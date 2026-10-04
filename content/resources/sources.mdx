@@ -1,10 +1,12 @@
 ---
 title: "الـ docs والـ packages"
 order: 0
-description: "الـ docs الرسمية والـ packages مرتبة حسب الأسبوع."
+description: "الـ docs الرسمية والـ packages مرتبة حسب الأسبوع والوحدة."
 ---
 
-مرتبة حسب الأسبوع اللي هتحتاجها فيه. لو لينك اتغير، دوّر بالاسم.
+لو لينك اتغير، دوّر بالاسم. الجدول الأول هو اللي هتحتاجه في الخطة الأساسية، والباقي مرتب حسب الوحدة عشان ترجعله وانت بتذاكرها.
+
+## الخطة الأساسية
 
 | المصدر | هتستخدمه في |
 | --- | --- |
@@ -23,3 +25,103 @@ description: "الـ docs الرسمية والـ packages مرتبة حسب ا�
 | [mocktail](https://pub.dev/packages/mocktail) و[bloc_test](https://pub.dev/packages/bloc_test) | الأسبوع 7 |
 | [Flutter: Integration testing](https://docs.flutter.dev/testing/integration-tests) | الأسبوع 7 |
 | [Open Library API](https://openlibrary.org/developers/api) | الـ catalog في المشروع |
+
+## Dart نفسها
+
+| المصدر | فايدته |
+| --- | --- |
+| [Effective Dart](https://dart.dev/effective-dart) | الـ style والتسمية والتصميم بالطريقة الرسمية |
+| [Class modifiers](https://dart.dev/language/class-modifiers) | `sealed` و`final` و`interface` و`base`: أساس شجرة الـ Failures والـ states |
+| [Linter rules](https://dart.dev/tools/linter-rules) | كل قواعد الـ lint بالشرح |
+| [dart test](https://dart.dev/tools/dart-test) | الـ test runner والـ tags والـ coverage |
+
+## الـ Domain والـ Data (الوحدة 2، 3)
+
+| المصدر | فايدته |
+| --- | --- |
+| [equatable](https://pub.dev/packages/equatable) | المساواة بالقيمة من غير codegen، للـ entities والـ states |
+| [json_serializable](https://pub.dev/packages/json_serializable) | توليد `fromJson` و`toJson` للـ DTOs |
+| [Flutter: JSON and serialization](https://docs.flutter.dev/data-and-backend/serialization/json) | امتى تكتب الـ JSON بإيدك وامتى تولّده |
+| [retrofit](https://pub.dev/packages/retrofit) | API client فوق dio بيتولّد من interface. اختياري |
+| [flutter_secure_storage](https://pub.dev/packages/flutter_secure_storage) | الـ tokens في Keychain وKeystore |
+| [shared_preferences](https://pub.dev/packages/shared_preferences) | الإعدادات البسيطة key-value |
+| [connectivity_plus](https://pub.dev/packages/connectivity_plus) | حالة الشبكة. افتكر: «فيه wifi» مش معناها «فيه نت» |
+| [fpdart](https://pub.dev/packages/fpdart) | `Either` و`TaskEither` لو حبيت الأسلوب الـ functional. اختياري، الـ Result بتاعنا كفاية |
+
+## الـ API والأخطاء (الوحدة 9)
+
+| المصدر | فايدته |
+| --- | --- |
+| [MDN: Overview of HTTP](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Overview) | HTTP من الأساس: request وresponse وheaders |
+| [MDN: HTTP response status codes](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status) | كل status code ومعناه، ارجعله وانت بتعمل خريطة الأخطاء |
+| [RFC 9457: Problem Details for HTTP APIs](https://www.rfc-editor.org/rfc/rfc9457.html) | شكل قياسي لجسم الـ error. اقترحه على الـ backend في عقد الـ API |
+| [http_mock_adapter](https://pub.dev/packages/http_mock_adapter) | تعمل mock لـ dio في التستات. شغال بس آخر تحديث 2023 |
+
+## Cubit وBloc (الوحدة 5، 10)
+
+| المصدر | فايدته |
+| --- | --- |
+| [flutter_bloc](https://pub.dev/packages/flutter_bloc) | `BlocProvider` و`BlocBuilder` و`BlocListener` وأخواتهم |
+| [hydrated_bloc](https://pub.dev/packages/hydrated_bloc) | تحفظ الـ state وترجّعها بعد ما الأبلكيشن يتقفل |
+| [replay_bloc](https://pub.dev/packages/replay_bloc) | undo وredo للـ Cubit. هادي في التحديثات بس شغالة |
+| [bloc_concurrency](https://pub.dev/packages/bloc_concurrency) | الـ transformers: `droppable` و`restartable` و`sequential` |
+| [bloc_lint](https://pub.dev/packages/bloc_lint) و[الـ docs بتاعته](https://bloclibrary.dev/lint/) | lint رسمي بيمسك أخطاء bloc الشائعة |
+
+## Dart Async وStreams (الوحدة 11)
+
+| المصدر | فايدته |
+| --- | --- |
+| [Futures, async, await](https://dart.dev/libraries/async/async-await) | الأساس الرسمي للـ Future |
+| [Asynchronous programming: Streams](https://dart.dev/libraries/async/using-streams) | `listen` و`await for` والأخطاء في الـ stream |
+| [Creating streams](https://dart.dev/libraries/async/creating-streams) | `async*` و`StreamController`، والـ single ضد الـ broadcast |
+| [Concurrency in Dart](https://dart.dev/language/concurrency) | الـ event loop والـ microtasks من الـ docs الرسمية |
+| [Isolates](https://dart.dev/language/isolates) | `Isolate.run` والـ isolates اللي عايشة طول الوقت |
+| [Flutter: Concurrency and isolates](https://docs.flutter.dev/perf/isolates) | إزاي تطلّع الشغل التقيل (زي parse JSON كبير) من الـ UI thread |
+| [Stream class API](https://api.flutter.dev/flutter/dart-async/Stream-class.html) | مرجع كل الـ methods |
+| [stream_transform](https://pub.dev/packages/stream_transform) | `debounce` و`throttle` و`switchMap`، من فريق Dart |
+| [rxdart](https://pub.dev/packages/rxdart) | الـ Rx operators و`BehaviorSubject`. تحديثاته بطيئة |
+
+## الاختبارات (الوحدة 7، 8)
+
+| المصدر | فايدته |
+| --- | --- |
+| [Flutter: Testing overview](https://docs.flutter.dev/testing/overview) | الأنواع التلاتة في صفحة واحدة |
+| [Cookbook: Unit testing](https://docs.flutter.dev/cookbook/testing/unit/introduction) | أول unit test خطوة بخطوة |
+| [Cookbook: Widget testing](https://docs.flutter.dev/cookbook/testing/widget/introduction) و[Finders](https://docs.flutter.dev/cookbook/testing/widget/finders) | `WidgetTester` و`pump` وإزاي تلاقي الـ widget |
+| [matchesGoldenFile](https://api.flutter.dev/flutter/flutter_test/matchesGoldenFile.html) | الـ golden matcher اللي جاي مع Flutter |
+| [alchemist](https://pub.dev/packages/alchemist) | goldens مريحة على أكتر من نظام. (`golden_toolkit` اتوقف، ماتستخدموش) |
+| [bloc docs: Testing](https://bloclibrary.dev/testing/) | الدليل الرسمي لتستات الـ Cubit والـ Bloc |
+| [fake_async](https://pub.dev/packages/fake_async) | تتحكم في الوقت جوه التست: timers وdebounce من غير انتظار |
+| [clock](https://pub.dev/packages/clock) | ساعة تقدر تحقنها، للكود اللي بيعتمد على الوقت |
+| [patrol](https://pub.dev/packages/patrol) و[الـ docs بتاعته](https://patrol.leancode.co/) | integration tests بتلمس الـ native: permissions وnotifications |
+
+## حراسة المعمارية والـ lints (الوحدة 7)
+
+| المصدر | فايدته |
+| --- | --- |
+| [flutter_lints](https://pub.dev/packages/flutter_lints) | القواعد الافتراضية |
+| [very_good_analysis](https://pub.dev/packages/very_good_analysis) | قواعد أشد بكتير، كويسة للفرق |
+| [Analyzer plugins](https://dart.dev/tools/analyzer-plugins) و[analysis_server_plugin](https://pub.dev/packages/analysis_server_plugin) | الطريقة الرسمية الجديدة تكتب بيها lint بتاعك (زي «الـ domain مايستوردش Flutter») |
+| [custom_lint](https://pub.dev/packages/custom_lint) | الطريقة القديمة لنفس الغرض. لسه شغالة بس الـ plugins الرسمية بقت البديل |
+| [dart_code_linter](https://pub.dev/packages/dart_code_linter) | نسخة مجانية من dart_code_metrics القديم (اللي اتوقف) |
+
+## الـ DI والتوسّع (الوحدة 6)
+
+| المصدر | فايدته |
+| --- | --- |
+| [get_it](https://pub.dev/packages/get_it) | الـ service locator اللي injectable بيولّد الكود بتاعه |
+| [Flutter: Flavors (Android)](https://docs.flutter.dev/deployment/flavors) و[Flavors (iOS)](https://docs.flutter.dev/deployment/flavors-ios) | الـ flavors على المنصتين |
+| [very_good_cli](https://pub.dev/packages/very_good_cli) | قوالب جاهزة ومشغّل تستات بالـ coverage |
+
+## الـ Production والـ Release (الوحدة 12)
+
+| المصدر | فايدته |
+| --- | --- |
+| [sentry_flutter](https://pub.dev/packages/sentry_flutter) و[Sentry docs](https://docs.sentry.io/platforms/dart/guides/flutter/) | الأخطاء والـ breadcrumbs والـ performance |
+| [firebase_crashlytics](https://pub.dev/packages/firebase_crashlytics) و[الـ setup](https://firebase.google.com/docs/crashlytics/get-started?platform=flutter) | البديل المجاني لو على Firebase |
+| [logging](https://pub.dev/packages/logging) | الـ logging الرسمي من فريق Dart، بمستويات وأسامي |
+| [logger](https://pub.dev/packages/logger) | logs ملونة ومقروءة في الـ console |
+| [Flutter: Continuous delivery](https://docs.flutter.dev/deployment/cd) | الدليل الرسمي للـ CD |
+| [fastlane: Flutter](https://docs.fastlane.tools/getting-started/cross-platform/flutter/) | الرفع للمتاجر أوتوماتيك |
+| [subosito/flutter-action](https://github.com/subosito/flutter-action) | Flutter جوه GitHub Actions |
+| [Flutter DevTools](https://docs.flutter.dev/tools/devtools) | الـ inspector والـ network والـ memory |

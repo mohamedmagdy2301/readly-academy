@@ -80,7 +80,7 @@ const CheatCard = ({ title, children }: { title: string; children: React.ReactNo
   <div className="cheat-card"><h4>{title}</h4>{children}</div>
 );
 
-const TAG: Record<string, string> = { yt: "يوتيوب مجاني", paid: "مدفوع", read: "مقال / docs" };
+const TAG: Record<string, string> = { yt: "يوتيوب مجاني", paid: "مدفوع", read: "مقال / docs", free: "مجاني", book: "كتاب", repo: "GitHub", tool: "أداة", community: "مجتمع" };
 const Courses = ({ children }: { children: React.ReactNode }) => <div className="courses">{children}</div>;
 const CourseTopic = ({ title, week, children }: { title: string; week: string; children: React.ReactNode }) => (
   <article className="course-topic"><h3>{title}</h3><small className="wk">{week}</small><div className="course-cols">{children}</div></article>
@@ -91,7 +91,10 @@ const CourseCol = ({ lang, children }: { lang: "ar" | "en"; children: React.Reac
 const CourseNote = ({ children }: { children: React.ReactNode }) => (
   <div className="course-note" style={{ gridColumn: "1 / -1" }}>{children}</div>
 );
-const Res = ({ title, href, tag, star, children }: { title: string; href: string; tag: "yt" | "paid" | "read"; star?: string; children?: React.ReactNode }) => (
+const ResGroup = ({ title, sub, children }: { title: string; sub?: string; children: React.ReactNode }) => (
+  <article className="course-topic"><h3>{title}</h3>{sub && <small className="wk">{sub}</small>}<div className="res-list">{children}</div></article>
+);
+const Res = ({ title, href, tag, star, children }: { title: string; href: string; tag: "yt" | "paid" | "read" | "free" | "book" | "repo" | "tool" | "community"; star?: string; children?: React.ReactNode }) => (
   <div className="res">
     {star === "true" && <span className="star" title="ابدأ بده">★ </span>}
     <a href={href} target="_blank" rel="noreferrer">{title}</a> <span className={`tag ${tag}`}>{TAG[tag]}</span>
@@ -110,5 +113,5 @@ export const mdxComponents: MDXComponents = {
   Tasks, Task, Deliverable, ReviewQuestion,
   Journey, Step, Scenario, BeforeAfter, Side,
   CheatGrid, CheatCard,
-  Courses, CourseTopic, CourseCol, CourseNote, Res, None,
+  Courses, CourseTopic, CourseCol, CourseNote, ResGroup, Res, None,
 };

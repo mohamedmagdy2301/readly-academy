@@ -1,0 +1,85 @@
+---
+title: "أدوات"
+order: 5
+description: "أدوات تسهّل عليك الـ debugging والـ API والاختبارات والـ release."
+---
+
+الأدوات دي مش جزء من الكود، بس هتوفّر عليك ساعات. أغلبها مجاني أو فيه نسخة مجانية كفاية. النجمة ★ على اللي تنزّله الأول.
+
+<Courses>
+
+<ResGroup title="الـ debugging" sub="كل الوحدات">
+
+<Res title="Flutter DevTools" href="https://docs.flutter.dev/tools/devtools" tag="tool" star="true">الـ inspector والـ performance والـ memory والـ logs</Res>
+
+<Res title="DevTools: Network View" href="https://docs.flutter.dev/tools/devtools/network" tag="tool" star="false">تشوف طلبات dio جوه الأبلكيشن من غير ما تضيف logger</Res>
+
+<Res title="Proxyman" href="https://proxyman.com/" tag="tool" star="false">proxy بيمسك الـ HTTPS من الموبايل. شغال على Windows وماك ولينكس</Res>
+
+<Res title="Charles Proxy" href="https://www.charlesproxy.com/" tag="tool" star="false">الكلاسيكي. فيه throttling تبطّأ بيه النت وتجرّب الـ timeouts والـ retry</Res>
+
+</ResGroup>
+
+<ResGroup title="الـ API" sub="الوحدة 3، 9">
+
+<Res title="Bruno" href="https://www.usebruno.com/" tag="tool" star="true">API client بيحفظ الـ collections كملفات جوه الـ repo، فتتراجع مع الكود</Res>
+
+<Res title="Postman" href="https://www.postman.com/" tag="tool" star="false">الأشهر، وغالبًا الـ backend هيبعتلك collection عليه</Res>
+
+<Res title="Hoppscotch" href="https://hoppscotch.io/" tag="tool" star="false">مفتوح المصدر وشغال من المتصفح</Res>
+
+<Res title="Mockoon" href="https://mockoon.com/" tag="tool" star="true">API وهمي على جهازك بواجهة رسومية. ابدأ الشاشة قبل ما الـ backend يخلص</Res>
+
+<Res title="json-server" href="https://github.com/typicode/json-server" tag="tool" star="false">REST API وهمي من ملف JSON في ثواني</Res>
+
+<Res title="WireMock" href="https://wiremock.org/" tag="tool" star="false">mocking بالكود، وبيقدر يرجّع أخطاء وتأخير عشان تجرّب خريطة الأخطاء</Res>
+
+</ResGroup>
+
+<ResGroup title="الـ Database" sub="الوحدة 3، 4">
+
+<Res title="drift_db_viewer" href="https://pub.dev/packages/drift_db_viewer" tag="tool" star="true">تتصفّح جداول drift من جوه الأبلكيشن في وضع الـ debug</Res>
+
+<Res title="DB Browser for SQLite" href="https://sqlitebrowser.org/" tag="tool" star="false">تسحب ملف الـ .sqlite من الجهاز وتفتحه على الكمبيوتر</Res>
+
+</ResGroup>
+
+<ResGroup title="جودة الكود والقوالب" sub="الوحدة 6، 7">
+
+<Res title="Very Good CLI" href="https://pub.dev/packages/very_good_cli" tag="tool" star="true">قوالب مشاريع جاهزة، و`very_good test --coverage` في أمر واحد</Res>
+
+<Res title="Mason" href="https://github.com/felangel/mason" tag="tool" star="false">قوالب كود (bricks): تعمل brick لـ feature كاملة بطبقاتها التلاتة</Res>
+
+<Res title="BrickHub" href="https://brickhub.dev/" tag="tool" star="false">bricks جاهزة لـ Mason</Res>
+
+<Res title="DCM" href="https://dcm.dev/" tag="tool" star="false">metrics وقواعد lint زيادة. مدفوع، والبديل المجاني dart_code_linter</Res>
+
+<Res title="FVM" href="https://fvm.app/" tag="tool" star="false">تثبّت نسخة Flutter لكل مشروع، فالفريق والـ CI يبقوا على نفس النسخة</Res>
+
+<Res title="Widgetbook" href="https://www.widgetbook.io/" tag="tool" star="false">كتالوج للـ widgets زي Storybook، تشوف كل حالة لوحدها</Res>
+
+</ResGroup>
+
+<ResGroup title="التغطية والـ CI" sub="الوحدة 6، 8، 12">
+
+<Res title="subosito/flutter-action" href="https://github.com/subosito/flutter-action" tag="tool" star="true">الـ GitHub Action اللي بينزّل Flutter في الـ CI</Res>
+
+<Res title="coverage (Dart)" href="https://pub.dev/packages/coverage" tag="tool" star="false">يحوّل نتيجة التستات لـ lcov</Res>
+
+<Res title="lcov / genhtml" href="https://github.com/linux-test-project/lcov" tag="tool" star="false">يطلّعلك صفحة HTML بالسطور اللي التستات مالمستهاش</Res>
+
+<Res title="Codecov" href="https://about.codecov.io/" tag="tool" star="false">يتابع التغطية في كل PR</Res>
+
+</ResGroup>
+
+<ResGroup title="الـ Production" sub="الوحدة 12">
+
+<Res title="Sentry for Flutter" href="https://docs.sentry.io/platforms/dart/guides/flutter/" tag="tool" star="true">الأخطاء والـ performance والـ breadcrumbs</Res>
+
+<Res title="Firebase Crashlytics" href="https://firebase.google.com/docs/crashlytics/get-started?platform=flutter" tag="tool" star="false">crash reporting مجاني، لو انت أصلًا على Firebase</Res>
+
+<Res title="Shorebird" href="https://shorebird.dev/" tag="tool" star="false">code push: تبعت hotfix من غير ما تستنى مراجعة المتجر</Res>
+
+</ResGroup>
+
+</Courses>

@@ -1,0 +1,57 @@
+---
+title: "مشاريع تقراها"
+order: 4
+description: "مشاريع Flutter مفتوحة المصدر تتعلم من الكود بتاعها."
+---
+
+قراية كود حد تاني بتعلّمك حاجات مفيش كورس هيقولهالك: الناس بتسمّي إيه، وبتحط الحاجة فين، وبتعمل إيه لما المشروع يكبر. ماتحاولش تقرا مشروع كبير من أوله لآخره. اختار feature واحدة وامشي وراها من الشاشة لحد الـ API، زي ما عملنا في «رحلة request».
+
+ركّز على الفكرة مش على الأداة. أغلب المشاريع الكبيرة هنا مش شغالة بـ Cubit، بس تقسيم الطبقات والـ repositories والـ sync هي هي.
+
+<Courses>
+
+<ResGroup title="ابدأ بدول" sub="صغيرين ومكتوبين عشان يتعلّموا منهم">
+
+<Res title="flutter/samples: Compass app" href="https://github.com/flutter/samples/tree/main/compass_app" tag="repo" star="true">الأبلكيشن الرسمي اللي ورا دليل المعمارية: MVVM وrepositories وservices وResult وCommand وgo_router وfreezed، وتستات بـ fakes. اتعمله تحديث قريب</Res>
+
+<Res title="bloc examples: flutter_todos" href="https://github.com/felangel/bloc/tree/master/examples/flutter_todos" tag="repo" star="true">repository فوق packages منفصلة للـ local والـ API. أقرب حاجة لتقسيم الـ packages في الوحدة 6</Res>
+
+<Res title="bloc examples: flutter_weather" href="https://github.com/felangel/bloc/tree/master/examples/flutter_weather" tag="repo" star="false">API client ثم repository ثم cubit، ومعاهم hydrated_bloc وbloc_test. صغير وكامل</Res>
+
+<Res title="bloc examples (كلهم)" href="https://github.com/felangel/bloc/tree/master/examples" tag="repo" star="false">أمثلة صاحب المكتبة، من counter لحد login وinfinite list</Res>
+
+</ResGroup>
+
+<ResGroup title="قريبين من الـ stack بتاعنا" sub="Clean Architecture مع bloc وget_it">
+
+<Res title="hungps/flutter_pokedex" href="https://github.com/hungps/flutter_pokedex" tag="repo" star="true">flutter_bloc وget_it/injectable وdio وfreezed. أقرب مشروع لأدوات الكورس، وبيتحدّث</Res>
+
+<Res title="ResoCoder: flutter-tdd-clean-architecture-course" href="https://github.com/ResoCoder/flutter-tdd-clean-architecture-course" tag="repo" star="false">التقسيم الكلاسيكي اللي أغلب الكورسات العربي نقلته: entities وusecases وdatasources وEither. متوقف من 2023، فخد منه الشكل بس</Res>
+
+<Res title="devmuaz/flutter-clean-architecture" href="https://github.com/devmuaz/flutter-clean-architecture" tag="repo" star="false">Bloc وretrofit/dio وfloor. الـ dependencies فيه قديمة (dio 4)</Res>
+
+</ResGroup>
+
+<ResGroup title="مشاريع كبيرة في production" sub="لما تحب تشوف المعمارية وهي متضغوطة">
+
+<Res title="AppFlowy (الـ Flutter frontend)" href="https://github.com/AppFlowy-IO/AppFlowy/tree/main/frontend/appflowy_flutter" tag="repo" star="true">أكبر مشروع bloc وfreezed وget_it وgo_router مفتوح تقريبًا. شوف إزاي بيقسّم الـ features</Res>
+
+<Res title="Immich (الموبايل)" href="https://github.com/immich-app/immich/tree/main/mobile" tag="repo" star="false">أبلكيشن offline تقيل بـ drift. ادرس الـ sync والـ local DB، وسيب الـ Riverpod</Res>
+
+<Res title="Spotube" href="https://github.com/team-spotube/spotube" tag="repo" star="false">Riverpod وdrift وdio وfreezed وget_it في أبلكيشن كبير</Res>
+
+<Res title="Wonderous" href="https://github.com/gskinnerTeam/flutter-wonderous-app" tag="repo" star="false">أبلكيشن مصقول بـ get_it وgo_router. مش bloc، بس مفيد في ترتيب الـ UI وفولدر الـ logic</Res>
+
+</ResGroup>
+
+<ResGroup title="قوالب وتشكيلات" sub="تبدأ منها مشروع أو تقارن">
+
+<Res title="Very Good Templates" href="https://github.com/VeryGoodOpenSource/very_good_templates" tag="repo" star="true">فيه very_good_core: flavors وl10n وbloc وCI وتغطية تستات 100%. (الـ repo القديم very_good_core اتقفل واتنقل هنا)</Res>
+
+<Res title="Very Good CLI" href="https://github.com/VeryGoodOpenSource/very_good_cli" tag="repo" star="false">إزاي القوالب بتتولّد، و`very_good test --coverage`</Res>
+
+<Res title="Flutter Architecture Samples" href="https://github.com/brianegan/flutter_architecture_samples" tag="repo" star="false">نفس أبلكيشن الـ todo بأكتر من طريقة state management. حلو للمقارنة</Res>
+
+</ResGroup>
+
+</Courses>

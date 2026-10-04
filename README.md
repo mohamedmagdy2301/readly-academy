@@ -27,7 +27,7 @@ npm run typecheck
 | الوحدة | `/course/<unit>/` | مقدمة الوحدة ودروسها |
 | الدرس | `/course/<unit>/<lesson>/` | الدرس نفسه، و«خلصت الدرس، اللي بعده» |
 | المراجعة | `/review/` | تابات: كروت المراجعة، أسئلة الـ interviews، الملخص، المسرد، إجاباتي |
-| المصادر | `/resources/` | تابات: الـ docs والـ packages، الكورسات والفيديوهات |
+| المصادر | `/resources/` | تابات: الـ docs والـ packages، الكورسات والفيديوهات، المقالات، الكتب، المشاريع، الأدوات، المجتمعات |
 
 ## هيكل المشروع
 
@@ -42,7 +42,7 @@ content/
 │  ├─ 01-foundations/
 │  └─ ...
 ├─ review/        # interview.mdx, cheat-sheet.mdx, glossary.mdx (كل ملف = تاب)
-├─ resources/     # sources.mdx, courses.mdx (كل ملف = تاب)
+├─ resources/     # sources, courses, articles, books, repos, tools, community (كل ملف = تاب)
 ├─ diagrams/      # الرسومات SVG
 └─ _templates/    # قوالب الدرس والوحدة والتطبيق (بيستخدمها npm run new)
 scripts/
@@ -110,7 +110,8 @@ draft: true          # اختياري: يخفيه من الـ build
 | `<BeforeAfter>` + `<Side label kind="before\|after">` | كود قبل وبعد |
 | `<Scenario>`، `<Journey>` + `<Step file>` | رحلة خطوة بخطوة |
 | `<CheatGrid>` + `<CheatCard>` | كروت ملخص |
-| `<Courses>`، `<CourseTopic>`، `<CourseCol>`، `<Res>` | جدول الكورسات |
+| `<Courses>`، `<CourseTopic>`، `<CourseCol>`، `<Res>` | جدول الكورسات: عمود عربي وعمود إنجليزي |
+| `<Courses>` + `<ResGroup title sub>` + `<Res>` | كروت مصادر من غير تقسيم لغة. الـ `tag` في `<Res>`: `yt` أو `paid` أو `read` أو `free` أو `book` أو `repo` أو `tool` أو `community` |
 
 قواعد مهمة:
 - الـ `id` بتاع أي `Task` أو `Question` أو `LogBox` لازم يكون مميز في الموقع كله، وثابت بعد النشر، لأنه مفتاح التقدم المحفوظ. الـ build بيقف ويقولك لو في id متكرر.

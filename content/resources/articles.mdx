@@ -1,0 +1,125 @@
+---
+title: "مقالات ومدونات"
+order: 2
+description: "مقالات بعينها لكل موضوع، ومدونات تستاهل تتابعها."
+---
+
+المقالات دي أقصر من الكورس وأعمق من الفيديو: كل واحدة بتشرح فكرة واحدة كويس. اقرا المقال لما توصل للدرس بتاعه، مش كلهم مرة واحدة. النجمة ★ على أهم مقال في كل مجموعة.
+
+<Courses>
+
+<ResGroup title="المعمارية والطبقات" sub="الوحدة 1، 12">
+
+<Res title="Uncle Bob: The Clean Architecture" href="https://blog.cleancoder.com/uncle-bob/2012/08/13/the-clean-architecture.html" tag="read" star="true">المقال الأصلي بتاع الدواير وقاعدة الـ dependency</Res>
+
+<Res title="Uncle Bob: Screaming Architecture" href="https://blog.cleancoder.com/uncle-bob/2011/09/30/Screaming-Architecture.html" tag="read" star="false">الفولدرات لازم «تزعّق» باللي الأبلكيشن بيعمله، مش بالـ framework</Res>
+
+<Res title="Martin Fowler: Presentation Domain Data Layering" href="https://martinfowler.com/bliki/PresentationDomainDataLayering.html" tag="read" star="false">منين جه التقسيم لتلات طبقات أصلًا</Res>
+
+<Res title="Alistair Cockburn: Hexagonal Architecture" href="https://alistair.cockburn.us/hexagonal-architecture" tag="read" star="false">الـ Ports and Adapters من صاحبها، نفس الفكرة من زاوية تانية</Res>
+
+<Res title="Flutter docs: Guide to app architecture" href="https://docs.flutter.dev/app-architecture/guide" tag="read" star="false">رأي Google الرسمي: MVVM وrepositories</Res>
+
+<Res title="Flutter docs: Architecture recommendations" href="https://docs.flutter.dev/app-architecture/recommendations" tag="read" star="false">checklist بالحاجات المهمة جدًا والحاجات الاختيارية</Res>
+
+<Res title="Code With Andrea: Flutter App Architecture with Riverpod" href="https://codewithandrea.com/articles/flutter-app-architecture-riverpod-introduction/" tag="read" star="false">أربع طبقات بدل تلاتة. بيستخدم Riverpod، بس الأفكار بتتنقل لـ Cubit زي ما هي</Res>
+
+<Res title="Code With Andrea: Feature-first or Layer-first?" href="https://codewithandrea.com/articles/flutter-project-structure/" tag="read" star="false">ترتيب الفولدرات ومميزات وعيوب كل طريقة</Res>
+
+<Res title="Very Good Ventures: Flutter Layered Architecture" href="https://verygood.ventures/blog/very-good-flutter-architecture/" tag="read" star="false">تقسيم VGV للطبقات مع bloc، قريب جدًا من اللي بنعمله</Res>
+
+<Res title="bloc docs: Architecture" href="https://bloclibrary.dev/architecture/" tag="read" star="false">data ثم repository ثم bloc ثم UI، من صاحب المكتبة</Res>
+
+</ResGroup>
+
+<ResGroup title="الـ Domain والـ Data" sub="الوحدة 2، 3">
+
+<Res title="Martin Fowler: Value Object" href="https://martinfowler.com/bliki/ValueObject.html" tag="read" star="true">المساواة بالقيمة، وده اللي freezed وequatable بيعملوه</Res>
+
+<Res title="Martin Fowler: Anemic Domain Model" href="https://martinfowler.com/bliki/AnemicDomainModel.html" tag="read" star="false">ليه entity كلها fields ومن غير سلوك تعتبر ريحة وحشة</Res>
+
+<Res title="Martin Fowler: Repository" href="https://martinfowler.com/eaaCatalog/repository.html" tag="read" star="false">التعريف الأصلي للـ pattern من كتاب PoEAA</Res>
+
+<Res title="Code With Andrea: The Repository Pattern" href="https://codewithandrea.com/articles/flutter-repository-pattern/" tag="read" star="false">الـ repository كحدود فوق الـ API، والتحويل من DTO لـ model</Res>
+
+</ResGroup>
+
+<ResGroup title="الأخطاء والـ Result" sub="الوحدة 2، 9">
+
+<Res title="Flutter docs: Error handling with Result objects" href="https://docs.flutter.dev/app-architecture/design-patterns/result" tag="read" star="true">الـ Result pattern الرسمي، قارنه بالـ Result بتاعنا</Res>
+
+<Res title="Code With Andrea: Exception Handling with try/catch and the Result type" href="https://codewithandrea.com/articles/flutter-exception-handling-try-catch-result-type/" tag="read" star="false">ليه ترجّع Result بدل ما ترمي exception بين الطبقات</Res>
+
+</ResGroup>
+
+<ResGroup title="الشبكة والـ Offline" sub="الوحدة 3، 4، 9">
+
+<Res title="Flutter docs: Offline-first support" href="https://docs.flutter.dev/app-architecture/design-patterns/offline-first" tag="read" star="true">استراتيجيات القراية والكتابة والـ sync الرسمية</Res>
+
+<Res title="Stripe: Designing robust and predictable APIs with idempotency" href="https://stripe.com/blog/idempotency" tag="read" star="true">الـ idempotency keys والـ retry الآمن، أحسن شرح للفكرة</Res>
+
+<Res title="AWS: Exponential Backoff And Jitter" href="https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/" tag="read" star="false">ليه الـ retry محتاج jitter، بالأرقام والمحاكاة</Res>
+
+</ResGroup>
+
+<ResGroup title="الـ Presentation وBloc" sub="الوحدة 5، 10">
+
+<Res title="Very Good Ventures: Bloc with Streams and Concurrency" href="https://verygood.ventures/blog/how-to-use-bloc-with-streams-and-concurrency/" tag="read" star="true">الـ event transformers: droppable وrestartable وsequential</Res>
+
+<Res title="Flutter docs: The command pattern" href="https://docs.flutter.dev/app-architecture/design-patterns/command" tag="read" star="false">إزاي تمثّل action في الشاشة بحالة running وerror وcompleted</Res>
+
+</ResGroup>
+
+<ResGroup title="Dart Async وStreams" sub="الوحدة 11">
+
+<Res title="dart.dev: Asynchronous programming: Streams" href="https://dart.dev/libraries/async/using-streams" tag="read" star="true">الأساسيات: await for وlisten والـ transforms</Res>
+
+<Res title="dart.dev: Creating streams in Dart" href="https://dart.dev/libraries/async/creating-streams" tag="read" star="false">async* وStreamController، وإزاي تحترم الـ pause والـ cancel</Res>
+
+</ResGroup>
+
+<ResGroup title="الاختبارات" sub="الوحدة 7، 8">
+
+<Res title="The Practical Test Pyramid" href="https://martinfowler.com/articles/practical-test-pyramid.html" tag="read" star="true">طويل وعملي: تختبر إيه في كل مستوى</Res>
+
+<Res title="Martin Fowler: Mocks Aren't Stubs" href="https://martinfowler.com/articles/mocksArentStubs.html" tag="read" star="false">المقال الكلاسيكي عن الفرق بين التحقق من الـ state والتحقق من السلوك</Res>
+
+<Res title="Martin Fowler: Test Double" href="https://martinfowler.com/bliki/TestDouble.html" tag="read" star="false">أسامي dummy وfake وstub وspy وmock في صفحة واحدة</Res>
+
+<Res title="Martin Fowler: Test Pyramid" href="https://martinfowler.com/bliki/TestPyramid.html" tag="read" star="false">النسخة القصيرة من فكرة الهرم</Res>
+
+<Res title="Google Testing Blog: Just Say No to More End-to-End Tests" href="https://testing.googleblog.com/2015/04/just-say-no-to-more-end-to-end-tests.html" tag="read" star="false">ليه الاعتماد على الـ E2E بس بيفشل في الواقع</Res>
+
+<Res title="Kent C. Dodds: Write tests. Not too many. Mostly integration." href="https://kentcdodds.com/blog/write-tests" tag="read" star="false">الرأي التاني قصاد الهرم (الـ testing trophy). اقراه عشان تعرف تناقش</Res>
+
+<Res title="Very Good Ventures: Flutter testing, a very good guide" href="https://verygood.ventures/blog/guide-to-flutter-testing/" tag="read" star="false">عادات عملية في الـ unit والـ widget والـ bloc tests</Res>
+
+</ResGroup>
+
+<ResGroup title="بالعربي" sub="الوحدة 1، 7">
+
+<Res title="أكاديمية حسوب: شرح مبادئ SOLID في التصميم كائني التوجه" href="https://academy.hsoub.com/programming/general/%D8%B4%D8%B1%D8%AD-%D9%85%D8%A8%D8%A7%D8%AF%D8%A6-solid-%D9%81%D9%8A-%D8%A7%D9%84%D8%AA%D8%B5%D9%85%D9%8A%D9%85-%D9%83%D8%A7%D8%A6%D9%86%D9%8A-%D8%A7%D9%84%D8%AA%D9%88%D8%AC%D9%87-r2525/" tag="read" star="true">المبادئ الخمسة مكتوبة بالعربي</Res>
+
+<Res title="أكاديمية حسوب: مبدأ عكس التابعيّة" href="https://academy.hsoub.com/programming/advanced/%D9%85%D8%A8%D8%A7%D8%AF%D8%A6-solid-%D9%84%D8%AA%D8%B5%D9%85%D9%8A%D9%85-%D8%A7%D9%84%D8%A8%D8%B1%D9%85%D8%AC%D9%8A%D8%A7%D8%AA-%D9%85%D8%A8%D8%AF%D8%A3-%D8%B9%D9%83%D8%B3-%D8%A7%D9%84%D8%AA%D8%A7%D8%A8%D8%B9%D9%8A%D9%91%D8%A9-dependency-inversion-principle-r397/" tag="read" star="false">الـ Dependency Inversion، الفكرة اللي قاعدة الـ dependency قايمة عليها</Res>
+
+<Res title="أكاديمية حسوب: أنماط التصميم البرمجي" href="https://academy.hsoub.com/programming/advanced/%D8%A3%D9%86%D9%85%D8%A7%D8%B7-%D8%A7%D9%84%D8%AA%D8%B5%D9%85%D9%8A%D9%85-%D8%A7%D9%84%D8%A8%D8%B1%D9%85%D8%AC%D9%8A-design-patterns-r498/" tag="read" star="false">مدخل للـ design patterns</Res>
+
+</ResGroup>
+
+<ResGroup title="مدونات تتابعها" sub="مش لدرس معين، تابعها على طول">
+
+<Res title="Code With Andrea" href="https://codewithandrea.com/" tag="free" star="true">أعمق كتابة عن معمارية Flutter</Res>
+
+<Res title="Very Good Ventures blog" href="https://verygood.ventures/blog/" tag="free" star="false">bloc والاختبارات والأدوات من فريق VGV</Res>
+
+<Res title="martinfowler.com" href="https://martinfowler.com/" tag="free" star="false">أساسيات المعمارية والاختبارات</Res>
+
+<Res title="The Flutter Blog" href="https://flutter.dev/blog" tag="free" star="false">المدونة الرسمية: الإصدارات الجديدة وشروحات من الفريق</Res>
+
+<Res title="Reso Coder" href="https://resocoder.com/" tag="free" star="false">Clean Architecture وTDD. قديم شوية بس أساسي</Res>
+
+<Res title="DCM Blog" href="https://dcm.dev/blog" tag="free" star="false">جودة الكود وقواعد الـ lint وتفاصيل جوه Flutter</Res>
+
+</ResGroup>
+
+</Courses>

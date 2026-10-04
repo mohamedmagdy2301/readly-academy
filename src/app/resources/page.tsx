@@ -12,7 +12,7 @@ export default async function ResourcesPage() {
     <div className="content narrow">
       <header className="section-head">
         <h1>المصادر</h1>
-        <p className="lede">الـ docs الرسمية والـ packages، وكورسات وفيديوهات عربي وإنجليزي لكل موضوع.</p>
+        <p className="lede">الـ docs والـ packages، وكورسات وفيديوهات، ومقالات وكتب، ومشاريع تقراها، وأدوات ومجتمعات.</p>
       </header>
       <Tabs tabs={rendered.map((p) => ({ id: p.slug, label: p.title, content: <div className="doc">{p.description && <p className="lede">{p.description}</p>}{p.content}</div> }))} />
     </div>
