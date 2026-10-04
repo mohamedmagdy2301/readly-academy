@@ -188,6 +188,117 @@ print(a == b); // false! different objects in memory
 
 بشكل افتراضي، `==` بتقارن مكان الـ object في الميموري مش محتواه. ده مهم جدًا مع Cubit: لو بتعمل emit لـ state جديدة بنفس المحتوى، الـ Cubit مش هيعرف إنها نفس القديمة. الحل إنك تعمل override لـ `==` و`hashCode`، أو تستخدم `equatable` أو `freezed` يعملوها عنك.
 
+### extension type: نوع جديد من غير تكلفة
+
+<CodeBlock label="BookId مش أي String">
+
+```dart
+extension type const BookId(String value) {}
+
+void openBook(BookId id) { /* ... */ }
+
+openBook(BookId('OL45804W')); // OK
+openBook('Atomic Habits');    // compile error: a String is not a BookId
+```
+
+</CodeBlock>
+
+في الـ runtime ده String عادي، فمفيش object زيادة ولا تكلفة. بس الـ compiler بيعامله كنوع لوحده، فمستحيل تبعت عنوان الكتاب مكان الـ id بالغلط. في درس الـ Domain هنقفل الـ constructor ونخلي الإنشاء يعدّي على validation.
+
+### Null safety: الـ `!` اللي بيوقّع الـ app
+
+<CodeBlock label="Null check operator used on a null value">
+
+```dart
+final title = json['title'] as String?;
+Text(title!); // crashes the day a book has no title
+```
+
+</CodeBlock>
+
+الـ `!` معناها «أنا متأكد إنها مش null، ولو غلطان وقّع الـ app». استخدمها بس لما تكون متأكد فعلًا، زي `res.data!` بعد طلب dio ناجح. لأي حاجة جاية من بره، قرر بنفسك هتعمل إيه لو مش موجودة:
+
+<CodeBlock label="البدائل">
+
+```dart
+final title = json['title'] as String? ?? 'Untitled'; // default with ??
+final length = description?.length;                   // null if description is null
+
+if (book.description case final text?) {             // null-check pattern
+  print(text.length); // text is String here, not String?
+}
+```
+
+</CodeBlock>
+
+و`late` زي `!` بالظبط بس مؤجلة: بتقول «هتتعيّن قبل ما حد يقراها». لو اتقرت قبلها، `LateInitializationError`. مكانها الطبيعي `setUp` في التستات، مش الـ state.
+
+### نفس الحقل بييجي بأكتر من شكل
+
+Open Library بيرجّع `description` مرة نص، ومرة object فيه `value`. الـ `as String?` هيضرب مع الشكل التاني. الـ patterns في Dart 3 بتقرا الشكلين من غير ولا cast:
+
+<CodeBlock label="switch على شكل الـ JSON">
+
+```dart
+final description = switch (json['description']) {
+  String text => text,
+  {'value': String text} => text, // a Map with a String "value"
+  _ => null,
+};
+```
+
+</CodeBlock>
+
+الـ `{'value': String text}` اسمه <b>map pattern</b>: بيتأكد إن القيمة Map، وفيها المفتاح ده، وقيمته String، وبيطلّعها في متغير. والمفاتيح الزيادة مابتفرقش. هتشوفه شغال في درس «أول feature ملف بملف».
+
+### Future اتنسى من غير await
+
+<CodeBlock label="الخطأ بيضيع في صمت">
+
+```dart
+Future<void> save(Book book) async {
+  _repository.addBook(book); // no await
+  emit(const Saved());       // shows "saved" even if it failed
+}
+```
+
+</CodeBlock>
+
+من غير `await`، الكود بيكمّل قبل ما الحفظ يخلص، ولو فشل محدش هيعرف. الحل `await`، ولو انت قاصد ماتستناش (زي log في الخلفية)، قولها صراحة بـ `unawaited(...)` من `dart:async`. وفعّل lint اسمه `unawaited_futures` في `analysis_options.yaml`، فأي Future منسي يطلع warning.
+
+### طلبين مستقلين ورا بعض
+
+<CodeBlock label="ورا بعض مقابل مع بعض">
+
+```dart
+// sequential: ~600ms if each takes 300ms
+final book = await fetchBook(id);
+final notes = await fetchNotes(id);
+
+// parallel: ~300ms, with a typed record
+final (book, notes) = await (fetchBook(id), fetchNotes(id)).wait;
+```
+
+</CodeBlock>
+
+لو الطلب التاني مش محتاج نتيجة الأول، ابعتهم مع بعض. الـ `.wait` على record من Futures بيرجّع record بنفس الأنواع، فـ `book` نوعه Book و`notes` نوعها List، من غير casts زي `Future.wait` اللي بيرجّع List من نوع واحد.
+
+### Bad state: Stream has already been listened to
+
+<CodeBlock label="stream ليه مستمع واحد بس">
+
+```dart
+final _controller = StreamController<List<Book>>();
+Stream<List<Book>> watchLibrary() => _controller.stream;
+
+watchLibrary().listen(showInLibrary); // OK
+watchLibrary().listen(showInHome);    // Bad state: Stream has already been listened to
+```
+
+</CodeBlock>
+
+الـ `StreamController()` العادي بيطلّع <b>single-subscription</b> stream: مستمع واحد بس. لو أكتر من شاشة هتسمع، استخدم `StreamController.broadcast()`. وأي `listen` لازم يتقابله `cancel()` لما الشاشة تتقفل، وإلا الـ stream هيفضل شغال وبيبعت لحد مش موجود. الـ `Cubit` و`BlocBuilder` بيعملوا ده عنك، بس أي `listen` بتكتبه بإيدك مسؤوليتك.
+
 
 </Level>
 
@@ -213,6 +324,13 @@ print(a == b); // false! different objects in memory
 الـ extension type (زي Email في الخطة) مالوش تكلفة في الـ runtime لأنه في الحقيقة String متغطي. ده معناه إن `is Email` وقت التشغيل مش هيفرق بينه وبين أي String. الحماية كلها وقت الـ compile، وده كفاية لمعظم الاستخدامات.
 
 </Note>
+
+### اختيارات هتقابلها كل يوم
+
+- <b>class ولا record؟</b> الـ record زي `(Book, List<Note>)` ممتاز لقيمة راجعة من function أو نتيجة `.wait`، ومساواته بالمحتوى جاهزة. بس مالوش اسم ولا methods، فلو هيتنقل بين طبقات أو هيعيش في الـ state، اعمله class باسم واضح.
+- <b>`==` بإيدك ولا equatable ولا freezed؟</b> بإيدك لـ class أو اتنين. equatable لما يبقى عندك states كتير ومش عايز codegen. freezed لما تحتاج كمان `copyWith` وJSON وsealed unions، والتمن `build_runner` وملفات متولّدة. في Readly هنستخدم freezed للـ DTOs في درس الـ Data، والـ states بنكتبها sealed بإيدنا.
+- <b>extension type ولا class للـ value object؟</b> الـ extension type ببلاش في الـ runtime وكفاية لـ id أو email. لو محتاج أكتر من حقل (Money فيها amount وcurrency)، أو محتاج `is` تفرّق وقت التشغيل، اعمل class.
+- <b>Future ولا Stream في الـ contract؟</b> Future للسؤال اللي ليه إجابة واحدة («هات الكتاب»). Stream للحاجة اللي بتتغير والشاشة لازم تعرف («المكتبة دلوقتي شكلها إيه»). درس Offline-first مبني على الـ Stream ده.
 
 <Note kind="interview" title="سؤال interview">
 
@@ -248,6 +366,15 @@ print(a == b); // false! different objects in memory
 <Answer>
 
 بترجع false لأنها بتقارن مكان الـ objects في الميموري. مع Cubit ده ممكن يخلي الـ UI تعمل rebuild من غير داعي، أو تفشل مقارنات في التستات.
+
+</Answer>
+</Question>
+
+<Question id="dart-4">
+<Ask>شاشة الكتاب محتاجة الكتاب وملاحظاته من طلبين مستقلين. تكتبها إزاي عشان الوقت يبقى وقت طلب واحد، والأنواع تفضل صح؟</Ask>
+<Answer>
+
+`final (book, notes) = await (fetchBook(id), fetchNotes(id)).wait;` الطلبين بيطلعوا مع بعض، والـ record اللي راجع كل حقل فيه بنوعه، من غير casts.
 
 </Answer>
 </Question>

@@ -37,7 +37,7 @@ final created = await dio.post('/library', data: {'key': 'OL1'});
 
 </CodeBlock>
 
-اعمل instance واحد من Dio وسجّله في get_it كـ lazySingleton. لو كل data source عمل Dio بتاعه، الـ interceptors والإعدادات هتتكرر.
+اعمل instance واحد من Dio لكل backend، وسجّله في get_it كـ lazySingleton. لو كل data source عمل Dio بتاعه، الـ interceptors والإعدادات هتتكرر. (ليه «لكل backend» مش «للمشروع كله» هتشوفه في Level 3.)
 
 | نوع الـ DioException | معناه | بيتحول لـ |
 | --- | --- | --- |
@@ -167,19 +167,225 @@ class RetryInterceptor extends Interceptor {
 
 </CodeBlock>
 
+### الـ token بتاعك راح لـ Open Library
+
+قلنا Dio واحد للمشروع. بس Readly بيكلّم سيرفرين: الـ API بتاعنا، وOpen Library للكتالوج. لو الـ CatalogRemoteSource استخدم نفس الـ Dio بـ URL كامل (`https://openlibrary.org/search.json`)، الـ AuthInterceptor هيحط `Authorization: Bearer ...` على الطلب. يعني الـ access token بتاع المستخدم بيتبعت لسيرفر مش بتاعك، وبيتسجل في الـ logs بتاعته. ولو Open Library رجّع 401 لأي سبب، الـ interceptor هيعمل refresh لـ token مالوش علاقة بالموضوع.
+
+القاعدة الصح: <b>Dio واحد لكل backend</b>، كل واحد بالـ base URL والـ interceptors بتوعه:
+
+<CodeBlock label="di/network.dart">
+
+```dart
+Dio buildApiDio(AppConfig config, TokenStore tokens) {
+  final options = BaseOptions(
+    baseUrl: config.baseUrl, // per flavor: dev, staging, prod
+    connectTimeout: const Duration(seconds: 10),
+    receiveTimeout: const Duration(seconds: 15),
+  );
+  final dio = Dio(options);
+  final refreshDio = Dio(options); // same server, no AuthInterceptor
+  dio.interceptors.addAll([
+    AuthInterceptor(tokens, refreshDio, dio),
+    RetryInterceptor(dio),
+  ]);
+  return dio;
+}
+
+Dio buildOpenLibraryDio() {
+  final dio = Dio(BaseOptions(
+    baseUrl: 'https://openlibrary.org',
+    connectTimeout: const Duration(seconds: 10),
+    receiveTimeout: const Duration(seconds: 20),
+  ));
+  dio.interceptors.add(RetryInterceptor(dio)); // retries yes, our token never
+  return dio;
+}
+
+// di/setup.dart
+getIt
+  ..registerLazySingleton<Dio>(() => buildApiDio(getIt(), getIt()), instanceName: 'api')
+  ..registerLazySingleton<Dio>(buildOpenLibraryDio, instanceName: 'openLibrary')
+  ..registerLazySingleton(() => LibraryRemoteSource(getIt<Dio>(instanceName: 'api')))
+  ..registerLazySingleton(() => CatalogRemoteSource(getIt<Dio>(instanceName: 'openLibrary')));
+```
+
+</CodeBlock>
+
+الـ `AppConfig` هو بتاع درس الـ flavors في الوحدة 6: كل environment ليه base URL، فمفيش URL مكتوب جوه أي data source. والـ data source مايعرفش هو واخد أنهي Dio، بياخد اللي اتبعتله في الـ constructor.
+
+### الـ timeouts التلاتة مش زي بعض
+
+| الـ timeout | بيقيس إيه | امتى بيضرب |
+| --- | --- | --- |
+| `connectTimeout` | فتح الاتصال بالسيرفر | السيرفر مش موجود أو النت مقطوع |
+| `sendTimeout` | رفع الـ body | رفع صورة غلاف على نت ضعيف |
+| `receiveTimeout` | الوقت لحد أول جزء من الرد، وبعدها بين كل جزء والتاني | السيرفر بطيء في الرد، أو سكت في النص |
+
+الـ `receiveTimeout` مش الوقت الكلي للطلب. لو السيرفر بيبعت الرد حتة حتة ببطء، والفرق بين كل حتة والتانية أقل من 15 ثانية، الطلب ممكن ياخد دقايق ومايضربش. ولو endpoint معين محتاج وقت أطول (تصدير المكتبة كلها مثلًا)، غيّره للطلب ده بس:
+
+```dart
+await _dio.get<List<dynamic>>(
+  '/library/export',
+  options: Options(receiveTimeout: const Duration(seconds: 60)),
+);
+```
+
+وفي مشكلة في الـ `_mapDio` بتاع درس الأخطاء: بيحوّل `connectionError` و`connectionTimeout` بس لـ NetworkFailure. الـ `receiveTimeout` والـ `sendTimeout` بيقعوا في الـ `_`، فبيبقوا ServerFailure. يعني المستخدم على نت ضعيف بيتقاله «في مشكلة في السيرفر»، وزرار «حاول تاني» ممكن يختفي. الاتنين دول من النت غالبًا:
+
+```dart
+DioExceptionType.connectionError ||
+DioExceptionType.connectionTimeout ||
+DioExceptionType.sendTimeout ||
+DioExceptionType.receiveTimeout =>
+  const NetworkFailure(),
+```
+
+### المستخدم كتب كلمة جديدة والطلب القديم لسه شغال
+
+في درس الـ Pagination، الـ Cubit بيتجاهل نتيجة البحث القديمة بـ request id. ده بيحمي الشاشة، بس الطلب القديم لسه بيحمّل بيانات محدش هيشوفها. الـ `CancelToken` بتاع dio بيقفل الطلب نفسه. ومكانه الـ data source، لأنه الحتة الوحيدة اللي تعرف dio:
+
+<CodeBlock label="CatalogRemoteSource بيلغي البحث القديم">
+
+```dart
+class CatalogRemoteSource {
+  CatalogRemoteSource(this._dio);
+  final Dio _dio;
+  CancelToken _searchToken = CancelToken();
+
+  Future<SearchPageDto> search(String query, {required int page}) async {
+    if (page == 1) {
+      _searchToken.cancel('replaced by a new search'); // old pages are useless now
+      _searchToken = CancelToken();
+    }
+    final res = await _dio.get<Map<String, dynamic>>(
+      '/search.json',
+      queryParameters: {'q': query, 'page': page, 'limit': pageSize},
+      cancelToken: _searchToken,
+    );
+    return SearchPageDto.fromJson(res.data!);
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ page 1 بس هي اللي بتلغي:</b> صفحة 1 معناها بحث جديد أو refresh، فأي طلب للبحث القديم مالوش لازمة. الـ loadMore لنفس البحث بيستخدم نفس الـ token، فبيتلغي مع البحث بتاعه.
+- <b>الطلب الملغي بيرجع DioException:</b> نوعه `cancel`، والـ guard بيحوّله Failure زي أي فشل. والـ Cubit بيتجاهله بالـ request id، لأنه نتيجة لطلب قديم.
+- <b>الإلغاء مش بديل عن الـ request id:</b> ممكن الرد يكون وصل فعلًا قبل الـ cancel بجزء من الثانية. الإلغاء بيوفّر bandwidth، والـ request id هو اللي بيضمن إن الشاشة صح.
+
+### الـ POST اتعاد والكتاب اتضاف مرتين
+
+المستخدم ضاف كتاب، والطلب وصل للسيرفر واتنفذ، بس الرد ماوصلش (`receiveTimeout`). من ناحية الـ app، مش معروف الكتاب اتضاف ولا لأ. لو الـ SyncService بتاع درس Offline-first أعاد الطلب، الكتاب ممكن يبقى في المكتبة مرتين.
+
+الحل <b>idempotency key</b>: الـ app بيعمل مفتاح فريد للعملية، ويبعته مع كل محاولة. السيرفر بيحفظ المفاتيح اللي شافها، ولو جاله نفس المفتاح تاني بيرجّع نفس الرد الأول من غير ما ينفذ تاني.
+
+<CodeBlock label="المفتاح بيتعمل مع العملية، مش مع المحاولة">
+
+```dart
+// one more column in the sync queue table (Offline-first lesson):
+// filled once when the op is inserted, then saved with it
+TextColumn get idempotencyKey => text().clientDefault(() => const Uuid().v4())();
+
+// data source: every attempt for this op sends the same key
+Future<void> addBook(BookDto book, {required String idempotencyKey}) =>
+    _dio.post<void>(
+      '/library',
+      data: book.toJson(),
+      options: Options(headers: {'Idempotency-Key': idempotencyKey}),
+    );
+```
+
+</CodeBlock>
+
+الغلطة المشهورة إنك تعمل المفتاح جوه interceptor أو جوه `addBook`. كده كل محاولة بمفتاح جديد، والسيرفر يشوفهم طلبات مختلفة، والمفتاح مابيعملش أي حاجة. المفتاح لازم يتولد مرة واحدة ويتحفظ مع العملية في الـ queue، فيعيش حتى لو الـ app اتقفل واتفتح.
+
+### الـ retry policy كاملة
+
+دلوقتي الـ RetryInterceptor يقدر يعرف الـ POST الآمن، ويحترم السيرفر لما يقوله «استنى»:
+
+<CodeBlock label="RetryInterceptor بيكبر">
+
+```dart
+class RetryInterceptor extends Interceptor {
+  RetryInterceptor(this._dio, {this.maxAttempts = 3, Random? random})
+      : _random = random ?? Random();
+  final Dio _dio;
+  final int maxAttempts;
+  final Random _random;
+
+  static const _transient = {
+    DioExceptionType.connectionError,
+    DioExceptionType.connectionTimeout,
+    DioExceptionType.receiveTimeout,
+  };
+
+  @override
+  void onError(DioException err, ErrorInterceptorHandler handler) async {
+    final options = err.requestOptions;
+    final attempt = (options.extra['attempt'] as int?) ?? 0;
+    final status = err.response?.statusCode;
+    final safe = options.method == 'GET' || options.headers.containsKey('Idempotency-Key');
+    final retryable = _transient.contains(err.type) ||
+        status == 429 || status == 502 || status == 503 || status == 504;
+    if (!safe || !retryable || attempt >= maxAttempts) return handler.next(err);
+
+    final wait = _retryAfter(err.response) ?? _backoff(attempt);
+    if (wait > const Duration(seconds: 30)) return handler.next(err); // too long to hold a spinner
+    await Future.delayed(wait);
+    options.extra['attempt'] = attempt + 1;
+    try {
+      handler.resolve(await _dio.fetch(options));
+    } on DioException catch (e) {
+      handler.next(e);
+    }
+  }
+
+  // 300, 600, 1200 ms, plus up to 300 ms of random jitter
+  Duration _backoff(int attempt) =>
+      Duration(milliseconds: 300 * (1 << attempt) + _random.nextInt(300));
+
+  Duration? _retryAfter(Response<dynamic>? res) {
+    final seconds = int.tryParse(res?.headers.value('retry-after') ?? '');
+    return seconds == null ? null : Duration(seconds: seconds);
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ jitter:</b> لو السيرفر وقع دقيقة ورجع، كل الأجهزة هتعيد في نفس الـ 300ms بالظبط، وتوقّعه تاني. الرقم العشوائي بيفرّقهم. والـ `Random` بيتبعت في الـ constructor عشان التست يثبّته.
+- <b>الـ Retry-After:</b> مع 429 (طلبات كتير) أو 503، السيرفر ممكن يقولك تستنى كام ثانية. لو الوقت ده طويل، الأحسن الـ Failure توصل للمستخدم بدل spinner دقيقة.
+- <b>الـ 500 مش في الليستة:</b> غالبًا bug في السيرفر، ونفس الطلب هيوقعه تاني. الـ 502 والـ 503 والـ 504 معناهم إن السيرفر مش متاح دلوقتي، ودي ممكن تتحل لوحدها.
+
 
 </Level>
 
 <Level n="4" title="تفاصيل الـ production">
 
-- <b>ليه الـ retry للـ GET بس؟</b> لأن إعادة POST ممكن تضيف الكتاب مرتين. لو لازم تعيد POST، ابعت idempotency key، والسيرفر يتجاهل أي طلب بنفس المفتاح.
-- <b>الإلغاء مكانه الـ data layer:</b> الـ `CancelToken` بتاع dio مايدخلش الـ Cubit عشان الـ Cubit مايعرفش dio. لو محتاج إلغاء، الـ data source يمسكه.
-- <b>الـ LogInterceptor في dev بس:</b> الـ logs في الـ production ممكن تطبع tokens وبيانات المستخدم.
-- <b>الـ timeouts:</b> من غيرها الطلب ممكن يفضل معلّق دقايق على نت ضعيف، والمستخدم شايف loading للأبد.
+| الطلب | يتعاد تلقائي؟ | ليه |
+| --- | --- | --- |
+| GET | أيوه، للأخطاء المؤقتة | بيقرا بس، فتكراره مابيغيرش حاجة |
+| PUT وDELETE | لو الـ backend بيطبّق معناهم صح | «خلّي الحالة كذا» و«امسح ده» نتيجتهم واحدة لو اتكرروا |
+| POST وPATCH | بـ Idempotency-Key بس | من غيره ممكن العملية تتنفذ مرتين |
+| أي 4xx غير 429 | لأ | الطلب نفسه غلط، وهيرجع نفس الرد |
+| 401 | مش شغل الـ retry | الـ AuthInterceptor بيعمل refresh |
+
+- <b>الكتابة في الـ offline-first:</b> الـ retry بتاع الـ interceptor عايش في الذاكرة، فلو الـ app اتقفل المحاولات بتضيع. إعادة الكتابة شغل الـ SyncService، لأن الـ queue محفوظة في الـ DB. والـ interceptor يخليه للقراية والطلبات اللي المستخدم مستنيها دلوقتي.
+- <b>الإلغاء مكانه الـ data layer:</b> الـ `CancelToken` بتاع dio مايدخلش الـ Cubit عشان الـ Cubit مايعرفش dio. لو محتاج إلغاء، الـ data source يمسكه، زي البحث فوق.
+- <b>الـ timeouts:</b> من غيرها الطلب ممكن يفضل معلّق دقايق على نت ضعيف، والمستخدم شايف loading للأبد. وdio مافيهوش timeout للطلب كله، فلو محتاج حد أقصى كلي، اعمله بـ CancelToken وTimer.
+- <b>الـ logs:</b> الـ LogInterceptor بتاع dio بيطبع الـ headers كاملة، يعني الـ token. خليه في dev بس، والحل الكامل (interceptor بيخفي الحساس ويبعت لـ AppLogger) في درس الـ Observability.
+- <b>ماتطفيش التحقق من الشهادة:</b> `badCertificateCallback = (cert, host, port) => true` بيحل مشكلة شهادة الـ dev server في دقيقة، وبيوصل للـ production بالغلط، وساعتها أي حد على نفس الـ WiFi يقدر يقرا ويعدّل كل الطلبات. ولو الـ backend شغال على جهازك بـ http: Android بيمنع الـ cleartext من API 28، وiOS بيمنعه بالـ ATS. افتح استثناء لـ `10.0.2.2` (الـ localhost من جوه الـ emulator) في نسخة الـ debug بس: `network_security_config` في `src/debug` على Android، وInfo.plist بتاع الـ debug على iOS.
+- <b>الـ certificate pinning:</b> الـ app يقبل شهادة السيرفر بتاعك بس، حتى لو حد ركّب CA مزيفة على الجهاز. في dio بيتعمل بـ `validateCertificate` في `IOHttpClientAdapter`. التمن: لما الشهادة تتجدد، أي نسخة قديمة من الـ app هتبطّل تشتغل لحد ما المستخدم يعمل update، فلازم pin احتياطي وخطة تجديد. لـ app بنك يستاهل، لـ Readly غالبًا HTTPS عادي كفاية.
 
 <Note kind="interview" title="سؤال interview">
 
 «3 requests رجعوا 401 في نفس الوقت، إزاي تضمن refresh واحد؟» بـ Completer كـ lock: أول طلب يبدأ الـ refresh، والباقي يستنوا نفس الـ future، وبعدين كله يعيد بالـ token الجديد. والـ refresh بيتعمل بـ Dio منفصل عشان مايدخلش loop.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«إمتى تعمل retry لطلب فشل؟» لما الحاجتين يتحققوا: الفشل مؤقت (نت، timeout، 429، 502 لـ 504)، والطلب آمن يتكرر (GET، أو POST معاه Idempotency-Key اتولد مرة واحدة مع العملية). مع backoff بيكبر وjitter عشان الأجهزة ماتعيدش كلها مع بعض، واحترام Retry-After، وحد أقصى للمحاولات وللوقت. ومابعيدش 4xx أبدًا. والكتابة في app offline-first بيعيدها الـ SyncService من queue محفوظة، مش الـ interceptor.
 
 </Note>
 
@@ -213,6 +419,24 @@ class RetryInterceptor extends Interceptor {
 <Answer>
 
 لأن إعادته ممكن تكرر العملية على السيرفر، زي إضافة نفس الكتاب مرتين.
+
+</Answer>
+</Question>
+
+<Question id="network-4">
+<Ask>`POST /library` ضرب `receiveTimeout`. الكتاب اتضاف على السيرفر ولا لأ؟ وتعيد الطلب إزاي من غير ما يتكرر؟</Ask>
+<Answer>
+
+مش معروف: الطلب ممكن يكون اتنفذ والرد بس اللي ماوصلش. تعيده بـ `Idempotency-Key` اتولد مرة واحدة مع العملية واتحفظ معاها، فالسيرفر يشوف نفس المفتاح ويرجّع الرد الأول من غير ما يضيف تاني. لو المفتاح اتولد مع كل محاولة، مالوش أي لازمة.
+
+</Answer>
+</Question>
+
+<Question id="network-5">
+<Ask>الـ CatalogRemoteSource بيستخدم نفس الـ Dio بتاع الـ API بـ URL كامل لـ Open Library. إيه المشكلة؟</Ask>
+<Answer>
+
+الـ AuthInterceptor هيحط الـ access token بتاع المستخدم على طلبات سيرفر مش بتاعك، ولو Open Library رجّع 401 هيعمل refresh مالوش لازمة. الحل Dio لكل backend، كل واحد بالـ base URL والـ interceptors بتوعه، ومتسجّلين في get_it بـ `instanceName`.
 
 </Answer>
 </Question>

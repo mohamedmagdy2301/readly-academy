@@ -99,6 +99,87 @@ class _LibraryPageState extends State<LibraryPage> {
 
 </Note>
 
+نفس الشاشة لما تتقسم، ده شكلها مختصر. كل جزء ليه سبب واحد يتغير بيه:
+
+<CodeBlock label="بعد: 3 أجزاء">
+
+```dart
+// data: knows dio and the JSON shape
+class LibraryRepositoryImpl implements LibraryRepository {
+  LibraryRepositoryImpl(this._remote);
+  final LibraryRemoteSource _remote;
+
+  @override
+  Future<Result<List<Book>>> getLibrary() => guard(() async {
+        final dtos = await _remote.fetchLibrary();
+        return dtos.map((d) => d.toEntity()).toList();
+      });
+}
+
+// domain: the rule, in plain Dart
+class GetLibrary {
+  GetLibrary(this._repository);
+  final LibraryRepository _repository;
+
+  Future<Result<List<Book>>> call() async => switch (await _repository.getLibrary()) {
+        Success(:final value) => Success(value.where((b) => !b.isArchived).toList()),
+        Err(:final failure) => Err(failure),
+      };
+}
+
+// presentation: only shows what the Cubit says
+BlocBuilder<LibraryCubit, LibraryState>(
+  builder: (context, state) => switch (state) {
+    LibraryLoading() => const CircularProgressIndicator(),
+    LibraryLoaded(:final books) => BookList(books: books),
+    LibraryError(:final failure) => ErrorView(message: failure.localized(AppLocalizations.of(context)!)),
+  },
+)
+```
+
+</CodeBlock>
+
+مش لازم تفهم كل سطر دلوقتي. درس «أول feature ملف بملف» بيبني ده من الأول، والوحدات اللي بعده بتعمّق في كل جزء. المهم هنا إنك تشوف المشاكل اللي فوق وهي بتتحل:
+
+### العميل عايز المكتبة تشتغل من غير نت
+
+في نسخة الـ widget، هتفتح الشاشة وتزوّد DB وتقرر امتى تقرا منها، جنب الـ dio والـ setState والقاعدة. في النسخة المتقسمة، التغيير كله في `LibraryRepositoryImpl`: يقرا من الـ DB الأول، ويحدّث من السيرفر. الـ use case والـ Cubit والشاشة مش هيعرفوا إن حاجة اتغيرت، لأن الـ contract لسه بيرجّع `Result<List<Book>>`.
+
+### عايز تتأكد إن الكتب المؤرشفة مابتظهرش
+
+في نسخة الـ widget، التست محتاج سيرفر حقيقي فيه كتاب مؤرشف، وشاشة شغالة. في النسخة المتقسمة، القاعدة في `GetLibrary`، وده Dart صافي:
+
+<CodeBlock label="تست القاعدة في أجزاء من الثانية">
+
+```dart
+class FakeLibraryRepository implements LibraryRepository {
+  FakeLibraryRepository(this.books);
+  final List<Book> books;
+
+  @override
+  Future<Result<List<Book>>> getLibrary() async => Success(books);
+  // ... other methods
+}
+
+test('archived books are hidden', () async {
+  final getLibrary = GetLibrary(FakeLibraryRepository([tReading, tArchived]));
+
+  final result = await getLibrary();
+
+  expect((result as Success<List<Book>>).value, [tReading]);
+});
+```
+
+</CodeBlock>
+
+### الشاشة الرئيسية محتاجة نفس الكتب
+
+مطور تاني عمل widget «بتقرا دلوقتي» في الشاشة الرئيسية، ونسخ الطلب، ونسي سطر `removeWhere`. فالكتب المؤرشفة ظهرت هناك ومش ظاهرة في المكتبة، وكل شاشة بقت بتقول حاجة. القاعدة لما تبقى في مكان واحد (`GetLibrary`، أو getter زي `book.isArchived` جوه الـ entity)، أي شاشة تانية بتستخدمها بدل ما تنسخها.
+
+### «Something went wrong» لكل حاجة
+
+الـ `catch (e)` بيبلع كل حاجة: النت الفاصل، والـ session اللي خلصت، والـ null error في الكود. المستخدم مش عارف يعمل إيه، وانت مش عارف إن في bug. في النسخة المتقسمة، الـ repository بيحوّل أخطاء الشبكة بس لـ Failures ليها أنواع، والشاشة بتعرض لكل نوع رد مختلف، والـ bug الحقيقي بيضرب ويوصل لتقرير الـ crash. ده درس الأخطاء في الوحدة 2.
+
 
 </Level>
 
@@ -107,6 +188,19 @@ class _LibraryPageState extends State<LibraryPage> {
 كل طبقة إضافية معناها ملفات أكتر وكود أكتر لنفس الميزة. في prototype أو hackathon أو app هيتشال بعد شهر، المعمارية الكاملة ممكن تكون عبء مش فايدة.
 
 المطور المحترف مش اللي بيطبّق Clean Architecture في كل حاجة. المحترف اللي يعرف يحسب التمن ده ويقرر: المشروع ده هيعيش قد إيه؟ فيه قواعد business حقيقية؟ هيشتغل عليه كام واحد؟ (هنرجع للقرار ده في درس «Clean ولا MVVM؟» في الوحدة 8).
+
+| السؤال | لو الإجابة كده، المعمارية بتستاهل | لو كده، خففها |
+| --- | --- | --- |
+| المشروع هيعيش قد إيه؟ | سنين، وهيتطور | أسابيع، أو demo |
+| كام واحد بيشتغل عليه؟ | أكتر من واحد، أو هيتسلم لفريق تاني | انت لوحدك ومش هتلمسه تاني |
+| فيه قواعد business؟ | آه: صلاحيات، حسابات، offline، conflicts | شاشات بتعرض اللي جاي من الـ API زي ما هو |
+| مصادر البيانات | أكتر من API، وDB محلية، وكاش | API واحد |
+| التستات | لازم، والـ CI بيمنع الـ merge | مش مطلوبة |
+
+- <b>المعمارية مش كل أو لا شيء:</b> حتى في app صغير، فصل الـ UI عن الطلبات بـ repository تمنه قليل وفايدته كبيرة. الـ use cases والـ value objects والـ packages بتضيفهم لما القواعد تظهر، مش من أول يوم.
+- <b>الفولدرات مش معمارية:</b> مشروع فيه فولدرات `domain` و`data` و`presentation`، والـ domain بيعمل import لـ dio، ده layer-first شكلًا بس. المعمارية هي اتجاه الـ imports، والفولدرات مجرد مكان.
+- <b>علامات الـ over-engineering:</b> use case لكل getter من غير ولا قاعدة، وinterface لكل class حتى اللي عمرها ما هيبقى ليها fake أو implementation تاني، و5 ملفات عشان تعرض نص ثابت. لو مش قادر تقول الطبقة دي بتحميك من أنهي تغيير، يبقى مالهاش لازمة.
+- <b>تكلفة إنك تأجل:</b> تحويل مشروع متلخبط لمتقسم أغلى بكتير من إنك تبدأ متقسم، لأن القواعد بتكون اتنسخت في 10 شاشات. علشان كده في درس «Refactor feature قديمة لـ Clean» في الوحدة 8 بنعمله feature feature، مش مرة واحدة.
 
 <Note kind="interview" title="سؤال interview">
 
@@ -142,6 +236,15 @@ class _LibraryPageState extends State<LibraryPage> {
 <Answer>
 
 في prototype أو app قصير العمر أو مفيهوش قواعد business حقيقية، لأن تمن الملفات الزيادة أكبر من الفايدة.
+
+</Answer>
+</Question>
+
+<Question id="why-4">
+<Ask>العميل طلب المكتبة تظهر من الكاش لو النت فاصل. في النسخة المتقسمة، أنهي جزء بيتغير، وأنهي أجزاء مابتتغيرش؟</Ask>
+<Answer>
+
+الـ `LibraryRepositoryImpl` بس (ومعاه local data source جديد). الـ use case والـ Cubit والشاشة مابيتغيروش، لأن الـ contract لسه بيرجّع `Result<List<Book>>`، ومحدش فيهم يعرف البيانات جاية منين.
 
 </Answer>
 </Question>

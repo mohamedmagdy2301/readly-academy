@@ -1,9 +1,10 @@
 ---
 title: "رحلة request واحدة: إضافة كتاب لمكتبتك"
-description: "ضغطة «إضافة كتاب» ملف بملف في 3 سيناريوهات."
+description: "ضغطة «إضافة كتاب» ملف بملف في 5 سيناريوهات."
+minutes: 25
 ---
 
-هنتتبع ضغطة زرار واحدة ملف بملف، في 3 سيناريوهات. أهم فكرة: الـ Cubit مابيستناش النت، بيستنى الكتابة في الـ DB بس، والمزامنة شغالة لوحدها في الخلفية.
+هنتتبع ضغطة زرار واحدة ملف بملف، في 5 سيناريوهات. أهم فكرة: الـ Cubit مابيستناش النت، بيستنى الكتابة في الـ DB بس، والمزامنة شغالة لوحدها في الخلفية. وكل اللي في الدرسين اللي فاتوا هيظهر هنا في مكانه: الـ queue، والـ triggers، والـ Idempotency-Key، والـ backoff، والـ dead letters.
 
 <Scenario title="السيناريو 1: النت شغال وكل حاجة تمام">
 
@@ -11,17 +12,99 @@ description: "ضغطة «إضافة كتاب» ملف بملف في 3 سينار
 
 <Step file="feature_library/presentation/library_view.dart">المستخدم داس «إضافة»، والـ widget نادى `context.read<LibraryCubit>().addBook(book)`. الـ widget مايعرفش أي حاجة غير الـ Cubit.</Step>
 
-<Step file="feature_library/presentation/library_cubit.dart">الـ Cubit بيتأكد إن مفيش حفظ شغال (flag عشان الضغط المتكرر)، وبينادي use case اسمه `AddBookToLibrary`.</Step>
+<Step file="feature_library/presentation/library_cubit.dart">
 
-<Step file="feature_library/domain/add_book_to_library.dart">هنا الـ business rule: الكتاب مش موجود في المكتبة أصلًا. لو موجود يرجع `Err(ValidationFailure)` من غير ما يلمس أي data.</Step>
+الـ Cubit بيتأكد إن مفيش إضافة شغالة (flag عشان الضغط المتكرر)، وبينادي use case اسمه `AddBookToLibrary`. ولو نجح، مابيعملش emit خالص:
 
-<Step file="feature_library/data/library_repository_impl.dart">الـ repository بيكتب الكتاب في drift بحالة pending، ويضيف operation في الـ sync queue، ويرجع `Success` فورًا. الكتاب بيظهر في الشاشة حالًا لأن الـ UI بتسمع على `watchLibrary()`.</Step>
+```dart
+bool _adding = false;
 
-<Step file="feature_library/data/sync_service.dart">الـ SyncService لاحظ operation جديدة والنت شغال، فنادى `LibraryRemoteDataSource.addBook`.</Step>
+Future<void> addBook(Book book) async {
+  if (_adding) return; // double tap
+  _adding = true;
+  final result = await _addBook(book);
+  _adding = false;
+  if (isClosed) return;
+  // success: nothing to emit, watchLibrary() already brought the new book
+  if (result case Err(:final failure)) {
+    final now = state; // read it again: the stream may have emitted meanwhile
+    if (now is LibraryLoaded) emit(now.copyWith(actionFailure: failure));
+  }
+}
+```
 
-<Step file="core_network/auth_interceptor.dart">الـ interceptor ضاف الـ access token، والسيرفر رجع 201.</Step>
+الـ `actionFailure` حقل جوه `LibraryLoaded` زي `refreshFailure` في درس الـ Cubit بالظبط، والـ snackbar من نفس الـ BlocListener. والـ `state` بيتقري تاني بعد الـ await، لأن الـ stream ممكن يكون طلّع ليست جديدة في الوقت ده، و`copyWith` على النسخة القديمة هيرجّعها.
 
-<Step file="feature_library/data/sync_service.dart">الـ SyncService حدّث الصف في drift لـ synced، والـ stream طلّع الكتاب من غير علامة «مستني مزامنة».</Step>
+</Step>
+
+<Step file="feature_library/domain/add_book_to_library.dart">هنا الـ business rule: الكتاب مش موجود في المكتبة أصلًا. الـ `contains` بيسأل drift، فشغال أوفلاين. لو موجود يرجع `Err(ValidationFailure)` من غير ما يلمس أي data.</Step>
+
+<Step file="feature_library/data/library_repository_impl.dart">
+
+الـ repository بيكتب الكتاب في drift بحالة pending، ويضيف عملية في الـ sync queue، في transaction واحدة، ويرجع `Success` فورًا:
+
+```dart
+@override
+Future<Result<void>> addBook(Book book) => guard(() async {
+      await _db.transaction(() async {
+        await _db.upsertBook(
+          book.toRow(updatedAt: _clock.now()).copyWith(syncState: 'pending'),
+        );
+        await _queue.enqueue(SyncKind.addBook, book.id.value);
+      });
+    });
+```
+
+الكتاب بيظهر في الشاشة حالًا لأن الـ UI بتسمع على `watchLibrary()`، وجنبه أيقونة سحابة صغيرة من الـ `SyncStatusCubit`.
+
+</Step>
+
+<Step file="feature_library/data/sync_queue.dart">الـ `enqueue` بيعمل صف في `SyncOps`. الـ `clientDefault` بيولّد `idempotencyKey` للعملية دي مرة واحدة، والمفتاح ده هيتبعت في كل محاولة. وبعدين `onEnqueued` بيطلّع حدث.</Step>
+
+<Step file="feature_library/data/sync_service.dart">
+
+الـ SyncService سامع على `onEnqueued`، فنادى `requestSync()`. مفيش drain شغال، فبدأ واحد:
+
+```dart
+for (final op in await _queue.pending()) {
+  if (!await _queue.claim(op)) continue; // pending -> syncing, or someone else has it
+  await _confirm(op, await _send(op));   // POST /library with op.idempotencyKey
+}
+```
+
+الـ `_send` بيقرا الصف من drift ويبعته بالـ `LibraryRemoteSource.addBook`، ومعاه header الـ `Idempotency-Key`.
+
+</Step>
+
+<Step file="core_network/auth_interceptor.dart">الـ interceptor ضاف الـ access token، والطلب خرج.</Step>
+
+<Step file="backend: middleware/idempotency.js">
+
+الـ middleware عمل `insertOne` للمفتاح بحالة processing ونجح، يعني أول مرة يشوفه. الـ handler اشتغل:
+
+```js
+async function addBookHandler(req, res) {
+  const book = { ...req.body, userId: req.user.id, version: 1, updatedAt: new Date() };
+  await db.collection('library').insertOne(book);
+  res.status(201).json(book); // the middleware stores this reply under the key
+}
+```
+
+</Step>
+
+<Step file="feature_library/data/sync_service.dart">
+
+الرد وصل، والـ `_confirm` شال العملية من الـ queue، وحفظ الـ version اللي رجع، وعلّم الصف synced لأن مفيش عمليات تانية للكتاب ده:
+
+```dart
+await _queue.remove(op);
+await _db.setVersion(op.bookId, server!.version);
+if (!await _queue.hasOps(op.bookId)) await _db.markSynced(op.bookId);
+```
+
+الـ stream بتاع `SyncOps` طلّع ليست فاضية، فأيقونة السحابة اختفت.
+
+</Step>
 
 </Journey>
 
@@ -29,9 +112,7 @@ description: "ضغطة «إضافة كتاب» ملف بملف في 3 سينار
 
 <Scenario title="السيناريو 2: الـ token انتهى في النص">
 
-كل حاجة زي السيناريو 1 لحد خطوة 6. السيرفر رجع 401، والـ interceptor قفل lock، وعمل refresh بـ Dio منفصل، وأعاد الطلب بالـ token الجديد. الـ Cubit والـ UI ماحسّوش بحاجة.
-
-لو الـ refresh نفسه فشل: الـ session بتتمسح، والـ AuthCubit بيطلّع loggedOut، وgo_router بيسمع عليه بـ `refreshListenable` ويحوّل لصفحة الدخول. الـ operation فضلت في الـ queue، وهتتزامن تلقائي بعد الدخول.
+كل حاجة زي السيناريو 1 لحد خطوة 7. السيرفر رجع 401، والـ interceptor قفل lock، وعمل refresh بـ Dio منفصل، وأعاد الطلب بالـ token الجديد. الـ interceptor بيعيد نفس الـ `RequestOptions`، فالـ `Idempotency-Key` نفسه بيتبعت تاني. الـ Cubit والـ UI والـ SyncService ماحسّوش بحاجة.
 
 <Diagram name="d-6c2c7d6cd5">
 
@@ -39,17 +120,87 @@ description: "ضغطة «إضافة كتاب» ملف بملف في 3 سينار
 
 </Diagram>
 
+لو الـ refresh نفسه اترفض: الـ tokens بتتمسح، والـ 401 بيوصل للـ SyncService. الـ `classify` بيقول `auth`، فالعملية بتبقى failed من غير ما المحاولة تتحسب، والـ drain بيقف. الـ AuthCubit بيطلّع `Unauthenticated(sessionExpired: true)`، وgo_router بيسمع عليه بـ `refreshListenable` ويحوّل لصفحة الدخول. الـ DB ماتمسحتش (درس الـ Session)، فالكتاب والعملية لسه موجودين. وبعد الدخول:
+
+```dart
+// di/setup.dart
+getIt<AuthCubit>()
+    .stream
+    .where((s) => s is Authenticated)
+    .listen((_) => getIt<SyncService>().requestSync());
+```
+
 </Scenario>
 
 <Scenario title="السيناريو 3: النت فاصل">
 
-خطوات 1 لـ 4 زي ما هي بالظبط، والكتاب بيظهر في الشاشة بعلامة «مستني اتصال». خطوة 5 مابتحصلش، والـ operation بتفضل pending. لما النت يرجع، الـ SyncService بيكمّل لوحده. ولو الطلب فشل بسبب النت أو 5xx، بيتعلّم failed ويرجع pending بعد backoff.
+خطوات 1 لـ 6 زي ما هي بالظبط، والكتاب بيظهر في الشاشة بعلامة «مستني اتصال». الـ drain بيجرب، والطلب بيفشل بـ `connectionError` من غير response. الـ `classify` بيقول `noResponse`: العملية بتبقى failed، والمحاولة ماتتحسبش، والـ drain بيقف. مفيش backoff، لأن مفيش فايدة تعيد وانت أوفلاين.
+
+لما النت يرجع، الـ `NetworkStatus.onOnline` بيطلّع حدث، والـ SyncService بيكمّل لوحده بنفس المفتاح. ولو الـ connectivity_plus قال wifi والنت لسه مش شغال، الطلب هيفشل تاني بنفس الطريقة ويستنى الـ trigger الجاي: لما الـ app يرجع من الخلفية، أو عملية جديدة تدخل.
+
+ولو السيرفر رد بـ 5xx أو 429، ده نوع تاني: `retryLater`. المحاولة بتتحسب، و`nextAttemptAt` بيتحسب بـ backoff وjitter من الـ `Clock`، وTimer بيصحّي الـ SyncService لما الوقت ييجي. وبعد 8 محاولات، العملية بتبقى dead.
 
 <Diagram name="d-e57be77da0">
 
-الـ conflict بيتحل بالسياسة اللي كتبتها في ADR الأسبوع 4 (مثلًا server-wins)، مش بقرار عشوائي جوه الكود.
+لو رجع 409، الـ conflict بيتحل بالـ ConflictPolicy اللي اخترتها في درس الـ Conflicts وكتبتها في ADR، مش بقرار عشوائي جوه الكود.
 
 </Diagram>
+
+</Scenario>
+
+<Scenario title="السيناريو 4: الطلب وصل والرد ضاع">
+
+ده السيناريو اللي من غير الدرس اللي فات كان بيعمل الكتاب نسختين.
+
+<Journey>
+
+<Step file="feature_library/data/sync_service.dart">الـ drain عمل claim للعملية وبعت `POST /library` بالمفتاح `k1`.</Step>
+
+<Step file="backend: middleware/idempotency.js">السيرفر سجّل `k1`، والـ handler حفظ الكتاب، والـ middleware حفظ رد الـ 201 تحت `k1` بحالة done.</Step>
+
+<Step file="(the network)">المستخدم دخل الأسانسير. الرد ماوصلش، والـ `receiveTimeout` بتاع dio خلص.</Step>
+
+<Step file="feature_library/data/sync_service.dart">
+
+dio رمى `DioException` من غير response. الـ app مايقدرش يعرف إن الكتاب اتحفظ، فبيتعامل معاها كأنها ماوصلتش، بس مايرميش المفتاح:
+
+```dart
+case SyncErrorKind.noResponse || SyncErrorKind.auth:
+  await _queue.mark(op, SyncState.failed); // may have reached the server: keep the key
+  return;
+```
+
+الكتاب لسه عليه علامة السحابة. ولو المستخدم مسحه دلوقتي، الـ `removeBook` هيلاقي الـ add حالتها failed مش pending، فمش هيشيلها، وهيضيف عملية حذف وراها (درس Offline-first).
+
+</Step>
+
+<Step file="app/readly_app.dart">المستخدم طلع من الأسانسير وفتح الـ app. الـ `AppLifecycleListener` نادى `requestSync()`، والـ drain عمل claim لنفس العملية، وبعتها بنفس `k1`.</Step>
+
+<Step file="backend: middleware/idempotency.js">الـ `insertOne` رجّع error 11000: المفتاح موجود. الـ `findOne` لاقاه done، فرجّع الـ 201 المحفوظ بـ header `Idempotent-Replayed: true`. الـ handler ماشتغلش، ومفيش insert تاني.</Step>
+
+<Step file="feature_library/data/sync_service.dart">الـ `_confirm` خد الـ version من الرد المحفوظ، وعلّم الصف synced. على السيرفر: كتاب واحد.</Step>
+
+</Journey>
+
+من غير المفتاح، الخطوة 6 كانت هتضيف الكتاب مرة تانية. ولو السيرفر عنده unique index على الكتاب وبيرجّع 409 «موجود خلاص»، كان الـ app هيتعامل مع عملية <b>نجحت</b> على إنها conflict أو dead. علشان كده الـ API الأحسن هنا `PUT /library/:key` idempotent بطبيعته، والمفتاح للعمليات اللي مالهاش مفتاح طبيعي.
+
+</Scenario>
+
+<Scenario title="السيناريو 5: السيرفر رفض العملية خالص">
+
+<Journey>
+
+<Step file="feature_library/data/sync_service.dart">الـ drain بعت add لكتاب الـ key بتاعه بايظ. السيرفر رجّع 422 بـ `code: 'UNKNOWN_BOOK'`.</Step>
+
+<Step file="feature_library/data/sync_error.dart">الـ `classify` بيقول `permanent`: نفس الطلب هياخد نفس الإجابة، فمفيش retry ولا backoff.</Step>
+
+<Step file="feature_library/data/sync_service.dart">الـ `markDead` حط العملية في حالة dead ومعاها الـ lastError، والكتاب ده اتضاف لـ `blocked`. الـ drain كمّل للكتب التانية، فتعديلات المستخدم على باقي المكتبة اتبعتت عادي. والـ AppLogger سجّل الـ dead letter، فهتشوفه في Sentry لو اتكرر عند مستخدمين كتير.</Step>
+
+<Step file="feature_library/presentation/sync_status_cubit.dart">الـ `SyncStatus.stuck` بقى فيه الكتاب، فظهر شريط «كتاب ماتزامنش». المستخدم فتحه، ولاقى «حاول تاني» و«الغي التعديل».</Step>
+
+<Step file="feature_library/data/library_repository_impl.dart">داس «الغي». الـ `discardStuck` شال كل عمليات الكتاب، ولأن أول عملية كانت add، مسح الصف من drift، وعمل refresh. الكتاب اختفى من المكتبة، وده نفس اللي على السيرفر. ولو كان داس «حاول تاني»، الـ `revive` كان هيرجّع العملية failed بمفتاح جديد، لأن السيرفر حافظ الـ 422 تحت المفتاح القديم.</Step>
+
+</Journey>
 
 </Scenario>
 
@@ -78,6 +229,24 @@ description: "ضغطة «إضافة كتاب» ملف بملف في 3 سينار
 <Answer>
 
 لأ. الشاشة هتبقى مستنية النت، والإضافة هتفشل أوفلاين. الكتابة في drift هي التأكيد، والـ sync queue بتعيد المحاولة لوحدها، وعلامة «مستني اتصال» بتقول للمستخدم الحالة.
+
+</Answer>
+</Question>
+
+<Question id="journey-4">
+<Ask>الـ POST وصل السيرفر والكتاب اتحفظ، بس الرد ضاع. امشي على اللي بيحصل لحد ما الصف يبقى synced، وقول إيه اللي بيمنع الكتاب يتضاف مرتين.</Ask>
+<Answer>
+
+dio بيرمي exception من غير response، فالـ SyncService بيعلّم العملية failed ويقف، والمفتاح بيفضل محفوظ معاها في الـ queue. في الـ trigger الجاي (النت رجع، أو الـ app رجع من الخلفية) بيبعتها تاني بنفس الـ `Idempotency-Key`. السيرفر بيلاقي المفتاح done فبيرجّع الـ 201 المحفوظ من غير ما الـ handler يشتغل، والـ `_confirm` بياخد الـ version ويعلّم الصف synced. اللي بيمنع التكرار إن المفتاح اتولد مرة واحدة مع العملية، والـ unique index على المفتاح في Mongo.
+
+</Answer>
+</Question>
+
+<Question id="journey-5">
+<Ask>السيرفر رجّع 422 لإضافة كتاب، والمستخدم عنده 10 تعديلات تانية في الـ queue على كتب تانية. هيحصل لهم إيه؟ والكتاب ده هيفضل في المكتبة؟</Ask>
+<Answer>
+
+الـ 10 هيتبعتوا عادي: العملية بقت dead، وده بيوقف عمليات نفس الكتاب بس، مش الـ queue كلها زي failed. الكتاب هيفضل ظاهر ومعاه شريط «ماتزامنش» لحد ما المستخدم يقرر: «حاول تاني» بيرجّعها بمفتاح جديد، و«الغي» بيشيل العمليات ويمسح الكتاب لأنه add السيرفر عمره ما قبلها. مفيش حاجة بتتمسح من غير ما المستخدم يعرف.
 
 </Answer>
 </Question>

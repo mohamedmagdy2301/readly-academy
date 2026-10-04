@@ -1,0 +1,865 @@
+---
+title: "الـ Conflicts والـ idempotency"
+description: "الـ retry مايكررش العملية، والتعديل من جهازين مايضيعش، والعملية اللي مش هتنجح أبدًا ماتقفلش الـ queue."
+minutes: 30
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="طلب الدليفري على التليفون">
+
+اتصلت تطلب بيتزا، وقلت الطلب، والخط قطع قبل ما تسمع «تمام». الطلب اتسجّل ولا لأ؟ مش عارف. لو اتصلت وطلبت تاني، ممكن توصلك بيتزتين. المطعم الشاطر بيخليك تقول رقم للطلب من الأول: «ده طلب رقم 47». لما تتصل تاني وتقول «طلب 47»، بيبص في الدفتر: لو موجود يقولك «اتسجّل، جاي في السكة»، ولو مش موجود يسجّله. الرقم ده هو الـ <b>idempotency key</b>.
+
+وانت وأخوك عندكم نسخة من ليستة المشتريات. انت شطبت «لبن» من نسختك، وهو غيّر «لبن» لـ «2 لبن» في نسخته. لما تتقابلوا، لازم قاعدة: نسخة مين تكسب؟ ولا ناخد من كل واحد اللي غيّره؟ ده الـ <b>conflict</b>، والقاعدة دي هي الـ <b>conflict policy</b>.
+
+</Analogy>
+
+الدرس اللي فات خلّى الـ queue تبعت العمليات لما النت يرجع. الدرس ده عن اللي بيحصل لما الإرسال نفسه يبقى مش واضح: الطلب وصل والرد ضاع، أو الكتاب اتعدّل من جهاز تاني، أو السيرفر رفض العملية خالص.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+السيناريو اللي بيكرر الكتب: الـ SyncService بعت «ضيف كتاب». السيرفر استلمه، وحفظه في Mongo، ورجّع 201. الرد ضاع في السكة (النت قطع، أو الـ receiveTimeout خلص). الـ app شاف `DioException` من غير response، فاعتبر العملية فشلت، وفضلت في الـ queue. أول ما النت يرجع، هيبعتها تاني، والسيرفر هيضيف الكتاب <b>مرة تانية</b>.
+
+الـ client مايقدرش يعرف الطلب وصل ولا لأ. الحاجة الوحيدة اللي يقدر يعملها إنه يخلّي التكرار مالوش أثر. في درس dio شفنا الفكرة: مفتاح فريد للعملية، بيتبعت في header اسمه `Idempotency-Key`، والسيرفر لو شافه قبل كده بيرجّع نفس الرد من غير ما ينفذ تاني.
+
+<Diagram name="d-idempotency-retry">
+
+الطلب الأول وصل واتنفذ والرد ضاع. الـ retry بنفس المفتاح بياخد نفس الرد المحفوظ، والكتاب بيفضل نسخة واحدة.
+
+</Diagram>
+
+### المفتاح بيتولد مع العملية، مش مع المحاولة
+
+المفتاح لازم يبقى ثابت في كل المحاولات، حتى لو الـ app اتقفل واتفتح بينهم. يعني مكانه عمود في جدول الـ queue، وبيتولد مرة واحدة وقت الـ insert:
+
+<CodeBlock label="الـ SyncOps بيكبر">
+
+```dart
+class SyncOps extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get kind => textEnum<SyncKind>()();
+  TextColumn get bookId => text()();
+  TextColumn get state => textEnum<SyncState>().withDefault(const Constant('pending'))();
+  IntColumn get attempts => integer().withDefault(const Constant(0))();
+  // new in this lesson
+  TextColumn get idempotencyKey => text().clientDefault(() => const Uuid().v4())();
+  DateTimeColumn get nextAttemptAt => dateTime().nullable()();
+  TextColumn get lastError => text().nullable()();
+}
+
+enum SyncState { pending, syncing, failed, dead } // dead: new, see Level 3
+```
+
+</CodeBlock>
+
+الـ `clientDefault` بيتنفذ في Dart مرة واحدة لما الصف يتعمل، والقيمة بتتحفظ. فالـ `enqueue` بتاع الدرس اللي فات ماتغيرش، وكل عملية بقى ليها مفتاحها. والـ `Uuid` من package اسمه uuid: الـ `v4()` رقم عشوائي 122 bit، فاحتمال إن جهازين يطلّعوا نفس المفتاح عمليًا صفر.
+
+<CodeBlock label="الـ data source بيبعت المفتاح">
+
+```dart
+// data/library_remote_source.dart
+Options _withKey(String key) => Options(headers: {'Idempotency-Key': key});
+
+Future<BookDto> addBook(BookDto book, {required String idempotencyKey}) async {
+  final res = await _dio.post<Map<String, dynamic>>(
+    '/library',
+    data: book.toJson(),
+    options: _withKey(idempotencyKey),
+  );
+  return BookDto.fromJson(res.data!); // the server's copy, with its version
+}
+
+Future<void> removeBook(String bookId, {required String idempotencyKey}) =>
+    _dio.delete<void>('/library/${Uri.encodeComponent(bookId)}',
+        options: _withKey(idempotencyKey));
+```
+
+</CodeBlock>
+
+- <b>الـ addBook بقى بيرجّع BookDto:</b> السيرفر بيرجّع الكتاب زي ما اتحفظ عنده، ومعاه `version` و`updatedAt`. هنحتاجهم في الـ conflicts.
+- <b>الـ encodeComponent:</b> الـ id بتاع Open Library شكله `/works/OL123W`، وفيه `/`. من غيرها الـ URL هيبقى `/library//works/OL123W` والسيرفر هيدوّر على route تاني.
+
+وفي الـ SyncService، الـ `_send` بقى يبعت `op.idempotencyKey` مع كل نوع عملية. ومفيش أي حتة تانية في الكود بتعمل مفتاح.
+
+### السيرفر: Node وMongo
+
+الـ backend بتاع Readly (Node/Express وMongoDB) محتاج middleware واحد بيتحط قدام أي route بيكتب:
+
+<CodeBlock label="middleware/idempotency.js">
+
+```js
+export function idempotency(db) {
+  const keys = db.collection('idempotency_keys');
+
+  return async (req, res, next) => {
+    const key = req.get('Idempotency-Key');
+    if (!key) return next();
+    const id = { userId: req.user.id, key }; // keys are per user
+
+    try {
+      await keys.insertOne({ ...id, state: 'processing', createdAt: new Date() });
+    } catch (err) {
+      if (err.code !== 11000) return next(err); // 11000 = duplicate key: seen it before
+      const saved = await keys.findOne(id);
+      if (saved?.state !== 'done') {
+        return res.status(409).json({ code: 'REQUEST_IN_PROGRESS' });
+      }
+      return res.status(saved.status).set('Idempotent-Replayed', 'true').json(saved.body);
+    }
+
+    // first time: run the route, then store its answer under the key
+    const send = res.json.bind(res);
+    res.json = (body) => {
+      const stored = res.statusCode >= 500
+        ? keys.deleteOne(id) // the server failed: the retry should run it again
+        : keys.updateOne(id, { $set: { state: 'done', status: res.statusCode, body } });
+      stored.catch(console.error);
+      return send(body);
+    };
+    next();
+  };
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ indexes والـ route">
+
+```js
+const keys = db.collection('idempotency_keys');
+await keys.createIndex({ userId: 1, key: 1 }, { unique: true });
+await keys.createIndex({ createdAt: 1 }, { expireAfterSeconds: 30 * 24 * 3600 });
+
+app.post('/library', auth, idempotency(db), addBookHandler);
+```
+
+</CodeBlock>
+
+- <b>الـ unique index هو الـ lock:</b> لو طلبين بنفس المفتاح وصلوا في نفس اللحظة، Mongo بيقبل `insertOne` واحد بس، والتاني بياخد error 11000. مفيش «اقرا وبعدين اكتب» ممكن يتسابقوا فيها.
+- <b>المفتاح مربوط بالمستخدم:</b> لو مستخدم بعت مفتاح مستخدم تاني بالصدفة أو عن قصد، مش هياخد الرد بتاعه.
+- <b>الـ 5xx مابيتحفظش:</b> لو السيرفر نفسه وقع في النص، المفتاح بيتمسح، والـ retry بيتنفذ من الأول. لكن 2xx و4xx بيتحفظوا: نفس الطلب هياخد نفس الإجابة.
+- <b>الـ TTL index:</b> Mongo بيمسح المفاتيح لوحده بعد 30 يوم. الرقم ده مش عشوائي، شوف Level 4.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### الـ retry وصل والطلب الأول لسه شغال
+
+الطلب الأول وصل السيرفر، والـ handler بطيء (Mongo بيكتب). الـ client خلص الـ receiveTimeout بتاعه وعمل retry. السيرفر لاقى المفتاح بحالة `processing`، فرجّع 409 بـ `REQUEST_IN_PROGRESS`. الـ client لازم يفهم إن ده مش conflict حقيقي: ده «استنى وجرّب تاني». علشان كده السيرفر بيبعت `code` في الـ body، والـ client بيفرّق بيه (الكود في «كل الأخطاء مش زي بعض» تحت).
+
+### نفس الكتاب اتعدّل من جهازين
+
+المستخدم على الموبايل وهو أوفلاين: «خلصته». وعلى التابلت وهو أونلاين: «بقراه». الموبايل اتوصل. لو السيرفر قبل أي تعديل وخلاص، آخر طلب يوصل هو اللي بيكسب، يعني تعديل امبارح الأوفلاين ممكن يمسح تعديل النهارده. محتاجين السيرفر <b>يكتشف</b> إن في conflict الأول، وبعدين نقرر.
+
+الطريقة: <b>optimistic concurrency</b> بـ version. كل كتاب على السيرفر ليه `version` بيزيد مع كل تعديل. الـ client بيبعت الـ version اللي هو شايفه، والسيرفر بيعدّل بس لو لسه هو هو:
+
+<CodeBlock label="السيرفر: التعديل مشروط بالـ version">
+
+```js
+// routes/library.js
+app.patch('/library/:key', auth, idempotency(db), async (req, res) => {
+  const { status, version } = req.body;
+  const books = db.collection('library');
+  const filter = { userId: req.user.id, key: req.params.key };
+
+  const updated = await books.findOneAndUpdate(
+    { ...filter, version }, // only if nobody changed it since the client saw it
+    { $set: { status, updatedAt: new Date() }, $inc: { version: 1 } },
+    { returnDocument: 'after' },
+  );
+  if (updated) return res.json(updated);
+
+  const current = await books.findOne(filter);
+  if (!current) return res.status(404).json({ code: 'NOT_FOUND' });
+  res.status(409).json({ code: 'VERSION_CONFLICT', current });
+});
+```
+
+</CodeBlock>
+
+الـ `findOneAndUpdate` بيدوّر ويعدّل في خطوة واحدة atomic. لو الـ version اتغير، الـ filter مش هيلاقي حاجة، فبنرجّع 409 ومعاه النسخة الحالية، عشان الـ client مايحتاجش طلب تاني يجيبها. والـ `updatedAt` بيتعمل بساعة السيرفر، مش ساعة الموبايل.
+
+والـ client بيحفظ الـ version في الصف:
+
+<CodeBlock label="الـ Books بيكبر، والـ updateStatus بيبعت الـ version">
+
+```dart
+// inside Books
+IntColumn get version => integer().withDefault(const Constant(0))(); // the server version this row is based on
+
+// data/book_row_mapper.dart: the BookRow constructor needs every column
+BookRow toRow({required DateTime updatedAt, String syncState = 'synced', int version = 0}) =>
+    BookRow(id: id.value, title: title, status: status,
+        syncState: syncState, version: version, updatedAt: updatedAt);
+
+// data/library_remote_source.dart
+Future<BookDto> updateStatus(String bookId, String status,
+    {required int version, required String idempotencyKey}) async {
+  final res = await _dio.patch<Map<String, dynamic>>(
+    '/library/${Uri.encodeComponent(bookId)}',
+    data: {'status': status, 'version': version},
+    options: _withKey(idempotencyKey),
+  );
+  return BookDto.fromJson(res.data!);
+}
+```
+
+</CodeBlock>
+
+ولما الطلب ينجح، الـ SyncService بياخد من رد السيرفر الـ version بس، مش الـ status:
+
+<CodeBlock label="_confirm">
+
+```dart
+Future<void> _confirm(SyncOp op, BookDto? server) => _db.transaction(() async {
+      await _queue.remove(op);
+      if (op.kind == SyncKind.removeBook) {
+        await _db.deleteBook(op.bookId);
+      } else {
+        // the server's version, not its status: a newer local edit may be waiting
+        await _db.setVersion(op.bookId, server!.version);
+        if (!await _queue.hasOps(op.bookId)) await _db.markSynced(op.bookId);
+      }
+    });
+```
+
+</CodeBlock>
+
+ولما يرجع 409، الـ SyncService بيسلّم القرار لـ policy:
+
+<CodeBlock label="_resolveConflict">
+
+```dart
+Future<void> _resolveConflict(SyncOp op, Map<String, dynamic> body) async {
+  final dto = BookDto.fromJson(body['current'] as Map<String, dynamic>);
+  // the server's copy as a row: its own updatedAt and version
+  final remote = dto.toEntity().toRow(updatedAt: dto.updatedAt).copyWith(version: dto.version);
+  final local = (await _db.bookById(op.bookId))!;
+  final resolved = _policy.resolve(op, local, remote);
+
+  await _db.transaction(() async {
+    await _queue.remove(op);
+    await _db.upsertBook(resolved.copyWith(version: remote.version));
+    // our change survived the merge: send it again, on top of the server's version
+    if (resolved.status != remote.status) {
+      await _queue.enqueue(SyncKind.updateStatus, op.bookId);
+    }
+    // same for currentPage with updateProgress, if the book has it
+    await _db.setSyncState(op.bookId, await _queue.hasOps(op.bookId) ? 'pending' : 'synced');
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>العملية الجديدة بمفتاح جديد:</b> دي طلب تاني فعلًا، بـ version تاني. لو استخدمنا المفتاح القديم، السيرفر هيرجّع الـ 409 المحفوظة.
+- <b>الـ add كمان ممكن يرجع 409:</b> الكتاب اتضاف من التابلت قبل ما الموبايل يتوصل. السيرفر بيرجّع `VERSION_CONFLICT` ومعاه نسخته، ونفس الكود بيتعامل معاها.
+
+### سياسة الـ conflict في الكود
+
+الـ `_policy` interface، والسياسة بتتختار في الـ DI. كده تقدر تغيّرها وتتستها لوحدها:
+
+<CodeBlock label="ConflictPolicy">
+
+```dart
+// data/conflict_policy.dart
+abstract interface class ConflictPolicy {
+  BookRow resolve(SyncOp op, BookRow local, BookRow remote);
+}
+
+/// The server's copy always wins. Simple, but the offline edit can vanish.
+final class ServerWins implements ConflictPolicy {
+  const ServerWins();
+  @override
+  BookRow resolve(SyncOp op, BookRow local, BookRow remote) => remote;
+}
+
+/// The newer updatedAt wins. local.updatedAt came from the Clock when the user edited.
+final class LastWriteWins implements ConflictPolicy {
+  const LastWriteWins();
+  @override
+  BookRow resolve(SyncOp op, BookRow local, BookRow remote) =>
+      local.updatedAt.isAfter(remote.updatedAt) ? local : remote;
+}
+
+/// Start from the server's copy and put back only the field this op changed.
+final class FieldMerge implements ConflictPolicy {
+  const FieldMerge();
+  @override
+  BookRow resolve(SyncOp op, BookRow local, BookRow remote) => switch (op.kind) {
+        SyncKind.updateStatus => remote.copyWith(status: local.status),
+        SyncKind.updateProgress => remote.copyWith(
+            currentPage: max(local.currentPage, remote.currentPage), // pages only go forward
+          ),
+        SyncKind.addBook || SyncKind.removeBook => remote,
+      };
+}
+```
+
+</CodeBlock>
+
+الـ FieldMerge هنا على افتراض إن الكتاب زاد عليه حقل `currentPage` (بقرا في صفحة كام) وعملية `updateProgress`. ده المثال اللي بيوضح الفرق:
+
+| السياسة | الموبايل: «خلصته» أوفلاين. التابلت: صفحة 120 أونلاين | التمن |
+| --- | --- | --- |
+| ServerWins | صفحة 120، و«خلصته» راحت | المستخدم بيخسر تعديل من غير ما يعرف |
+| LastWriteWins | اللي `updatedAt` بتاعه أحدث بياخد الكتاب كله | تعديل التاني كله بيضيع، ومعتمد على الساعات |
+| FieldMerge | «خلصته» وصفحة 120 مع بعض | كود أكتر، ومحتاج تعرف كل عملية غيّرت إيه |
+
+الـ `ConflictResolver` اللي في درس SOLID هو الـ LastWriteWins ده. والـ `max` للصفحات قاعدة من الـ domain: التقدم في القراية مابيرجعش لورا، فالدمج الصح هو الأكبر، مش الأحدث.
+
+### ساعة الموبايل غلط
+
+المستخدم مغيّر ساعة الموبايل بإيده، وهي متأخرة ساعتين. الساعة 10 الصبح فعلًا، داس «خلصته»، والـ `Clock` كتب `updatedAt` = 8. التابلت عدّل الساعة 9، والسيرفر كتب 9 بساعته. الـ LastWriteWins قارن 8 بـ 9، فالتعديل الأحدث <b>خسر</b>. ولو الساعة متقدمة، تعديلاته هتكسب دايمًا، حتى على تعديلات أحدث منها بأيام.
+
+المشكلة إنك بتقارن ساعة جهاز بساعة جهاز تاني. الحلول بالترتيب:
+
+1. <b>اكتشف بالـ version، مش بالوقت:</b> الـ 409 بيقولك «حد عدّل بعد ما انت شفت» من غير أي ساعة. ده اللي عملناه فوق.
+2. <b>قرّر من غير وقت لو تقدر:</b> ServerWins أو FieldMerge أو قاعدة domain زي الـ max. مفيش ساعة، مفيش skew.
+3. <b>لو لازم LWW، خلّي كل الأوقات بساعة السيرفر:</b> كل response فيه header اسمه `Date` بوقت السيرفر. منه تعرف الموبايل متأخر أو متقدم بكام، وتصحح بيه:
+
+<CodeBlock label="ServerClock">
+
+```dart
+// core/time/server_clock.dart
+/// The phone's clock, shifted by the offset measured from the server's Date header.
+class ServerClock implements Clock {
+  ServerClock(this._device);
+  final Clock _device;
+  Duration _offset = Duration.zero;
+
+  void calibrate(DateTime serverNow) => _offset = serverNow.difference(_device.now());
+
+  @override
+  DateTime now() => _device.now().add(_offset);
+}
+
+// an interceptor calls it on every response
+final date = response.headers.value('date');
+if (date != null) serverClock.calibrate(HttpDate.parse(date));
+```
+
+</CodeBlock>
+
+الـ repository بياخد `ServerClock` بدل `SystemClock`، ومش محتاج يعرف الفرق، لأن الاتنين `Clock`. الدقة بالثانية بس (الـ header مافيهوش milliseconds)، وكفاية جدًا لتعديلات بيعملها بني آدم.
+
+### كل الأخطاء مش زي بعض
+
+الـ drain بتاع الدرس اللي فات بيتعامل مع أي `DioException` بنفس الطريقة: failed، واقف، وجرّب بعدين. بس 400 بسبب body غلط هيرجع 400 لو بعته مليون مرة، والـ queue هتفضل واقفة عليه للأبد. لازم نفرّق:
+
+<CodeBlock label="classify">
+
+```dart
+// data/sync_error.dart
+enum SyncErrorKind { noResponse, retryLater, auth, conflict, permanent }
+
+SyncErrorKind classify(DioException e) {
+  final res = e.response;
+  if (res == null) return SyncErrorKind.noResponse; // offline, timeout, connection reset
+  final code = res.data is Map ? res.data['code'] : null;
+  return switch (res.statusCode ?? 0) {
+    401 => SyncErrorKind.auth,
+    409 when code == 'REQUEST_IN_PROGRESS' => SyncErrorKind.retryLater,
+    409 => SyncErrorKind.conflict,
+    408 || 429 => SyncErrorKind.retryLater,
+    >= 500 => SyncErrorKind.retryLater,
+    _ => SyncErrorKind.permanent, // 400, 403, 404, 422: the same request gets the same answer
+  };
+}
+```
+
+</CodeBlock>
+
+| النوع | الـ SyncService بيعمل إيه | المحاولة بتتحسب؟ |
+| --- | --- | --- |
+| noResponse | failed، ويقف، والـ trigger الجاي يجرب | لأ: الطلب ممكن يكون وصل، والمفتاح بيحمي |
+| retryLater | failed، وميعاد المحاولة الجاية بـ backoff، ويقف | أيوه |
+| auth | failed، ويقف لحد الـ login | لأ |
+| conflict | الـ policy، ويكمّل | لأ |
+| permanent | dead، ويكمّل للكتب التانية | لأ |
+
+الـ 401 هنا معناها إن الـ AuthInterceptor جرّب refresh والسيرفر رفضه، يعني الـ session خلصت فعلًا (درس الـ Session). مفيش فايدة من المحاولة لحد ما المستخدم يدخل.
+
+وحالة خاصة: `removeBook` رجّع 404. الكتاب مش موجود على السيرفر، وده بالظبط اللي كنا عايزينه. اعتبرها نجاح، مش permanent.
+
+### الـ retry بيضرب السيرفر كل ثانية
+
+السيرفر وقع 5 دقايق. 10 آلاف موبايل بيعيدوا كل ثانية، فأول ما يقوم بياخد 10 آلاف طلب في نفس اللحظة ويقع تاني. محتاجين حاجتين: الانتظار يكبر مع كل فشل (<b>exponential backoff</b>)، وكل جهاز يستنى رقم مختلف شوية (<b>jitter</b>) عشان مايرجعوش كلهم مع بعض.
+
+<CodeBlock label="backoff مع jitter وحد أقصى">
+
+```dart
+class SyncService {
+  SyncService(this._queue, this._remote, this._db, this._network,
+      {required Clock clock, required ConflictPolicy policy, double Function()? jitter})
+      : _clock = clock,
+        _policy = policy,
+        _jitter = jitter ?? Random().nextDouble;
+
+  static const _base = Duration(seconds: 2);
+  static const _maxDelay = Duration(minutes: 10);
+  static const _maxAttempts = 8;
+  Timer? _wake;
+  // ...
+
+  Future<void> _retryLater(SyncOp op, DioException e) async {
+    final attempt = op.attempts + 1;
+    if (attempt >= _maxAttempts) {
+      return _queue.markDead(op, 'gave up after $attempt attempts (${e.response?.statusCode})');
+    }
+    final wait = _retryAfter(e.response) ?? _backoff(attempt);
+    await _queue.scheduleRetry(op, attempts: attempt, at: _clock.now().add(wait));
+    _wake?.cancel();
+    _wake = Timer(wait, requestSync); // nothing else will wake us when the wait is over
+  }
+
+  // 2s, 4s, 8s ... up to 10 min. Half fixed, half random.
+  Duration _backoff(int attempt) {
+    final cap = _base.inMilliseconds << min(attempt - 1, 20);
+    final ms = min(cap, _maxDelay.inMilliseconds);
+    return Duration(milliseconds: (ms / 2 + ms / 2 * _jitter()).round());
+  }
+
+  Duration? _retryAfter(Response<dynamic>? res) {
+    final seconds = int.tryParse(res?.headers.value('retry-after') ?? '');
+    return seconds == null ? null : Duration(seconds: seconds);
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ nextAttemptAt محفوظ في الـ DB:</b> مش في الذاكرة. لو الـ app اتقفل وفتح بعد دقيقة، الـ drain هيعرف إن لسه بدري.
+- <b>الـ Clock:</b> «لسه بدري» معناها مقارنة بـ `_clock.now()`. وفي التست ده اللي بيخليك تقدّم الوقت دقيقتين في سطر بدل ما تستناهم.
+- <b>الـ jitter function:</b> في الـ production `Random().nextDouble`، وفي التست `() => 1.0`، فالانتظار بيبقى رقم ثابت تقدر تـ expect عليه.
+- <b>الـ Retry-After:</b> لو السيرفر قال «استنى 30 ثانية» مع 429 أو 503، هو أعرف منك.
+- <b>الحد الأقصى:</b> 8 محاولات بـ backoff لحد 10 دقايق يعني حوالي نص ساعة سيرفر بيرجّع 5xx. بعدها العملية dead، ومش هتفضل تحاول للأبد.
+
+وفي الـ drain، العملية اللي ميعادها لسه ماجاش بتوقف اللي بعدها، عشان الترتيب:
+
+```dart
+final due = op.nextAttemptAt;
+if (due != null && due.isAfter(_clock.now())) return; // backing off: keep the order
+```
+
+### عملية مش هتنجح أبدًا
+
+المستخدم ضاف كتاب، والسيرفر رجّع 422 لأن الـ key بتاع الكتاب مش موجود في Open Library. لو العملية فضلت failed، الـ drain هيقف عندها كل مرة، وكل عمليات المستخدم اللي بعدها مش هتتبعت أبدًا. ولو مسحتها بهدوء، الكتاب هيفضل في المكتبة على الموبايل بس، والمستخدم فاكره اتحفظ.
+
+الحل حالة رابعة: <b>dead</b>. العملية بتتشال من الطريق، بس مابتتمسحش، والمستخدم بيقرر:
+
+<CodeBlock label="الـ drain مع dead">
+
+```dart
+Future<void> _drain() async {
+  final blocked = await _queue.deadBookIds(); // a dead op holds back later ops for its book
+  for (final op in await _queue.pending()) {   // pending + failed, oldest first
+    if (blocked.contains(op.bookId)) continue;
+    final due = op.nextAttemptAt;
+    if (due != null && due.isAfter(_clock.now())) return;
+    if (!await _queue.claim(op)) continue;
+    try {
+      await _confirm(op, await _send(op));
+    } on DioException catch (e) {
+      switch (classify(e)) {
+        case SyncErrorKind.noResponse || SyncErrorKind.auth:
+          await _queue.mark(op, SyncState.failed);
+          return;
+        case SyncErrorKind.retryLater:
+          await _retryLater(op, e);
+          return;
+        case SyncErrorKind.conflict:
+          await _resolveConflict(op, e.response!.data as Map<String, dynamic>);
+        case SyncErrorKind.permanent:
+          await _queue.markDead(op, '${e.response!.statusCode} ${e.response!.data}');
+          blocked.add(op.bookId);
+      }
+    }
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ dead بيوقف كتابه بس:</b> «غيّر حالة الكتاب» مالهاش معنى لو «ضيف الكتاب» اترفضت، فعمليات نفس الكتاب بتستنى. لكن كتب تانية مالهاش دعوة، فبتكمّل. ده الفرق بينه وبين failed اللي بيوقف الكل.
+- <b>الـ lastError:</b> بيتحفظ عشان الـ logs والـ support، مش عشان المستخدم يقراه.
+
+والمستخدم بيشوفه من الـ SyncStatus بتاع الدرس اللي فات:
+
+<CodeBlock label="stuck في الـ SyncStatus، وretry وdiscard">
+
+```dart
+// domain: SyncStatus grows one field
+final Set<BookId> stuck; // a dead op: waiting for the user, not for the network
+
+// data: SyncQueue
+/// dead -> failed, with a fresh key: the server stored its 4xx under the old one.
+/// A book has at most one dead op, the rest wait behind it.
+Future<void> revive(String bookId) async {
+  await (_db.update(_db.syncOps)
+        ..where((o) => o.bookId.equals(bookId) & o.state.equalsValue(SyncState.dead)))
+      .write(SyncOpsCompanion(
+        state: const Value(SyncState.failed),
+        attempts: const Value(0),
+        nextAttemptAt: const Value(null),
+        idempotencyKey: Value(const Uuid().v4()),
+      ));
+  _enqueued.add(null);
+}
+
+// data: LibraryRepositoryImpl
+@override
+Future<Result<void>> discardStuck(BookId id) => guard(() async {
+      await _db.transaction(() async {
+        final ops = await _queue.opsFor(id.value); // oldest first
+        await _queue.dropAll(id.value);
+        if (ops.first.kind == SyncKind.addBook) {
+          await _db.deleteBook(id.value); // the server never accepted it
+        } else {
+          await _db.markSynced(id.value); // the next refresh brings the server's copy back
+        }
+      });
+      await refresh();
+    });
+```
+
+</CodeBlock>
+
+- <b>الـ retry بمفتاح جديد:</b> السيرفر حفظ الـ 422 تحت المفتاح القديم. لو بعتنا نفس المفتاح، هيرجّع نفس الـ 422 من غير ما يجرب. والـ retry ده منطقي لما الحاجة اتغيرت: اشتراك اتجدد بعد 403، أو deploy صلّح bug في السيرفر.
+- <b>الـ discard بيرجّع الحقيقة:</b> لو العملية كانت add، الكتاب بيتمسح. لو تعديل، الصف بيرجع synced والـ refresh بيكتب فوقه نسخة السيرفر. والـ tombstone كمان بيرجع ظاهر، لأن `watchBooks` بيخفي الـ deleted بس.
+
+في الـ UI: شريط «كتابين ماتزامنوش»، بيفتح ليستة بالكتب دي، وجنب كل واحد «حاول تاني» و«الغي التعديل». والـ SyncStatusCubit بيمسك الـ repository وبينادي `retryStuck` و`discardStuck`.
+
+### التست: الوقت والسيرفر في إيدك
+
+كل ده مستحيل تتسته على سيرفر حقيقي: مش هتعرف تضيّع رد معين، ولا تستنى 10 دقايق backoff. محتاج 3 حاجات تتحكم فيها: DB في الذاكرة، وسيرفر fake، و`FixedClock`.
+
+<CodeBlock label="FixedClock بيمشي لما تقوله">
+
+```dart
+class FixedClock implements Clock {
+  FixedClock(this._now);
+  DateTime _now;
+
+  @override
+  DateTime now() => _now;
+
+  void advance(Duration by) => _now = _now.add(by);
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="FakeLibraryRemote بيعمل dedupe زي السيرفر">
+
+```dart
+class FakeLibraryRemote implements LibraryRemoteSource {
+  final books = <String, BookDto>{};   // what the server has
+  final _replies = <String, BookDto>{}; // idempotency key -> stored reply
+  int addCalls = 0;
+  bool loseNextResponse = false;
+  int? failNextWith;
+
+  @override
+  Future<BookDto> addBook(BookDto book, {required String idempotencyKey}) async {
+    addCalls++;
+    if (failNextWith case final status?) {
+      failNextWith = null;
+      throw _http(status);
+    }
+    final reply = _replies.putIfAbsent(idempotencyKey, () {
+      final saved = book.copyWith(version: 1);
+      books[book.key] = saved;
+      return saved;
+    });
+    if (loseNextResponse) {
+      loseNextResponse = false; // it was saved, the client just never hears about it
+      throw DioException(requestOptions: RequestOptions(), type: DioExceptionType.connectionError);
+    }
+    return reply;
+  }
+
+  DioException _http(int status) {
+    final options = RequestOptions(path: '/library');
+    return DioException(
+      requestOptions: options,
+      type: DioExceptionType.badResponse,
+      response: Response(requestOptions: options, statusCode: status),
+    );
+  }
+
+  // fetchLibrary, updateStatus, removeBook: same idea
+}
+
+class FakeNetworkStatus implements NetworkStatus {
+  @override
+  Stream<void> get onOnline => const Stream.empty();
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="التستات">
+
+```dart
+void main() {
+  late AppDatabase db;
+  late FixedClock clock;
+  late FakeLibraryRemote remote;
+  late LibraryRepositoryImpl repo;
+  late SyncService sync;
+
+  setUp(() {
+    db = AppDatabase(NativeDatabase.memory());
+    clock = FixedClock(DateTime(2026, 10, 4, 10));
+    remote = FakeLibraryRemote();
+    final queue = SyncQueue(db, clock);
+    repo = LibraryRepositoryImpl(db, remote, queue, clock);
+    sync = SyncService(queue, remote, db, FakeNetworkStatus(),
+        clock: clock, policy: const ServerWins(), jitter: () => 1.0);
+    // start() is never called: the test decides when a drain runs
+  });
+  tearDown(() async {
+    await sync.stop(); // cancels the backoff timer
+    await db.close();
+  });
+
+  test('lost response: the retry reuses the key, the server keeps one copy', () async {
+    remote.loseNextResponse = true;
+    await repo.addBook(tBook);
+
+    await sync.requestSync();
+    expect(remote.books, hasLength(1));                      // it reached the server
+    expect(await db.select(db.syncOps).get(), hasLength(1)); // but the app can't know
+
+    await sync.requestSync();                                // next trigger, same key
+    expect(remote.addCalls, 2);
+    expect(remote.books, hasLength(1));
+    expect(await db.select(db.syncOps).get(), isEmpty);
+  });
+
+  test('503: waits for the backoff, then retries', () async {
+    remote.failNextWith = 503;
+    await repo.addBook(tBook);
+    await sync.requestSync();
+
+    final op = (await db.select(db.syncOps).get()).single;
+    expect(op.attempts, 1);
+    expect(op.nextAttemptAt, DateTime(2026, 10, 4, 10, 0, 2)); // 2s, jitter fixed at 1.0
+
+    await sync.requestSync();                 // too early: nothing is sent
+    expect(remote.addCalls, 1);
+
+    clock.advance(const Duration(seconds: 2));
+    await sync.requestSync();
+    expect(remote.addCalls, 2);
+    expect(remote.books, hasLength(1));
+  });
+
+  test('422: dead, and the other books keep syncing', () async {
+    remote.failNextWith = 422;
+    await repo.addBook(tBook);
+    await repo.addBook(tOtherBook);
+    await sync.requestSync();
+
+    final ops = await db.select(db.syncOps).get();
+    expect(ops.single.state, SyncState.dead);
+    expect(remote.books.keys, [tOtherBook.id.value]);
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>الـ NativeDatabase.memory():</b> drift حقيقي بـ SQLite في الذاكرة. الـ transactions والـ claim والـ queries نفسها اللي في الـ app، مش fake.
+- <b>الـ fake بيعمل dedupe بالمفتاح:</b> لو الـ SyncService بعت مفتاح جديد في الـ retry، التست الأول هيلاقي كتابين ويفشل. يعني التست بيحمي القاعدة نفسها، مش التنفيذ.
+- <b>الـ FixedClock:</b> الـ backoff بيتستّ في ميلي ثانية مش في دقايق، والـ `updatedAt` بتاع الـ LastWriteWins بيبقى رقم انت عارفه.
+- <b>والـ policies لوحدها:</b> functions من غير DB ولا شبكة: صفّين وعملية، وexpect على الناتج. ابدأ بيها.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>idempotent بطبيعتها قبل الـ key:</b> «ضيف الكتاب ده لمكتبتي» ليها مفتاح طبيعي: الكتاب نفسه. لو الـ API بقى `PUT /library/:key` بـ upsert، وunique index على `(userId, key)`، التكرار مالوش أثر من غير أي middleware. والفخ لو السيرفر بيرجّع 409 «موجود خلاص»: الـ retry بعد رد ضايع هياخد 409، والعملية اللي نجحت فعلًا هتتحسب conflict أو dead. الـ Idempotency-Key للعمليات اللي مالهاش مفتاح طبيعي، زي «سجّل جلسة قراية» أو «ضيف ملاحظة».
+- <b>عمر المفتاح أطول من أطول retry:</b> لو المفتاح بيتمسح بعد 24 ساعة، والمستخدم كان أوفلاين أسبوع والرد الأول ضاع، الـ retry هيوصل بمفتاح السيرفر نسيه، والكتاب هيتضاف مرتين. علشان كده الـ TTL شهر، أو تحط حد أقصى لعمر العملية في الـ queue أقل منه.
+- <b>المفتاح والكتابة مش atomic:</b> لو السيرفر وقع بعد ما الكتاب اتحفظ وقبل ما المفتاح يبقى done، المفتاح هيفضل processing، والـ retry هياخد `REQUEST_IN_PROGRESS` لحد ما الـ TTL يمسحه، وبعدها يتنفذ تاني. الحل الكامل transaction في Mongo (محتاج replica set) بتكتب الاتنين، أو unique index على البيانات نفسها كخط دفاع تاني.
+- <b>نفس المفتاح لازم يبعت نفس الـ body:</b> عندنا العملية بتقرا الصف وقت الإرسال، فالـ retry ممكن يبعت حالة أحدث بنفس المفتاح، والسيرفر هيرجّع الرد القديم. ده مقبول هنا، لأن التعديل الأحدث ليه عملية تانية في الـ queue. لكن لو السيرفر بيتشيك (السيرفرات الصارمة بترجّع 422 لنفس المفتاح بـ body مختلف)، احفظ الـ body في العملية أول ما تتبعت أول مرة، وابعته هو في كل retry.
+- <b>اختار السياسة لكل نوع بيانات:</b> حالة الكتاب: FieldMerge أو ServerWins. التقدم في القراية: max. ملاحظة كتبها المستخدم بإيده: ماتختارش لوحدك، احفظ الاتنين أو اسأله (ودي حالة conflict في الـ queue بتستنى الـ UI). القاعدة إن الـ app مايرميش حاجة كتبها المستخدم من غير ما يعرف.
+- <b>الـ retry بتاع الـ sync مش في الـ RetryInterceptor:</b> الـ interceptor بيعيد في الذاكرة لطلب المستخدم مستنيه دلوقتي. الـ queue بتعيد من الـ DB، فبتعيش بعد قفل الـ app، وبتعرف ترتيب العمليات. الاتنين بيبعتوا نفس المفتاح، فلو الاتنين عادوا، السيرفر لسه شايفها عملية واحدة.
+- <b>الـ dead letters لازم توصلك:</b> كل markDead يتسجّل في الـ `AppLogger` بتاع درس الـ observability بالـ status والـ lastError. لو العدد زاد بعد release، يبقى في bug في الـ client أو الـ API اتغير، والمستخدمين مش هيبلّغوك.
+- <b>الـ migration:</b> لو الـ queue اتنشرت قبل كده من غير `idempotencyKey`، الـ column الجديد مايقدرش يبقى NOT NULL في `addColumn` من غير default في SQL. خليه nullable، واملا العمليات القديمة بمفاتيح جوه الـ migration نفسها. والـ `dead` مش محتاج migration، لأن الـ textEnum بيخزّن الاسم.
+- <b>امتى ده كله مش كفاية:</b> لو اتنين بيكتبوا في نفس النص في نفس الوقت (زي Google Docs)، الـ version والـ policies مش هيكفوا. ده عالم الـ CRDTs، وReadly مش محتاجه.
+
+<Note kind="interview" title="سؤال interview">
+
+«الـ app بيعيد طلب "ضيف كتاب" لما النت يقطع، وبعض المستخدمين لاقوا الكتاب مرتين. ليه، وتصلحها إزاي؟» الطلب وصل السيرفر والرد هو اللي ضاع، فالـ client شافه فشل وعاده. الـ client مايقدرش يعرف الفرق، فالحل إن التكرار مايبقالوش أثر: مفتاح uuid بيتولد مرة واحدة مع العملية ويتحفظ معاها في الـ queue، ويتبعت في كل محاولة كـ `Idempotency-Key`. السيرفر عنده unique index على المستخدم والمفتاح، بيحفظ الرد مع المفتاح، ولو المفتاح اتكرر بيرجّع نفس الرد من غير ما ينفذ، ولو الطلب الأول لسه شغال بيقول «استنى». عمر المفتاح لازم أطول من أطول فترة retry. وجنبه: retry بـ backoff وjitter للأخطاء المؤقتة بس، والـ 4xx تروح dead letter يشوفها المستخدم، والـ conflict يتكشف بـ version مش بساعة الموبايل. ولو العملية ليها مفتاح طبيعي، الأحسن تبقى PUT idempotent من الأول.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### الـ SyncService كامل
+
+الـ SyncService بتاع درس Offline-first، ومعاه المفتاح والـ version والـ policy والـ backoff والـ dead letters. الـ SyncQueue بقت بتاخد Clock عشان `scheduleRetry` و`markDead`.
+
+```dart
+class SyncService {
+  SyncService(this._queue, this._remote, this._db, this._network,
+      {required Clock clock, required ConflictPolicy policy, double Function()? jitter})
+      : _clock = clock,
+        _policy = policy,
+        _jitter = jitter ?? Random().nextDouble;
+
+  final SyncQueue _queue;
+  final LibraryRemoteSource _remote;
+  final AppDatabase _db;
+  final NetworkStatus _network;
+  final Clock _clock;
+  final ConflictPolicy _policy;
+  final double Function() _jitter;
+
+  static const _base = Duration(seconds: 2);
+  static const _maxDelay = Duration(minutes: 10);
+  static const _maxAttempts = 8;
+
+  final _subs = <StreamSubscription<void>>[];
+  Timer? _wake;
+  bool _running = false;
+  bool _again = false;
+
+  Future<void> start() async {
+    await _queue.recoverStuck();
+    _subs
+      ..add(_network.onOnline.listen((_) => requestSync()))
+      ..add(_queue.onEnqueued.listen((_) => requestSync()));
+    await requestSync();
+  }
+
+  Future<void> requestSync() async {
+    if (_running) {
+      _again = true;
+      return;
+    }
+    _running = true;
+    try {
+      do {
+        _again = false;
+        await _drain();
+      } while (_again);
+    } finally {
+      _running = false;
+    }
+  }
+
+  Future<void> _drain() async {
+    final blocked = await _queue.deadBookIds();
+    for (final op in await _queue.pending()) {
+      if (blocked.contains(op.bookId)) continue;
+      final due = op.nextAttemptAt;
+      if (due != null && due.isAfter(_clock.now())) return;
+      if (!await _queue.claim(op)) continue;
+      try {
+        await _confirm(op, await _send(op));
+      } on DioException catch (e) {
+        if (op.kind == SyncKind.removeBook && e.response?.statusCode == 404) {
+          await _confirm(op, null); // already gone: that's what we wanted
+          continue;
+        }
+        switch (classify(e)) {
+          case SyncErrorKind.noResponse || SyncErrorKind.auth:
+            await _queue.mark(op, SyncState.failed);
+            return;
+          case SyncErrorKind.retryLater:
+            await _retryLater(op, e);
+            return;
+          case SyncErrorKind.conflict:
+            await _resolveConflict(op, e.response!.data as Map<String, dynamic>);
+          case SyncErrorKind.permanent:
+            await _queue.markDead(op, '${e.response!.statusCode} ${e.response!.data}');
+            blocked.add(op.bookId);
+        }
+      }
+    }
+  }
+
+  Future<BookDto?> _send(SyncOp op) async {
+    final row = (await _db.bookById(op.bookId))!; // tombstones keep the row until confirmed
+    final key = op.idempotencyKey;
+    switch (op.kind) {
+      case SyncKind.addBook:
+        return _remote.addBook(row.toDto(), idempotencyKey: key);
+      case SyncKind.updateStatus:
+        return _remote.updateStatus(op.bookId, row.status.name,
+            version: row.version, idempotencyKey: key);
+      case SyncKind.removeBook:
+        await _remote.removeBook(op.bookId, idempotencyKey: key);
+        return null;
+    }
+  }
+
+  // _confirm, _resolveConflict, _retryLater, _backoff, _retryAfter: as in Level 3
+
+  Future<void> stop() async {
+    _wake?.cancel();
+    for (final sub in _subs) {
+      await sub.cancel();
+    }
+    _subs.clear();
+  }
+}
+```
+
+<CodeBlock label="الـ DI">
+
+```dart
+getIt
+  ..registerLazySingleton<ServerClock>(() => ServerClock(const SystemClock()))
+  ..registerLazySingleton<Clock>(() => getIt<ServerClock>()) // the same instance, seen as a Clock
+  ..registerLazySingleton<ConflictPolicy>(() => const FieldMerge())
+  ..registerLazySingleton<SyncService>(() => SyncService(
+        getIt(), getIt(), getIt(), getIt(),
+        clock: getIt(),
+        policy: getIt(),
+      ));
+```
+
+</CodeBlock>
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="conflicts-1">
+<Ask>الـ `Idempotency-Key` بيتولد فين؟ وليه مش جوه interceptor أو قبل كل محاولة؟</Ask>
+<Answer>
+
+بيتولد مرة واحدة لما العملية تدخل الـ queue (`clientDefault` في جدول SyncOps)، ويتحفظ معاها في الـ DB. لو اتولد مع كل محاولة، الـ retry هيوصل بمفتاح جديد، والسيرفر هيشوفه طلب جديد وينفذه تاني، فالمفتاح مالوش أي لازمة. ولأنه في الـ DB، بيفضل هو هو حتى لو الـ app اتقفل بين المحاولتين.
+
+</Answer>
+</Question>
+
+<Question id="conflicts-2">
+<Ask>السياسة last-write-wins بالـ `updatedAt`، وموبايل مستخدم ساعته متأخرة ساعتين. إيه اللي هيحصل لتعديلاته؟ وتصلحها إزاي؟</Ask>
+<Answer>
+
+تعديلاته هتخسر قدام أي تعديل اتعمل في آخر ساعتين من جهاز تاني، حتى لو تعديله هو الأحدث فعلًا، لأنك بتقارن ساعة الموبايل بساعة السيرفر. الحل إنك تكتشف الـ conflict بـ version مش بالوقت، وتقرر بسياسة مش محتاجة ساعة (server-wins، أو merge لكل حقل، أو قاعدة domain زي أكبر صفحة). ولو لازم LWW، خلّي كل الأوقات بساعة السيرفر: تصحح ساعة الموبايل بالفرق اللي بتحسبه من header الـ `Date`.
+
+</Answer>
+</Question>
+
+<Question id="conflicts-3">
+<Ask>السيرفر رجّع 422 لعملية في الـ queue. الـ SyncService يعمل إيه؟ ولما المستخدم يدوس «حاول تاني»، ليه العملية بتاخد مفتاح جديد؟</Ask>
+<Answer>
+
+422 خطأ permanent: نفس الطلب هياخد نفس الإجابة، فمفيش retry ولا backoff. العملية بتبقى dead ومعاها الـ lastError، وعمليات نفس الكتاب بتستنى وراها، والكتب التانية بتكمّل. والمستخدم بيشوفها ويختار يجرب تاني أو يلغي التعديل. المفتاح الجديد لأن السيرفر حفظ الـ 422 تحت المفتاح القديم، فلو بعتناه تاني هيرجّع نفس الـ 422 المحفوظة من غير ما يجرب.
+
+</Answer>
+</Question>
+
+</Quiz>

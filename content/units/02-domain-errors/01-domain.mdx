@@ -211,18 +211,152 @@ await sub.cancel();
 
 الـ Future للسؤال اللي ليه إجابة واحدة، والـ Stream للحاجة اللي بتتغير، والـ StreamUseCase بيتعمل لما يكون في قاعدة على اللي بيتغير.
 
+### علّمت الكتاب «خلصته» والشاشة ماتغيرتش
+
+الـ Entity هويتها الـ id، فطبيعي تفكر تخلي `==` تقارن الـ id بس: كتابين بنفس الـ id يبقوا نفس الكتاب. الكلام ده صح في الـ DDD، بس في Flutter بيعمل bug صعب تلاقيه:
+
+<CodeBlock label="== بالـ id بس">
+
+```dart
+class Book {
+  // ...fields
+  @override
+  bool operator ==(Object other) => other is Book && other.id == id; // id only
+  @override
+  int get hashCode => id.hashCode;
+}
+
+// in LibraryCubit: LibraryLoaded uses equatable, props: [books]
+final updated = [
+  for (final b in current.books) b.id == id ? b.markAsFinished() : b,
+];
+emit(LibraryLoaded(updated)); // ignored!
+```
+
+</CodeBlock>
+
+الـ equatable بيقارن الليستتين عنصر عنصر بـ `==` بتاع Book. الكتاب القديم والجديد ليهم نفس الـ id، فالليستتين «متساويين»، فالـ state الجديدة بتساوي القديمة. والـ Cubit بيتجاهل أي emit لـ state بتساوي اللي قبلها، فالشاشة فاضلة «بقراه». ونفس الحكاية مع `BlocSelector` و`Stream.distinct()` و`didUpdateWidget`: كلهم بيسألوا `==` «في حاجة اتغيرت؟»، وانت جاوبتهم «لأ».
+
+الحل إنك تفصل بين سؤالين مختلفين:
+
+<CodeBlock label="سؤالين، مش سؤال واحد">
+
+```dart
+@freezed
+abstract class Book with _$Book {
+  const Book._();
+  const factory Book({
+    required BookId id,
+    required String title,
+    required BookStatus status,
+  }) = _Book; // == compares every field: "did anything change?"
+
+  bool isSameBookAs(Book other) => other.id == id; // "is it the same book?"
+}
+```
+
+</CodeBlock>
+
+- <b>الـ ==:</b> بيقارن كل الحقول، لأن Flutter كله مبني على إن `==` معناها «مفيش حاجة اتغيرت».
+- <b>الهوية:</b> بتتسأل صراحة بـ `a.id == b.id` أو method باسم واضح. ولما تحتاج Map أو Set بالكتب، خلي الـ key هو الـ `BookId` مش الـ Book.
+
+### القاعدة دي السيرفر بيتحقق منها كمان، أكتبها في الـ app؟
+
+أي قاعدة في الـ app ليها نسخة على السيرفر، لأن أي حد يقدر يبعت request من غير الـ app. السؤال مش «مين يتحقق»، السؤال «أنهي قواعد تستاهل نسخة تانية في الـ app». كل نسخة زيادة ممكن تختلف عن الأصل، والأخطر إن الـ app القديم بيفضل على موبايلات الناس شهور. لو السيرفر خفّف قاعدة والـ app لسه شادد، المستخدم ممنوع من حاجة مسموحة، ومش هيعرف ليه.
+
+| نوع القاعدة | مثال في Readly | مكانها |
+| --- | --- | --- |
+| شكل الـ input | الإيميل فيه @، والباسورد 8 حروف على الأقل | value object في الـ domain، والسيرفر بيتحقق تاني |
+| على بيانات موجودة عندك | الكتاب مايتضافش للمكتبة مرتين | use case، لأن المكتبة كلها عندك في الـ DB |
+| محتاجة بيانات مش عندك | الإيميل ده مستخدم قبل كده؟ | السيرفر بس، والـ app بيعرض رده على الحقل |
+| بتتغير من غير release | الخطة المجانية فيها 100 كتاب بس | السيرفر بس |
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+Future<Result<void>> call(Book book) async {
+  if (await _repository.count() >= 100) {
+    return const Err(ValidationFailure('Library is full'));
+  }
+  return _repository.addBook(book);
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+Future<Result<void>> call(Book book) async {
+  if (await _repository.contains(book.id)) {
+    return const Err(ValidationFailure('Book already in library'));
+  }
+  return _repository.addBook(book); // the server owns the plan limit
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: الـ 100 محفوظة جوه الـ app. لو الـ business غيّرها لـ 200، كل اللي ماعملوش update هيتمنعوا عند 100. بعد: السيرفر بيرفض بـ 403 وcode زي `library_full`، والـ app بيعرض الرسالة. ولو محتاج تعرض «فاضلك 3 كتب» قبل ما المستخدم يحاول، الرقم ييجي من الـ API كبيانات، مش ثابت في الكود. إزاي الـ code ده بيوصل للـ Cubit هتشوفه في درس الأخطاء.
+
+### use case بيكلّم repositoryين: والتاني فشل
+
+لما المستخدم يشيل كتاب من مكتبته، ملاحظاته على الكتاب ده لازم تتشال كمان. ده repositoryين في عملية واحدة، ومكانها use case:
+
+<CodeBlock label="RemoveBookFromLibrary">
+
+```dart
+class RemoveBookFromLibrary {
+  RemoveBookFromLibrary(this._library, this._notes);
+  final LibraryRepository _library;
+  final NotesRepository _notes;
+
+  Future<Result<void>> call(BookId id) async {
+    // the book first: if this fails, nothing changed
+    switch (await _library.removeBook(id)) {
+      case Err(:final failure):
+        return Err(failure);
+      case Success():
+        return _notes.deleteNotesFor(id); // safe to call again
+    }
+  }
+}
+```
+
+</CodeBlock>
+
+مفيش transaction بين repositoryين، فلازم تفكر: لو الخطوة التانية فشلت، الحالة اللي فاضلة شكلها إيه؟
+
+- <b>لو بدأت بالملاحظات:</b> الملاحظات اتمسحت والكتاب فضل. المستخدم خسر حاجة كتبها بإيده، والكتاب لسه قدامه كأن مفيش حاجة حصلت.
+- <b>لو بدأت بالكتاب:</b> الكتاب اتشال والملاحظات فضلت من غير كتاب. مش ظاهرة لحد، وأي محاولة تانية بتمسحها، لأن `deleteNotesFor` لكتاب مالوش ملاحظات بيرجّع Success عادي.
+
+القاعدة: رتّب الخطوات بحيث إن الفشل في النص يسيب أقل حالة ضرر، وخلي الخطوة التانية تنفع تتعاد (idempotent). ولو الاتنين جداول في نفس الـ drift DB، الأحسن الـ use case يطلب الحاجة بنيّتها: method واحدة زي `removeBookWithNotes` في الـ repository، والـ data layer ينفذها في transaction. الـ domain يقول «عايز إيه»، والـ data يعرف «إزاي تتعمل مرة واحدة».
+
 
 </Level>
 
 <Level n="4" title="قرارات صعبة">
 
 - <b>الـ use case الـ pass-through:</b> لو الـ use case بينادي الـ repository وبس من غير أي قاعدة، فهو ملف زيادة. عندك اختيارين: تسيبه عشان كل الـ features شكلها واحد، أو الـ Cubit يكلّم الـ repository مباشرة لما مفيش logic. الاتنين صح، الغلط إنك تعمل كده من غير ما تقرر.
-- <b>تركيب الـ use cases:</b> use case ممكن يستخدم أكتر من repository. مثلًا «انقل الكتاب للمكتبة واحذفه من قائمة الأمنيات» بيكلّم repositoryين في عملية واحدة. ده مكانه الطبيعي use case مش Cubit.
+- <b>تركيب الـ use cases:</b> use case ممكن يستخدم أكتر من repository، زي `RemoveBookFromLibrary`. ده مكانه الطبيعي use case مش Cubit، لأن الـ Cubit مايصحش يقرر ترتيب الخطوات ولا يعرف إن الملاحظات تابعة للكتاب.
+- <b>use case بينادي use case تاني؟</b> غالبًا لأ. لو `FinishBook` محتاج قاعدة موجودة في `AddBookToLibrary`، القاعدة دي مكانها الـ entity أو function صافية في الـ domain (domain service) والاتنين يستخدموها. لما use case ينادي التاني، الـ checks بتتكرر، وتغيير في واحد بيكسر التاني من غير ما تاخد بالك.
+- <b>الـ transaction بين repositoryين:</b> في حل تاني غير method واحدة: abstraction في الـ domain زي `TransactionRunner` والـ use case يلف الخطوتين بيه. بيشتغل، بس كل الـ repositories لازم يكونوا على نفس الـ DB، وفكرة «transaction» بقت جوه الـ domain. في Readly الـ method الواحدة أوضح. ولو واحد من الاتنين على السيرفر، مفيش transaction أصلًا: الترتيب والـ idempotency، والأحسن السيرفر يمسح الملاحظات لوحده لما الكتاب يتشال.
+- <b>الوقت قاعدة كمان:</b> لو `markAsFinished` محتاجة تسجّل امتى الكتاب خلص، ماتناديش `DateTime.now()` جوه الـ entity. خليها تاخد الوقت كـ parameter، والـ use case ياخده من `Clock` (من درس SOLID)، فالتست يحدد الوقت بنفسه.
 - <b>الـ Domain بيتختبر بـ dart test:</b> لأنه مافيهوش Flutter، تستاته بتشتغل في أجزاء من الثانية. لو احتجت Flutter عشان تختبر قاعدة، يبقى القاعدة دي في مكان غلط.
 
 <Note kind="interview" title="سؤال interview">
 
-«إيه الفرق بين Entity وValue Object؟» الـ Entity ليها هوية (id) وبتفضل نفس الحاجة حتى لو بياناتها اتغيرت. الـ Value Object مالوش هوية: اتنين بنفس القيمة يبقوا نفس الحاجة، وبيحمي قواعده من لحظة إنشائه.
+«إيه الفرق بين Entity وValue Object؟» الـ Entity ليها هوية (id) وبتفضل نفس الحاجة حتى لو بياناتها اتغيرت. الـ Value Object مالوش هوية: اتنين بنفس القيمة يبقوا نفس الحاجة، وبيحمي قواعده من لحظة إنشائه. ولو سألك «يبقى الـ == في الـ Entity بالـ id؟»: في Flutter لأ، الـ == بيقارن كل الحقول عشان الـ Cubit والـ widgets يعرفوا إن حاجة اتغيرت، والهوية بتتسأل صراحة بالـ id.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«use case بيعمل خطوتين على repositoryين، والتانية فشلت. تعمل إيه؟» مفيش transaction بين repositoryين، فبرتّب الخطوات بحيث الفشل في النص يسيب أقل ضرر (الكتاب الأول، والملاحظات بعده)، والخطوة التانية تنفع تتعاد. ولو الاتنين في نفس الـ DB، بنقل العملية لـ method واحدة في الـ data layer تتنفذ في transaction، والـ domain يفضل بيعبّر عن النيّة بس.
 
 </Note>
 
@@ -281,6 +415,24 @@ extension type const Email._(String value) {
 <Answer>
 
 إن في حاجة من Flutter دخلت الـ Domain، والقاعدة أو الـ dependency دي في المكان الغلط.
+
+</Answer>
+</Question>
+
+<Question id="domain-4">
+<Ask>الـ `==` بتاع Book بيقارن الـ id بس، والـ state بـ equatable. المستخدم علّم كتاب «خلصته» والشاشة ماتغيرتش. ليه؟</Ask>
+<Answer>
+
+الليست الجديدة بتساوي القديمة، لأن الكتاب الجديد ليه نفس الـ id. فالـ state الجديدة بتساوي القديمة، والـ Cubit بيتجاهل الـ emit. الـ `==` لازم يقارن كل الحقول، والهوية تتسأل صراحة بـ `a.id == b.id`.
+
+</Answer>
+</Question>
+
+<Question id="domain-5">
+<Ask>الخطة المجانية فيها 100 كتاب بس. تكتب الشرط ده في `AddBookToLibrary`؟</Ask>
+<Answer>
+
+لأ. دي قاعدة business بتتغير من غير release، فمكانها السيرفر. لو اتكتبت في الـ app، النسخ القديمة هتفضل تمنع عند 100 حتى لو الحد اتغير. السيرفر يرفض بـ code معروف والـ app يعرض الرسالة، ولو محتاج الرقم في الـ UI ييجي من الـ API.
 
 </Answer>
 </Question>

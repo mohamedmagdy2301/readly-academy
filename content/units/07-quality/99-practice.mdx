@@ -1,6 +1,6 @@
 ---
 title: "التطبيق والمهام"
-description: "مهام الأسبوع 7 في Readly: الاختبارات بعمق."
+description: "مهام الأسبوع 7 في Readly: الاختبارات بعمق، وحراسة المعمارية بأدوات."
 type: "practice"
 ---
 
@@ -11,6 +11,8 @@ type: "practice"
 <Task id="w7-4">اكتب integration test بـ integration_test الرسمي لـ flow: login ثم إضافة كتاب أوفلاين ثم sync.</Task>
 <Task id="w7-5">ضيف الـ coverage في الـ CI، ويفشل لو نزل عن الحد.</Task>
 <Task id="w7-6">كمّل تستات الـ AuthInterceptor بالحالة الرابعة: الـ refresh رجع 401، فالـ tokens تتمسح والطلب يعدّي بـ 401 (الكود في درس الاختبارات).</Task>
+<Task id="w7-7">اعمل package `tools/architecture` فيها architecture test بـ dart test: allowlist للـ domain، ومفيش package بتعمل import لـ `src/` بتاع feature تانية، وتست بيتأكد إن الـ scan شاف ملفات فعلًا. اتأكد إنه بيمسك: زوّد import لـ dio في use case وشوفه بيفشل (الكود في درس «حراسة المعمارية»).</Task>
+<Task id="w7-8">ارفع `implementation_imports` و`depend_on_referenced_packages` لـ error في `analysis_options.yaml`، وشغّل الـ architecture test في الـ CI قبل التستات، وفعّل branch protection على `main` بالـ job ده.</Task>
 </Tasks>
 
 <Diagram name="d-dbbe7a7e7b">

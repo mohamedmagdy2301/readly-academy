@@ -97,6 +97,131 @@ import 'package:flutter/material.dart';        // NO
 
 </Note>
 
+القاعدة سهلة على الورق. في الكود بتتكسر بأشكال صغيرة، ومحدش بياخد باله غير لما التغيير الجاي يوجع. دي أشهرها:
+
+### الـ Cubit بيقرا الـ JSON
+
+<CodeBlock label="الـ DTO وصل للـ Presentation">
+
+```dart
+// presentation/library_cubit.dart
+import '../data/book_dto.dart'; // leak
+
+Future<void> load() async {
+  final dtos = await _remote.fetchLibrary();
+  emit(LibraryLoaded(dtos.where((d) => d.status != 'archived').toList()));
+}
+```
+
+</CodeBlock>
+
+الـ Cubit بقى عارف اسم الحقل `status` وقيمته `'archived'` زي ما السيرفر بيكتبها. لو السيرفر غيّرها لـ `'ARCHIVED'`، القاعدة هتبطّل تشتغل في صمت. الحل إن الـ repository يرجّع entities بس، والـ Cubit يكلّم الـ Domain:
+
+<CodeBlock label="الـ Cubit بيشوف entities بس">
+
+```dart
+// presentation/library_cubit.dart
+import '../domain/get_library.dart';
+
+Future<void> load() async {
+  final result = await _getLibrary(); // Result<List<Book>>, rule applied inside
+  emit(switch (result) {
+    Success(:final value) => LibraryLoaded(value),
+    Err(:final failure) => LibraryError(failure),
+  });
+}
+```
+
+</CodeBlock>
+
+### الـ Domain عمل import لـ Flutter عشان لون
+
+<CodeBlock label="Color جوه الـ entity">
+
+```dart
+// domain/book_status.dart
+import 'package:flutter/material.dart'; // now the domain needs Flutter to compile
+
+enum BookStatus {
+  wantToRead(Colors.grey),
+  reading(Colors.blue),
+  finished(Colors.green);
+
+  const BookStatus(this.color);
+  final Color color;
+}
+```
+
+</CodeBlock>
+
+شكلها بريئة، بس دلوقتي تستات الـ Domain محتاجة Flutter، ومستحيل تنقل الـ Domain لـ package Dart صافي. واللون قرار تصميم مش قاعدة business: الـ dark mode ممكن يغيّره. مكانه الـ Presentation، كـ extension على الـ enum:
+
+<CodeBlock label="الشكل في الـ Presentation">
+
+```dart
+// domain/book_status.dart: plain Dart
+enum BookStatus { wantToRead, reading, finished }
+
+// presentation/book_status_ui.dart
+extension BookStatusUi on BookStatus {
+  Color color(ColorScheme scheme) => switch (this) {
+        BookStatus.wantToRead => scheme.outline,
+        BookStatus.reading => scheme.primary,
+        BookStatus.finished => scheme.tertiary,
+      };
+}
+```
+
+</CodeBlock>
+
+ونفس الكلام في الـ `IconData` والنصوص المترجمة والـ `BuildContext`: أي حاجة محتاجة `package:flutter` مكانها بره الـ Domain.
+
+### الـ Cubit بيمسك DioException
+
+<CodeBlock label="الـ exception عدّت الحدود">
+
+```dart
+try {
+  emit(LibraryLoaded(await _repository.getLibrary()));
+} on DioException catch (e) {
+  if (e.response?.statusCode == 401) emit(const LibrarySessionExpired());
+}
+```
+
+</CodeBlock>
+
+الـ Cubit بقى بيعمل import لـ dio، يعني الـ Presentation بقت تعرف الـ Data من الباب الخلفي. لو بدّلت dio بـ http، الشاشات هتتكسر. الحل إن الـ repository يحوّل الـ exception لـ `Failure` عند الحد، والـ Cubit يعمل switch على `UnauthorizedFailure`. ده درس الأخطاء في الوحدة 2.
+
+### القاعدة اتكسرت ومحدش لاحظ
+
+الـ code review بيعدّي import غلط في يوم زحمة. اللي مابيعدّيهوش تست بيفشل. قبل ما تقسّم لـ packages (الوحدة 6)، تست صغير بيقرا ملفات الـ Domain ويتأكد إن مفيش فيها imports ممنوعة:
+
+<CodeBlock label="test/architecture_test.dart">
+
+```dart
+import 'dart:io';
+import 'package:flutter_test/flutter_test.dart';
+
+void main() {
+  test('domain imports no Flutter, dio or data', () {
+    final forbidden = RegExp(r"import '(package:flutter/|package:dio/|.*/data/)");
+    final offenders = Directory('lib/features')
+        .listSync(recursive: true)
+        .whereType<File>()
+        .where((f) => f.path.replaceAll(r'\', '/').contains('/domain/'))
+        .where((f) => f.readAsLinesSync().any(forbidden.hasMatch))
+        .map((f) => f.path)
+        .toList();
+
+    expect(offenders, isEmpty, reason: 'domain must stay plain Dart');
+  });
+}
+```
+
+</CodeBlock>
+
+الـ CI بيشغّله مع باقي التستات، فأول import غلط بيوقف الـ merge. ونفس الفكرة بأداة أقوى في درس الـ Refactor في الوحدة 8.
+
 
 </Level>
 
@@ -105,6 +230,10 @@ import 'package:flutter/material.dart';        // NO
 - <b>feature-first ولا layer-first؟</b> الـ layer-first (فولدر data واحد لكل المشروع) بيخلي أي feature متفرقة على 3 أماكن، وبيسهّل الـ imports العشوائية بين الـ features. الـ feature-first بيخليك تشيل feature كاملة أو تحوّلها لـ package مرة واحدة.
 - <b>الـ core:</b> مكان الحاجات المشتركة فعلًا (Result، Failure، إعداد dio). لو حاجة بتخدم feature واحدة أو اتنين بس، خليها في واحدة منهم. الـ core اللي بيكبر من غير ضابط بيبقى «مكان أي حاجة»، وده عكس الهدف.
 - <b>القاعدة لازم تتفرض بأداة:</b> «إحنا متفقين محدش يعمل import غلط» بيتكسر في أول deadline. الحل: تقسيم لـ packages (درس «التوسّع والـ production» في الوحدة 6) أو lint rules، فالـ import الغلط يبقى error.
+- <b>مش كل feature محتاجة 3 طبقات:</b> الـ settings مثلًا مفيهاش قواعد تتحمي، فالـ Cubit بيكلّم store صغير على طول (درس «Settings: feature من غير domain» في الوحدة 6). الطبقة بتتعمل لما يبقى في حاجة تحميها، مش عشان الفولدر موجود.
+- <b>الـ Domain بيتكلم بلغة الـ business:</b> أسماء زي `BookStatus.finished` و`AddBookToLibrary`، مش `status: 2` ولا `postLibraryItem`. لو أسماء الـ Domain شبه الـ endpoints، يبقى الـ API هو اللي بيصمم المشروع مش انت.
+- <b>التنسيق للعرض مكانه الـ Presentation:</b> «اتضاف من 3 أيام» أو السعر بالجنيه بفاصلة، ده عرض مش قاعدة، ومحتاج اللغة الحالية. الـ entity بتشيل `DateTime`، والـ widget أو extension في الـ Presentation بيحوّله لنص.
+- <b>entity مشتركة بين features:</b> لو `BookId` محتاجاه library وnotes، مكانه حاجة الاتنين يعتمدوا عليها (الـ core أو الـ public API بتاع library)، مش إن notes تعمل import لـ internals بتاعة library.
 
 <Note kind="interview" title="سؤال interview">
 
@@ -164,6 +293,15 @@ import 'package:flutter/material.dart';        // NO
 <Answer>
 
 إنه بقى فيه حاجات بتخدم feature واحدة، وأي تغيير فيه بيأثر على المشروع كله.
+
+</Answer>
+</Question>
+
+<Question id="layers-4">
+<Ask>كل حالة كتاب (`BookStatus`) محتاجة لون في الشاشة. تحط اللون فين، وليه مش جوه الـ enum نفسه؟</Ask>
+<Answer>
+
+في extension على `BookStatus` في الـ Presentation، بياخد الألوان من الـ theme. لو اللون جوه الـ enum، الـ Domain هيعمل import لـ Flutter، وتستاته هتحتاج Flutter، واللون قرار تصميم مش قاعدة business.
 
 </Answer>
 </Question>

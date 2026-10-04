@@ -1,6 +1,7 @@
 ---
 title: "Offline-first"
 description: "الـ app يشتغل من غير نت، والسيرفر يلحق بعدين."
+minutes: 40
 ---
 
 <Level n="1" title="الفكرة بتشبيه">
@@ -11,6 +12,7 @@ description: "الـ app يشتغل من غير نت، والسيرفر يلحق
 
 </Analogy>
 
+ولو الزبون طلب شاي وبعدين لغاه قبل ما السيستم يرجع، الجرسون الشاطر بيشطب السطرين من الدفتر، مش بيدخّل الطلب ويلغيه. ولو سأل الزبون «طلبي اتبعت للمطبخ؟» بيبص في الدفتر ويرد. الدرس ده عن الدفتر ده: بيتكتب فيه إيه، وبيتفضّى امتى، والزبون يعرف حالته إزاي.
 
 </Level>
 
@@ -27,9 +29,11 @@ Readly هيوصل للمستوى 2. أول خطوة: جدول في drift، وstr
 <CodeBlock label="drift: جدول وstream">
 
 ```dart
+@DataClassName('BookRow')
 class Books extends Table {
   TextColumn get id => text()();
   TextColumn get title => text()();
+  TextColumn get status => textEnum<BookStatus>()();
   TextColumn get syncState => text().withDefault(const Constant('synced'))();
   DateTimeColumn get updatedAt => dateTime()();
 
@@ -37,13 +41,15 @@ class Books extends Table {
   Set<Column> get primaryKey => {id};
 }
 
-@DriftDatabase(tables: [Books])
+@DriftDatabase(tables: [Books, SyncOps])
 class AppDatabase extends _$AppDatabase {
   AppDatabase(super.e);
   @override
   int get schemaVersion => 1;
 
-  Stream<List<BookRow>> watchBooks() => select(books).watch();
+  // tombstones stay in the table until the server confirms the delete
+  Stream<List<BookRow>> watchBooks() =>
+      (select(books)..where((b) => b.syncState.equals('deleted').not())).watch();
 }
 ```
 
@@ -51,10 +57,30 @@ class AppDatabase extends _$AppDatabase {
 
 الـ `watch()` بيرجّع stream بيطلّع قيمة جديدة كل ما الجدول يتغير. ده سر الـ offline-first: أي كتابة في الـ DB بتظهر في الشاشة فورًا.
 
+- <b>الـ syncState:</b> حالة الصف نفسه: `synced` (زي السيرفر)، أو `pending` (فيه تعديل لسه ماتبعتش)، أو `deleted` (اتمسح هنا ولسه السيرفر مايعرفش).
+- <b>الـ textEnum:</b> بيخزّن اسم الـ enum كـ text، فلو زوّدت قيمة جديدة للـ enum بعدين مش محتاج migration.
+
+الـ constructor اللي drift بيولّده لـ `BookRow` بيطلب كل الأعمدة، حتى اللي ليها default في الجدول (الـ default بيتطبق على الـ Companion بس). فالـ `toRow` بتاع درس التخزين المحلي لازم ياخد العمود الجديد هو كمان، بنفس الـ default:
+
+<CodeBlock label="الـ toRow بيكبر مع الجدول">
+
+```dart
+extension BookToRow on Book {
+  BookRow toRow({required DateTime updatedAt, String syncState = 'synced'}) => BookRow(
+        id: id.value,
+        title: title,
+        status: status,
+        syncState: syncState,
+        updatedAt: updatedAt,
+      );
+}
+```
+
+</CodeBlock>
 
 </Level>
 
-<Level n="3" title="Single source of truth والـ sync queue">
+<Level n="3" title="الـ sync queue والمشاكل الحقيقية">
 
 <Diagram name="d-b57f03dfab">
 
@@ -62,31 +88,55 @@ class AppDatabase extends _$AppDatabase {
 
 </Diagram>
 
+الـ queue نفسها جدول تاني في نفس الـ DB. كل صف فيه عملية واحدة لسه السيرفر ماعرفهاش:
+
+<CodeBlock label="جدول الـ sync queue">
+
+```dart
+enum SyncKind { addBook, updateStatus, removeBook }
+enum SyncState { pending, syncing, failed }
+
+class SyncOps extends Table {
+  IntColumn get id => integer().autoIncrement()(); // insertion order = send order
+  TextColumn get kind => textEnum<SyncKind>()();
+  TextColumn get bookId => text()();
+  TextColumn get state => textEnum<SyncState>().withDefault(const Constant('pending'))();
+  IntColumn get attempts => integer().withDefault(const Constant(0))();
+}
+```
+
+</CodeBlock>
+
+drift بيولّد من الجدول ده data class اسمها `SyncOp`. لاحظ إن العملية مافيهاش بيانات الكتاب، فيها نوعها والـ id بس. وقت الإرسال، الـ SyncService بيقرا الصف من `Books`، فبيبعت دايمًا آخر نسخة. ده هيفرق جامد في المشاكل اللي تحت.
+
 <CodeBlock label="الـ repository">
 
 ```dart
 class LibraryRepositoryImpl implements LibraryRepository {
-  LibraryRepositoryImpl(this._db, this._remote, this._queue);
+  LibraryRepositoryImpl(this._db, this._remote, this._queue, this._clock);
   final AppDatabase _db;
   final LibraryRemoteSource _remote;
   final SyncQueue _queue;
+  final Clock _clock;
 
   @override
   Stream<List<Book>> watchLibrary() =>
-      _db.watchBooks().map((rows) => rows.map((r) => r.toEntity()).toList());
+      _db.watchBooks().map((rows) => [for (final r in rows) r.toEntity()]);
 
   @override
   Future<Result<void>> addBook(Book book) => guard(() async {
         await _db.transaction(() async {
-          await _db.upsertBook(BookRow.fromEntity(book, syncState: 'pending'));
-          await _queue.enqueue(SyncOp.addBook(book.id));
+          final row = book.toRow(updatedAt: _clock.now()).copyWith(syncState: 'pending');
+          await _db.upsertBook(row);
+          await _queue.enqueue(SyncKind.addBook, book.id.value);
         });
       });
 
   @override
   Future<Result<void>> refresh() => guard(() async {
         final dtos = await _remote.fetchLibrary();
-        await _db.upsertBooks(dtos.map(BookRow.fromDto));
+        final now = _clock.now();
+        await _db.upsertBooks(dtos.map((d) => d.toEntity().toRow(updatedAt: now)));
       });
 }
 ```
@@ -94,6 +144,7 @@ class LibraryRepositoryImpl implements LibraryRepository {
 </CodeBlock>
 
 - <b>الـ addBook</b> مابيستناش النت: بيكتب في الـ DB بحالة pending ويضيف عملية في الـ queue، والاتنين في transaction واحدة عشان مايحصلش واحد من غير التاني.
+- <b>الـ toRow والـ toEntity:</b> الـ extensions بتاعة درس الـ local storage. الـ `BookRow` drift هو اللي بيولّده، فمانقدرش نزوّد عليه constructor، والـ `copyWith` اللي drift بيولّده بيغيّر الـ `syncState`.
 - <b>الـ refresh</b> مابيرجّعش بيانات للـ UI: بيكتب في الـ DB، والـ stream يوصّل التحديث لوحده.
 
 <Diagram name="d-eef8045129">
@@ -106,23 +157,26 @@ class LibraryRepositoryImpl implements LibraryRepository {
 
 ```dart
 class SyncService {
-  SyncService(this._queue, this._remote, this._db, this._connectivity);
-  // ...
+  SyncService(this._queue, this._remote, this._db, this._network);
+  final SyncQueue _queue;
+  final LibraryRemoteSource _remote;
+  final AppDatabase _db;
+  final NetworkStatus _network;
 
   void start() {
-    _connectivity.onOnline.listen((_) => _drain());
+    _network.onOnline.listen((_) => _drain());
   }
 
   Future<void> _drain() async {
     for (final op in await _queue.pending()) {
       await _queue.mark(op, SyncState.syncing);
       try {
-        await _remote.apply(op);
-        await _db.markSynced(op.bookId);
+        await _send(op);
         await _queue.remove(op);
+        await _db.markSynced(op.bookId);
       } on DioException catch (e) {
         if (e.response?.statusCode == 409) {
-          await _resolveConflict(op);
+          await _resolveConflict(op, e); // the next lesson
         } else {
           await _queue.mark(op, SyncState.failed); // retried later with backoff
           break; // keep the order: stop at the first failure
@@ -130,28 +184,389 @@ class SyncService {
       }
     }
   }
+
+  // the op says what changed, the row says what it looks like now
+  Future<void> _send(SyncOp op) async {
+    final row = await _db.bookById(op.bookId);
+    switch (op.kind) {
+      case SyncKind.addBook:
+        await _remote.addBook(row!.toDto());
+      case SyncKind.updateStatus:
+        await _remote.updateStatus(op.bookId, row!.status.name);
+      case SyncKind.removeBook:
+        await _remote.removeBook(op.bookId);
+    }
+  }
 }
 ```
 
 </CodeBlock>
 
+الـ `_queue.pending()` بترجّع العمليات اللي حالتها pending أو failed، مترتبة بالـ id. الكود ده شغال في الديمو، بس في الاستخدام الحقيقي فيه 6 مشاكل.
+
+### الـ refresh رجّع الحالة القديمة
+
+المستخدم أوفلاين وغيّر حالة كتاب لـ «خلصته». بعدها بدقيقة النت رجع، والـ refresh اشتغل قبل الـ sync. السيرفر لسه شايف «بقراه»، فالـ upsert كتب «بقراه» فوق «خلصته». والمصيبة الأكبر: العملية اللي في الـ queue بتقرا الصف وقت الإرسال، فهتبعت «بقراه» للسيرفر. تعديل المستخدم ضاع خالص.
+
+القاعدة: الصف اللي عليه تعديل لسه ماتبعتش ملكك انت، مش ملك السيرفر، لحد ما الـ queue تبعته:
+
+<CodeBlock label="upsert مايلمسش صف pending">
+
+```dart
+// inside AppDatabase
+Future<void> upsertBooks(Iterable<BookRow> rows) => batch((b) {
+      for (final row in rows) {
+        b.insert(
+          books,
+          row,
+          onConflict: DoUpdate(
+            (_) => row,
+            // only overwrite rows that have nothing waiting to sync
+            where: (old) => old.syncState.equals('synced'),
+          ),
+        );
+      }
+    });
+```
+
+</CodeBlock>
+
+الكتب الجديدة بتتضاف عادي، والكتب الـ synced بتتحدث، والـ pending والـ deleted بيفضلوا زي ما هما. ولما الـ queue تبعت تعديلها والصف يرجع synced، الـ refresh الجاي هيحدّثه.
+
+### connectivity_plus قال wifi والنت مش شغال
+
+الـ connectivity_plus بيقولك الموبايل متوصل بإيه: wifi ولا mobile ولا مفيش. مابيقولكش إن في <b>internet</b>. wifi كافيه لسه ماعملتش فيه login، أو راوتر النت عنده فاصل، أو VPN واقع: كل دول بيطلعوا `wifi`. ولو الـ SyncService صدّقه، هيعتبر كل طلب فاشل bug.
+
+الحل إن الـ connectivity يبقى <b>تلميح</b> مش حكم: «جرّب دلوقتي». الطلب نفسه هو اللي بيقول إذا كان في نت ولا لأ:
+
+<CodeBlock label="NetworkStatus">
+
+```dart
+// core/network/network_status.dart
+abstract interface class NetworkStatus {
+  /// A hint that the network may be back. Only a real request can confirm it.
+  Stream<void> get onOnline;
+}
+
+class ConnectivityNetworkStatus implements NetworkStatus {
+  ConnectivityNetworkStatus(this._connectivity);
+  final Connectivity _connectivity; // connectivity_plus
+
+  @override
+  Stream<void> get onOnline => _connectivity.onConnectivityChanged
+      .where((results) => !results.contains(ConnectivityResult.none))
+      .map((_) {});
+}
+```
+
+</CodeBlock>
+
+- <b>ماتمنعش الكتابة بسببه:</b> الكتابة بتروح للـ DB دايمًا، أوفلاين أو أونلاين.
+- <b>ماتمنعش الطلبات بسببه:</b> لو قال «مفيش» وهو غلطان، هتفضل أوفلاين وانت متوصل. سيب الطلب يخرج، والـ `connectTimeout` بتاع dio بيخليه يفشل بسرعة.
+- <b>الـ interface ده في core:</b> الـ SyncService مايعرفش connectivity_plus، وفي التست بتديله stream انت اللي بتتحكم فيه. نفس فكرة الـ Clock.
+
+### الـ sync يشتغل امتى؟
+
+الـ SyncService المبسّط بيشتغل لما النت يرجع بس. يعني لو ضفت كتاب والنت شغال أصلًا، مش هيتبعت لحد ما النت يفصل ويرجع. اللحظات اللي لازم يشتغل فيها:
+
+| اللحظة | ليه |
+| --- | --- |
+| عملية جديدة دخلت الـ queue | الحالة العادية: النت شغال وعايزها تتبعت حالًا |
+| الـ app فتح | عمليات فاضلة من آخر مرة |
+| النت رجع | اللي اتكتب وانت أوفلاين |
+| الـ app رجع من الخلفية | الموبايل كان نايم، والنت ممكن يكون رجع وانت مش شايف |
+| بعد الـ login | الـ session كانت خلصت والعمليات مستنية |
+
+ولما يبقى عندك 5 أماكن بتشغّل الـ drain، هيحصل إن اتنين يشتغلوا في نفس اللحظة: النت رجع والمستخدم ضاف كتاب. الاتنين هيقروا نفس العمليات من الـ queue، وهيبعتوا نفس العملية مرتين. الحل باب واحد للـ drain:
+
+<CodeBlock label="requestSync: drain واحد في المرة">
+
+```dart
+class SyncService {
+  // ...
+  final _subs = <StreamSubscription<void>>[];
+  bool _running = false;
+  bool _again = false;
+
+  void start() {
+    _subs
+      ..add(_network.onOnline.listen((_) => requestSync()))
+      ..add(_queue.onEnqueued.listen((_) => requestSync()));
+    requestSync(); // app start: ops left from the last session
+  }
+
+  /// Safe to call from anywhere, any number of times.
+  Future<void> requestSync() async {
+    if (_running) {
+      _again = true; // something changed mid-drain: one more pass after this one
+      return;
+    }
+    _running = true;
+    try {
+      do {
+        _again = false;
+        await _drain();
+      } while (_again);
+    } finally {
+      _running = false;
+    }
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ _running:</b> نفس فكرة الـ flag في درس الـ Cubit. بيتحط قبل أول await، فمحدش يعدّي بعدك.
+- <b>الـ _again:</b> لو عملية جديدة دخلت والـ drain شغال، ممكن يكون عدّى عليها خلاص. فبدل ما نرميها، نعمل لفة كمان بعد ما يخلص.
+- <b>الـ onEnqueued:</b> stream جوه الـ SyncQueue بيطلّع حدث مع كل enqueue. كده الـ repository مايعرفش إن في SyncService أصلًا.
+
+والـ «رجع من الخلفية» مكانه الـ app، مش الـ data layer:
+
+<CodeBlock label="app resumed">
+
+```dart
+// app/readly_app.dart, inside the State of ReadlyApp
+late final AppLifecycleListener _lifecycle;
+
+@override
+void initState() {
+  super.initState();
+  _lifecycle = AppLifecycleListener(onResume: getIt<SyncService>().requestSync);
+}
+
+@override
+void dispose() {
+  _lifecycle.dispose();
+  super.dispose();
+}
+```
+
+</CodeBlock>
+
+وبعد الـ login: `getIt<AuthCubit>().stream.where((s) => s is Authenticated).listen((_) => getIt<SyncService>().requestSync())` في `di/setup.dart`، جنب الـ reset بتاع درس الـ Session.
+
+### «ضيف» وبعدين «امسح» لنفس الكتاب وانت أوفلاين
+
+المستخدم أوفلاين: ضاف كتاب، غيّر حالته 3 مرات، وبعدين مسحه. الـ queue فيها 5 عمليات. لما النت يرجع، السيرفر هياخد 5 طلبات عشان يوصل لنفس النقطة اللي بدأ منها: مفيش كتاب. ولو واحد فيهم فشل في النص، المستخدم هيشوف error لكتاب مش موجود.
+
+الحل إن الـ enqueue يبص على العمليات اللي <b>لسه محدش لمسها</b> لنفس الكتاب، قبل ما يضيف واحدة جديدة:
+
+<CodeBlock label="SyncQueue.enqueue بيدمج">
+
+```dart
+// data/sync_queue.dart
+class SyncQueue {
+  SyncQueue(this._db);
+  final AppDatabase _db;
+  final _enqueued = StreamController<void>.broadcast();
+
+  Stream<void> get onEnqueued => _enqueued.stream;
+
+  Future<void> enqueue(SyncKind kind, String bookId) async {
+    final unsent = await _unsent(bookId);
+    // ops read the row when sent, so an unsent add or status op will carry the new status
+    final covered = kind == SyncKind.updateStatus &&
+        unsent.any((o) => o.kind == SyncKind.addBook || o.kind == SyncKind.updateStatus);
+    if (!covered) {
+      await _db.into(_db.syncOps).insert(SyncOpsCompanion.insert(kind: kind, bookId: bookId));
+    }
+    _enqueued.add(null);
+  }
+
+  // pending = no drain has touched it, so the server has never seen it
+  Future<List<SyncOp>> _unsent(String bookId) => (_db.select(_db.syncOps)
+        ..where((o) => o.bookId.equals(bookId) & o.state.equalsValue(SyncState.pending))
+        ..orderBy([(o) => OrderingTerm.asc(o.id)]))
+      .get();
+}
+```
+
+</CodeBlock>
+
+والمسح بيتعمل في الـ repository، لأنه محتاج يلمس جدول الكتب كمان:
+
+<CodeBlock label="removeBook">
+
+```dart
+@override
+Future<Result<void>> removeBook(BookId id) => guard(() async {
+      await _db.transaction(() async {
+        final add = await _queue.unsentAdd(id.value);
+        if (add != null) {
+          // the server never saw this book: drop the add and every op after it
+          await _queue.dropFrom(add);
+          await _db.deleteBook(id.value);
+        } else {
+          await _db.markDeleted(id.value); // tombstone: hidden from the UI, kept for the sync
+          await _queue.enqueue(SyncKind.removeBook, id.value);
+        }
+      });
+    });
+```
+
+</CodeBlock>
+
+| في الـ queue لنفس الكتاب | العملية الجديدة | اللي بيحصل |
+| --- | --- | --- |
+| add لسه pending | updateStatus | مفيش عملية جديدة: الـ add هيبعت الحالة الجديدة |
+| updateStatus لسه pending | updateStatus | مفيش عملية جديدة |
+| add لسه pending | removeBook | الـ add واللي بعدها بيتشالوا، والصف بيتمسح. السيرفر مش هيعرف حاجة |
+| add حالتها syncing أو failed | removeBook | removeBook عادي |
+
+الصف الأخير هو المهم. عملية حالتها failed اتبعتت قبل كده، وممكن تكون <b>وصلت السيرفر</b> والرد هو اللي ضاع. لو شلتها، الكتاب هيفضل على السيرفر للأبد. علشان كده الدمج بيبص على pending بس. وموضوع «وصلت ولا لأ» ده هو الدرس الجاي كله.
+
+وفي مشكلة صغيرة في الـ drain بسبب نفس الفكرة: بعد ما الـ add تنجح، الـ `markSynced` بيشيل علامة «مستني مزامنة»، مع إن ممكن يكون في updateStatus لنفس الكتاب لسه في الـ queue. الصف يبقى synced بس لما مايبقاش ليه عمليات:
+
+```dart
+await _db.transaction(() async {
+  await _queue.remove(op);
+  if (op.kind == SyncKind.removeBook) {
+    await _db.deleteBook(op.bookId); // the tombstone did its job
+  } else if (!await _queue.hasOps(op.bookId)) {
+    await _db.markSynced(op.bookId);
+  }
+});
+```
+
+### المستخدم ضاف كتاب وقفل الـ app على طول
+
+العملية دخلت الـ queue، والمستخدم قفل الـ app قبل ما الـ drain يخلص. هتتبعت أول ما يفتح الـ app تاني، ودي ممكن تبقى بعد أسبوع. لو عايز الـ sync يحصل والـ app مقفول، محتاج الـ OS نفسه يصحّي الـ app. ده شغل <b>workmanager</b>:
+
+<CodeBlock label="workmanager">
+
+```dart
+// main.dart
+@pragma('vm:entry-point') // keep it in release builds
+void callbackDispatcher() {
+  Workmanager().executeTask((task, inputData) async {
+    // a fresh isolate: nothing from main() exists here
+    await setupDependencies();
+    await getIt<SyncService>().requestSync();
+    return true; // the queue keeps what failed, no need for the OS to retry
+  });
+}
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await setupDependencies();
+  await Workmanager().initialize(callbackDispatcher);
+  await Workmanager().registerPeriodicTask(
+    'readly-sync',
+    'sync',
+    frequency: const Duration(minutes: 15), // the Android minimum
+    constraints: Constraints(networkType: NetworkType.connected),
+  );
+  getIt<SyncService>().start();
+  runApp(const ReadlyApp());
+}
+```
+
+</CodeBlock>
+
+الحدود اللي لازم تعرفها قبل ما تعتمد عليه:
+
+- <b>Android:</b> أقل فترة 15 دقيقة، والـ OS بيأجّلها أكتر في الـ Doze mode وتوفير البطارية، وفي شركات موبايلات بتقتل الشغل ده خالص.
+- <b>iOS:</b> النظام هو اللي بيقرر امتى (وأحيانًا مابيشغلش خالص لو المستخدم نادرًا بيفتح الـ app)، ومحتاج تسجّل الـ task identifier في `Info.plist` وفي الـ `AppDelegate`.
+- <b>isolate تاني:</b> الـ get_it فاضي، فلازم `setupDependencies` تاني. والـ Keychain لازم يتقري والموبايل مقفول (`first_unlock` من درس الـ Session).
+
+يعني workmanager «بونص»، مش ضمان. الضمان هو اللحظات اللي في الجدول فوق.
+
+والـ isolate التاني بيجيب مشكلتين:
+
+1. <b>drain في isolate الخلفية وdrain في الـ app في نفس الوقت:</b> الـ `_running` flag جوه كل isolate لوحده، فمابيحميش. الحماية لازم تبقى في الـ DB نفسها.
+2. <b>الـ app اتقفل والعملية syncing:</b> العملية هتفضل syncing للأبد، ومحدش هيبعتها تاني.
+
+<CodeBlock label="claim وrecoverStuck في الـ SyncQueue">
+
+```dart
+/// Takes the op for this drain. False if someone else took it first.
+Future<bool> claim(SyncOp op) async {
+  final changed = await (_db.update(_db.syncOps)
+        ..where((o) => o.id.equals(op.id) & o.state.equalsValue(op.state)))
+      .write(const SyncOpsCompanion(state: Value(SyncState.syncing)));
+  return changed == 1; // SQLite runs this UPDATE atomically
+}
+
+/// On app start: "syncing" with no drain running means the app died mid-request.
+Future<void> recoverStuck() => (_db.update(_db.syncOps)
+      ..where((o) => o.state.equalsValue(SyncState.syncing)))
+    .write(const SyncOpsCompanion(state: Value(SyncState.failed)));
+```
+
+</CodeBlock>
+
+- <b>الـ claim:</b> الـ UPDATE فيه شرط إن الحالة لسه زي ما قريتها. لو isolate تاني سبقك، الحالة اتغيرت، فالـ UPDATE مش هيلاقي صف، والـ drain يكمّل للعملية اللي بعدها.
+- <b>الـ recoverStuck بيرجّعها failed مش pending:</b> العملية دي ممكن تكون وصلت السيرفر. لو رجعت pending، الدمج هيتعامل معاها كأنها ماتبعتتش. ولو الـ isolate التاني كان لسه شغال فعلًا، العملية هتتبعت مرتين. ده مش هيبوّظ حاجة بعد الدرس الجاي، لأن الـ idempotency key بيخلّي السيرفر يتجاهل التكرار.
+- <b>الـ streams:</b> drift مابيحسّش بالكتابة اللي جاية من isolate تاني. لما الـ app يرجع من الخلفية، نادي `_db.markTablesUpdated({_db.books, _db.syncOps})` قبل الـ requestSync، فكل الـ streams تقرا من الأول.
+
+### المستخدم مش عارف إيه اللي اتبعت
+
+الكتاب ظاهر في المكتبة، بس المستخدم مش عارف إذا كان اتحفظ على السيرفر ولا لأ. لو فتح Readly من موبايل تاني ومالقاهوش، هيفتكر إنه ضاع. الـ queue نفسها عارفة الإجابة، والـ UI محتاجة تسمع عليها:
+
+<CodeBlock label="SyncStatus من الـ queue">
+
+```dart
+// domain/sync_status.dart
+class SyncStatus {
+  const SyncStatus({this.unsynced = const {}, this.failing = 0});
+  final Set<BookId> unsynced; // books with at least one op in the queue
+  final int failing;          // ops the server itself answered with an error
+}
+
+// data/library_repository_impl.dart
+@override
+Stream<SyncStatus> watchSyncStatus() =>
+    _db.select(_db.syncOps).watch().map((ops) => SyncStatus(
+          unsynced: {for (final o in ops) BookId.fromTrusted(o.bookId)},
+          failing: ops.where((o) => o.attempts > 0).length,
+        ));
+```
+
+</CodeBlock>
+
+<CodeBlock label="Cubit واحد للـ app كله">
+
+```dart
+class SyncStatusCubit extends Cubit<SyncStatus> {
+  SyncStatusCubit(LibraryRepository repository) : super(const SyncStatus()) {
+    _sub = repository.watchSyncStatus().listen(emit);
+  }
+  late final StreamSubscription<SyncStatus> _sub;
+
+  @override
+  Future<void> close() async {
+    await _sub.cancel();
+    return super.close();
+  }
+}
+
+// a small cloud icon on each tile, rebuilt only when this book's answer changes
+final unsynced = context.select((SyncStatusCubit c) => c.state.unsynced.contains(book.id));
+```
+
+</CodeBlock>
+
+- <b>علامة على كل كتاب:</b> أيقونة سحابة صغيرة بتختفي لما يتزامن. الـ `context.select` بيعيد بناء الـ tile ده بس لما الإجابة بتاعته تتغير، مش كل الليست مع كل تغيير في الـ queue.
+- <b>شريط واحد فوق:</b> بيظهر لو `failing` أكبر من صفر: «في تعديلات لسه ماوصلتش، هنحاول تاني». مش لكل عملية pending أو فشلت عشان مفيش نت، لأن دي الحالة العادية وانت أوفلاين. الـ `attempts` بيزيد بس لما السيرفر نفسه يرد بخطأ، والتفرقة دي في الدرس الجاي.
+- <b>الـ SyncStatusCubit زي الـ AuthCubit:</b> واحد للـ app كله، فبيتسجّل `registerLazySingleton`، وبيتحط فوق الـ router بـ `BlocProvider.value`. ومفيش logic، فبيكلّم الـ repository مباشرة من غير use case.
 
 </Level>
 
 <Level n="4" title="قرارات صعبة">
 
-- <b>الـ conflict:</b> عدّلت الكتاب أوفلاين، وفي نفس الوقت اتعدّل من جهاز تاني. محتاج سياسة مكتوبة: last-write-wins بـ updatedAt، أو server-wins، أو merge لكل حقل. أي واحدة تنفع، الغلط إنه يبقى سلوك عشوائي.
-- <b>الترتيب:</b> «ضيف كتاب» ثم «غيّر حالته» لازم يوصلوا بالترتيب ده. علشان كده الـ drain بيقف عند أول عملية فشلت.
-- <b>الحذف:</b> لو حذفت الصف من الـ DB فورًا، السيرفر عمره ما هيعرف. بتعلّمه «محذوف» (tombstone) لحد ما الحذف يتزامن، وبعدين تشيله.
-- <b>الوقت:</b> الـ last-write-wins معتمد على الوقت، فخلي الوقت جاي من abstraction اسمها Clock عشان تقدر تختبرها (شوف فصل SOLID).
+- <b>الـ conflict:</b> عدّلت الكتاب أوفلاين، وفي نفس الوقت اتعدّل من جهاز تاني. محتاج سياسة مكتوبة: last-write-wins بـ updatedAt، أو server-wins، أو merge لكل حقل. أي واحدة تنفع، الغلط إنه يبقى سلوك عشوائي. ده، ومعاه الـ retry اللي مايكررش العملية، موضوع الدرس الجاي.
+- <b>الترتيب:</b> «ضيف كتاب» ثم «غيّر حالته» لازم يوصلوا بالترتيب ده. علشان كده الـ drain بيقف عند أول عملية فشلت، والـ id بتاع الـ queue autoIncrement.
+- <b>العملية بتشاور على الصف ولا شايلة نسخة منه؟</b> في Readly العملية فيها نوعها والـ id بس، ووقت الإرسال بتقرا الصف. ده بيخلّي الدمج سهل، والسيرفر بياخد دايمًا آخر نسخة. التمن إنك مابتعرفش «إيه اللي اتغير بالظبط». لو محتاج ده (audit، أو عملية زي «زوّد عدد الصفحات 10» مش «خليها 120»)، العملية لازم تشيل الـ payload بتاعها، والدمج يبقى أصعب.
+- <b>الحذف:</b> لو حذفت الصف من الـ DB فورًا، السيرفر عمره ما هيعرف. بتعلّمه «محذوف» (tombstone) لحد ما الحذف يتزامن، وبعدين تشيله. والاستثناء الوحيد كتاب السيرفر ماشافهوش أصلًا.
+- <b>الوقت:</b> الـ last-write-wins معتمد على الوقت، فخلي الوقت جاي من abstraction اسمها Clock عشان تقدر تختبرها (شوف فصل SOLID). ونفس الكلام للنت: `NetworkStatus` مش connectivity_plus مباشرة.
+- <b>الـ workmanager يستاهل؟</b> لو المستخدم بيكتب أوفلاين ويقفل الـ app على طول (موبايل في المترو)، أيوه. بس هو isolate تاني بـ DI تاني، وsetup في Android وiOS، وبطارية. ابدأ بالـ triggers الخمسة، وزوّده لما الأرقام تقول إن عمليات بتستنى أيام.
 - <b>تمنه عالي:</b> offline-first بيضاعف تعقيد الـ data layer. لو الـ app مالوش استخدام حقيقي من غير نت، المستوى 1 كفاية.
 
 <Note kind="interview" title="سؤال interview">
 
-«يعني إيه single source of truth؟» الـ UI بتقرا من مصدر واحد بس هو stream من الـ local DB، والشبكة بتكتب في الـ DB ومابترجّعش بيانات للـ UI مباشرة. كده مستحيل الشاشة تعرض حاجة مختلفة عن الكاش.
+«يعني إيه single source of truth؟» الـ UI بتقرا من مصدر واحد بس هو stream من الـ local DB، والشبكة بتكتب في الـ DB ومابترجّعش بيانات للـ UI مباشرة. كده مستحيل الشاشة تعرض حاجة مختلفة عن الكاش. والسؤال اللي بعده غالبًا: «والـ refresh لو جه والمستخدم عنده تعديل لسه ماتبعتش؟» الـ upsert مايلمسش أي صف عليه عملية في الـ queue، لأن الصف ده الـ client هو اللي ماسك الحقيقة بتاعته لحد ما يتبعت.
 
 </Note>
-
 
 </Level>
 
@@ -159,25 +574,128 @@ class SyncService {
 
 ### الـ offline-first: الـ DB هي مصدر الحقيقة الوحيد
 
-الـ UI مابتاخدش بيانات من الـ network مباشرة خالص. الـ refresh بيكتب في الـ DB، والـ stream بيوصّل التحديث لوحده.
+الـ UI مابتاخدش بيانات من الـ network مباشرة خالص. الـ refresh بيكتب في الـ DB، والـ stream بيوصّل التحديث لوحده. والـ `updatedAt` جاي من الـ Clock، عشان يبقى قابل للتست.
 
 ```dart
 class LibraryRepositoryImpl implements LibraryRepository {
-  LibraryRepositoryImpl(this._remote, this._local);
-
-  final LibraryRemoteDataSource _remote;
-  final LibraryLocalDataSource _local;
-
-  @override
-  Stream<List<Book>> watchLibrary() => _local
-      .watchBooks()
-      .map((rows) => rows.map((row) => row.toEntity()).toList());
+  LibraryRepositoryImpl(this._db, this._remote, this._queue, this._clock);
+  final AppDatabase _db;
+  final LibraryRemoteSource _remote;
+  final SyncQueue _queue;
+  final Clock _clock;
 
   @override
-  Future<Result<void>> refreshLibrary() => guard(() async {
-        final dtos = await _remote.fetchLibrary();
-        await _local.upsertBooks(dtos.map(BookRow.fromDto));
+  Stream<List<Book>> watchLibrary() =>
+      _db.watchBooks().map((rows) => [for (final r in rows) r.toEntity()]);
+
+  @override
+  Future<Result<void>> addBook(Book book) => guard(() async {
+        await _db.transaction(() async {
+          await _db.upsertBook(
+            book.toRow(updatedAt: _clock.now()).copyWith(syncState: 'pending'),
+          );
+          await _queue.enqueue(SyncKind.addBook, book.id.value);
+        });
       });
+
+  @override
+  Future<Result<void>> updateStatus(BookId id, BookStatus status) => guard(() async {
+        await _db.transaction(() async {
+          await _db.updateStatus(id.value, status, at: _clock.now()); // also sets 'pending'
+          await _queue.enqueue(SyncKind.updateStatus, id.value);
+        });
+      });
+
+  // removeBook as in Level 3
+
+  @override
+  Future<Result<void>> refresh() => guard(() async {
+        final dtos = await _remote.fetchLibrary();
+        final now = _clock.now();
+        // skips rows waiting to sync
+        await _db.upsertBooks(dtos.map((d) => d.toEntity().toRow(updatedAt: now)));
+      });
+
+  // watchSyncStatus() as in Level 3
+}
+```
+
+### الـ SyncService بعد المشاكل كلها
+
+```dart
+class SyncService {
+  SyncService(this._queue, this._remote, this._db, this._network);
+  final SyncQueue _queue;
+  final LibraryRemoteSource _remote;
+  final AppDatabase _db;
+  final NetworkStatus _network;
+
+  final _subs = <StreamSubscription<void>>[];
+  bool _running = false;
+  bool _again = false;
+
+  Future<void> start() async {
+    await _queue.recoverStuck();
+    _subs
+      ..add(_network.onOnline.listen((_) => requestSync()))
+      ..add(_queue.onEnqueued.listen((_) => requestSync()));
+    await requestSync();
+  }
+
+  Future<void> requestSync() async {
+    if (_running) {
+      _again = true;
+      return;
+    }
+    _running = true;
+    try {
+      do {
+        _again = false;
+        await _drain();
+      } while (_again);
+    } finally {
+      _running = false;
+    }
+  }
+
+  Future<void> _drain() async {
+    for (final op in await _queue.pending()) {
+      if (!await _queue.claim(op)) continue; // another isolate has it
+      try {
+        await _send(op);
+        await _db.transaction(() async {
+          await _queue.remove(op);
+          if (op.kind == SyncKind.removeBook) {
+            await _db.deleteBook(op.bookId);
+          } else if (!await _queue.hasOps(op.bookId)) {
+            await _db.markSynced(op.bookId);
+          }
+        });
+      } on DioException {
+        await _queue.mark(op, SyncState.failed); // the next lesson: which errors, and when to retry
+        break;
+      }
+    }
+  }
+
+  Future<void> _send(SyncOp op) async {
+    final row = await _db.bookById(op.bookId);
+    switch (op.kind) {
+      case SyncKind.addBook:
+        await _remote.addBook(row!.toDto());
+      case SyncKind.updateStatus:
+        await _remote.updateStatus(op.bookId, row!.status.name);
+      case SyncKind.removeBook:
+        await _remote.removeBook(op.bookId);
+    }
+  }
+
+  Future<void> stop() async {
+    for (final sub in _subs) {
+      await sub.cancel();
+    }
+    _subs.clear();
+  }
 }
 ```
 
@@ -216,6 +734,24 @@ class LibraryRepositoryImpl implements LibraryRepository {
 <Answer>
 
 عشان يحافظ على ترتيب العمليات. لو كمّل، ممكن «غيّر الحالة» يوصل قبل «ضيف الكتاب».
+
+</Answer>
+</Question>
+
+<Question id="offline-4">
+<Ask>connectivity_plus بيقول `wifi`، بس كل الطلبات بتفشل. الـ SyncService المفروض يعمل إيه؟ وتمنع الكتابة لما يقول `none`؟</Ask>
+<Answer>
+
+الـ connectivity بيقول الموبايل متوصل بإيه، مش إن في internet، فهو تلميح «جرّب دلوقتي» بس. الـ drain بيجرب، ولو الطلب فشل العملية بتفضل في الـ queue لحد الـ trigger الجاي. والكتابة عمرها ما تتمنع: بتروح للـ DB والـ queue في كل الحالات.
+
+</Answer>
+</Question>
+
+<Question id="offline-5">
+<Ask>المستخدم أوفلاين: ضاف كتاب ومسحه بعدها بدقيقة. إيه اللي هيتبعت للسيرفر لما النت يرجع؟ وإيه اللي هيتغير لو الـ add كانت اتبعتت وفشلت؟</Ask>
+<Answer>
+
+ولا حاجة: الـ add لسه pending يعني السيرفر ماشافهاش، فالـ removeBook بيشيلها هي واللي بعدها ويمسح الصف. لكن لو الـ add حالتها failed، ممكن تكون وصلت والرد هو اللي ضاع، فالـ removeBook بيتضاف للـ queue عادي ويتبعت بعدها.
 
 </Answer>
 </Question>

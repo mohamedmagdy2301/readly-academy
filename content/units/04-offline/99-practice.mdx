@@ -10,9 +10,11 @@ type: "practice"
 <Task id="w4-3">اعمل sync queue: أي إضافة أو تعديل أوفلاين يتخزن كـ pending operation ويتبعت لما النت يرجع.</Task>
 <Task id="w4-4">اختار سياسة conflict (last-write-wins أو server-wins) واكتبها ADR.</Task>
 <Task id="w4-5">اعمل abstraction للوقت (Clock) واستخدمه في الـ conflict resolution، وتست بـ FixedClock (DIP).</Task>
+<Task id="w4-6">خلي الـ sync آمن مع الـ retry: `idempotencyKey` بيتولد مع العملية في الـ queue ويتبعت كـ `Idempotency-Key`، وmiddleware في الـ backend (Node وMongo) بـ unique index بيرجّع الرد المحفوظ. واكتب تست بـ fake remote بيضيّع أول رد، وتأكد إن الكتاب على السيرفر نسخة واحدة.</Task>
+<Task id="w4-7">فرّق الأخطاء في الـ SyncService: backoff مع jitter وحد أقصى للمحاولات للـ 5xx والـ 429، وdead letter للـ 4xx التانية بشريط في الـ UI فيه «حاول تاني» و«الغي التعديل». وتست الـ backoff بـ FixedClock.</Task>
 </Tasks>
 
-<Deliverable>اقفل النت، ضيف 3 كتب وعدّل واحد، افتح النت، والسيرفر يبقى متزامن.</Deliverable>
+<Deliverable>اقفل النت، ضيف 3 كتب وعدّل واحد وامسح واحد، افتح النت، والسيرفر يبقى متزامن. وبعدين خلي السيرفر يرجّع 500 مرتين لأول طلب: الكتاب يوصل نسخة واحدة بعد الـ backoff.</Deliverable>
 
 <ReviewQuestion>الـ sync queue تبع أنهي layer؟ ومين بيشغّلها؟</ReviewQuestion>
 

@@ -146,6 +146,167 @@ extension FailureL10n on Failure {
 
 </CodeBlock>
 
+### Failure محتاجة بيانات زيادة
+
+الـ backend بتاع Readly لما يرفض request، مابيرجّعش status بس. بيرجّع body بيقول إيه اللي حصل بالظبط:
+
+<CodeBlock label="422 من POST /books/OL1W/notes">
+
+```json
+{
+  "code": "validation_failed",
+  "message": "Invalid note",
+  "fields": { "text": "too_long" }
+}
+```
+
+</CodeBlock>
+
+الـ `_mapDio` الحالي بيرمي ده كله ويرجّع `ServerFailure(statusCode: 422)`. الشاشة عارفة إن في حاجة اترفضت، بس مش عارفة أنهي حقل ولا ليه. والـ status لوحده مش كفاية: الـ 409 ممكن تبقى «الإيميل مستخدم» في endpoint، و«الكتاب في مكتبتك أصلًا» في endpoint تاني. الحل إن الـ ServerFailure يشيل البيانات دي:
+
+<CodeBlock label="ServerFailure بيشيل الـ code والحقول">
+
+```dart
+final class ServerFailure extends Failure {
+  const ServerFailure(
+    super.message, {
+    this.statusCode,
+    this.code,
+    this.fieldErrors = const {},
+  });
+  final int? statusCode;
+  final String? code;                    // stable code from our backend
+  final Map<String, String> fieldErrors; // field name -> error code
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ _mapDio بيقرا الـ body">
+
+```dart
+Failure _mapDio(DioException e) => switch (e.type) {
+      // ...network and 401 as before
+      DioExceptionType.badResponse => _fromResponse(e.response),
+      _ => ServerFailure(e.message ?? 'Unexpected error'),
+    };
+
+ServerFailure _fromResponse(Response<dynamic>? res) {
+  final status = res?.statusCode;
+  final body = res?.data;
+  // a proxy can answer with HTML or nothing at all: never trust the shape
+  final code = switch (body) {
+    {'code': final String c} => c,
+    _ => null,
+  };
+  final fields = switch (body) {
+    {'fields': final Map<String, dynamic> f} => {
+        for (final MapEntry(:key, :value) in f.entries)
+          if (value is String) key: value,
+      },
+    _ => const <String, String>{},
+  };
+  return ServerFailure('HTTP $status ${code ?? ''}',
+      statusCode: status, code: code, fieldErrors: fields);
+}
+```
+
+</CodeBlock>
+
+- <b>الـ map patterns:</b> `{'code': final String c}` بيتأكد إن الـ body map، وفيه `code`، ونوعه String، في سطر واحد. لو أي حاجة من دول مش صح، بيروح للـ `_`. مفيش `as` ممكن يرمي TypeError جوه الـ guard نفسه.
+- <b>الـ code مش الـ message:</b> الـ message بتاع السيرفر بلغة واحدة وممكن يتغير في أي وقت. الـ code عقد بينك وبين الـ backend، والترجمة بتفضل في الـ app.
+
+<CodeBlock label="الـ Cubit بيوزّع الأخطاء على الحقول">
+
+```dart
+emit(switch (result) {
+  Success() => state.copyWith(status: FormStatus.success),
+  Err(failure: ServerFailure(:final fieldErrors)) when fieldErrors.isNotEmpty =>
+    state.copyWith(status: FormStatus.editing, serverErrors: fieldErrors),
+  Err(:final failure) =>
+    state.copyWith(status: FormStatus.failure, failure: failure),
+});
+
+// in the UI: the field picks its own text
+String? textError(AppLocalizations l10n) => switch (serverErrors['text']) {
+      'too_long' => l10n.errorNoteTooLong,
+      null => null,
+      _ => l10n.errorInvalidInput, // a code the app doesn't know yet
+    };
+```
+
+</CodeBlock>
+
+الـ `_` في الآخر مهم: الـ backend هيزوّد codes جديدة، والنسخ القديمة من الـ app لازم تعرض رسالة عامة معقولة بدل ما تقع أو تسكت. ودي نفس فكرة درس الـ Forms: الخطأ اللي بيخص حقل يظهر على الحقل، والباقي في snackbar.
+
+### زرار «حاول تاني» على خطأ عمره ما هيتصلح
+
+`ErrorView` بزرار retry لكل Failure شكله لطيف. بس لو السيرفر رجّع 400 لأن الـ request نفسه غلط، الضغط على retry هيبعت نفس الـ request ويرجع نفس الـ 400. المستخدم هيضغط 5 مرات ويقفل الـ app. السؤال لكل Failure: <b>لو نفس الطلب اتبعت تاني، ممكن ينجح؟</b>
+
+<CodeBlock label="canRetry جنب localized">
+
+```dart
+extension FailureRetry on Failure {
+  bool get canRetry => switch (this) {
+        NetworkFailure() => true, // the network may come back
+        ServerFailure(:final statusCode) =>
+          statusCode == null || statusCode >= 500 || statusCode == 429,
+        UnauthorizedFailure() => false, // the fix is logging in again
+        ValidationFailure() => false,   // the fix is changing the input
+        CacheFailure() => false,
+      };
+}
+
+// in the UI
+ErrorView(
+  message: failure.localized(l10n),
+  onRetry: failure.canRetry ? cubit.load : null, // no button when it can't help
+)
+```
+
+</CodeBlock>
+
+وفي فرق بين نوعين retry. الـ <b>retry التلقائي</b> مكانه الـ data layer: الـ RetryInterceptor اللي هنكتبه في درس dio بيعيد الأخطاء المؤقتة كام مرة من غير ما حد يحس. الـ Failure بتوصل للـ Cubit بس بعد ما المحاولات دي تخلص. والـ <b>retry اليدوي</b> قرار UI: الزرار يظهر لما المحاولة ممكن تفرق. الاتنين مابيعيدوش 4xx أبدًا.
+
+### الـ Result اللي محدش بص عليه
+
+الـ Result بيجبرك تتعامل مع الفشل، بشرط إنك تقراه:
+
+<CodeBlock label="الفشل اختفى">
+
+```dart
+Future<void> removeBook(BookId id) async {
+  await _removeBook(id); // the Result is dropped: a failure vanishes
+  emit(state.copyWith(justRemoved: true)); // "removed" snackbar
+}
+```
+
+</CodeBlock>
+
+الـ compiler مش هيقول حاجة: انت عملت await لـ Future ورميت اللي جواه. المستخدم شاف «اتشال» والكتاب لسه موجود. الـ `@useResult` من package:meta بيخلي الـ analyzer يطلّع warning لأي حد ينادي الـ method ويرمي نتيجتها:
+
+<CodeBlock label="@useResult على الـ contract">
+
+```dart
+import 'package:meta/meta.dart';
+
+abstract interface class LibraryRepository {
+  @useResult
+  Future<Result<void>> removeBook(BookId id);
+  // ...
+}
+
+class RemoveBookFromLibrary {
+  // ...
+  @useResult
+  Future<Result<void>> call(BookId id) async { /* ... */ }
+}
+```
+
+</CodeBlock>
+
+وفعّل `unawaited_futures` في `analysis_options.yaml`، عشان Future من غير await (ولا `unawaited(...)` صريحة) يطلع warning هو كمان.
+
 
 </Level>
 
@@ -154,10 +315,20 @@ extension FailureL10n on Failure {
 - <b>Result خاص بيك ولا Either من fpdart؟</b> الـ Result بالـ sealed classes بيدّيك نفس الفايدة من غير dependency، والـ switch عليه مقروء لأي حد. fpdart مفيد لو الفريق متعود على functional programming ومحتاج أدوات زي TaskEither.
 - <b>الـ exceptions للـ bugs، والـ Failures للمتوقع:</b> أي حاجة المستخدم ممكن يتسبب فيها أو العالم الخارجي (نت، سيرفر، input) تبقى Failure. أي حاجة معناها إن الكود نفسه غلط تفضل exception وتوصل لـ Sentry.
 - <b>الـ message في الـ Failure للـ logs مش للمستخدم:</b> النص اللي المستخدم بيشوفه دايمًا من ملفات الترجمة. الـ message الإنجليزي جوه الـ Failure بيساعدك في الـ debugging بس.
+- <b>نوع Failure جديد ولا field في نوع موجود؟</b> نوع جديد لما الـ app كله بيتصرف معاه بشكل مختلف: `UnauthorizedFailure` في أي شاشة معناها «روح للـ login». field لما ده تفصيلة شاشة واحدة بس: أخطاء الحقول، والـ code، وثواني الـ Retry-After. كل نوع جديد بيكسر كل switch في المشروع (`localized` و`canRetry` وغيرهم) لحد ما تتعامل معاه، وده مفيد لو الكل محتاج يتصرف، وإزعاج لو شاشة واحدة بس اللي يهمها.
+- <b>الـ sealed مابيتورثش من package تاني:</b> الـ subtypes بتاعة sealed class لازم تبقى في نفس الـ library (نفس الملف أو الـ part files بتاعته). لو `Failure` في core، feature الـ notes مش هتقدر تعمل `NoteTooLongFailure extends Failure`. ودي ميزة: core مش هيعرف حاجة عن الـ features. التفاصيل الخاصة بـ feature بتتشال كبيانات (`code: 'note_too_long'`) جوه نوع موجود.
+- <b>مش كل حاجة Result:</b> الحسابات الصافية في الـ domain اللي مابتفشلش بشكل متوقع، والـ streams زي `watchLibrary()`، بترجّع قيمتها على طول. لو كل function رجّعت Result، الـ switches هتملا الكود والإشارة المهمة «دي ممكن تفشل» هتضيع.
+- <b>الـ guard هو مكان الـ log كمان:</b> هو الحتة الوحيدة اللي شايفة الـ exception الأصلي قبل ما يتحول لـ Failure. ماتعملش log تاني في الـ Cubit لنفس الفشل. التفاصيل في درس الـ Observability.
 
 <Note kind="interview" title="سؤال interview">
 
 «ليه Result بدل exceptions؟» لأن الـ signature بتقول إن العملية ممكن تفشل، والـ compiler بيجبرك تتعامل مع كل نوع Failure. والـ exceptions بتفضل للحاجات غير المتوقعة، يعني الـ bugs.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«السيرفر رجّع 422 فيه أخطاء لكل حقل. إزاي توصلها للفورم من غير ما الـ Cubit يعرف dio؟» الـ guard هو اللي بيقرا الـ body وهو بيحوّل الـ DioException، وبيحط الـ code وأخطاء الحقول كبيانات جوه `ServerFailure`. الـ Cubit بيعمل pattern match على الـ failure ويحط `fieldErrors` في الـ state، والـ UI كل حقل بيختار نصه من الترجمة حسب الـ code، مع رسالة عامة لأي code مايعرفوش. والـ parsing نفسه بـ patterns مش `as`، عشان body بايظ مايرميش TypeError جوه الـ guard.
 
 </Note>
 
@@ -351,6 +522,24 @@ return switch (state.failure) {
 <Answer>
 
 كل switch على Failure في المشروع هيطلع compile error لحد ما تضيفها. ده مقصود: مستحيل تنساها.
+
+</Answer>
+</Question>
+
+<Question id="errors-4">
+<Ask>السيرفر رجّع 400 لأن الـ request نفسه غلط. تعرض زرار «حاول تاني»؟</Ask>
+<Answer>
+
+لأ. نفس الطلب هيرجع نفس الـ 400. الزرار يظهر بس لما المحاولة ممكن تفرق: النت فاصل، أو 5xx، أو 429. والقرار ده في مكان واحد (`canRetry` جنب `localized`) مش في كل شاشة.
+
+</Answer>
+</Question>
+
+<Question id="errors-5">
+<Ask>`Failure` sealed في core، وfeature الـ notes عايزة `NoteTooLongFailure extends Failure`. ينفع؟ وتعمل إيه؟</Ask>
+<Answer>
+
+ماينفعش: subtypes الـ sealed لازم تبقى في نفس الـ library. ودي حماية، عشان core مايعرفش حاجة عن الـ features. التفصيلة الخاصة بالـ feature بتتشال كبيانات جوه نوع موجود، زي `ServerFailure(code: 'note_too_long')` أو `fieldErrors`.
 
 </Answer>
 </Question>

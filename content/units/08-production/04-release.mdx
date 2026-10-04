@@ -1,0 +1,637 @@
+---
+title: "الـ Flavors والـ environments والـ release"
+description: "dev وstaging وprod من نفس الكود: config من ملف لكل environment داخل من الـ DI، وتلات apps جنب بعض على الموبايل، وrelease بيطلع من الـ CI متوقّع ومعاه الـ symbols."
+minutes: 30
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="المطبعة وتلات طبعات">
+
+دار نشر بتطبع نفس الكتاب تلات مرات: <b>نسخة المؤلف</b> مليانة ملاحظات وبيعدّل فيها براحته، و<b>بروفة المراجعة</b> شكلها زي الكتاب النهائي بالظبط بس عليها ختم «بروفة» عشان محدش يبيعها بالغلط، و<b>الطبعة اللي في المكتبات</b>. المحتوى واحد، والغلاف والختم والمخزن اللي رايحله مختلفين. والمطبعة مش بتطبع الطبعة النهائية من على مكتب حد: في ماكينة واحدة، بلوح طباعة متسجّل، وبيتحفظ منه نسخة أصلية لو حد اشتكى من صفحة بعد سنة.
+
+</Analogy>
+
+في Readly التلات طبعات هم الـ <b>environments</b>: dev بيكلّم سيرفر التطوير وفيه logs، وstaging شكله زي prod بالظبط بس بيكلّم سيرفر تجارب والـ QA بيجرّب عليه، وprod اللي عند المستخدمين. الـ <b>flavor</b> هو الغلاف: تلات apps بأسماء وأيقونات وids مختلفة، متسطّبين جنب بعض على نفس الموبايل. والماكينة الواحدة هي الـ <b>CI</b>: الـ release بيطلع منها بس، متوقّع ومتمضي، وبيتحفظ معاه الـ symbols اللي Sentry محتاجها عشان يقرا أي crash بعد كده.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+في درس التوسّع عملنا `main_dev.dart` و`main_prod.dart`، والقيم مكتوبة جوه الكود. هنا هنطلّع القيم لملف JSON لكل environment، ونزوّد staging، ونخلّي الـ build نفسه يقول هو أنهي environment.
+
+<CodeBlock label="config/dev.json">
+
+```json
+{
+  "APP_ENV": "dev",
+  "BASE_URL": "https://api-dev.readly.app",
+  "ENABLE_LOGS": true,
+  "SENTRY_DSN": "",
+  "NEW_NOTES": true
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="config/staging.json">
+
+```json
+{
+  "APP_ENV": "staging",
+  "BASE_URL": "https://api-staging.readly.app",
+  "ENABLE_LOGS": false,
+  "SENTRY_DSN": "https://publickey@o123.ingest.sentry.io/456",
+  "NEW_NOTES": true
+}
+```
+
+</CodeBlock>
+
+والـ `config/prod.json` نفس الـ keys: `APP_ENV` بـ `prod`، و`api.readly.app`، و`NEW_NOTES` بـ `false` لحد ما الـ QA يخلّص. الملفات دي في الـ repo عادي، لأن مافيهاش ولا سر، والسبب في Level 3.
+
+الـ `--dart-define-from-file` بياخد الملف ده ويحوّل كل key لـ define، زي ما تكون كتبت `--dart-define=BASE_URL=...` لكل سطر. والقيم بتتقري في Dart بـ `String.fromEnvironment` و`bool.fromEnvironment`، وبتتحط في الـ binary وقت الـ compile.
+
+<CodeBlock label="AppConfig: المكان الوحيد اللي بيقرا الـ defines">
+
+```dart
+// core/config/app_config.dart
+class AppConfig {
+  const AppConfig({
+    required this.name,
+    required this.baseUrl,
+    required this.enableLogs,
+    this.sentryDsn = '',
+    this.newNotes = false,
+  });
+
+  final String name; // dev, staging, prod
+  final String baseUrl;
+  final bool enableLogs;
+  final String sentryDsn; // empty: Sentry stays off
+  final bool newNotes; // the flag from the Refactor lesson
+
+  factory AppConfig.fromEnvironment() {
+    // const: fromEnvironment is only guaranteed to work in a const context
+    const name = String.fromEnvironment('APP_ENV');
+    const baseUrl = String.fromEnvironment('BASE_URL');
+    if (name.isEmpty || baseUrl.isEmpty) {
+      throw StateError('No config. Run with --dart-define-from-file=config/<env>.json');
+    }
+    return const AppConfig(
+      name: name,
+      baseUrl: baseUrl,
+      enableLogs: bool.fromEnvironment('ENABLE_LOGS'),
+      sentryDsn: String.fromEnvironment('SENTRY_DSN'),
+      newNotes: bool.fromEnvironment('NEW_NOTES'),
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>نفس الـ AppConfig:</b> نفس الـ fields اللي اتعملت في درس التوسّع (`name` و`baseUrl` و`enableLogs`)، و`newNotes` من درس الـ Refactor، وزاد `sentryDsn`. اللي اتغير هو مصدر القيم بس.
+- <b>الـ define الناقص بيرجع string فاضي:</b> مش error. لو حد شغّل `flutter run` من غير الملف، الـ app هيكلّم `""` ويطلّع أخطاء شبكة غريبة. الـ `throw` بيخلّيه يقع في أول سطر برسالة بتقول الحل.
+
+<CodeBlock label="main.dart واحد، والـ config بيدخل من الـ DI">
+
+```dart
+// lib/main.dart: the only entry point
+Future<void> main() => bootstrap(AppConfig.fromEnvironment());
+
+// di/setup.dart
+Future<void> setupDependencies(AppConfig config) async {
+  // prefs from the Settings lesson are loaded here first
+  getIt
+    ..registerSingleton<AppConfig>(config)
+    ..registerLazySingleton<Dio>(() => Dio(BaseOptions(baseUrl: config.baseUrl)))
+    ..registerLazySingleton<AppLogger>(
+        () => config.enableLogs ? const ConsoleLogger() : const SentryLogger());
+  // ...
+}
+```
+
+</CodeBlock>
+
+الـ `bootstrap` هو نفسه بتاع درس الـ Logging والـ Monitoring، والفرق سطر واحد: الـ DSN بقى بييجي من الـ config بدل `fromEnvironment` جوه الـ bootstrap. كده كل الـ `fromEnvironment` في الـ app في مكان واحد.
+
+<CodeBlock label="Sentry بياخد الـ environment من نفس الـ config">
+
+```dart
+await SentryFlutter.init(
+  (options) {
+    options.dsn = config.sentryDsn; // empty in dev: Sentry is off
+    options.environment = config.name; // dev, staging or prod
+    const release = String.fromEnvironment('SENTRY_RELEASE'); // set by CI only
+    if (release.isNotEmpty) options.release = release;
+  },
+  appRunner: () => runApp(const ReadlyApp()),
+);
+```
+
+</CodeBlock>
+
+باقي الإعدادات (الـ breadcrumbs، و`isReportable`، والـ handlers) زي ما هي في [درس الـ Logging والـ Monitoring](/course/production/observability/). الجديد إن staging بقى environment لوحده في Sentry، فالـ crashes بتاعة الـ QA مابتتخلطش بتاعة المستخدمين.
+
+- <b>الـ Cubits والـ repositories مابتشوفش AppConfig تقريبًا:</b> الـ Dio بياخد الـ baseUrl في الـ composition root، والـ logger بيتختار هناك. اللي محتاج قيمة (زي route الـ notes و`newNotes`) بياخدها من get_it في الـ router أو من الـ constructor.
+- <b>ليه مش `String.fromEnvironment` في الـ data source على طول؟</b> لأنه مخفي ومش بيتغير في التست: الـ data source هيكلّم الـ URL اللي اتبنى بيه وخلاص. من الـ constructor، التست بيدّيه `AppConfig(name: 'test', baseUrl: 'http://localhost', enableLogs: false)`.
+
+### تلات apps على نفس الموبايل
+
+الـ JSON بيغيّر الـ Dart بس. اسم الـ app والأيقونة والـ application id ده الـ native، وده شغل `--flavor`. من غيره، الـ staging والـ prod ليهم نفس الـ id، فتسطيب واحد بيمسح التاني، والـ QA مش هيعرف هو فاتح أنهي واحد.
+
+<CodeBlock label="android/app/build.gradle.kts">
+
+```kotlin
+android {
+    flavorDimensions += "env"
+    productFlavors {
+        create("dev") {
+            dimension = "env"
+            applicationIdSuffix = ".dev" // app.readly.dev
+            resValue("string", "app_name", "Readly Dev")
+        }
+        create("staging") {
+            dimension = "env"
+            applicationIdSuffix = ".staging"
+            resValue("string", "app_name", "Readly Staging")
+        }
+        create("prod") {
+            dimension = "env"
+            resValue("string", "app_name", "Readly")
+        }
+    }
+}
+```
+
+</CodeBlock>
+
+- <b>الاسم:</b> في `AndroidManifest.xml` الـ `android:label` يبقى `@string/app_name`.
+- <b>الأيقونة:</b> حط `ic_launcher` تانية في `android/app/src/dev/res/mipmap-*/` و`src/staging/res/`. الـ source set بتاع الـ flavor بيغطي على `src/main` لوحده. خلّي أيقونة dev وstaging فيها شريط ملوّن، عشان تبان من أول نظرة.
+
+<CodeBlock label="iOS: build configurations وschemes">
+
+```text
+Runner target > Build Settings, per configuration:
+  Debug-dev, Release-dev, Profile-dev
+    PRODUCT_BUNDLE_IDENTIFIER          = app.readly.dev
+    APP_DISPLAY_NAME                   = Readly Dev
+    ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon-dev
+  (same for -staging, and -prod with app.readly / Readly / AppIcon)
+
+Info.plist:  CFBundleDisplayName = $(APP_DISPLAY_NAME)
+Schemes:     dev, staging, prod  (names must match --flavor exactly)
+```
+
+</CodeBlock>
+
+```ruby
+# ios/Podfile: CocoaPods must know which new configuration is debug or release
+project 'Runner', {
+  'Debug-dev' => :debug, 'Profile-dev' => :release, 'Release-dev' => :release,
+  'Debug-staging' => :debug, 'Profile-staging' => :release, 'Release-staging' => :release,
+  'Debug-prod' => :debug, 'Profile-prod' => :release, 'Release-prod' => :release,
+}
+```
+
+في iOS الـ flavor = scheme، وكل scheme بيستخدم build configurations اسمها `Debug-<flavor>` و`Release-<flavor>` و`Profile-<flavor>`. Flutter بيدوّر على الأسامي دي بالظبط، ولو اسم الـ scheme مختلف عن الـ `--flavor` الـ build بيفشل.
+
+<CodeBlock label="التشغيل">
+
+```bash
+flutter run --flavor dev --dart-define-from-file=config/dev.json
+flutter run --flavor staging --dart-define-from-file=config/staging.json
+flutter build appbundle --flavor prod --dart-define-from-file=config/prod.json
+```
+
+</CodeBlock>
+
+<CodeBlock label=".vscode/launch.json: الاتنين مع بعض دايمًا">
+
+```json
+{
+  "configurations": [
+    {
+      "name": "dev",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "args": ["--flavor", "dev", "--dart-define-from-file=config/dev.json"]
+    },
+    {
+      "name": "staging",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "args": ["--flavor", "staging", "--dart-define-from-file=config/staging.json"]
+    }
+  ]
+}
+```
+
+</CodeBlock>
+
+| الحاجة | بتتحدد بإيه | بتأثر على |
+| --- | --- | --- |
+| `--flavor` | productFlavors في Android، وscheme في iOS | الـ id، والاسم، والأيقونة، وملفات native زي `google-services.json` |
+| `--dart-define-from-file` | ملف JSON | قيم الـ Dart: الـ URL، والـ logs، والـ DSN، والـ flags |
+| `appFlavor` | Flutter بيحطه من `--flavor` | الـ Dart يقدر يعرف الـ native flavor اتبنى بأنهي اسم |
+
+<Diagram name="d-release-pipeline">
+
+ملف config واحد بيدخل الـ build مع الـ flavor بتاعه. أسرار الـ CI بتمضي الـ build ومابتدخلش جواه. الـ app المتمضي بيروح للـ store، والـ symbols بتروح لـ Sentry من نفس الـ job.
+
+</Diagram>
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### build الـ staging بيكلّم prod
+
+الـ QA بلّغ إن «كتب تجربة» ظهرت في مكتبة مستخدمين حقيقيين. حد عمل `--flavor staging --dart-define-from-file=config/prod.json`: الأيقونة بتقول Staging، والـ URL بتاع prod. الـ flavor والـ config اتنين flags منفصلين، ومحدش بيربطهم ببعض.
+
+الحل إن الـ app نفسه يتأكد إنهم متطابقين. Flutter بيحط اسم الـ flavor في `appFlavor`، فتقارنه بالـ config وانت بتبدأ:
+
+<CodeBlock label="الـ flavor لازم يطابق الـ config">
+
+```dart
+import 'package:flutter/services.dart' show appFlavor;
+
+Future<void> bootstrap(AppConfig config) async {
+  // appFlavor comes from --flavor; null when built without it (tests, web)
+  if (appFlavor != null && appFlavor != config.name) {
+    throw StateError('Built as "$appFlavor" with config "${config.name}"');
+  }
+  WidgetsFlutterBinding.ensureInitialized();
+  await setupDependencies(config);
+  // ...the rest of bootstrap
+}
+```
+
+</CodeBlock>
+
+- <b>يقع على طول:</b> build غلط بيقفل وهو بيفتح عند الـ QA، أحسن من build بيشتغل وبيكتب في بيانات المستخدمين.
+- <b>الـ CI بيستخدم متغير واحد للاتنين:</b> `--flavor ${{ matrix.flavor }}` و`config/${{ matrix.flavor }}.json`، فمايقدرش يخلطهم أصلًا. والـ check ده للـ builds اللي بتتعمل بالإيد.
+
+### الأسرار اتشحنت جوه الـ app
+
+حد حط مفتاح API مدفوع (مثلًا مفتاح خدمة توصيات بالـ AI) في `config/prod.json`، على أساس إن «الـ dart-define مش في الكود». بس كل define بيتكتب كـ string جوه الـ binary. أي حد ينزّل الـ APK ويفكه، ويعمل `strings` على `libapp.so`، هيلاقي المفتاح في دقيقة. والـ `--obfuscate` بيغيّر أسامي الـ classes والـ functions، مش الـ strings. والـ `.env` اللي بيتحمّل كـ asset (زي flutter_dotenv) أسوأ: ده ملف مقروء جوه الـ APK على طول.
+
+القاعدة: <b>أي حاجة في الـ app مش سر</b>، مهما كانت متخبية.
+
+| القيمة | تتحط فين | ليه |
+| --- | --- | --- |
+| `BASE_URL`، `APP_ENV`، الـ flags | `config/*.json` في الـ repo | مش سر، وأي حد يقدر يشوفها من الـ network |
+| `SENTRY_DSN` | `config/*.json` | معمول عشان يبقى في الـ client: بيبعت events بس، مابيقراش حاجة |
+| مفتاح Google Maps وأمثاله | الـ JSON، ومقفول من الـ console على الـ package name وبصمة الـ signing | لازم يبقى في الـ app، فبتحميه بالقيود مش بالإخفاء |
+| مفتاح API مدفوع أو أي secret بيقرا بيانات | السيرفر بتاعك بس | الـ app يكلّم الـ backend، والـ backend يكلّم الخدمة |
+| الـ keystore وباسورداته، و`SENTRY_AUTH_TOKEN`، وحساب الـ Play | secrets في الـ CI بس | بيمضوا ويرفعوا الـ build، ومابيدخلوش جواه |
+
+ولو المفتاح اتشحن خلاص: غيّره (rotate) فورًا. مسحه من الـ repo مش كفاية، النسخ القديمة عند المستخدمين لسه فيها.
+
+### الـ crash وصل Sentry رموز
+
+بعد الـ release، Sentry بيعرض stack trace شكله `#00 abs 0000007a3b4c1f2c virt 00000000003a1f2c _kDartIsolateSnapshotInstructions+0x...`. محدش يقدر يقرا ده. السبب إن الـ build اتعمل بـ `--obfuscate --split-debug-info`، والـ symbols اتحطت في فولدر على اللابتوب، ومحدش رفعها.
+
+الـ `--split-debug-info` بيطلّع معلومات الـ debug برا الـ app (فالـ app بيصغر)، والـ `--obfuscate` بيغيّر الأسامي. الاتنين كويسين، بس الـ symbols دي بقت النسخة الوحيدة اللي تقدر تقرا بيها أي crash من الـ build ده. وكل build ليه symbols بتاعته: لو عملت build تاني لنفس النسخة، الـ symbols الجديدة مش هتفك الـ crashes بتاعة القديم.
+
+<CodeBlock label="pubspec.yaml: إعدادات sentry_dart_plugin">
+
+```yaml
+# dart pub add --dev sentry_dart_plugin
+sentry:
+  org: readly
+  project: readly-app
+  upload_debug_symbols: true
+  # auth token, release and dist come from env vars in CI
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ build والرفع في نفس الـ job">
+
+```bash
+flutter build appbundle --flavor prod --dart-define-from-file=config/prod.json \
+  --dart-define=SENTRY_RELEASE=$SENTRY_RELEASE \
+  --obfuscate --split-debug-info=build/symbols
+
+# reads SENTRY_AUTH_TOKEN, SENTRY_RELEASE and SENTRY_DIST from the env
+dart run sentry_dart_plugin
+```
+
+</CodeBlock>
+
+- <b>الرفع قبل الـ store:</b> لو رفع الـ symbols فشل، الـ job يقف والـ build مايوصلش لحد. أحسن من نسخة عند المستخدمين مش هتعرف تقرا أي crash فيها.
+- <b>نفس اسم الـ release للاتنين:</b> الـ `SENTRY_RELEASE` نفسه بيروح للـ app كـ define وللـ plugin كـ env، زي ما اتشرح في درس الـ Logging والـ Monitoring.
+- <b>مفيش release من لاب توب:</b> الـ build المحلي ليه symbols مالهاش نسخة في أي حتة. الـ store builds بتطلع من الـ CI بس، وده الجزء الجاي.
+
+### الـ store رفض الـ build: «Version code 41 has already been used»
+
+كل build بيترفع لـ Play لازم يبقى `versionCode` بتاعه أكبر من اللي قبله، ونفس الكلام للـ build number في App Store Connect. لو بتزوّد الرقم بالإيد في `pubspec.yaml` (`version: 1.4.0+41`)، هيجي يوم حد ينسى، أو اتنين يزوّدوه في branchين.
+
+الحل إن الـ CI هو اللي يحط الرقم، والـ pubspec مايتلمسش:
+
+```bash
+flutter build appbundle --flavor prod --dart-define-from-file=config/prod.json \
+  --build-name=1.4.0 --build-number=$GITHUB_RUN_NUMBER
+```
+
+- <b>الـ build-name:</b> النسخة اللي المستخدم بيشوفها، وبتيجي من الـ git tag (`v1.4.0`).
+- <b>الـ build-number:</b> `github.run_number` بيزيد مع كل run للـ workflow ده. لو كنت بترفع بالإيد قبل كده ووصلت لـ 57، ابدأ من فوقه: `$((100 + GITHUB_RUN_NUMBER))`. ولو غيّرت اسم ملف الـ workflow، العداد بيرجع من 1، فالـ offset ده بيحميك.
+- <b>نفس الرقم في Sentry:</b> الـ release `app.readly@1.4.0+42` معناها build 42 بالظبط. لو مستخدم قالك «عندي 1.4.0»، الـ build number بيقولك أنهي build فيهم.
+
+### الـ release بيتعمل من لاب توب حد
+
+الـ keystore على جهاز واحد في الفريق، والباسورد في رسالة قديمة. لو الجهاز ضاع والـ app مش على Play App Signing، مفيش update تاني للأبد. ومع Play App Signing (الافتراضي للـ apps الجديدة) المفتاح ده upload key بس، وتقدر تطلب reset من Google، بس بطلب رسمي وأيام استنى. وكل release بيعتمد على الـ Flutter version والـ JSON اللي على جهازه.
+
+الحل workflow بيشتغل على الـ tag، وكل حاجة سرية بتيجي من الـ GitHub secrets:
+
+<CodeBlock label="android/app/build.gradle.kts: التوقيع من key.properties">
+
+```kotlin
+import java.io.FileInputStream
+import java.util.Properties
+
+val keyProperties = Properties().apply {
+    val file = rootProject.file("key.properties") // written by CI, gitignored
+    if (file.exists()) load(FileInputStream(file))
+}
+
+android {
+    signingConfigs {
+        create("release") {
+            storeFile = keyProperties["storeFile"]?.let { file(it as String) }
+            storePassword = keyProperties["storePassword"] as String?
+            keyAlias = keyProperties["keyAlias"] as String?
+            keyPassword = keyProperties["keyPassword"] as String?
+        }
+    }
+    buildTypes {
+        release {
+            signingConfig = signingConfigs.getByName("release")
+        }
+    }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="خطوة التوقيع في الـ workflow">
+
+```yaml
+- name: Signing key
+  env:
+    KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+    STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+    KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+  run: |
+    echo "$KEYSTORE_BASE64" | base64 --decode > android/app/upload.jks
+    {
+      echo "storeFile=upload.jks"
+      echo "storePassword=$STORE_PASSWORD"
+      echo "keyAlias=upload"
+      echo "keyPassword=$KEY_PASSWORD"
+    } > android/key.properties
+```
+
+</CodeBlock>
+
+- <b>الـ secrets بتدخل من `env`:</b> مش `${{ secrets.X }}` جوه الـ `run` على طول. كده الـ shell بيشوفها متغير عادي، وGitHub بيخفيها لو اتطبعت في الـ log.
+- <b>`key.properties` و`*.jks` في `.gitignore`:</b> الملفين بيتعملوا في الـ CI ويموتوا معاه.
+- <b>iOS نفس الفكرة:</b> الـ certificate والـ provisioning profile من الـ secrets لـ keychain مؤقت (أو fastlane match)، وبعدين `flutter build ipa --flavor prod --dart-define-from-file=config/prod.json --export-options-plist=ios/ExportOptions.plist`، والرفع لـ TestFlight بمفتاح App Store Connect API. الـ workflow كامل في آخر الدرس.
+
+### مستخدمين على نسخة قديمة بتكسر الـ API
+
+الـ backend غيّر شكل `/library`، والنسخة 1.2 عند 8% من المستخدمين بتقع. انت مش متحكم إن المستخدم يعمل update. الحل إن السيرفر يقول أقل build مسموح بيه، والـ app يقارن:
+
+<CodeBlock label="force update">
+
+```dart
+// domain/app_version.dart
+class VersionPolicy {
+  const VersionPolicy({required this.minSupportedBuild, required this.latestBuild});
+  final int minSupportedBuild;
+  final int latestBuild;
+}
+
+enum UpdateStatus { upToDate, optional, required }
+
+abstract interface class AppVersionRepository {
+  Future<Result<VersionPolicy>> policy(); // GET /app/version?platform=android
+}
+
+class CheckForUpdate {
+  CheckForUpdate(this._repository, this._currentBuild);
+  final AppVersionRepository _repository;
+  final int _currentBuild;
+
+  Future<UpdateStatus> call() async => switch (await _repository.policy()) {
+        Success(:final value) when _currentBuild < value.minSupportedBuild =>
+          UpdateStatus.required,
+        Success(:final value) when _currentBuild < value.latestBuild =>
+          UpdateStatus.optional,
+        _ => UpdateStatus.upToDate, // offline or server error: never lock the user out
+      };
+}
+
+// bootstrap: the current build is read once, then injected
+final info = await PackageInfo.fromPlatform(); // package_info_plus
+getIt.registerLazySingleton(() => CheckForUpdate(getIt(), int.parse(info.buildNumber)));
+```
+
+</CodeBlock>
+
+- <b>الـ build number مش الـ version name:</b> مقارنة `1.10.0` بـ `1.9.0` كـ strings غلط، والـ build number رقم بيزيد دايمًا (ده فايدة إن الـ CI بيحطه).
+- <b>لكل platform رقم:</b> أرقام Android وiOS ممكن تختلف، فالـ endpoint بياخد الـ platform.
+- <b>الـ required شاشة مقفولة:</b> redirect في go_router لـ `/update` فيها زرار للـ store بس. والـ optional banner يتقفل.
+- <b>الـ fail open:</b> لو الطلب فشل، المستخدم يكمّل. الـ app اللي مابيفتحش عشان سيرفر الـ version واقع أسوأ من نسخة قديمة.
+- <b>عادةً ده لازم يبقى موجود من أول release:</b> النسخ اللي اتنشرت من غير الـ check مش هتعرف إنها قديمة أبدًا.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>main لكل flavor ولا main واحد؟</b>
+
+| | `main_dev.dart` و`main_prod.dart` (درس التوسّع) | `main.dart` واحد + JSON |
+| --- | --- | --- |
+| القيم | Dart، فلو field ناقص يبقى compile error | strings، ومحتاجة validation في `fromEnvironment` |
+| كود مختلف لكل environment | سهل: `main_dev` يسجّل `FakeLibraryRepository` | محتاج `if` على `config.name` في الـ DI |
+| الـ CI | `-t lib/main_prod.dart` | ملف JSON، ويقدر يزوّد `--dart-define` فوقه زي `SENTRY_RELEASE` |
+| الغلطة المشهورة | `--flavor prod -t lib/main_dev.dart` | `--flavor prod` مع `staging.json` |
+
+الاتنين محتاجين `--flavor` للـ native، والاتنين محتاجين check الـ `appFlavor`. لو الفرق بين الـ environments قيم بس، main واحد أبسط. ولو dev فيه fakes أو أدوات debug (شاشة تغيّر الـ base URL، أو `FakeLibraryRepository`)، خلّي `main_dev.dart` يعمل override للتسجيلات دي بس، والقيم برضه من الـ JSON.
+
+- <b>تلات environments كفاية:</b> كل environment زيادة يعني backend وdatabase وSentry environment وapp في الـ store لازم حد يصونهم. staging قيمته إنه شبه prod بالظبط (`ENABLE_LOGS: false`، وSentryLogger، وobfuscation)، فلو بقى «dev تاني» مالوش لازمة.
+- <b>الـ flavor مش feature flag:</b> الـ flavor بيتحدد وقت الـ build: أنهي backend وأنهي app. الـ flag بيختار أنهي كود يشتغل. `newNotes` في الـ JSON flag وقت الـ build، فعشان تقفله في prod محتاج release. لو عايز تقفله في دقيقة من غير release، يبقى Remote Config (زي firebase_remote_config) ورا contract `FeatureFlags` في الـ DI، وقيمة افتراضية آمنة لو ماوصلش. ماتعملش flavor لكل تجربة.
+- <b>نزول تدريجي:</b> Play بيسمح بـ staged rollout (5% وبعدين 20% وبعدين 100%)، والـ App Store بيسمح بـ phased release. راقب الـ crash-free sessions للـ release الجديد في Sentry، ولو نزل، وقّف الـ rollout. ده اللي بيخلّي الـ release name الصح مهم: من غيره مش هتعرف الـ crashes جاية من النسخة الجديدة ولا القديمة.
+- <b>ثبّت الأدوات:</b> `flutter-version` محدد في الـ workflow، و`pubspec.lock` في الـ repo. الـ release اللي اتبنى النهارده لازم يتبني نفسه بكرة.
+- <b>الـ JSON في الـ repo:</b> لأن مافيهوش أسرار، يتراجع في الـ PR زي أي كود. لو احتجت قيمة تختلف في الـ CI، زوّدها بـ `--dart-define` فوق الملف، مش ملف بيتولّد ومحدش بيشوفه.
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي بتجهّز dev وstaging وprod في Flutter، وإزاي تضمن إن الـ release سليم؟» ملف JSON لكل environment بـ `--dart-define-from-file`، بيتقري في مكان واحد (`AppConfig.fromEnvironment`) وبيتسجل في الـ DI، فمفيش `fromEnvironment` ولا `kDebugMode` متوزعة. و`--flavor` للـ native: productFlavors في Android وschemes في iOS، بـ id واسم وأيقونة مختلفين، فالتلاتة يتسطّبوا جنب بعض. والـ app بيقارن `appFlavor` بالـ config وهو بيبدأ، عشان build staging مايكلّمش prod. والأسرار: أي حاجة في الـ binary مش سر، dart-define وobfuscation مش استثناء، فالمفاتيح الحقيقية في الـ backend، وأسرار التوقيع في الـ CI. والـ release من الـ CI بس على tag: الـ build number من الـ run، و`--obfuscate --split-debug-info`، ورفع الـ symbols لـ Sentry بنفس اسم الـ release قبل الرفع للـ store، وبعدين staged rollout وعين على الـ crash-free rate.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### القيم في الكود ← القيم في ملف
+
+<BeforeAfter>
+
+<Side label="قبل: entry point لكل flavor" kind="before">
+
+```dart
+// lib/main_dev.dart
+void main() => bootstrap(const AppConfig(
+      name: 'dev',
+      baseUrl: 'https://api-dev.readly.app',
+      enableLogs: true,
+    ));
+
+// lib/main_prod.dart
+void main() => bootstrap(const AppConfig(
+      name: 'prod',
+      baseUrl: 'https://api.readly.app',
+      enableLogs: false,
+    ));
+
+// flutter build appbundle --flavor prod -t lib/main_prod.dart
+// nothing stops: --flavor prod -t lib/main_dev.dart
+```
+
+</Side>
+
+<Side label="بعد: main واحد، وملف لكل environment" kind="after">
+
+```dart
+// lib/main.dart
+Future<void> main() => bootstrap(AppConfig.fromEnvironment());
+
+// bootstrap: fails fast on a mixed build
+if (appFlavor != null && appFlavor != config.name) {
+  throw StateError('Built as "$appFlavor" with config "${config.name}"');
+}
+
+// flutter build appbundle --flavor prod \
+//   --dart-define-from-file=config/prod.json
+```
+
+</Side>
+
+</BeforeAfter>
+
+### الـ release workflow كامل (Android)
+
+```yaml
+# .github/workflows/release.yml
+name: release
+on:
+  push:
+    tags: ['v*'] # git tag v1.4.0 && git push --tags
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - flavor: staging
+            package: app.readly.staging
+          - flavor: prod
+            package: app.readly
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.35.0 # pinned: every release uses the same compiler
+      - run: flutter pub get
+      - run: flutter test
+
+      - name: Version # +100: builds before CI were numbered by hand
+        run: |
+          NAME="${GITHUB_REF_NAME#v}"
+          echo "BUILD_NAME=$NAME" >> "$GITHUB_ENV"
+          echo "BUILD_NUMBER=$((100 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+          echo "SENTRY_RELEASE=${{ matrix.package }}@$NAME+$((100 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+          echo "SENTRY_DIST=$((100 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+
+      - name: Signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 --decode > android/app/upload.jks
+          {
+            echo "storeFile=upload.jks"
+            echo "storePassword=$STORE_PASSWORD"
+            echo "keyAlias=upload"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > android/key.properties
+
+      - name: Build
+        run: |
+          flutter build appbundle --flavor ${{ matrix.flavor }} \
+            --dart-define-from-file=config/${{ matrix.flavor }}.json \
+            --dart-define=SENTRY_RELEASE=$SENTRY_RELEASE \
+            --build-name=$BUILD_NAME --build-number=$BUILD_NUMBER \
+            --obfuscate --split-debug-info=build/symbols
+
+      - name: Upload symbols to Sentry # before the store: no symbols, no release
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        run: dart run sentry_dart_plugin
+
+      - name: Upload to Play (internal track)
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: ${{ matrix.package }}
+          releaseFiles: build/app/outputs/bundle/${{ matrix.flavor }}Release/app-${{ matrix.flavor }}-release.aab
+          track: internal
+```
+
+- <b>الـ matrix:</b> staging وprod بيتبنوا من نفس الـ commit بنفس الخطوات، والفرق اسم الـ flavor بس. كل واحد app منفصل في Play Console، والـ staging بيفضل على الـ internal track للـ QA.
+- <b>الـ internal track الأول:</b> الـ workflow مابيرفعش لـ production على طول. حد بيجرّب الـ build على الـ internal، وبعدين بيرقّيه لـ production بـ staged rollout من الـ console.
+- <b>iOS:</b> job تاني على `macos-latest` بنفس الخطوات: الـ certificate والـ profile من الـ secrets، و`flutter build ipa` بنفس الـ flags، ونفس `dart run sentry_dart_plugin` (بيرفع الـ dSYMs كمان)، والرفع لـ TestFlight.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="release-1">
+<Ask>الـ QA فتح app أيقونته «Readly Staging»، وضاف كتاب، فظهر في مكتبة مستخدم حقيقي. إيه اللي حصل، وإيه اللي يمنعه؟</Ask>
+<Answer>
+
+الـ build اتعمل بـ `--flavor staging` (الأيقونة والـ id) مع `config/prod.json` (الـ URL)، لأن الاتنين flags منفصلين. الحل إن الـ bootstrap يقارن `appFlavor` بـ `config.name` ويقع لو مختلفين، وإن الـ CI ياخد الاتنين من نفس المتغير (`matrix.flavor`).
+
+</Answer>
+</Question>
+
+<Question id="release-2">
+<Ask>زميلك حط مفتاح API مدفوع في `--dart-define` وقال «ده مش في الـ repo، والـ build متعمله obfuscate». هو في أمان؟</Ask>
+<Answer>
+
+لأ. أي define بيتكتب كـ string جوه الـ binary، و`strings` على `libapp.so` بيطلّعه. الـ obfuscation بيغيّر أسامي الـ symbols مش الـ strings. المفتاح لازم يتنقل للـ backend، والـ app يكلّم الـ backend. ولأنه اتشحن خلاص، لازم يتغير (rotate) لأن النسخ القديمة لسه فيها.
+
+</Answer>
+</Question>
+
+<Question id="release-3">
+<Ask>بعد release 1.4.0، الـ crashes في Sentry شكلها عناوين memory من غير أسامي functions. ليه، وإيه اللي يمنع ده يتكرر؟</Ask>
+<Answer>
+
+الـ build اتعمل بـ `--obfuscate --split-debug-info`، والـ symbols ماترفعتش لـ Sentry. الحل إن `dart run sentry_dart_plugin` يبقى خطوة في نفس الـ CI job بعد الـ build وقبل الرفع للـ store، فلو فشل الـ release يقف. ومفيش store builds من لاب توب، لأن كل build ليه symbols بتاعته ومش هتتعوض.
+
+</Answer>
+</Question>
+
+</Quiz>

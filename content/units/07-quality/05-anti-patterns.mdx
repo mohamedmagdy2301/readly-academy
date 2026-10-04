@@ -1,32 +1,525 @@
 ---
 title: "الأخطاء الشائعة وقائمة المراجعة"
-description: "أشهر الأخطاء، وقائمة مراجعة قبل أي PR."
+description: "أشهر الأخطاء في Clean Arch بـ Flutter، والغلط العكسي: الـ over-engineering. إزاي تمسك كل واحد في الـ review أو بأداة، وإزاي تقوله، وقائمة مراجعة قبل أي PR."
+minutes: 25
 ---
 
-دي أشهر الأخطاء اللي بتظهر في مشاريع Clean Arch في Flutter، وهستخدمها وأنا بعمل review لكودك.
+<Level n="1" title="الفكرة بتشبيه">
 
-| الخطأ | المشكلة | البديل |
-| --- | --- | --- |
-| الـ Model بيعمل extends للـ Entity | الـ domain بيترتبط بشكل الـ JSON، وأي تغيير في الـ API بيوصل للـ UI | DTO منفصل مع mapper صريح |
-| الـ Repository بيرجع DTO | نفس المشكلة بس أسوأ | الـ contract بيرجع entities بس |
-| الـ Failure كـ String أو class عادية | مفيش exhaustive handling، والـ UI بتعمل if على نصوص | هرم Failures بـ sealed classes |
-| use case pass-through لكل method | boilerplate بيخلي الناس تكره المعمارية | قرار فريق واضح: إما تسيبه وانت واعي ليه، أو الـ Cubit يكلّم الـ repository مباشرة لما مفيش logic |
-| استدعاء get_it جوه الـ widgets والـ Cubits | الـ dependencies مخفية والتست صعب | constructor injection، وget_it في الـ composition root بس |
-| الـ Cubit بيعرف Dio أو بيعمل parse لـ JSON | الـ presentation عرفت تفاصيل الـ data | الـ Cubit يكلّم use case أو repository contract |
-| try/catch في كل طبقة أو ابتلاع الأخطاء | الأخطاء بتتوه ومفيش logging | تحويل واحد عند الحد (guard) مع log |
-| feature بتعمل import لـ internals feature تانية | الـ features بتتشابك ومتنفعش تتشال | public API (barrel) أو contract في core |
-| الـ core بقى مكان أي حاجة مشتركة | god package، وأي تغيير فيه بيعيد build كل حاجة | core صغير، والحاجة اللي بتخدم featureين بس تفضل في واحدة منهم |
-| الـ side effects جوه build | الـ navigation أو الـ snackbar بيتكرر مع كل rebuild | BlocListener |
+<Analogy title="مهندس استلام الشقة">
+
+قبل ما تستلم شقة، بتجيب مهندس يعاينها. معاه ليستة، وبيدوّر على نوعين مشاكل. الأول حاجات <b>ناقصة</b>: سلك كهربا متدفن في الحيطة من غير ماسورة، فأول ما يبوظ لازم تكسر الحيطة. والتاني حاجات <b>زيادة</b>: باب مصفّح لأوضة الكراكيب، و4 مفاتيح لنفس اللمبة. دي مش خطر، بس دفعت فيها فلوس، وكل ما تيجي تغيّر حاجة بتلف عليها. وفي حاجات بيقيسها بأداة، زي ميزان المية والـ tester، وحاجات محتاجة عينه وخبرته. ولما يلاقي مشكلة، مابيقولكش «الشقة وحشة»، بيقولك «الحيطة دي فيها رطوبة عشان المواسير، والحل كذا».
+
+</Analogy>
+
+الـ review في Clean Architecture بنفس الشكل. في أخطاء بتكسر المعمارية من جوه: الـ domain بقى يعرف الـ JSON، أو الـ exceptions بتعدّي للـ UI. وفي أخطاء عكسية: طبقات وinterfaces وmappers ملهاش لازمة، بتخلي أي تعديل صغير يلمس 7 ملفات، وبتخلي الفريق يكره المعمارية كلها. والدرس ده عن الاتنين: إزاي تعرف كل واحد، وإزاي تمسكه، وإزاي تقوله لصاحب الـ PR من غير ما يتحول لخناقة.
+
+</Level>
+
+<Level n="2" title="أهم الأخطاء بالكود">
+
+دي أشهر الأخطاء اللي بتظهر في مشاريع Clean Arch في Flutter، وهستخدمها وأنا بعمل review لكودك. العمود الأخير بيقول مين يقدر يمسكها: أداة من درس «حراسة المعمارية»، ولا عين الـ reviewer.
+
+| الخطأ | المشكلة | البديل | بيتمسك بـ |
+| --- | --- | --- | --- |
+| الـ Model بيعمل extends للـ Entity | الـ domain بيترتبط بشكل الـ JSON، وأي تغيير في الـ API بيوصل للـ UI | DTO منفصل مع mapper صريح | الـ review |
+| الـ Repository بيرجع DTO | نفس المشكلة بس أسوأ | الـ contract بيرجع entities بس | الـ architecture test: الـ domain مايعملش import لـ data |
+| الـ Failure كـ String أو class عادية | مفيش exhaustive handling، والـ UI بتعمل if على نصوص | هرم Failures بـ sealed classes | الـ review، وبعدها الـ compiler |
+| use case pass-through لكل method | boilerplate بيخلي الناس تكره المعمارية | قرار فريق واضح: إما تسيبه وانت واعي ليه، أو الـ Cubit يكلّم الـ repository مباشرة لما مفيش logic | الـ review |
+| استدعاء get_it جوه الـ widgets والـ Cubits | الـ dependencies مخفية والتست صعب | constructor injection، وget_it في الـ composition root بس | الـ review، أو rule في الـ architecture test |
+| الـ Cubit بيعرف Dio أو بيعمل parse لـ JSON | الـ presentation عرفت تفاصيل الـ data | الـ Cubit يكلّم use case أو repository contract | الـ architecture test: الـ presentation مايعملش import لـ dio |
+| try/catch في كل طبقة أو ابتلاع الأخطاء | الأخطاء بتتوه ومفيش logging | تحويل واحد عند الحد (guard) مع log | الـ lint `empty_catches`، والـ review |
+| feature بتعمل import لـ internals feature تانية | الـ features بتتشابك ومتنفعش تتشال | public API (barrel) أو contract في core | `implementation_imports` والـ architecture test |
+| الـ core بقى مكان أي حاجة مشتركة | god package، وأي تغيير فيه بيعيد build كل حاجة | core صغير، والحاجة اللي بتخدم featureين بس تفضل في واحدة منهم | الـ review |
+| الـ side effects جوه build | الـ navigation أو الـ snackbar بيتكرر مع كل rebuild | BlocListener | الـ review، وwidget test |
 
 الخطأ رقم 8 في الجدول بالرسم: الـ import المسموح والممنوع بين الـ features.
 
 <Diagram name="d-b80eff8ef5">
 
-feature الـ notes تقدر تستخدم اللي feature الـ library بتصدّره في الـ barrel بس. بعد التقسيم لـ packages في الأسبوع 6، الـ import للـ src بيبقى compile error مش مجرد اتفاق.
+feature الـ notes تقدر تستخدم اللي feature الـ library بتصدّره في الـ barrel بس. بعد التقسيم لـ packages في الوحدة 6، الـ import للـ src بيطلّع `implementation_imports`، ولما ترفعه لـ error في الـ analysis_options بيوقف الـ CI، مش مجرد اتفاق.
 
 </Diagram>
 
-### قائمة المراجعة قبل أي PR
+الـ Cubit اللي بيعرف dio اتشرح بالكود في درس «SOLID في Readly» (مثال الـ SRP). هنا الخمسة اللي بتظهر أكتر في الـ PRs.
+
+### الـ Model بيعمل extends للـ Entity
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+// data/book_model.dart
+class BookModel extends Book {
+  const BookModel({required super.id, required super.title, required super.status});
+
+  factory BookModel.fromJson(Map<String, dynamic> json) => BookModel(
+        id: BookId.fromTrusted(json['key'] as String),
+        title: json['title'] as String,
+        status: BookStatus.values.byName(json['status'] as String),
+      );
+}
+
+// the repository returns BookModel typed as Book:
+// the Cubit holds a JSON-shaped object without knowing it
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+// data/book_dto.dart: the API's shape, honestly
+class BookDto {
+  const BookDto({required this.key, required this.title, required this.status});
+  final String key;
+  final String title;
+  final String status;
+  // fromJson ...
+}
+
+extension BookDtoMapper on BookDto {
+  Book toEntity() => Book(
+        id: BookId.fromTrusted(key),
+        title: title,
+        status: switch (status) {
+          'reading' => BookStatus.reading,
+          'finished' => BookStatus.finished,
+          _ => BookStatus.wantToRead,
+        },
+      );
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+الـ `BookStatus.values.byName` في الـ «قبل» بيرمي `ArgumentError` أول ما السيرفر يرجّع `'want_to_read'` أو حالة جديدة. والـ mapper الصريح هو المكان الوحيد اللي بيقرر يعمل إيه مع الحاجات دي، زي ما شفنا في درس الـ Data.
+
+<b>إزاي تمسكه:</b>
+
+- <b>في الـ review:</b> أي `extends` لـ class من الـ domain جوه فولدر `data/`، أو `fromJson` على class في `domain/`.
+- <b>بأداة:</b> الـ allowlist بتاعة الـ domain في الـ architecture test بتمسك `json_annotation` و`freezed_annotation` لو اتعمل لهم import في الـ domain. بس `fromJson` مكتوب بإيده من غير أي import مش هيتمسك، فده يفضل على الـ review.
+
+### الـ Repository بيعدّي exceptions وDTOs
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+// domain/library_repository.dart
+abstract interface class LibraryRepository {
+  Future<List<BookDto>> getLibrary(); // a DTO, and it throws DioException
+}
+
+// presentation/library_cubit.dart
+Future<void> load() async {
+  emit(const LibraryLoading());
+  try {
+    final dtos = await _repository.getLibrary();
+    emit(LibraryLoaded(dtos.map((d) => d.toEntity()).toList()));
+  } catch (e) {
+    emit(LibraryError(e.toString())); // "DioException [connection error]: ..."
+  }
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+// domain
+abstract interface class LibraryRepository {
+  Future<Result<List<Book>>> getLibrary();
+}
+
+// data: the only place exceptions become Failures
+@override
+Future<Result<List<Book>>> getLibrary() => guard(() async {
+      final dtos = await _remote.fetchLibrary();
+      return dtos.map((d) => d.toEntity()).toList();
+    });
+
+// presentation: no try, no DTO
+Future<void> load() async {
+  emit(const LibraryLoading());
+  final result = await _repository.getLibrary();
+  if (isClosed) return;
+  emit(switch (result) {
+    Success(:final value) => LibraryLoaded(value),
+    Err(:final failure) => LibraryError(failure),
+  });
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+<b>إزاي تمسكه:</b>
+
+- <b>في الـ review:</b> أي method في contract بترجع `Future<X>` من غير `Result`، أو `try` جوه Cubit. الـ try في الـ Cubit علامة إن في exception بيعدّي من تحت.
+- <b>بأداة:</b> الـ contract اللي بيرجع `BookDto` لازم يعمل import لـ `data/`، والـ architecture test بيمسك ده. والـ `catch (e)` اللي بيبلع كل حاجة بيتمسك بـ lints زي `avoid_catches_without_on_clauses`، والـ catch الفاضي بـ `empty_catches`.
+
+### الـ Failure كـ String
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+final class LibraryError extends LibraryState {
+  const LibraryError(this.message);
+  final String message;
+}
+
+// UI: matching on text
+if (state.message.contains('internet')) return const OfflineBanner();
+return ErrorView(message: state.message); // English server text in an Arabic app
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+final class LibraryError extends LibraryState {
+  const LibraryError(this.failure);
+  final Failure failure;
+}
+
+// UI: no `_`, so a new Failure is a compile error here
+LibraryError(:final failure) => switch (failure) {
+    NetworkFailure() => const OfflineBanner(),
+    ServerFailure() || CacheFailure() || ValidationFailure() || UnauthorizedFailure() =>
+      ErrorView(
+        message: failure.localized(AppLocalizations.of(context)!),
+        onRetry: context.read<LibraryCubit>().load,
+      ),
+  },
+```
+
+</Side>
+
+</BeforeAfter>
+
+- <b>الـ `_` بيطفّي الـ compiler:</b> لو كتبت `_ => ErrorView(...)`، أي Failure جديد هيروح للـ ErrorView من غير ما حد يفكر هو محتاج شاشة مختلفة ولا لأ. اكتب الحالات بأسمائها في الأماكن اللي الفرق فيها مهم.
+- <b>إزاي تمسكه في الـ review:</b> `String` في أي Error state، أو `e.toString()`، أو `contains` على رسالة. بعد ما الـ Failure يبقى sealed، الـ compiler هو اللي بيمسك أي switch ناقص.
+
+### get_it جوه الـ Cubit
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+class NotesCubit extends Cubit<NotesState> {
+  NotesCubit() : super(const NotesLoading());
+
+  final _repository = getIt<NotesRepository>(); // hidden
+  final _addNote = getIt<AddNote>();            // hidden
+}
+
+// test: register everything in get_it first,
+// and a missing registration fails at runtime, not compile time
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+class NotesCubit extends Cubit<NotesState> {
+  NotesCubit(this._repository, this._addNote) : super(const NotesLoading());
+
+  final NotesRepository _repository;
+  final AddNote _addNote;
+}
+
+// composition root only
+getIt.registerFactory(() => NotesCubit(getIt(), getIt()));
+
+// test: no get_it at all
+final repo = FakeNotesRepository();
+final cubit = NotesCubit(repo, AddNote(repo));
+```
+
+</Side>
+
+</BeforeAfter>
+
+<b>إزاي تمسكه:</b>
+
+- <b>في الـ review:</b> `getIt<` أو `GetIt.I` في أي ملف غير الـ composition root (`di/`) وبناء الـ routes.
+- <b>بأداة:</b> rule نصية في الـ architecture test: أي ملف في `domain/` أو `data/` أو اسمه `_cubit.dart` مايبقاش فيه `getIt`. نفس شكل rule الـ `ignore` في درس «حراسة المعمارية».
+
+### الـ side effects جوه build
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+BlocBuilder<AddBookCubit, AddBookState>(
+  builder: (context, state) {
+    if (state is AddBookSaved) {
+      // runs during build, and again on every rebuild
+      ScaffoldMessenger.of(context).showSnackBar(snack);
+      context.pop();
+    }
+    return AddBookForm(saving: state is AddBookSaving);
+  },
+)
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+BlocConsumer<AddBookCubit, AddBookState>(
+  listenWhen: (prev, curr) => curr is AddBookSaved,
+  listener: (context, state) {
+    ScaffoldMessenger.of(context).showSnackBar(snack);
+    context.pop();
+  },
+  builder: (context, state) => AddBookForm(saving: state is AddBookSaving),
+)
+```
+
+</Side>
+
+</BeforeAfter>
+
+الـ build ممكن يتنادى كذا مرة لنفس الـ state، زي لما الكيبورد يفتح. والـ navigation جواه يا إما بيرمي error إنك بتغيّر الشجرة وهي بتتبني، يا إما بيتكرر.
+
+<b>إزاي تمسكه:</b>
+
+- <b>في الـ review:</b> `Navigator` أو `context.go` أو `context.pop` أو `showSnackBar` أو `showDialog` جوه أي `builder:`.
+- <b>بتست:</b> صعب يتمسك بأداة على الـ imports، فاكتب widget test: اعمل emit للـ state، وبعدين `tester.pump()` تاني من غير state جديدة، واتأكد إن `find.byType(SnackBar)` لاقي واحد بس.
+
+</Level>
+
+<Level n="3" title="الغلط العكسي: الـ over-engineering">
+
+الأخطاء اللي فاتت معناها معمارية أقل من اللازم. الأخطاء دي العكس: طبقات أكتر من اللازم. مابتكسرش حاجة، بس تكلفتها حقيقية: ملفات أكتر، وكل حقل جديد بيلف على 7 أماكن، والـ junior الجديد بياخد أسبوع على ما يفهم ليه في 4 classes بنفس الشكل. وهي أكتر سبب بيخلي الناس تقول «Clean Architecture دي boilerplate».
+
+والحاجات دي أغلبها مش هتلاقي لها أداة، لأن الحكم عليها محتاج سياق. هي شغل الـ review.
+
+### interface ليه implementation واحد للأبد
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+abstract interface class DateFormatter {
+  String format(DateTime date);
+}
+
+class DateFormatterImpl implements DateFormatter {
+  @override
+  String format(DateTime date) => DateFormat.yMMMd('ar').format(date);
+}
+
+// registered in get_it, injected into 6 widgets,
+// never faked in a single test
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+extension ReadlyDate on DateTime {
+  String toReadlyDate(String locale) => DateFormat.yMMMd(locale).format(this);
+}
+
+// Text(note.createdAt.toReadlyDate(locale))
+```
+
+</Side>
+
+</BeforeAfter>
+
+الـ interface بيستاهل لما يكون في سبب من دول:
+
+- <b>بيعزل حاجة من بره:</b> شبكة، أو DB، أو storage، أو الوقت. الـ `Clock` ليه implementation واحد في الـ app، بس التست محتاج `FixedClock`، فهو بيستاهل.
+- <b>حد feature:</b> زي `BookLookup` اللي feature الـ notes بتعتمد عليه بدل الـ repository كله.
+- <b>implementation تاني حقيقي:</b> مش «يمكن نغيّر المكتبة بعد سنتين». لو حصل، الـ refactor ساعتها أرخص من الـ interface اللي شايله من النهارده.
+
+<b>إزاي تمسكه:</b> اسم `XImpl` مالوش أخ، والـ interface مالوش fake في `test/`، والـ format نفسه مافيهوش أي حاجة من بره. اسأل في الـ review: «مين التاني اللي هيعمل implement للـ interface ده؟».
+
+### mapper بين شكلين متطابقين
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+// presentation/book_ui_model.dart
+class BookUiModel {
+  const BookUiModel({required this.id, required this.title, required this.status});
+  final BookId id;
+  final String title;
+  final BookStatus status;
+}
+
+extension BookToUi on Book {
+  BookUiModel toUi() => BookUiModel(id: id, title: title, status: status);
+}
+
+// + 3 mapper tests, + a new field now touches entity, ui model, mapper, tests
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+// the widget takes the entity; formatting happens where it's shown
+class BookTile extends StatelessWidget {
+  const BookTile({super.key, required this.book});
+  final Book book;
+
+  @override
+  Widget build(BuildContext context) => ListTile(
+        title: Text(book.title),
+        // localized() sits next to color() in the BookStatusUi extension
+        subtitle: Text(book.status.localized(AppLocalizations.of(context)!)),
+      );
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+- <b>الـ DTO حاجة تانية:</b> الـ DTO والـ entity ممكن يبقوا متطابقين النهارده، والـ mapper بينهم بيستاهل، لأنه بيحميك من API انت مش متحكم فيه (أول سطر في جدول Level 2). الـ mapper اللي مالوش لازمة هو اللي بين شكلين جوه الكود بتاعك، والاتنين بيتغيروا مع بعض دايمًا.
+- <b>امتى الـ UI model يستاهل:</b> لما يجمّع أكتر من entity (كتاب، وعدد ملاحظاته، ونسبة القراية)، أو يحسب حاجة غالية مرة واحدة بدل ما تتحسب في كل build لليست طويلة.
+
+<b>إزاي تمسكه:</b> mapper جسمه كله `field: field`، ومافيهوش ولا شرط ولا تحويل.
+
+### use case لكل method في الـ CRUD
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```text
+library/domain/usecases/
+├─ get_library.dart        // => _repository.getLibrary()
+├─ get_book.dart           // => _repository.getBook(id)
+├─ watch_library.dart      // => _repository.watchLibrary()
+├─ add_book_to_library.dart
+├─ update_book.dart        // => _repository.updateBook(book)
+├─ delete_book.dart        // => _repository.deleteBook(id)
+└─ mark_book_as_finished.dart
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```text
+library/domain/usecases/
+├─ add_book_to_library.dart   // no duplicates
+└─ mark_book_as_finished.dart // only reading -> finished
+
+// the Cubit calls the repository directly
+// for get, watch, update and delete (ADR 007)
+```
+
+</Side>
+
+</BeforeAfter>
+
+ده نفس قرار الـ pass-through في درس الـ Domain، ونفس اللي حصل مع `GetNotes` في درس الـ Refactor. الغلط مش إنك تختار ده أو ده، الغلط إنك ماتختارش. لو الفريق قرر «use case لكل حاجة عشان الاتساق»، ده قرار مقبول، بس يتكتب في ADR والكل يمشي عليه.
+
+<b>إزاي تمسكه:</b> use case جسم الـ `call` فيه سطر واحد بينادي الـ repository بنفس الـ parameters، وتسته بيعمل mock للـ repository ويتأكد إنه اتنادى.
+
+### packages قبل ما تحتاجها
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```text
+packages/
+├─ core/  core_ui/  core_utils/  core_network/
+├─ library_domain/  library_data/  library_presentation/
+├─ notes_domain/    notes_data/    notes_presentation/
+└─ shared/   // appeared to break a cycle
+// 3 screens, 1 developer, 11 pubspecs
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```text
+lib/
+├─ core/
+└─ features/
+   ├─ library/{domain,data,presentation}/
+   └─ notes/{domain,data,presentation}/
+tools/architecture/   // the same rules, as a test
+```
+
+</Side>
+
+</BeforeAfter>
+
+- <b>package لكل layer أسوأ من package لكل feature:</b> كل feature PR بيلمس 3 pubspecs، والحد اللي بيفرق بجد (بين features) مش موجود.
+- <b>الحدود ممكن تتفرض من غير packages:</b> الـ architecture test بيفرض نفس القواعد على فولدرات. الـ packages بتستاهل لما الفريق يكبر لأكتر من squad، أو الـ analyze والـ build يبطّأوا، أو feature محتاجة تتستخدم في app تاني، زي ما قلنا في درس التوسّع.
+- <b>علامة إن التقسيم بدري:</b> barrels بتعمل export لكل ملف في `src/`، يعني مفيش حاجة private أصلًا، أو package اسمها `shared` اتعملت عشان تكسر circular dependency.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+لقيت الغلط، فاضل تقوله بطريقة تخليه يتصلّح ومايتكررش، من غير ما صاحب الـ PR يحس إنه بيتحاكم.
+
+- <b>فرّق بين اللي بيوقف الـ PR واللي لأ:</b> علّم كل comment بنوعه. صيغة زي Conventional Comments بتساعد: `issue (blocking):` لحاجة لازم تتصلّح قبل الـ merge، و`suggestion (non-blocking):` لتحسين، و`nitpick:` لذوق، و`question:` لما مش متأكد. لو كل comment شكله blocking، صاحب الـ PR مش هيعرف يبدأ منين.
+- <b>الـ comment فيه 3 حاجات:</b> إيه المشكلة، وليه مهمة في Readly بالذات (إيه اللي هيبوظ)، والحل بشكل محدد. ولو في قاعدة مكتوبة، اربطها: الـ ADR، أو الدرس، أو الـ checklist.
+- <b>الـ over-engineering سؤال مش أمر:</b> ممكن صاحب الـ PR يعرف حاجة انت ماتعرفهاش، زي implementation تاني جاي الـ sprint الجاي. «مين التاني اللي هيعمل implement؟» أحسن من «شيل الـ interface ده».
+- <b>نفس الـ comment 3 مرات يبقى check:</b> لو بتكتب «الـ domain مايعملش import لـ dio» في كل PR، ده شغل الـ architecture test مش شغلك. الـ review يفضل للحاجات اللي محتاجة حكم.
+- <b>PR فيه 40 مشكلة:</b> ماترميش 40 comment على junior. اختار أهم 2 أو 3 حاجات في المعمارية، وقول إن الباقي هيتظبط مع الوقت، واعرض تقعدوا مع بعض نص ساعة. وفي المرة الجاية خليه يعمل draft PR بدري قبل ما يكتب كل حاجة.
+- <b>الكود مش الشخص:</b> «الـ Cubit ده بيعمل parse للـ JSON» مش «انت عملت parse في الـ Cubit». وقول الحلو اللي شفته، بشكل محدد: «الـ request id هنا حلو، مسك حالة كنت هنساها».
+- <b>ماتخلطش:</b> لو لقيت حاجة قديمة جنب السطر اللي اتغير، ماتطلبش تتصلّح في نفس الـ PR. ده refactor ليه PR لوحده، زي ما شفنا في درس الـ Refactor.
+
+<BeforeAfter>
+
+<Side label="comment بيعمل خناقة" kind="before">
+
+> ده غلط. الـ Cubit مايكلمش dio. اقرا الـ Clean Architecture.
+
+</Side>
+
+<Side label="comment بيتصلّح" kind="after">
+
+> **issue (blocking):** `LibraryCubit` بيعمل import لـ dio وبيعمل parse للـ JSON. لو الـ API غيّر `key` لـ `id`، الشاشة هي اللي هتقع، ومش هنقدر نختبر الـ Cubit بـ fake repository.
+> الأقرب: `final result = await _repository.getLibrary();` والـ DTO يفضل في الـ data. (قايمة المراجعة: pr-1 وpr-3)
+
+</Side>
+
+</BeforeAfter>
+
+<Note kind="interview" title="سؤال interview">
+
+«إيه علامات الـ over-engineering في Clean Architecture، وترد إزاي على حد بيقول إنها boilerplate؟» العلامات: interface ليه implementation واحد ومالوش fake ومابيعزلش حاجة من بره، وmapper بين شكلين متطابقين جوه الكود بتاعي، وuse case لكل method من غير أي قاعدة، وpackages أكتر من الفريق والـ features. وبرد بإن الـ boilerplate ده مش المعمارية، ده تطبيق من غير ما نسأل «ليه». الحدود اللي بتحمي بجد قليلة: الـ domain مايعرفش الـ framework، والـ exceptions بتتحول لـ Failures عند الـ repository، والـ features بتكلّم بعض من الـ public API. ودي بفرضها بـ architecture test مش بطبقات زيادة. وأي abstraction تانية لازم يكون ليها سبب: تست، أو حد مع حاجة من بره، أو implementation تاني حقيقي.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قائمة المراجعة قبل أي PR">
+
+عدّي عليها على الـ PR بتاعك قبل ما تطلب review. الأدوات بتمسك جزء منها (pr-1 وpr-2 وpr-9)، والباقي محتاج عينك.
 
 <Tasks>
 <Task id="pr-1">الـ domain مافيهوش import لـ Flutter أو packages بتاعة data.</Task>
@@ -38,4 +531,39 @@ feature الـ notes تقدر تستخدم اللي feature الـ library بت�
 <Task id="pr-8">أي نص جديد ظاهر للمستخدم موجود في ملفات الـ ARB بالعربي والإنجليزي.</Task>
 <Task id="pr-7">لو في قرار معماري جديد، في ADR ليه.</Task>
 <Task id="pr-9">الـ architecture test أخضر، والـ allowlist ماكبرتش.</Task>
+<Task id="pr-10">أي interface أو mapper أو use case أو package جديد ليه سبب: قاعدة، أو حد مع حاجة من بره، أو fake في تست.</Task>
+<Task id="pr-11">الـ navigation والـ snackbar والـ dialog في BlocListener، مش جوه builder.</Task>
 </Tasks>
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="anti-patterns-1">
+<Ask>في PR لقيت `class BookModel extends Book` فيها `fromJson`، والـ repository بيرجّعها كـ `Book`. الكود شغال. إيه المشكلة، وإيه الحل؟</Ask>
+<Answer>
+
+الـ domain بقى مربوط بشكل الـ JSON، والـ Cubit ماسك object شكله شكل الـ API من غير ما يعرف. أي تغيير في الـ API بيلمس الـ entity. الحل DTO منفصل في الـ data، وmapper صريح `toEntity()` هو المكان الوحيد اللي بيقرر يعمل إيه مع القيم الغريبة.
+
+</Answer>
+</Question>
+
+<Question id="anti-patterns-2">
+<Ask>`Clock` ليه implementation واحد في الـ app، و`DateFormatter` كمان. ليه الأول بيستاهل interface والتاني لأ؟</Ask>
+<Answer>
+
+الـ `Clock` بيعزل حاجة من بره (الوقت)، والتستات محتاجة `FixedClock` عشان تبقى ثابتة. الـ `DateFormatter` مابيعزلش حاجة ومحدش بيعمله fake، فهو boilerplate. extension على `DateTime` كفاية.
+
+</Answer>
+</Question>
+
+<Question id="anti-patterns-3">
+<Ask>junior عمل PR فيه Cubit بيكلّم dio، وget_it جوه الـ widgets، و3 أسماء variables مش واضحة. هتكتب الـ review إزاي؟</Ask>
+<Answer>
+
+الـ dio والـ get_it `issue (blocking)`، وكل واحد فيه المشكلة وتأثيرها على Readly والحل المحدد ورابط القاعدة. والأسماء `nitpick` مش بتوقف الـ merge. ولو نفس الـ comment بيتكرر في PRs كتير، يتحوّل لـ rule في الـ architecture test.
+
+</Answer>
+</Question>
+
+</Quiz>

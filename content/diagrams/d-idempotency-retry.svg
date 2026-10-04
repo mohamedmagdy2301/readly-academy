@@ -1,0 +1,27 @@
+<svg viewBox="0 0 760 320" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="الرد ضاع، والـ retry بنفس الـ Idempotency-Key مابيضيفش الكتاب مرتين">
+<rect x="40" y="16" width="140" height="40" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="110" y="41" text-anchor="middle" font-size="13" fill="var(--ink)" font-weight="600">SyncService</text>
+<rect x="330" y="16" width="140" height="40" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="400" y="41" text-anchor="middle" font-size="13" fill="var(--ink)" font-weight="600">Node API</text>
+<rect x="580" y="16" width="140" height="40" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="650" y="41" text-anchor="middle" font-size="13" fill="var(--ink)" font-weight="600">MongoDB</text>
+<line x1="110" y1="56" x2="110" y2="308" stroke="var(--line)" stroke-width="1.4" stroke-dasharray="5 5"/>
+<line x1="400" y1="56" x2="400" y2="308" stroke="var(--line)" stroke-width="1.4" stroke-dasharray="5 5"/>
+<line x1="650" y1="56" x2="650" y2="308" stroke="var(--line)" stroke-width="1.4" stroke-dasharray="5 5"/>
+<text x="255" y="82" text-anchor="middle" font-size="12" fill="var(--ink)">POST /library  key: k1</text>
+<line x1="110" y1="90" x2="396" y2="90" stroke="var(--ink)" stroke-width="1.6" marker-end="url(#mk-ink)"/>
+<text x="525" y="112" text-anchor="middle" font-size="11" fill="var(--muted)">save k1 + insert book</text>
+<line x1="400" y1="120" x2="646" y2="120" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#mk-mut)"/>
+<text x="290" y="142" text-anchor="middle" font-size="12" fill="var(--warn)" font-weight="600">201 (lost on the way)</text>
+<line x1="400" y1="150" x2="180" y2="150" stroke="var(--warn)" stroke-width="1.6" stroke-dasharray="6 4"/>
+<line x1="162" y1="141" x2="180" y2="159" stroke="var(--warn)" stroke-width="2.2"/>
+<line x1="162" y1="159" x2="180" y2="141" stroke="var(--warn)" stroke-width="2.2"/>
+<rect x="122" y="168" width="266" height="30" rx="8" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="1.2"/>
+<text x="255" y="188" text-anchor="middle" font-size="12" fill="var(--ink)" class="ar" direction="rtl" unicode-bidi="embed">الرد ضاع: العملية لسه في الـ queue</text>
+<text x="255" y="222" text-anchor="middle" font-size="12" fill="var(--accent)" font-weight="600">retry: POST /library  key: k1</text>
+<line x1="110" y1="230" x2="396" y2="230" stroke="var(--accent)" stroke-width="1.6" marker-end="url(#mk-acc)"/>
+<text x="525" y="252" text-anchor="middle" font-size="11" fill="var(--muted)">find k1: done, no insert</text>
+<line x1="400" y1="260" x2="646" y2="260" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#mk-mut)"/>
+<text x="255" y="282" text-anchor="middle" font-size="12" fill="var(--good)" font-weight="600">201 replayed: same book, one copy</text>
+<line x1="400" y1="290" x2="114" y2="290" stroke="var(--good)" stroke-width="1.6" marker-end="url(#mk-good)"/>
+</svg>

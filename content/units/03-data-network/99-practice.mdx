@@ -10,9 +10,11 @@ type: "practice"
 <Task id="w3-3">اعمل الـ DTOs بـ freezed وjson_serializable، وmappers صريحة للـ entities.</Task>
 <Task id="w3-4">اكتب دالة guard واحدة بتحوّل الـ DioException إلى Failure.</Task>
 <Task id="w3-5">ضيف pagination في الـ catalog (الكود في درس الـ Pagination).</Task>
+<Task id="w3-6">اعمل AppDatabase بـ drift فيها جدول Books وBooksDao، وLibraryLocalSource فوقه بيحوّل أخطاء drift لـ CacheException، واكتب له تستات على NativeDatabase.memory() (الكود في درس التخزين المحلي).</Task>
+<Task id="w3-7">اعمل TokenStore بـ SecureTokenStore وFakeTokenStore، واستثني FlutterSecureStorage.xml من الـ backup على Android. وبعدين زوّد عمود coverUrl بـ migration لـ schemaVersion 2، واكتب تست SchemaVerifier للترقية من v1.</Task>
 </Tasks>
 
-<Deliverable>الـ auth والـ catalog شغالين مع backend حقيقي، وتستات repository لكل حالات الـ error.</Deliverable>
+<Deliverable>الـ auth والـ catalog شغالين مع backend حقيقي، والمكتبة متخزنة في drift، وتستات repository لكل حالات الـ error.</Deliverable>
 
 <ReviewQuestion>3 requests رجعوا 401 في نفس اللحظة، إزاي تضمن refresh واحد بس؟</ReviewQuestion>
 

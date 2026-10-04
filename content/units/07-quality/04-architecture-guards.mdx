@@ -1,0 +1,740 @@
+---
+title: "حراسة المعمارية: lints وarchitecture tests"
+description: "القواعد اللي عايشة في دماغ الفريق بس بتتكسر. حوّلها لـ checks بتوقف الـ PR لوحدها: lints، وحدود الـ packages، وarchitecture test، وCI."
+minutes: 25
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="يافطة «ممنوع الركن» والعمود الحديد">
+
+قدام باب العمارة في يافطة «ممنوع الركن». أول شهر الناس محترماها. وبعدين واحد مستعجل الساعة 2 بالليل ركن «خمس دقايق»، والتاني شافه فركن جنبه، وبعد سنة اليافطة بقت ديكور. الحل مش يافطة أكبر. الحل <b>عمود حديد</b> على الرصيف: مش محتاج حد يفتكر القاعدة، ومش محتاج حد يقف يزعق. ولو في عربيتين كانوا راكنين من زمان، بتكتب أرقامهم في ورقة على الباب وتقول «دول بس لحد ما يمشوا»، والورقة دي بتقصر بس، عمرها ما بتطول.
+
+</Analogy>
+
+في Readly عندك قواعد كتير اتعلمتها في الكورس: الـ domain مايعرفش Flutter ولا dio، والـ feature ماتلمسش internals feature تانية، والـ exceptions ماتعدّيش من الـ repository. لو القواعد دي موجودة في دماغ الفريق وفي الـ review بس، هتتكسر: حد جديد، أو deadline، أو reviewer تعبان يوم الخميس. والكسر الأول بيبقى سطر import صغير محدش أخد باله منه، والتاني بيقلّده.
+
+الحل إنك تحوّل كل قاعدة ميكانيكية لـ <b>check</b> بيشتغل لوحده: الـ IDE يحط خط أحمر وانت بتكتب، والـ CI يوقف الـ PR لو القاعدة اتكسرت. والـ review يفضل للحاجات اللي محتاجة دماغ بني آدم: الاسم ده واضح؟ الـ use case ده محتاجينه؟
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+أول خطوة إنك تكتب القواعد وتشوف كل واحدة مين يقدر يمسكها:
+
+| القاعدة | لو اتكسرت | مين يمسكها |
+| --- | --- | --- |
+| الـ domain مايعملش import لـ Flutter أو dio أو drift | الـ domain مابقاش Dart صافي، والـ use cases محتاجة framework عشان تتختبر | architecture test |
+| الـ domain مايعملش import لـ data أو presentation | السهم اتعكس، وتغيير في الـ API بيوصل للقواعد | architecture test |
+| feature ماتلمسش `src/` بتاع feature تانية | الـ features بتتشابك، وتغيير داخلي في واحدة بيكسر التانية | `implementation_imports` + architecture test |
+| أي package بتعمل لها import مكتوبة في الـ pubspec بتاعك | الـ import شغال بالصدفة، ولو الـ package اتشالت من حتة تانية الكود يقع | `depend_on_referenced_packages` |
+| مفيش catch فاضي | الأخطاء بتختفي من غير log | `empty_catches` |
+| الكود متنسق | الـ diff مليان مسافات والـ review بيضيع فيها | `dart format` |
+| مفيش سلوك جديد من غير تست | الـ bug بيرجع تاني بعد ما اتصلّح | coverage في الـ CI |
+
+### الطبقة الأولى: analysis_options
+
+الـ analyzer أرخص check عندك: بيشتغل وانت بتكتب، والـ IDE بيحط خط تحت السطر الغلط قبل ما تحفظ. ملف واحد في root الـ workspace بيطبّق على كل الـ packages، لأن الـ analyzer بيدوّر على أقرب `analysis_options.yaml` في الفولدر وفي اللي فوقه:
+
+<CodeBlock label="analysis_options.yaml (root الـ workspace)">
+
+```yaml
+include: package:very_good_analysis/analysis_options.yaml
+
+analyzer:
+  exclude:
+    - "**/*.g.dart"
+    - "**/*.freezed.dart"
+
+linter:
+  rules:
+    public_member_api_docs: false # an app, not a published package
+```
+
+</CodeBlock>
+
+- <b>الـ very_good_analysis:</b> مجموعة lints جاهزة وصارمة فوق الـ recommended بتاع Dart. بتحطها في `dev_dependencies` وتعمل لها `include`. أي rule مش مناسبة بتقفلها هنا بسطر وسبب، مش بـ `ignore` في كل ملف.
+- <b>الـ implementation_imports:</b> في الـ recommended set، يعني شغال أصلًا. بيعلّم على أي `import 'package:feature_library/src/...'` من package تانية: الـ `src/` ده تفاصيل، والـ public API هو الـ barrel.
+- <b>الـ depend_on_referenced_packages:</b> في الـ core set. بيعلّم على أي import لـ package مش مكتوبة في الـ pubspec بتاع الـ package اللي فيها الملف.
+
+### الطبقة التانية: حدود الـ packages
+
+بعد التقسيم لـ packages في درس التوسّع، الـ pubspec بقى بيقول مين مسموحله يعتمد على مين:
+
+<CodeBlock label="packages/feature_notes/pubspec.yaml">
+
+```yaml
+name: feature_notes
+resolution: workspace
+environment:
+  sdk: ^3.6.0
+dependencies:
+  core:
+  feature_library: # notes needs BookLookup, nothing else
+  flutter:
+    sdk: flutter
+```
+
+</CodeBlock>
+
+`feature_library` مش مكتوب فيها `feature_notes`، فلو حد في الـ library عمل import لحاجة من الـ notes، الـ `depend_on_referenced_packages` هيعلّم عليه. ولو الـ notes عملت import لـ `feature_library/src/data/...`، الـ `implementation_imports` هيعلّم عليه. القاعدة اتنقلت من «اتفقنا» لملف YAML بيتعمل له review.
+
+### الطبقة التالتة: architecture test
+
+الـ lints مابتعرفش حاجة عن الطبقات. بالنسبة للـ analyzer، `import 'package:dio/dio.dart'` جوه `domain/` زيه زي أي import تاني. القاعدة دي محتاجة كود بيقرا الـ imports ويحكم عليها، وأبسط مكان ليه <b>تست عادي بـ dart test</b>. مش محتاج plugin ولا أداة جديدة، ومحدش في الفريق محتاج يتعلم حاجة عشان يقراه.
+
+التست بيتحط في package صغيرة لوحدها في الـ workspace. Dart صافي، فبتشتغل في أقل من ثانية:
+
+<CodeBlock label="tools/architecture/pubspec.yaml">
+
+```yaml
+name: readly_architecture
+publish_to: none
+resolution: workspace
+environment:
+  sdk: ^3.6.0
+dev_dependencies:
+  test: ^1.25.0
+```
+
+</CodeBlock>
+
+وبتزوّد `- tools/architecture` في الـ `workspace:` بتاع الـ pubspec اللي في الـ root.
+
+<CodeBlock label="tools/architecture/test/architecture_test.dart">
+
+```dart
+import 'dart:io';
+
+import 'package:test/test.dart';
+
+// dart test runs from tools/architecture: the repo root is two levels up
+final packagesDir = Directory('../../packages');
+
+typedef Import = ({String file, int line, String uri});
+
+final _directive = RegExp(
+  r'''^[ \t]*(?:import|export)[ \t]+['"]([^'"]+)['"]''',
+  multiLine: true,
+);
+
+List<Import> importsIn(Directory dir) {
+  final found = <Import>[];
+  for (final file in dir.listSync(recursive: true).whereType<File>()) {
+    if (!file.path.endsWith('.dart')) continue;
+    final src = file.readAsStringSync();
+    for (final m in _directive.allMatches(src)) {
+      final line = '\n'.allMatches(src.substring(0, m.start)).length + 1;
+      found.add((file: file.path.replaceAll(r'\', '/'), line: line, uri: m[1]!));
+    }
+  }
+  return found;
+}
+
+Iterable<Directory> get packages => packagesDir.listSync().whereType<Directory>();
+String nameOf(Directory pkg) => pkg.path.replaceAll(r'\', '/').split('/').last;
+Directory domainOf(Directory pkg) => Directory('${pkg.path}/lib/src/domain');
+
+const forbiddenInDomain = ['package:flutter/', 'package:dio/', 'package:drift/'];
+
+void main() {
+  test('domain imports no framework and no outer layer', () {
+    final violations = [
+      for (final pkg in packages)
+        if (domainOf(pkg).existsSync())
+          for (final i in importsIn(domainOf(pkg)))
+            if (forbiddenInDomain.any(i.uri.startsWith) ||
+                i.uri.contains('/data/') ||
+                i.uri.contains('/presentation/'))
+              i,
+    ];
+    expect(violations, isEmpty);
+  });
+
+  test("features don't import each other's src/", () {
+    final violations = [
+      for (final pkg in packages)
+        for (final i in importsIn(Directory('${pkg.path}/lib')))
+          if (i.uri.startsWith('package:feature_') &&
+              i.uri.contains('/src/') &&
+              !i.uri.startsWith('package:${nameOf(pkg)}/'))
+            i,
+    ];
+    expect(violations, isEmpty);
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>بيقرا النص بس:</b> regex على سطور الـ `import` والـ `export`، من غير analyzer ولا parsing. ده كفاية لأن الـ imports في Dart ليها شكل ثابت، و`dart format` بيضمن إنها في أول السطر.
+- <b>الـ relative imports متغطية:</b> `'../data/book_dto.dart'` جواه `/data/`، فبيتمسك زي `package:feature_library/src/data/...` بالظبط.
+- <b>رسالة الفشل بتقول تعمل إيه:</b> الـ `expect` بيطبع الـ records اللي فشلت، فيها الملف ورقم السطر والـ import. اللي بيقرا الـ CI يروح للسطر على طول.
+- <b>الـ record type:</b> `Import` مجرد typedef لـ record من Dart 3، من غير class وconstructor و`toString`.
+
+### الطبقة الرابعة: الـ CI
+
+كل اللي فات ملوش لازمة لو بيشتغل على جهاز اللي فاكر يشغّله بس. الـ CI بيشغّل كل حاجة على كل PR:
+
+<CodeBlock label=".github/workflows/ci.yml">
+
+```yaml
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+
+      # cheap checks first: fail in seconds, not after the tests
+      - name: Format
+        run: dart format --output=none --set-exit-if-changed .
+      - name: Analyze
+        run: flutter analyze
+      - name: Architecture
+        working-directory: tools/architecture
+        run: dart test
+
+      - name: Tests
+        run: |
+          for pkg in apps/readly packages/*; do
+            [ -d "$pkg/test" ] || continue
+            (cd "$pkg" && flutter test --coverage) || exit 1
+          done
+      - name: Merge coverage
+        run: mkdir -p coverage && cat packages/*/coverage/lcov.info > coverage/lcov.info
+      - uses: VeryGoodOpenSource/very_good_coverage@v3
+        with:
+          path: coverage/lcov.info
+          min_coverage: 90
+          exclude: "**/presentation/** **/*.g.dart **/*.freezed.dart"
+```
+
+</CodeBlock>
+
+- <b>الترتيب مقصود:</b> الـ format والـ analyze والـ architecture بياخدوا ثواني، والتستات دقايق. لو الـ domain فيه import لـ dio، تعرف في 30 ثانية مش بعد 8 دقايق.
+- <b>الـ workspace:</b> `flutter pub get` مرة واحدة في الـ root بيجيب كل الـ packages. والتستات بتتشغّل package package لأن كل واحدة ليها فولدر `test` بتاعها.
+- <b>الـ coverage للـ domain والـ data:</b> الـ `exclude` بيشيل الـ presentation والـ generated code، فالرقم يقيس الكود اللي فيه القواعد، زي الـ deliverable بتاع الوحدة.
+
+<Diagram name="d-arch-guards">
+
+نفس القواعد بتتشيك في كذا مرحلة. الـ lints في الـ IDE أرخص حاجة، والـ pre-commit اختياري وأي حد يقدر يعدّيه، والـ CI مع الـ branch protection هما الضمان الوحيد اللي محدش يقدر يتخطاه.
+
+</Diagram>
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### الـ import عدّى من غير ما الـ feature تعتمد على الـ package
+
+عملت التقسيم لـ packages وافتكرت إن الـ import الغلط بقى compile error. وبعدين حد في `feature_library` عمل `import 'package:feature_notes/feature_notes.dart'`، والكود اتعمله compile عادي، والـ CI عدّى.
+
+السببين: الـ pub workspace بيعمل <b>resolution واحدة</b> لكل الـ packages، و`.dart_tool/package_config.json` واحد في الـ root فيه كل الـ packages. فالـ compiler يقدر يلاقي `feature_notes` من أي حتة، حتى لو مش مكتوبة في الـ pubspec. والـ lints اللي بتمسك ده severity بتاعها <b>info</b>، و`dart analyze` مابيفشلش على الـ infos من غير `--fatal-infos`. يعني الحد موجود بس على شكل خط أزرق محدش بيبص عليه.
+
+الحل إنك ترفع الـ lints اللي بتحرس الحدود لـ error:
+
+<CodeBlock label="analysis_options.yaml">
+
+```yaml
+analyzer:
+  errors:
+    implementation_imports: error
+    depend_on_referenced_packages: error
+    empty_catches: error
+```
+
+</CodeBlock>
+
+- <b>بقت حمرا في الـ IDE:</b> مش خط أزرق وسط 40 info تانيين. واللي بيكتب بيشوفها قبل ما يعمل commit.
+- <b>بتوقف أي analyze:</b> `flutter analyze` بيفشل على الـ infos by default، بس `dart analyze` لأ. لما الـ severity تبقى error، الاتنين بيفشلوا، ومش فارق مين بيشغّل إيه.
+- <b>متعملش كده لكل rule:</b> ارفع بس الـ rules اللي كسرها بيكسر المعمارية. لو كل style rule بقت error، الناس هتبطّل تفرّق بين «كود مش متنسق» و«الـ domain بقى بيعرف dio».
+
+### الـ composition root محتاج الـ Impl
+
+الـ app لازم يسجّل `LibraryRepositoryImpl` في get_it، والـ Impl ده في `src/data/`. فالـ composition root عمل `import 'package:feature_library/src/data/library_repository_impl.dart'`، والـ lint علّم عليه، فحد حط `// ignore: implementation_imports` وكمّل.
+
+الـ app مش محتاج يعرف الـ Impl. محتاج حد يسجّله. كل feature بتصدّر function تسجيل واحدة في الـ barrel، زي `registerNotes` في درس الـ Refactor:
+
+<CodeBlock label="الـ feature بتسجّل نفسها">
+
+```dart
+// packages/feature_library/lib/src/library_di.dart
+void registerLibrary(GetIt getIt) {
+  getIt
+    ..registerLazySingleton(() => LibraryRemoteSource(getIt()))
+    ..registerLazySingleton(() => LibraryLocalSource(getIt()))
+    ..registerLazySingleton(() => LibraryRepositoryImpl(getIt(), getIt()))
+    // one instance, two contracts
+    ..registerLazySingleton<LibraryRepository>(() => getIt<LibraryRepositoryImpl>())
+    ..registerLazySingleton<BookLookup>(() => getIt<LibraryRepositoryImpl>())
+    ..registerFactory(() => LibraryCubit(getIt(), getIt()));
+}
+
+// packages/feature_library/lib/feature_library.dart (the barrel)
+export 'src/domain/book.dart';
+export 'src/domain/book_lookup.dart';
+export 'src/library_di.dart'; // the app calls registerLibrary, never sees the Impl
+export 'src/presentation/library_page.dart';
+
+// apps/readly/lib/di/setup.dart
+void setupDependencies(AppConfig config) {
+  registerCore(getIt, config);
+  registerLibrary(getIt);
+  registerNotes(getIt);
+}
+```
+
+</CodeBlock>
+
+وبعد كده تزوّد `apps/` في الـ scan بتاع الـ architecture test، عشان الـ app كمان مايلمسش `src/` بتاع أي feature:
+
+```dart
+final appsDir = Directory('../../apps');
+
+Iterable<Directory> get allPackages => [
+      ...packagesDir.listSync().whereType<Directory>(),
+      ...appsDir.listSync().whereType<Directory>(),
+    ];
+```
+
+الـ app بقى بيعرف الـ barrels بس، والـ Impl ممكن يتغير اسمه أو يتقسم من غير ما الـ app يحس.
+
+### الـ denylist بيسرّب
+
+الـ test بيمنع flutter وdio وdrift. وبعد شهر حد عمل `import 'package:shared_preferences/shared_preferences.dart'` في use case عشان يحفظ «آخر بحث»، والتست عدّى لأن shared_preferences مش في الليستة. الـ denylist بيمنع اللي انت فكرت فيه بس، وأي package جديدة بتعدّي.
+
+الـ domain بالذات المسموح فيه قليل ومعروف، فاعكس القاعدة: <b>allowlist</b> باللي مسموح، وأي حاجة تانية ممنوعة:
+
+<CodeBlock label="allowlist للـ domain">
+
+```dart
+const domainAllowed = [
+  'dart:async',
+  'dart:collection',
+  'dart:math',
+  'package:core/', // Result, Failure, UseCase
+  'package:meta/',
+  'package:equatable/',
+];
+
+// package:feature_library/feature_library.dart: another feature's public API
+final _barrel = RegExp(r'^package:(feature_\w+)/\1\.dart$');
+
+bool domainMayImport(String uri, {required String own}) {
+  if (!uri.contains(':')) {
+    // relative: fine while it stays out of the outer layers
+    return !uri.contains('/data/') && !uri.contains('/presentation/');
+  }
+  if (uri.startsWith('package:$own/src/domain/')) return true;
+  if (_barrel.hasMatch(uri)) return true;
+  return domainAllowed.any(uri.startsWith);
+}
+```
+
+</CodeBlock>
+
+- <b>الـ barrel لازم يبدأ بـ feature_:</b> كل package ليها ملف بنفس اسمها، فـ `package:dio/dio.dart` شكله barrel برضه. من غير الـ prefix، الـ regex كان هيعدّي dio وshared_preferences من الباب الخلفي.
+- <b>زيادة حاجة للـ allowlist قرار:</b> لو الفريق قرر يستخدم freezed في الـ entities، `package:freezed_annotation/` بيدخل الليستة في PR فيه سطر بيقول ليه، أو ADR. مش بيتزوّد بهدوء عشان التست يعدّي.
+- <b>الـ denylist لسه مفيد في حتة تانية:</b> الـ presentation بتستخدم packages كتير، فالـ allowlist هناك هيبقى طويل ومزعج. هناك امنع الحاجات المحددة: `package:dio/` و`package:drift/` و`/data/`.
+
+### التست أخضر وهو مابيقراش حاجة
+
+لو حد عمل rename لفولدر `packages`، الـ `listSync()` هيرمي exception والتست هيقع، وده كويس. بس لو حد غيّر `lib/src/domain` لـ `lib/src/core_domain`، الـ `domainOf(pkg).existsSync()` بقى false لكل الـ packages، فالتست بيلف على صفر ملفات، وصفر violations يعني أخضر. والتست بقى بيحرس ولا حاجة من غير ما حد يعرف.
+
+ده أخطر حاجة في أي check: <b>الإحساس بالأمان</b>. تست مابيفشلش أبدًا مش بيقولك إن الكود سليم، بيقولك إنه مش شغال. فالتست لازم يثبت إنه شاف حاجة، والـ rule نفسها تتختبر لوحدها:
+
+<CodeBlock label="التست يتأكد من نفسه">
+
+```dart
+test('the scan actually sees the code', () {
+  final domains = packages.where((p) => domainOf(p).existsSync()).toList();
+  expect(domains.length, greaterThanOrEqualTo(4), reason: 'moved folders? fix the paths');
+  expect(domains.expand((d) => importsIn(domainOf(d))), isNotEmpty);
+});
+
+group('domainMayImport', () {
+  test('rejects frameworks, storage and outer layers', () {
+    for (final uri in [
+      'package:flutter/foundation.dart',
+      'package:dio/dio.dart',
+      'package:shared_preferences/shared_preferences.dart',
+      '../data/book_dto.dart',
+      'package:feature_library/src/data/library_remote_source.dart',
+    ]) {
+      expect(domainMayImport(uri, own: 'feature_notes'), isFalse, reason: uri);
+    }
+  });
+
+  test('accepts core, its own domain and other barrels', () {
+    for (final uri in [
+      'package:core/core.dart',
+      'package:feature_notes/src/domain/note.dart',
+      'package:feature_library/feature_library.dart',
+      'note.dart',
+    ]) {
+      expect(domainMayImport(uri, own: 'feature_notes'), isTrue, reason: uri);
+    }
+  });
+});
+```
+
+</CodeBlock>
+
+- <b>الـ sanity check:</b> Readly فيها 4 features على الأقل ليها domain. لو الرقم نزل، يبقى المسار اتغير مش الـ features اختفت.
+- <b>الـ rule ليها تستات زي أي كود:</b> نفس فكرة «امسح الـ sort وشوف التست بيفشل» في درس الـ Refactor. لو الـ regex باظ، التستات دي هي اللي هتقولك، مش bug في production بعد 3 شهور.
+
+### الـ generated files بتلخبط الأرقام
+
+الـ freezed والـ json_serializable والـ injectable بيولّدوا كود كتير. الملفات دي مش انت اللي كاتبها، فمش منطقي إنها تدخل في الـ lints ولا في رقم الـ coverage. والمشكلة الأخطر: حد غيّر DTO ونسي يشغّل `build_runner`، فالـ `.g.dart` اللي في الـ repo قديم، والـ CI عدّى لأن الكود القديم لسه بيتعمله compile.
+
+- <b>الـ analyzer:</b> الـ `exclude` اللي في `analysis_options.yaml` فوق.
+- <b>الـ coverage:</b> الـ `exclude` في خطوة الـ very_good_coverage، فالـ 90% تبقى عن الكود اللي انت كاتبه.
+- <b>الـ generated قديم:</b> الـ CI يولّد من جديد ويتأكد إن مفيش حاجة اتغيرت:
+
+<CodeBlock label="خطوة في الـ CI بعد pub get">
+
+```yaml
+- name: Generated code is up to date
+  run: |
+    for pkg in packages/*; do
+      grep -q build_runner "$pkg/pubspec.yaml" || continue
+      (cd "$pkg" && dart run build_runner build --delete-conflicting-outputs) || exit 1
+    done
+    git diff --exit-code
+```
+
+</CodeBlock>
+
+لو الـ `git diff` لقى فرق، الخطوة بتفشل والـ log بيوري الملف اللي اتغير. يعني اللي عمل الـ PR نسي يولّد، أو عدّل في ملف generated بإيده.
+
+### قاعدة strict أوي فالفريق قفلها
+
+الـ very_good_analysis فيه rules زي `public_member_api_docs` (doc comment على كل حاجة public). في app، ده بيطلّع مئات الـ infos في أول يوم. فالفريق يا إما يشيل الـ `include` كله، يا إما كل ملف يبدأ بـ `// ignore_for_file: ...`. وفي الحالتين الـ rules المهمة راحت مع اللي مش مهمة.
+
+- <b>اقفل الـ rule في مكان واحد وبسبب:</b> سطر في `analysis_options.yaml` وجنبه comment، زي `public_member_api_docs: false` فوق. كده القرار ظاهر وبيتعمله review، ولو حد عايز يرجّعها عارف هو بيرجّع إيه.
+- <b>rules الحدود ماتتقفلش بـ ignore:</b> الـ architecture test يمسك ده كمان:
+
+<CodeBlock label="ممنوع تسكيت rules الحدود">
+
+```dart
+final _silenced = RegExp(
+  r'ignore(?:_for_file)?:.*\b(?:implementation_imports|depend_on_referenced_packages)\b',
+);
+
+test('boundary lints are never silenced', () {
+  final files = [
+    for (final pkg in packages)
+      for (final f in Directory('${pkg.path}/lib').listSync(recursive: true).whereType<File>())
+        if (f.path.endsWith('.dart') && _silenced.hasMatch(f.readAsStringSync())) f.path,
+  ];
+  expect(files, isEmpty, reason: 'fix the import or change the pubspec, in review');
+});
+```
+
+</CodeBlock>
+
+لو في سبب حقيقي إن feature تعتمد على feature، التعديل مكانه الـ pubspec، وده بيتعمله review. مش comment صغير في آخر الملف محدش هيشوفه.
+
+### المخالفات القديمة كتير على ما تتصلّح في PR واحد
+
+لما تضيف الـ test على كود قديم، هيطلّع 30 مخالفة. لو استنيت لحد ما تتصلّح كلها، التست مش هيدخل أبدًا، وفي الوقت ده هيتزوّد 10 جداد. الحل اللي في [درس الـ Refactor](/course/production/refactor/): <b>allowlist بتصغر بس</b>. التست بيفشل لو في مخالفة جديدة، وبيفشل كمان لو مخالفة قديمة اتصلّحت ولسه في الليستة. نفس الفكرة تنفع لكل rules الـ test هنا، مش لـ dio بس:
+
+<CodeBlock label="allowlist لكل الـ rules">
+
+```dart
+// "file -> import", one list per rule. Shrinks with every PR; never add to it.
+const knownInDomain = {
+  'packages/feature_profile/lib/src/domain/avatar.dart -> package:flutter/painting.dart',
+};
+const knownCrossFeature = <String>{};
+
+void expectOnlyKnown(List<Import> violations, Set<String> known) {
+  String key(Import i) => '${i.file.replaceFirst('../../', '')} -> ${i.uri}';
+  final found = violations.map(key).toSet();
+  expect(found.difference(known), isEmpty, reason: 'new violation');
+  expect(known.difference(found), isEmpty, reason: 'fixed? remove it from the list');
+}
+
+// in the domain test
+expectOnlyKnown(violations, knownInDomain);
+```
+
+</CodeBlock>
+
+- <b>ليستة لكل rule:</b> لو الليستة مشتركة، مخالفة الـ domain هتظهر «اتصلّحت» في تست الـ features لأنه مش بيدوّر عليها، فالتست يفشل غلط.
+- <b>الـ key نص ثابت:</b> الملف والـ import، من غير رقم السطر. لو حد زوّد سطر فوق الـ import، الليستة ماتتأثرش.
+
+وطول الليستات رقم بتوريه للفريق كل sprint، زي ما في درس الـ Refactor.
+
+### الـ CI أحمر والـ PR اتدمج
+
+الـ CI بيشتغل وبيطلع أحمر، بس زرار الـ merge لسه شغال. حد قال «الـ test ده flaky، هدمج وأصلحه بعدين»، وبعدين بقى عادي. الـ CI اللي مابيمنعش الـ merge مجرد اقتراح.
+
+- <b>الـ branch protection:</b> في GitHub، اعمل ruleset أو branch protection على `main` بـ «Require status checks to pass» واختار الـ job `check`. كده الـ merge مقفول لحد ما يخضر، وحتى الـ admins لو مافيش حد في قايمة الـ bypass.
+- <b>الـ flaky test مش عذر للدمج:</b> التست المتقلب بيتصلّح أو بيتشال بـ PR فيه سبب. لو اتساب، الفريق هيتعلم إن الأحمر عادي، وأول أحمر حقيقي هيتدمج.
+
+ولو عايز تمسك المشاكل قبل الـ push، الـ <b>pre-commit hook</b> بيشغّل الحاجات السريعة على جهازك. بس هو اختياري: أي حد يقدر يعدّيه بـ `git commit --no-verify`، وحد مانزّلوش أصلًا مش هيشتغل عنده. فهو للسرعة، والضمان في الـ CI:
+
+<CodeBlock label=".githooks/pre-commit">
+
+```sh
+#!/bin/sh
+# fast checks only (seconds); CI runs everything
+files=$(git diff --cached --name-only --diff-filter=ACM -- '*.dart')
+[ -z "$files" ] && exit 0
+
+dart format --output=none --set-exit-if-changed $files || {
+  echo "run: dart format ."
+  exit 1
+}
+(cd tools/architecture && dart test --reporter=compact)
+```
+
+</CodeBlock>
+
+```bash
+chmod +x .githooks/pre-commit
+git config core.hooksPath .githooks   # once per clone
+```
+
+الـ `core.hooksPath` بيخلي الـ hooks جوه الـ repo وبتتعمل لها review، بدل `.git/hooks` اللي مابيتعملهاش commit. ولو الفريق عايز أداة بدل shell script، lefthook بيعمل نفس الحاجة بملف YAML.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>إيه اللي يتحوّل لـ check وإيه اللي يفضل في الـ review:</b> لو القاعدة ممكن تتقال كـ «الملف X مايعملش import لـ Y» أو «الشكل لازم يبقى كذا»، تبقى check. لو محتاجة حكم، زي «الـ use case ده ليه لازمة؟» أو «الاسم ده واضح؟»، تفضل في الـ review. وعلامة إنها لازم تبقى check: لو كتبت نفس الـ comment في 3 PRs.
+- <b>تست ولا analyzer plugin؟</b> من Dart 3.10 تقدر تكتب analyzer plugin وتفعّله في قسم `plugins:` في `analysis_options.yaml`، فالـ rule بتطلع خط أحمر في الـ IDE وفي `dart analyze`. ده أحسن للي بيكتب، بس كود أكتر وAPI لسه بيتطور. وقبل كده كان الطريق الشائع `custom_lint` من المجتمع. ابدأ بالتست: 60 سطر، أي حد يفهمه، وبيشتغل في الـ CI من أول يوم. ولما rule تثبت والناس تتكعبل فيها كتير، فكّر تنقلها لـ plugin.
+- <b>كل rule ليها سبب مكتوب:</b> comment في الـ `analysis_options.yaml`، أو ADR للـ rules الكبيرة زي «الـ domain allowlist». الـ rule اللي محدش فاكر ليه موجودة بتتقفل أول مرة تضايق حد.
+- <b>ratchet مش cliff:</b> ماتحطش `min_coverage: 90` على مشروع عنده 60%، الـ CI هيبقى أحمر لحد ما حد يقفله. حط الرقم الحالي، وزوّده كل ما يطلع. ونفس الفكرة في الـ allowlist: النهارده 30، والشهر الجاي 22. الاتجاه أهم من الرقم.
+- <b>سرعة الـ CI جزء من المعمارية:</b> لو الـ CI بياخد 25 دقيقة، الناس بتجمّع تغييرات كتير في PR واحد عشان ماتستناش، والـ review بيبوظ. شغّل الحاجات الرخيصة الأول، واعمل cache، ولو كبر، شغّل التستات بتاعة الـ packages اللي اتغيرت بس على الـ PR، وكلها على `main`.
+- <b>الـ barrel بيسحب الـ presentation معاه:</b> الـ `feature_library.dart` بيعمل export للـ `LibraryPage`. فلما الـ domain بتاع الـ notes يعمل import للـ barrel عشان `BookLookup`، هو بيجيب Flutter بشكل غير مباشر، والـ test مش هيشوف ده لأنه بيقرا الـ imports المباشرة بس. لو عايز domain صافي فعلًا، الـ feature تصدّر ملفين: `feature_library.dart` لكل الـ public API، و`library_domain.dart` للـ domain types بس، والـ allowlist بتاعة الـ domain تقبل التاني بس.
+- <b>ماتحرسش الذوق:</b> rule بتمنع حاجة مش بتأذي (ترتيب الـ methods، أو اسم الفولدر `usecases` ولا `use_cases`) بتصرف رصيد الفريق في الـ checks على حاجة مش مهمة. خلّي الـ checks للحاجات اللي كسرها بيكلّف.
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي تضمن إن المعمارية ماتبوظش بعد 6 شهور والفريق بيكبر؟» ماعتمدش على الـ review لوحده. القواعد الميكانيكية بتتحول لـ checks: `analysis_options` بـ very_good_analysis، ورفع `implementation_imports` و`depend_on_referenced_packages` لـ error، لأن الـ pub workspace بيعمل resolution واحدة والـ import الغلط بيتعمله compile عادي. وفوقهم architecture test بـ dart test بيقرا الـ imports: allowlist للـ domain، ومفيش feature بتلمس `src/` بتاع التانية، والتست نفسه بيتأكد إنه شاف ملفات عشان مايبقاش أخضر على الفاضي. والمخالفات القديمة في allowlist بتصغر بس. وكل ده في CI بيشغّل الرخيص الأول، والـ branch protection بتمنع دمج الأحمر. والـ review يفضل للحاجات اللي محتاجة حكم.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### الـ architecture test كامل
+
+كل الحلول اللي فاتت في ملف واحد. الـ CI بيشغّله بـ `dart test` من `tools/architecture`.
+
+```dart
+import 'dart:io';
+
+import 'package:test/test.dart';
+
+// dart test runs from tools/architecture: the repo root is two levels up
+final packagesDir = Directory('../../packages');
+final appsDir = Directory('../../apps');
+
+typedef Import = ({String file, int line, String uri});
+
+// ---------- reading ----------
+
+final _directive = RegExp(
+  r'''^[ \t]*(?:import|export)[ \t]+['"]([^'"]+)['"]''',
+  multiLine: true,
+);
+const _generated = ['.g.dart', '.freezed.dart', '.config.dart', '.mocks.dart'];
+
+Iterable<File> dartFiles(Directory dir) => dir
+    .listSync(recursive: true)
+    .whereType<File>()
+    .where((f) => f.path.endsWith('.dart') && !_generated.any(f.path.endsWith));
+
+List<Import> importsIn(Directory dir) {
+  final found = <Import>[];
+  for (final file in dartFiles(dir)) {
+    final src = file.readAsStringSync();
+    for (final m in _directive.allMatches(src)) {
+      final line = '\n'.allMatches(src.substring(0, m.start)).length + 1;
+      found.add((file: file.path.replaceAll(r'\', '/'), line: line, uri: m[1]!));
+    }
+  }
+  return found;
+}
+
+// folder name == package name (feature_library, feature_notes, ...)
+Iterable<Directory> get packages => packagesDir.listSync().whereType<Directory>();
+Iterable<Directory> get allPackages =>
+    [...packages, ...appsDir.listSync().whereType<Directory>()];
+String nameOf(Directory pkg) => pkg.path.replaceAll(r'\', '/').split('/').last;
+Directory domainOf(Directory pkg) => Directory('${pkg.path}/lib/src/domain');
+Directory libOf(Directory pkg) => Directory('${pkg.path}/lib');
+
+// ---------- rules ----------
+
+const domainAllowed = [
+  'dart:async',
+  'dart:collection',
+  'dart:math',
+  'package:core/', // Result, Failure, UseCase
+  'package:meta/',
+  'package:equatable/',
+];
+final _barrel = RegExp(r'^package:(feature_\w+)/\1\.dart$');
+
+bool domainMayImport(String uri, {required String own}) {
+  if (!uri.contains(':')) {
+    return !uri.contains('/data/') && !uri.contains('/presentation/');
+  }
+  if (uri.startsWith('package:$own/src/domain/')) return true;
+  if (_barrel.hasMatch(uri)) return true;
+  return domainAllowed.any(uri.startsWith);
+}
+
+bool reachesIntoOtherFeature(String uri, {required String own}) =>
+    uri.startsWith('package:feature_') &&
+    uri.contains('/src/') &&
+    !uri.startsWith('package:$own/');
+
+final _silenced = RegExp(
+  r'ignore(?:_for_file)?:.*\b(?:implementation_imports|depend_on_referenced_packages)\b',
+);
+
+// ---------- legacy: shrinks with every PR, never add to it ----------
+
+const knownInDomain = {
+  'packages/feature_profile/lib/src/domain/avatar.dart -> package:flutter/painting.dart',
+};
+const knownCrossFeature = <String>{};
+
+void expectOnlyKnown(List<Import> violations, Set<String> known) {
+  String key(Import i) => '${i.file.replaceFirst('../../', '')} -> ${i.uri}';
+  final found = violations.map(key).toSet();
+  expect(found.difference(known), isEmpty, reason: 'new violation');
+  expect(known.difference(found), isEmpty, reason: 'fixed? remove it from the list');
+}
+
+void main() {
+  test('the scan actually sees the code', () {
+    final domains = packages.where((p) => domainOf(p).existsSync()).toList();
+    expect(domains.length, greaterThanOrEqualTo(4), reason: 'moved folders? fix the paths');
+    expect(domains.expand((d) => importsIn(domainOf(d))), isNotEmpty);
+  });
+
+  test('domain imports only what the allowlist says', () {
+    expectOnlyKnown([
+      for (final pkg in packages)
+        if (domainOf(pkg).existsSync())
+          for (final i in importsIn(domainOf(pkg)))
+            if (!domainMayImport(i.uri, own: nameOf(pkg))) i,
+    ], knownInDomain);
+  });
+
+  test("nobody imports another feature's src/", () {
+    expectOnlyKnown([
+      for (final pkg in allPackages)
+        for (final i in importsIn(libOf(pkg)))
+          if (reachesIntoOtherFeature(i.uri, own: nameOf(pkg))) i,
+    ], knownCrossFeature);
+  });
+
+  test('boundary lints are never silenced', () {
+    final files = [
+      for (final pkg in allPackages)
+        for (final f in dartFiles(libOf(pkg)))
+          if (_silenced.hasMatch(f.readAsStringSync())) f.path,
+    ];
+    expect(files, isEmpty, reason: 'fix the import or change the pubspec, in review');
+  });
+
+  group('domainMayImport', () {
+    test('rejects frameworks, storage and outer layers', () {
+      for (final uri in [
+        'package:flutter/foundation.dart',
+        'package:dio/dio.dart',
+        'package:shared_preferences/shared_preferences.dart',
+        '../data/book_dto.dart',
+        'package:feature_library/src/data/library_remote_source.dart',
+      ]) {
+        expect(domainMayImport(uri, own: 'feature_notes'), isFalse, reason: uri);
+      }
+    });
+
+    test('accepts core, its own domain and other barrels', () {
+      for (final uri in [
+        'package:core/core.dart',
+        'package:feature_notes/src/domain/note.dart',
+        'package:feature_library/feature_library.dart',
+        'note.dart',
+      ]) {
+        expect(domainMayImport(uri, own: 'feature_notes'), isTrue, reason: uri);
+      }
+    });
+  });
+}
+```
+
+### الـ analysis_options النهائي
+
+```yaml
+include: package:very_good_analysis/analysis_options.yaml
+
+analyzer:
+  exclude:
+    - "**/*.g.dart"
+    - "**/*.freezed.dart"
+  errors:
+    # boundaries: a red error, not a blue info
+    implementation_imports: error
+    depend_on_referenced_packages: error
+    empty_catches: error
+
+linter:
+  rules:
+    public_member_api_docs: false # an app, not a published package
+```
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="guards-1">
+<Ask>قسّمت Readly لـ packages بـ pub workspace، و`feature_library` عملت import لـ `feature_notes` من غير ما تكون في الـ pubspec بتاعها، والـ CI عدّى. ليه، وتصلحها إزاي؟</Ask>
+<Answer>
+
+الـ workspace بيعمل resolution واحدة و`package_config.json` واحد فيه كل الـ packages، فالـ import بيتعمله compile عادي. والـ `depend_on_referenced_packages` اللي بيمسكه severity بتاعه info، و`dart analyze` مابيفشلش على الـ infos. الحل ترفعه هو و`implementation_imports` لـ error في `analysis_options.yaml`، فيبقوا أحمر في الـ IDE ويوقفوا أي analyze.
+
+</Answer>
+</Question>
+
+<Question id="guards-2">
+<Ask>الـ architecture test بقاله شهرين أخضر. إيه اللي ممكن يخليه أخضر وهو مش بيحرس حاجة، وتحمي نفسك من ده إزاي؟</Ask>
+<Answer>
+
+إن المسار اتغير (فولدر اتعمله rename) فالتست بيلف على صفر ملفات، أو الـ rule نفسها غلط، أو denylist بتعدّي أي package ماحدش فكر فيها. الحل: التست يتأكد إنه شاف عدد ملفات معقول، والـ rule تبقى function ليها تستات بـ imports غلط وصح، والـ domain يتحرس بـ allowlist مش denylist.
+
+</Answer>
+</Question>
+
+<Question id="guards-3">
+<Ask>زميلك عايز يحط `min_coverage: 90` ويرفع كل الـ lints لـ error من النهارده، والمشروع فيه 60% coverage و300 info. إيه رأيك؟</Ask>
+<Answer>
+
+الـ CI هيبقى أحمر على طول، والفريق هيقفل الـ checks أو يدمج وهو أحمر. الأحسن ratchet: الـ coverage بالرقم الحالي ويزيد كل ما يطلع، والمخالفات القديمة في allowlist بتصغر بس، والـ error بس للـ rules اللي بتحرس الحدود، والباقي info أو مقفول بسبب مكتوب.
+
+</Answer>
+</Question>
+
+</Quiz>

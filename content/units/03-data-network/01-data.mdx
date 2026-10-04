@@ -143,18 +143,128 @@ abstract class BookDto with _$BookDto {
 | stale-while-revalidate | اعرض الكاش فورًا وحدّث في الخلفية | أغلب الشاشات: المكتبة، الكتالوج |
 | single source of truth | الـ UI تقرا من الـ DB بس، والشبكة تكتب في الـ DB | الـ offline-first (درس Offline-first في الوحدة 4) |
 
+### كتاب واحد بايظ ضيّع الصفحة كلها
+
+بحث في Open Library رجّع 20 كتاب، وواحد منهم مالوش `title`. الـ fromJson بيعمل cast لـ String، فبيرمي <b>TypeError</b>. والـ TypeError ده Error مش Exception، فالـ guard مش بيمسكه (ودي حاجة صح، زي ما شفنا في درس الأخطاء). النتيجة: الـ 19 كتاب السليمين ضاعوا، والـ Cubit واقف على loading، وفي crash في الـ logs. بسبب حقل واحد في كتاب واحد.
+
+ماتحلهاش بإنك تمسك `TypeError`، لأنك كده هتخبّي الـ null bugs بتاعتك انت كمان. الحل إن الـ DTO يوصف الـ API بصدق، والـ mapper يقرر:
+
+<CodeBlock label="الـ DTO بيقول الحقيقة، والـ mapper بيقرر">
+
+```dart
+@freezed
+abstract class BookDto with _$BookDto {
+  const factory BookDto({
+    required String key, // always there: it's the id
+    String? title,       // missing on some Open Library works
+    @Default('want_to_read') String status,
+  }) = _BookDto;
+
+  factory BookDto.fromJson(Map<String, dynamic> json) =>
+      _$BookDtoFromJson(json);
+}
+
+extension BookDtoMapper on BookDto {
+  // null: this item has nothing worth showing
+  Book? toEntityOrNull() {
+    final t = title?.trim();
+    if (t == null || t.isEmpty) return null;
+    // _status: the same switch as toEntity() above
+    return Book(id: BookId.fromTrusted(key), title: t, status: _status(status));
+  }
+}
+
+// in the repository
+final books = dto.docs.map((d) => d.toEntityOrNull()).nonNulls.toList();
+```
+
+</CodeBlock>
+
+- <b>الـ required للي مستحيل يغيب بس:</b> الـ key هو الـ id، ولو غاب يبقى الـ API نفسه بايظ، والـ crash هنا مفيد. أي حقل تاني ممكن يغيب يبقى nullable أو ليه `@Default`.
+- <b>الـ mapper بيقرر مش الـ fromJson:</b> «كتاب من غير عنوان مايتعرضش» قرار، ومكانه الـ mapper. والـ `nonNulls` بيشيل اللي رجع null، فالـ 19 التانيين بيوصلوا.
+- <b>لو الشكل كله غلط:</b> زي إن `docs` نفسها مش list، ده API اتغير، والـ crash هنا هو اللي هيعرّفك. ماتحاولش تنقذ كل حاجة.
+
+### السيرفر زوّد حالة جديدة
+
+الـ backend زوّد حالة `abandoned` («سيبته»). المستخدم عنده نسخة قديمة من الـ app، والـ mapper بتاعها فيه `_ => BookStatus.wantToRead`. الكتاب اللي سابه بقى ظاهر «عايز أقراه». ولو المستخدم غيّر عنوان الكتاب ده، الـ app هيبعت الكتاب كله بـ `status: 'want_to_read'`، ويمسح `abandoned` من السيرفر. التطبيق القديم بوّظ بيانات حتى على الأجهزة الجديدة.
+
+مشكلتين، ولكل واحدة حل:
+
+- <b>القراية:</b> الـ default مقبول عشان الـ app القديم مايقعش، بس سجّل القيمة اللي ماتعرفهاش (`logger.warning('unknown status: $status')`)، فتعرف إن في نسخ قديمة بتستقبل بيانات جديدة.
+- <b>الكتابة:</b> ماتبعتش حقل ماغيّرتوش. الـ default اللي حطّه الـ mapper عشان يعرض حاجة مايتبعتش للسيرفر كأنه قيمة حقيقية.
+
+### الـ PATCH مسح العنوان
+
+الطريقة السهلة للكتابة إنك تعيد استخدام نفس الـ DTO: `BookDto.fromEntity(book).toJson()`. بس كده بتبعت كل الحقول، بما فيهم اللي null. والسيرفر بيفهم `"title": null` على إنه «امسح العنوان». وحتى لو مفيش null، بتبعت قيم ممكن تكون اتغيرت على السيرفر من جهاز تاني، فبتكتب فوقها بقيم قديمة.
+
+<CodeBlock label="DTO للطلب، مش نفس DTO الرد">
+
+```dart
+// data/update_book_request.dart
+@freezed
+abstract class UpdateBookRequest with _$UpdateBookRequest {
+  @JsonSerializable(includeIfNull: false) // null means "not changed": don't send it
+  const factory UpdateBookRequest({String? title, String? status}) = _UpdateBookRequest;
+
+  factory UpdateBookRequest.fromJson(Map<String, dynamic> json) =>
+      _$UpdateBookRequestFromJson(json);
+}
+
+// data source
+Future<void> updateStatus(BookId id, BookStatus status) => _dio.patch<void>(
+      '/library/${id.value}',
+      data: UpdateBookRequest(status: _statusToJson(status)).toJson(), // {"status": "finished"}
+    );
+```
+
+</CodeBlock>
+
+الـ DTO بتاع الرد بيوصف «السيرفر بيبعت إيه»، والـ DTO بتاع الطلب بيوصف «العملية دي بتغيّر إيه». لما يبقوا class واحدة، أي حقل بيتضاف للرد بيتبعت في كل طلب من غير ما حد يقصد.
+
+### الوقت جه بفرق 3 ساعات
+
+الـ `DateTime.parse('2026-10-04T08:00:00Z')` بيرجّع وقت UTC، لأن في `Z` في الآخر. لكن لو السيرفر بعت `'2026-10-04T08:00:00'` من غير `Z`، Dart بيفهمه وقت محلي، فالوقت بيتزحزح بفرق التوقيت. والعكس كمان: `DateTime.now().toIso8601String()` مافيهوش timezone خالص، فالسيرفر هيفهمه UTC.
+
+<CodeBlock label="UTC في كل حتة، والمحلي في الـ UI بس">
+
+```dart
+// writing: always send UTC, it ends with Z
+data: {'updatedAt': _clock.now().toUtc().toIso8601String()},
+
+// reading: if the API omits Z, say it's UTC yourself
+DateTime parseUtc(String raw) =>
+    DateTime.parse(raw.endsWith('Z') ? raw : '${raw}Z');
+
+// showing: local time only at the last moment
+Text(DateFormat.yMMMd(locale).format(book.updatedAt.toLocal()))
+```
+
+</CodeBlock>
+
+ده بيفرق جدًا في درس Offline-first: الـ last-write-wins بيقارن `updatedAt` من الجهاز ومن السيرفر. لو واحد UTC والتاني محلي، المقارنة هتطلع غلط ومحدش هياخد باله.
+
 
 </Level>
 
 <Level n="4" title="عقلية الـ production">
 
-- <b>الـ JSON مش مضمون:</b> السيرفر ممكن يرجّع null في حقل انت فاكره دايمًا موجود. الـ `as String` هترمي exception، والـ guard هيحوّله لـ Failure. ده أحسن من إن الـ app يقع، بس الأحسن إنك تحط default معقول في الـ DTO للحقول اللي مش حرجة.
+- <b>الـ JSON مش مضمون:</b> السيرفر ممكن يرجّع null في حقل انت فاكره دايمًا موجود. الـ `as String` هترمي TypeError، والـ guard مش هيمسكه لأنه Error مش Exception. الحماية في الـ DTO نفسه: الحقول اللي ممكن تغيب nullable أو ليها default، والـ mapper يقرر يعمل إيه لو ناقصة.
 - <b>الـ data source بيرجّع DTO مش response خام:</b> كده الـ repository مايعرفش حاجة عن dio خالص، وتقدر تبدّل dio بـ http من غير ما تلمسه.
-- <b>الـ mapper في اتجاهين:</b> للقراية `toEntity()`، وللكتابة `BookDto.fromEntity()`. خليهم جنب بعض في نفس الملف.
+- <b>الـ mapper في اتجاهين:</b> للقراية `toEntity()`، وللكتابة `BookDto.fromEntity()` أو DTO طلب منفصل. خليهم جنب بعض في نفس الملف، واكتب لهم unit tests: الـ mapper أسهل حاجة تتستّ في الـ data layer، ومن أكتر الأماكن اللي فيها bugs.
+- <b>الـ envelope بيقف عند الـ data source:</b> لو الـ backend بيلف كل رد في `{"data": ..., "meta": ...}`، اعمل `ApiResponse<T>` بـ `@JsonSerializable(genericArgumentFactories: true)`، والـ data source يفك الـ envelope ويرجّع اللي جواه. الـ repository مايعرفش إن في envelope.
+- <b>الـ JSON الكبير بيقطّع الـ UI:</b> dio بيعمل decode للـ responses الكبيرة في isolate تاني لوحده، بس الـ fromJson والـ mapping لآلاف العناصر بيحصلوا على الـ main isolate. لو قسته ولقيته بيقطّع، انقله: `await Isolate.run(() => list.map(BookDto.fromJson).toList())`.
+- <b>الـ snake_case:</b> Open Library بيبعت `first_publish_year`. بدل `@JsonKey(name: ...)` على كل حقل، حط `@JsonSerializable(fieldRename: FieldRename.snake)` على الـ factory.
+- <b>الـ Local source ليه درس لوحده:</b> drift والـ secure storage وإيه يتحفظ فين، في درس التخزين المحلي بعد الدرس الجاي.
 
 <Note kind="interview" title="سؤال interview">
 
 «ليه تعمل DTO منفصل عن الـ Entity؟» عشان شكل الـ API وشكل الـ business يتغيروا كل واحد لوحده. الـ mapper بيمتص أي تغيير في الـ API، والـ Domain والـ UI مايحسوش.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«السيرفر بعت null في حقل الـ app فاكره required، والشاشة كلها وقعت. تصلحها إزاي؟» مش بـ catch على TypeError، لأن ده هيخبّي bugs الـ app كمان. الـ DTO لازم يوصف الـ API بصدق: الحقل ده nullable. والـ mapper يقرر: عنصر من غير عنوان يتشال من الليست بدل ما يضيّعها كلها. والـ required يفضل للحاجات اللي غيابها معناه إن الـ API نفسه اتغير، وهناك الـ crash مفيد لأنه بيعرّفك.
 
 </Note>
 
@@ -195,7 +305,7 @@ abstract class BookDto with _$BookDto {
 }
 
 extension BookDtoMapper on BookDto {
-  Book toEntity() => Book(id: BookId(key), title: title);
+  Book toEntity() => Book(id: BookId.fromTrusted(key), title: title);
 }
 ```
 
@@ -232,6 +342,24 @@ extension BookDtoMapper on BookDto {
 <Answer>
 
 لما عايز الشاشة تظهر فورًا بآخر بيانات معروفة، وفي نفس الوقت تتحدث من السيرفر في الخلفية.
+
+</Answer>
+</Question>
+
+<Question id="data-4">
+<Ask>كتاب واحد من 20 جه من غير `title`، والصفحة كلها ماظهرتش. ليه الـ guard ماحوّلوش لـ Failure، والحل إيه؟</Ask>
+<Answer>
+
+الـ cast في الـ fromJson بيرمي TypeError، وده Error مش Exception، فالـ guard بيسيبه يعدّي. الحل مش catch على TypeError: الـ `title` يبقى nullable في الـ DTO، والـ mapper يرجّع null للكتاب ده، والـ repository يشيله بـ `nonNulls` فالـ 19 الباقيين يوصلوا.
+
+</Answer>
+</Question>
+
+<Question id="data-5">
+<Ask>المستخدم غيّر حالة كتاب، والـ app بعت `BookDto.fromEntity(book).toJson()` كله في PATCH. إيه اللي ممكن يبوظ؟</Ask>
+<Answer>
+
+الحقول اللي null هتتبعت `null` والسيرفر هيمسحها، والحقول اللي اتغيرت من جهاز تاني هتتكتب فوقها بقيم قديمة. ابعت اللي اتغير بس: DTO طلب منفصل بـ `includeIfNull: false`.
 
 </Answer>
 </Question>

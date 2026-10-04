@@ -11,6 +11,7 @@ description: "الاتنين صح. السؤال الحقيقي: المشروع �
 
 </Analogy>
 
+الدرس ده مش هيقولك «استخدم كذا». هنكتب <b>نفس الـ feature الصغيرة</b> من Readly بالطريقتين، ونشوف كل واحدة بتكلّف كام ملف، وبعدين نشوف إيه اللي بيحصل لما المشروع يكبر: قاعدة تانية، وشاشة تانية، وoffline. ومن هنا القرار بيبقى أرقام مش ذوق.
 
 </Level>
 
@@ -26,6 +27,135 @@ description: "الاتنين صح. السؤال الحقيقي: المشروع �
 
 يعني MVVM بتاع Flutter هو تقريبًا اللي انت بتعمله، من غير ما الـ Domain يبقى طبقة إجبارية. الـ ViewModel بيكلّم الـ repository مباشرة، والـ use cases بتظهر بس لما يكون في logic يستاهل.
 
+### نفس الـ feature بالطريقتين
+
+صفحة الكتاب (`BookPage`) فيها زرار «خلصته». وفيه قاعدة business واحدة: <b>الكتاب لازم يكون `reading` عشان يتعلّم `finished`</b>. مينفعش تخلّص كتاب لسه في «عايز أقراه».
+
+الـ state واحدة في الحالتين:
+
+<CodeBlock label="الـ states">
+
+```dart
+sealed class BookState {
+  const BookState();
+}
+final class BookLoading extends BookState {
+  const BookLoading();
+}
+final class BookLoaded extends BookState {
+  const BookLoaded(this.book, {this.saving = false, this.failure});
+  final Book book;
+  final bool saving;
+  final Failure? failure; // shown as a snackbar, the book stays
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="MVVM: الـ ViewModel بيكلّم الـ repository، والقاعدة جواه">
+
+```dart
+// data/library_repository.dart: a concrete class, no contract
+class LibraryRepository {
+  LibraryRepository(this._remote, this._logger);
+  final LibraryRemoteSource _remote;
+  final AppLogger _logger;
+
+  Future<Result<void>> updateStatus(BookId id, BookStatus status) => guard(
+        () => _remote.patchStatus(id.value, status.name),
+        logger: _logger,
+        operation: 'library.updateStatus',
+      );
+}
+
+// presentation/book_cubit.dart: the ViewModel
+class BookCubit extends Cubit<BookState> {
+  BookCubit(this._library) : super(const BookLoading());
+  final LibraryRepository _library;
+
+  Future<void> markAsFinished() async {
+    final current = state;
+    if (current is! BookLoaded || current.saving) return;
+    if (current.book.status != BookStatus.reading) { // the rule
+      emit(BookLoaded(current.book, failure: const ValidationFailure('Book not started')));
+      return;
+    }
+    emit(BookLoaded(current.book, saving: true));
+    final result = await _library.updateStatus(current.book.id, BookStatus.finished);
+    if (isClosed) return;
+    emit(switch (result) {
+      Success() => BookLoaded(current.book.markAsFinished()),
+      Err(:final failure) => BookLoaded(current.book, failure: failure),
+    });
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="Clean: القاعدة في الـ Domain، والـ Cubit بينادي use case">
+
+```dart
+// domain/book.dart
+class Book {
+  // ...fields
+  bool get canBeFinished => status == BookStatus.reading;
+  Book markAsFinished() => Book(id: id, title: title, status: BookStatus.finished);
+}
+
+// domain/library_repository.dart: the contract
+abstract interface class LibraryRepository {
+  // ...getLibrary, watchLibrary, addBook, contains
+  Future<Result<void>> updateBook(Book book);
+}
+
+// domain/mark_book_as_finished.dart
+class MarkBookAsFinished {
+  MarkBookAsFinished(this._library);
+  final LibraryRepository _library;
+
+  Future<Result<Book>> call(Book book) async {
+    if (!book.canBeFinished) return const Err(ValidationFailure('Book not started'));
+    final finished = book.markAsFinished();
+    return switch (await _library.updateBook(finished)) {
+      Success() => Success(finished),
+      Err(:final failure) => Err(failure),
+    };
+  }
+}
+
+// presentation/book_cubit.dart: no rule here anymore
+class BookCubit extends Cubit<BookState> {
+  BookCubit(this._markAsFinished) : super(const BookLoading());
+  final MarkBookAsFinished _markAsFinished;
+
+  Future<void> markAsFinished() async {
+    final current = state;
+    if (current is! BookLoaded || current.saving) return;
+    emit(BookLoaded(current.book, saving: true));
+    final result = await _markAsFinished(current.book);
+    if (isClosed) return;
+    emit(switch (result) {
+      Success(:final value) => BookLoaded(value),
+      Err(:final failure) => BookLoaded(current.book, failure: failure),
+    });
+  }
+}
+```
+
+</CodeBlock>
+
+والـ `LibraryRepositoryImpl` في الـ data هو نفس الـ class اللي في نسخة MVVM تقريبًا، بس بقى `implements LibraryRepository` وبياخد `Book` كامل.
+
+| | MVVM + repository | Clean + use case |
+| --- | --- | --- |
+| الملفات اللي اتلمست | 3: الـ repository والـ Cubit والـ state | 6: الـ entity والـ contract والـ impl والـ use case والـ Cubit والـ state |
+| تسجيلات في get_it | 2 | 4 (الـ contract بالـ impl، والـ use case) |
+| القاعدة فين | سطر في `BookCubit` | `canBeFinished` في الـ entity، والـ use case بيطبّقها |
+| «Go to definition» من الـ Cubit | بيوديك للكود على طول | بيوديك للـ use case، ومنه للـ contract، ولازم «Go to implementations» |
+| تست القاعدة | `blocTest` على الـ Cubit مع mock للـ repository | `dart test` على الـ use case مع `FakeLibraryRepository` |
+
+لـ feature فيها قاعدة واحدة وشاشة واحدة، نسخة MVVM <b>أحسن</b>: نص الملفات، وأي حد جديد يفهمها في دقيقة. الفرق بيبان لما الـ feature تكبر، وده Level 3.
 
 </Level>
 
@@ -45,14 +175,169 @@ description: "الاتنين صح. السؤال الحقيقي: المشروع �
 
 </Diagram>
 
+الجدول ده بيقول «امتى» بشكل عام. تعالى نشوف بالكود إيه اللي بيحصل للـ feature بتاعتنا لما المتطلبات تزيد.
+
+### شاشة تانية محتاجة نفس القاعدة
+
+شاشة المكتبة زوّدت swipe على الكتاب: «خلصته». في نسخة MVVM، `LibraryCubit` محتاج نفس القاعدة، فالحل الأسهل إنك تنسخ الـ `if`. بعد شهر حد يغيّر القاعدة في `BookCubit` (مثلًا «مسموح تخلّص كتاب من wantToRead لو قريته برا الـ app») وينسى الـ swipe، فالشاشتين يقولوا كلام مختلف عن نفس الكتاب.
+
+في MVVM عندك حلّين من غير ما تعمل Domain كامل: تنقل القاعدة للـ repository، أو تعمل use case للعملية دي بس. دليل Flutter نفسه بيقول كده: الـ domain layer اختياري، وبيظهر لما logic يتكرر بين ViewModels.
+
+<CodeBlock label="الـ use case اتعمل لأن في مستخدم تاني">
+
+```dart
+// the same MarkBookAsFinished, now used by two Cubits
+getIt
+  ..registerLazySingleton(() => MarkBookAsFinished(getIt()))
+  ..registerFactory(() => BookCubit(getIt()))
+  ..registerFactory(() => LibraryCubit(getIt(), getIt())); // WatchLibrary + MarkBookAsFinished
+
+// LibraryCubit: the swipe action
+Future<void> finish(Book book) async {
+  final result = await _markAsFinished(book);
+  if (isClosed) return;
+  final current = state;
+  if (result case Err(:final failure) when current is LibraryLoaded) {
+    emit(current.copyWith(actionFailure: failure)); // a snackbar, the list stays
+  }
+  // success: watchLibrary emits the updated list by itself
+}
+```
+
+</CodeBlock>
+
+في نسخة Clean، ده سطر تسجيل وconstructor parameter. القاعدة مكتوبة مرة واحدة، والتست بتاعها مكتوب مرة واحدة.
+
+### قاعدة تانية وصلت
+
+المنتج طلب «هدف القراية السنوي»: لما كتاب يتعلّم `finished`، عداد السنة دي يزيد. دي عملية فيها repositoryين لازم يحصلوا مع بعض، وده بالظبط «تركيب الـ use cases» من درس الـ Domain.
+
+<BeforeAfter>
+
+<Side label="MVVM: الـ Cubit بيرتّب الخطوات" kind="before">
+
+```dart
+// BookCubit now knows the order and both repos
+Future<void> markAsFinished() async {
+  // ...guards and the status rule
+  final result = await _library.updateStatus(book.id, BookStatus.finished);
+  if (result case Success()) {
+    await _goals.increment(year: _clock.now().year);
+  }
+  // LibraryCubit's swipe must repeat all of this
+}
+```
+
+</Side>
+
+<Side label="Clean: الـ use case بيكبر، الـ Cubit زي ما هو" kind="after">
+
+```dart
+class MarkBookAsFinished {
+  MarkBookAsFinished(this._library, this._goals, this._clock);
+  final LibraryRepository _library;
+  final ReadingGoalRepository _goals;
+  final Clock _clock;
+
+  Future<Result<Book>> call(Book book) async {
+    if (!book.canBeFinished) return const Err(ValidationFailure('Book not started'));
+    final finished = book.markAsFinished();
+    final saved = await _library.updateBook(finished);
+    if (saved case Err(:final failure)) return Err(failure);
+    await _goals.increment(year: _clock.now().year); // best effort
+    return Success(finished);
+  }
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+- <b>في MVVM:</b> كل Cubit بيستخدم العملية لازم ياخد repositoryين وClock ويرتّبهم صح. القاعدة الجديدة لمست كل الشاشات.
+- <b>في Clean:</b> الـ use case اتغير والـ DI اتغير، والـ Cubits ماتلمستش. وتست «الهدف مابيزيدش لو الحفظ فشل» بيبقى `dart test` من غير Flutter.
+
+### الـ offline وصل
+
+المستخدم عايز يعلّم الكتاب خلص وهو في الطيارة. الحل من درس الـ Offline: الـ repository بيكتب في drift بحالة pending، ويضيف `SyncOp` في الـ `SyncQueue`، والـ `SyncService` يبعت لما النت يرجع.
+
+المفاجأة: <b>ده بيلمس الـ repository بس في الطريقتين</b>. الـ Cubit في MVVM كان بيكلّم `updateStatus` وهيفضل يكلّمها. يعني الـ offline لوحده مش حجة لـ Clean، هو حجة لـ repository محترم بيخبّي مصدر البيانات. اللي بيفرق هو اللي بييجي مع الـ offline:
+
+- <b>قواعد الـ conflicts:</b> الكتاب اتعلّم finished على الموبايل وreading على التابلت. مين يكسب؟ ده قرار business (last-write-wins بالـ `updatedAt` في ADR 004)، ومكانه الطبيعي الـ Domain مش جوه الـ SyncService.
+- <b>مصادر بيانات أكتر:</b> الـ API وdrift والـ queue. لو الـ repository مالوش contract، كل تست للـ Cubit محتاج يعمل mock لـ class عارفة الـ DB.
+
+### الحساب في الآخر
+
+| اللي حصل | MVVM: اللي اتلمس | Clean: اللي اتلمس |
+| --- | --- | --- |
+| الـ feature الأولى | 3 ملفات | 6 ملفات |
+| شاشة تانية | `LibraryCubit` + نسخة من القاعدة (أو تطلّع use case) | `LibraryCubit` + سطر DI |
+| قاعدة الهدف السنوي | كل Cubit بيعلّم كتاب finished | الـ use case + الـ DI |
+| الـ offline | الـ repository | الـ repository impl |
+
+Clean بتدفع أكتر في الأول، وبتوفّر مع كل شاشة وقاعدة جديدة. لو الـ feature عمرها ما هتاخد شاشة تانية ولا قاعدة تانية، انت دفعت ومخدتش حاجة.
 
 </Level>
 
-<Level n="4" title="المعمارية بتتطور">
+<Level n="4" title="قرارات الـ senior">
 
 مش لازم تقرر مرة واحدة للأبد. ممكن تبدأ MVVM مع repositories، ولما قاعدة business تكبر أو تتكرر في أكتر من مكان، تطلّعها لـ use case. ولما الـ entities تبدأ يبقى ليها سلوك، تعمل Domain حقيقي. ده اسمه <b>evolutionary architecture</b>: المعمارية بتكبر مع المشروع بدل ما تتبني كاملة من أول يوم.
 
 وفي الـ interview، المطور اللي بيقول «أنا بستخدم Clean Architecture في كل حاجة» أضعف من اللي بيقول «بستخدم MVVM للمشاريع الصغيرة، وبضيف Domain layer لما يكون في قواعد business حقيقية أو المشروع طويل، وده مثال من شغلي». التانية بتقول إنك فاهم التمن مش حافظ الوصفة.
+
+### checklist القرار
+
+اسأل الأسئلة دي على المشروع، وبعدين على كل feature لوحدها:
+
+| السؤال | يميل لـ MVVM + repositories | يميل لـ Clean (Domain كامل) |
+| --- | --- | --- |
+| حجم الفريق | 1 لـ 3 مطورين، بيقعدوا جنب بعض | 4 أو أكتر، أو أكتر من فريق على نفس الـ app |
+| عمر المشروع | MVP، أو حملة، أو أقل من سنة | سنين، وفي ناس هتمسكه بعدك |
+| الـ business logic | عرض بيانات وCRUD، والسيرفر هو اللي بيقرر | قواعد وحسابات وstate machines على الـ client |
+| الـ offline | cache للقراية بس | كتابة offline وsync وconflicts |
+| مصادر البيانات | API واحد | API وDB محلية وqueue وSDKs تانية |
+| الاختبار | widget tests للـ happy path كفاية | القواعد لازم تتختبر لوحدها (فلوس، صلاحيات، تقارير) |
+
+- <b>مش مجموع نقط:</b> معيار واحد قوي يكفي للـ feature بتاعته. قاعدة فيها فلوس محتاجة use case حتى لو باقي الـ app CRUD.
+- <b>الـ feature مش المشروع:</b> نفس الـ app ممكن يبقى فيه الاتنين، وده الجزء الجاي.
+- <b>اكتب القرار:</b> ADR من 5 سطور بيقول المعايير اللي طبّقتها، عشان اللي بعدك مايعيدش النقاش.
+
+### تمن كل طبقة
+
+| الطبقة | بتضيف إيه | بتكلّف إيه | تستاهل امتى |
+| --- | --- | --- | --- |
+| contract للـ repository | تبديل الـ implementation، وfakes في التست | ملف، وتسجيل `as`، و«Go to implementations» بدل «Go to definition» | تقريبًا دايمًا: رخيصة وبتحمي الـ Cubit من الـ data |
+| use case | القاعدة في مكان واحد، وتست بـ `dart test` | ملف، وتسجيل، وتست. ولو pass-through، ملف مالوش لازمة | لما في قاعدة، أو عملية فيها أكتر من repository، أو أكتر من Cubit بيستخدمها |
+| entity منفصلة عن الـ DTO | الـ Domain مايتأثرش بشكل الـ API | mapper، وحقول متكررة في class تانية | لما الـ API بيتغير، أو في أكتر من مصدر لنفس البيانات |
+| package لكل feature | حدود حقيقية بيمنعها الـ analyzer | pubspec لكل package، وbuild أبطأ، وتعقيد في الـ CI | فريق كبير والحدود بتتكسر كتير (درس التوسّع) |
+
+الترتيب ده هو نفسه ترتيب الإضافة: contract الأول لأنه أرخص حاجة، والـ packages آخر حاجة.
+
+### هجين لكل feature
+
+Readly نفسه مش معمول بشكل واحد:
+
+- <b>settings:</b> مالهاش Domain خالص. الـ Cubit بيكلّم `SettingsStore` من ورا contract (درس الـ Settings).
+- <b>catalog:</b> بحث وعرض. `SearchBooks` شبه pass-through، والقاعدة الحقيقية الوحيدة (hasMore) في الـ repository. MVVM كان هيكفي، وسبناه use case عشان الشكل يبقى واحد مع library.
+- <b>library وnotes:</b> قواعد (مايتضافش مرتين، الملاحظة الفاضية، finished)، وoffline، وconflicts. Clean كامل.
+
+القاعدة الوحيدة: <b>جوه الـ feature الواحدة شكل واحد</b>. مش Cubit بيكلّم use case في method والـ repository في method تانية من غير سبب. ولو عملت كده (زي `NotesCubit` اللي بيكلّم الـ repository في `load` لأن مفيش قاعدة)، يبقى قرار مكتوب جنب الكود.
+
+### الانتقال من MVVM لـ Clean لما الحاجة تظهر
+
+مش محتاج تعيد كتابة حاجة. نفس خطوات [درس الـ Refactor](/course/production/refactor/)، بس أسهل لأن الكود أصلًا فيه Cubit وrepository:
+
+1. <b>contract للـ repository:</b> `abstract interface class LibraryRepository` في domain، والـ class القديمة تبقى `LibraryRepositoryImpl implements LibraryRepository`. الـ DI بيتغير، والـ Cubits ماتحسّش.
+2. <b>use case للعملية اللي ظهر ليها مستخدم تاني أو قاعدة تانية:</b> القاعدة بتتنقل من الـ Cubit للـ use case، والتست بتاعها بيتنقل من `blocTest` لـ `dart test`. العمليات التانية تفضل تكلّم الـ repository.
+3. <b>entity وDTO:</b> بس لما الـ JSON يبدأ يوجعك، زي PR 4 في درس الـ Refactor.
+
+كل خطوة PR لوحده بيطلع للمستخدمين، والتستات خضرا قبله وبعده. ولو المشروع وقف عند خطوة 1 للأبد، ده مش فشل، ده معناه إن الخطوة 2 ماكانتش لازمة.
+
+<Note kind="interview" title="سؤال interview">
+
+«ليه ماتستخدمش Clean Architecture في كل المشاريع؟» لأن كل طبقة ليها تمن: ملفات وتسجيلات وقفزات أكتر وانت بتقرا الكود، ووقت لأي حد جديد. Clean بتدفع التمن ده في الأول عشان توفّر لما القواعد تتكرر بين شاشات، أو تتركّب من أكتر من repository، أو تحتاج تتختبر لوحدها. فبقرر لكل feature بأسئلة محددة: في قواعد على الـ client؟ في offline writes؟ كام مصدر بيانات؟ المشروع هيعيش كام سنة وكام واحد هيشتغل عليه؟ وبدايتي الافتراضية MVVM مع repository ورا contract، وبضيف use case أول ما قاعدة تتكرر أو عملية تحتاج repositoryين. والقرار مكتوب في ADR. مثال: في Readly الـ settings مالهاش Domain، والـ library Clean كامل، في نفس الـ app.
+
+</Note>
 
 </Level>
 
@@ -81,6 +366,24 @@ description: "الاتنين صح. السؤال الحقيقي: المشروع �
 <Answer>
 
 إنك تبدأ بمعمارية بسيطة، وتضيف طبقات (زي الـ Domain) لما المشروع يحتاجها فعلًا.
+
+</Answer>
+</Question>
+
+<Question id="choose-4">
+<Ask>`BookCubit` فيه قاعدة «الكتاب لازم يكون reading عشان يتعلّم finished». شاشة المكتبة محتاجة نفس الزرار. تعمل إيه في مشروع MVVM؟</Ask>
+<Answer>
+
+ماتنسخش الـ `if`. تطلّع العملية لـ use case واحد (`MarkBookAsFinished`) وتديه للـ Cubitين من الـ DI. ده مش تحويل المشروع لـ Clean، ده الـ domain layer الاختياري بتاع MVVM وهو بيظهر في المكان اللي محتاجه بس.
+
+</Answer>
+</Question>
+
+<Question id="choose-5">
+<Ask>فريقك عايز يحوّل الـ app كله لـ Clean عشان «هنعمل offline». الـ offline لوحده يبرر ده؟</Ask>
+<Answer>
+
+لأ. الـ offline بيغيّر الـ repository بس (drift والـ SyncQueue)، والـ Cubit مش بيحس في الطريقتين. اللي يبرر Domain هو اللي بييجي معاه: قواعد conflicts، ومصادر بيانات أكتر محتاجة contract عشان التست. فالقرار للـ features اللي فيها كتابة offline، مش للـ app كله.
 
 </Answer>
 </Question>

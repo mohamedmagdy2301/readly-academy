@@ -1,0 +1,575 @@
+---
+title: "التخزين المحلي: drift وsecure storage"
+description: "إيه يتحفظ فين على الجهاز، والـ local data sources اللي بتخبّي drift والـ secure storage، والـ migrations اللي مابتبوّظش بيانات المستخدمين."
+minutes: 30
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="الأرشيف والخزنة والنوتة اللي على التلاجة">
+
+في أي مكتب في 3 أماكن للحفظ. <b>الأرشيف</b>: دواليب فيها آلاف الملفات، متقسمة ومتفهرسة، وتقدر تسأل «هاتلي كل ملفات العملاء اللي في القاهرة» فتلاقيهم في ثانية. <b>الخزنة</b>: صغيرة ومقفولة، فيها مفاتيح المكتب والشيكات بس، وفتحها بياخد وقت. و<b>النوتة اللي على التلاجة</b>: «التكييف على 22»، أي حد معدّي يقراها، ومحدش بيكتب فيها حاجة سرية. محدش بيحط الشيكات على التلاجة، ومحدش بيحط الأرشيف كله في الخزنة.
+
+</Analogy>
+
+الـ app بتاعك عنده نفس التلات أماكن. <b>drift</b> هو الأرشيف: SQLite بجداول وqueries وstreams، للمكتبة والملاحظات. <b>flutter_secure_storage</b> هو الخزنة: متشفّر بمفاتيح النظام، للـ tokens بس. و<b>shared_preferences</b> هو النوتة: قيم صغيرة زي الثيم واللغة.
+
+والقاعدة اللي من درس الـ Data لسه زي ما هي: الـ repository مايعرفش drift ولا الـ secure storage، بيكلّم <b>local data source</b> زي ما بيكلّم الـ remote.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+| البيانات | تتحفظ فين | ليه |
+| --- | --- | --- |
+| المكتبة والملاحظات وكاش الكتالوج | drift | بيانات كتير، محتاجة queries وترتيب وfilter، والشاشة لازم تتحدث لوحدها لما تتغير |
+| الـ access والـ refresh token | flutter_secure_storage | سر: اللي ياخده يبقى هو المستخدم |
+| الثيم واللغة وعلامة أول تشغيل | shared_preferences | قيم صغيرة مش سرية، بتتقرا أول ما الـ app يفتح |
+
+<Diagram name="d-local-storage">
+
+كل نوع بيانات ليه contract في الـ data layer، ووراه مكان تخزين مختلف. الـ repository والـ interceptor والـ Cubit مايعرفوش drift ولا Keychain.
+
+</Diagram>
+
+### drift: الجدول والـ DAO
+
+<CodeBlock label="الجدول">
+
+```dart
+// data/local/books_table.dart
+@DataClassName('BookRow') // drift would call it Book and clash with the entity
+class Books extends Table {
+  TextColumn get id => text()();
+  TextColumn get title => text()();
+  TextColumn get status => textEnum<BookStatus>()(); // stored by name: 'reading'
+  DateTimeColumn get updatedAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+```
+
+</CodeBlock>
+
+drift بيولّد من الجدول ده data class اسمها `BookRow`. الـ `BookRow` بالنسبة للـ DB زي الـ `BookDto` بالنسبة للـ API: شكل التخزين، مش شكل الـ business.
+
+لو حطيت كل الـ queries في الـ `AppDatabase` نفسه، هيبقى ملف فيه queries كل الـ features. الـ <b>DAO</b> (Data Access Object) بيجمع queries جدول واحد في class لوحدها:
+
+<CodeBlock label="BooksDao">
+
+```dart
+// data/local/books_dao.dart
+@DriftAccessor(tables: [Books])
+class BooksDao extends DatabaseAccessor<AppDatabase> with _$BooksDaoMixin {
+  BooksDao(super.db);
+
+  Stream<List<BookRow>> watchAll() =>
+      (select(books)..orderBy([(b) => OrderingTerm.asc(b.title)])).watch();
+
+  Future<BookRow?> byId(String id) =>
+      (select(books)..where((b) => b.id.equals(id))).getSingleOrNull();
+
+  Future<void> upsert(BookRow row) => into(books).insertOnConflictUpdate(row);
+
+  Future<void> upsertAll(Iterable<BookRow> rows) =>
+      batch((b) => b.insertAllOnConflictUpdate(books, rows));
+
+  Future<int> remove(String id) =>
+      (delete(books)..where((b) => b.id.equals(id))).go();
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="AppDatabase">
+
+```dart
+// data/local/app_database.dart
+@DriftDatabase(tables: [Books], daos: [BooksDao])
+class AppDatabase extends _$AppDatabase {
+  AppDatabase(super.e); // tests pass NativeDatabase.memory()
+
+  // the app: a file named readly, opened on a background isolate
+  AppDatabase.open() : super(driftDatabase(name: 'readly'));
+
+  @override
+  int get schemaVersion => 1;
+}
+```
+
+</CodeBlock>
+
+- <b>الـ watch:</b> بيرجّع stream بيطلّع الليست كاملة من جديد مع أي تغيير في جدول `books`. ده اللي هيخلي شاشة المكتبة تتحدث لوحدها، وهو قلب درس Offline-first الجاي.
+- <b>الـ insertAllOnConflictUpdate:</b> لو الكتاب موجود بنفس الـ primary key بيتحدّث، لو مش موجود بيتضاف. وكله في `batch` واحد.
+- <b>الـ driftDatabase:</b> من package `drift_flutter`. بيلاقي فولدر الـ app ويفتح الملف، والـ SQL بيشتغل في isolate تاني، فالـ queries التقيلة مابتقطّعش الـ UI.
+
+### الـ local source والـ mapper
+
+<CodeBlock label="LibraryLocalSource">
+
+```dart
+// data/library_local_source.dart
+class LibraryLocalSource {
+  LibraryLocalSource(this._dao);
+  final BooksDao _dao;
+
+  Stream<List<BookRow>> watchBooks() => _dao.watchAll();
+
+  Future<BookRow?> bookById(String id) => _run(() => _dao.byId(id));
+
+  Future<void> upsertBooks(Iterable<BookRow> rows) => _run(() => _dao.upsertAll(rows));
+
+  // drift throws SqliteException, or DriftRemoteException from the isolate:
+  // the guard only knows CacheException
+  Future<T> _run<T>(Future<T> Function() action) async {
+    try {
+      return await action();
+    } on Exception catch (e) {
+      throw CacheException(e.toString());
+    }
+  }
+}
+```
+
+</CodeBlock>
+
+الـ guard بتاع درس الأخطاء بيمسك `DioException` و`CacheException` بس. لو الـ local source سابت الـ exception بتاع drift يعدّي، هيوصل للـ Cubit كـ crash مش CacheFailure. فالـ local source بتعمل زي الـ remote بالظبط: بترمي، بس بنوع الـ data layer يعرفه. والـ `on Exception` مش `catch (e)`: الـ Errors (يعني الـ bugs) بتعدّي زي ما هي.
+
+<CodeBlock label="الـ mapper: نفس فكرة الـ DTO">
+
+```dart
+// data/book_row_mapper.dart
+extension BookRowMapper on BookRow {
+  Book toEntity() => Book(id: BookId.fromTrusted(id), title: title, status: status);
+}
+
+extension BookToRow on Book {
+  BookRow toRow({required DateTime updatedAt}) =>
+      BookRow(id: id.value, title: title, status: status, updatedAt: updatedAt);
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ repository بيستخدم الاتنين">
+
+```dart
+class LibraryRepositoryImpl implements LibraryRepository {
+  LibraryRepositoryImpl(this._remote, this._local, this._clock);
+  final LibraryRemoteSource _remote;
+  final LibraryLocalSource _local;
+  final Clock _clock;
+
+  @override
+  Stream<List<Book>> watchLibrary() =>
+      _local.watchBooks().map((rows) => [for (final r in rows) r.toEntity()]);
+
+  @override
+  Future<Result<void>> refresh() => guard(() async {
+        final dtos = await _remote.fetchLibrary();
+        final now = _clock.now().toUtc();
+        await _local.upsertBooks(dtos.map((d) => d.toEntity().toRow(updatedAt: now)));
+      });
+}
+```
+
+</CodeBlock>
+
+الـ refresh مابيرجّعش الكتب: بيكتبها في الـ DB، والـ watch بيوصّلها للشاشة. ده المستوى 1 من جدول درس Offline-first (كاش للقراية). الدرس ده بيبني الأرشيف، والدرس الجاي هيزوّد عليه الكتابة أوفلاين والـ sync queue.
+
+<Note kind="info" title="الـ queries في درس Offline-first">
+
+في درس Offline-first هتلاقي `watchBooks` و`upsertBooks` و`bookById` مكتوبة على `AppDatabase` مباشرة، عشان الكود يبقى قصير وتركّز على الـ sync. في المشروع الحقيقي مكانها الـ DAO، والـ repository بياخد الـ `LibraryLocalSource`.
+
+</Note>
+
+### الـ tokens: TokenStore
+
+الـ AuthInterceptor في درس dio كان بيقرا من `TokenStore` من غير ما نشوفه. ده الـ contract:
+
+<CodeBlock label="الـ contract والـ implementation">
+
+```dart
+// core/auth/token_store.dart
+abstract interface class TokenStore {
+  Future<String?> get accessToken;
+  Future<String?> get refreshToken;
+  Future<void> save({required String access, required String refresh});
+  Future<void> clear();
+}
+
+// core/auth/secure_token_store.dart
+class SecureTokenStore implements TokenStore {
+  SecureTokenStore(this._storage);
+  final FlutterSecureStorage _storage;
+
+  // renaming these after release logs everyone out
+  static const _accessKey = 'access_token';
+  static const _refreshKey = 'refresh_token';
+
+  @override
+  Future<String?> get accessToken => _storage.read(key: _accessKey);
+
+  @override
+  Future<String?> get refreshToken => _storage.read(key: _refreshKey);
+
+  @override
+  Future<void> save({required String access, required String refresh}) async {
+    await _storage.write(key: _accessKey, value: access);
+    await _storage.write(key: _refreshKey, value: refresh);
+  }
+
+  @override
+  Future<void> clear() async {
+    await _storage.delete(key: _accessKey);
+    await _storage.delete(key: _refreshKey);
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="نسخة للتستات">
+
+```dart
+// test/fakes/fake_token_store.dart
+class FakeTokenStore implements TokenStore {
+  String? access;
+  String? refresh;
+
+  @override
+  Future<String?> get accessToken async => access;
+  @override
+  Future<String?> get refreshToken async => refresh;
+  @override
+  Future<void> save({required String access, required String refresh}) async {
+    this.access = access;
+    this.refresh = refresh;
+  }
+  @override
+  Future<void> clear() async => access = refresh = null;
+}
+```
+
+</CodeBlock>
+
+- <b>الـ contract في core مش في الـ domain:</b> الـ domain مايعرفش يعني إيه token. اللي بيستخدموه الـ AuthInterceptor والـ AuthRepositoryImpl، والاتنين في الـ data layer.
+- <b>الـ fake بيحفظ في الذاكرة:</b> الـ flutter_secure_storage بيكلّم الـ native، فمش هيشتغل في `flutter test`. والـ fake ده هو اللي هنستخدمه في تستات الـ AuthInterceptor في درس التستات.
+- <b>ليه مش shared_preferences؟</b> ملف نص عادي جوه فولدر الـ app، أي حد على موبايل rooted يقراه، وبيدخل في الـ backups. والـ refresh token عايش شهور.
+
+الـ TokenStore هيكبر في درس الـ Session في الوحدة 6: stream بيقول إن الـ session اتمسحت، وlogout بيمسح كل حاجة، ومشكلة الـ Keychain في iOS بعد مسح الـ app.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### زوّدت عمود والـ app وقع عند كل المستخدمين
+
+ضفت `coverUrl` لجدول `Books`، وجربت على موبايلك بعد ما مسحت الـ app، وكله تمام. نزّلت الـ update، فكل اللي عندهم الـ app وقع: الـ DB عندهم اتعملت بالشكل القديم، والكود الجديد بيطلب عمود مش موجود. drift بيعمل الجداول مرة واحدة بس، أول ما الملف يتعمل. أي تغيير بعد كده لازم يتقال له صراحة:
+
+<CodeBlock label="schemaVersion وMigrationStrategy">
+
+```dart
+@DriftDatabase(tables: [Books, Notes], daos: [BooksDao])
+class AppDatabase extends _$AppDatabase {
+  // ...
+  @override
+  int get schemaVersion => 3;
+
+  @override
+  MigrationStrategy get migration => MigrationStrategy(
+        onCreate: (m) => m.createAll(), // fresh install: build the latest shape
+        onUpgrade: (m, from, to) async {
+          if (from < 2) {
+            await m.addColumn(books, books.coverUrl); // v2: covers
+          }
+          if (from < 3) {
+            await m.createTable(notes); // v3: notes feature
+          }
+        },
+        beforeOpen: (details) async {
+          await customStatement('PRAGMA foreign_keys = ON');
+        },
+      );
+}
+
+// in Books: new columns on old rows must be nullable or have a default
+TextColumn get coverUrl => text().nullable()();
+```
+
+</CodeBlock>
+
+- <b>`from < 2` مش `from == 1`:</b> في مستخدم ماعملش update من شهور، وهيقفز من 1 لـ 3 مرة واحدة. بالـ `<`، كل الخطوات اللي فاتته بتتنفذ بالترتيب.
+- <b>العمود الجديد nullable أو ليه default:</b> الصفوف القديمة مالهاش قيمة له. SQLite بيرفض يزوّد عمود NOT NULL من غير default، والـ migration هتقع.
+- <b>الـ migration اللي اتنشرت ماتتعدلش:</b> لو اكتشفت غلطة في v2 بعد النشر، صلّحها في v3. ناس كتير عدّوا على v2 خلاص.
+- <b>قبل أول نشر:</b> طول ما مفيش مستخدمين، v1 تتغير براحتك وتمسح الـ app وتجرب. أول ما تنشر، أي تغيير في الجداول يبقى version جديدة وmigration.
+- <b>تغيير نوع عمود أو اسمه:</b> SQLite مابيعرفش يعمل ده مباشرة. drift عنده `m.alterTable(TableMigration(books))` بيعمل جدول جديد وينقل البيانات.
+
+### الـ migration اتجربت على موبايلك بس
+
+جرّبت الـ migration إزاي؟ نزّلت النسخة القديمة، وضفت كتاب، ونزّلت الجديدة. ده من 2 لـ 3 بس، ومن غير بيانات حقيقية. drift يقدر يحفظ شكل كل version، ويختبر الـ migrations في dart test:
+
+```bash
+# after every schemaVersion bump: save the shape of this version
+dart run drift_dev schema dump lib/data/local/app_database.dart drift_schemas/
+# generate test helpers from all saved versions
+dart run drift_dev schema generate drift_schemas/ test/generated_migrations/
+```
+
+<CodeBlock label="تست بيعدّي على كل الـ versions">
+
+```dart
+import 'generated_migrations/schema.dart';
+
+void main() {
+  late SchemaVerifier verifier;
+  setUpAll(() => verifier = SchemaVerifier(GeneratedHelper()));
+
+  for (final from in [1, 2]) {
+    test('upgrade from v$from to v3', () async {
+      final connection = await verifier.startAt(from);
+      final db = AppDatabase(connection);
+      await verifier.migrateAndValidate(db, 3); // fails if the shape differs
+      await db.close();
+    });
+  }
+}
+```
+
+</CodeBlock>
+
+الـ `migrateAndValidate` بيشغّل الـ migration وبيقارن النتيجة بالشكل اللي `onCreate` كان هيعمله. لو نسيت عمود أو index، التست بيقع على جهازك مش عند المستخدمين. والـ `drift_schemas/` بيتعمله commit، لأنه سجل كل version نزلت. والنسخ الجديدة من drift فيها `dart run drift_dev make-migrations` بيعمل الخطوات دي كلها مرة واحدة.
+
+### الـ sync كتب 500 كتاب والشاشة اتبنت 500 مرة
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+for (final row in rows) {
+  await _dao.upsert(row); // every write wakes up watchAll()
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+// one batch: one write, one stream update
+await _dao.upsertAll(rows);
+
+// several tables: a transaction, the streams
+// fire once after it commits
+await _db.transaction(() async {
+  await _db.booksDao.upsertAll(rows);
+  await _db.notesDao.removeOrphans();
+});
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: كل كتابة بتصحّي الـ `watch`، فالـ query بتتعاد والليست بتتبني من جديد 500 مرة في ثواني، والـ scroll بيقطّع. بعد: الـ batch كتابة واحدة. والـ transaction كمان: drift بيأجّل تحديث الـ streams لحد ما الـ transaction تخلص، فالشاشة بتشوف النتيجة النهائية مرة واحدة، ومابتشوفش حالة في النص.
+
+### المكتبة بقت 3000 كتاب والفلتر بقى بطيء
+
+الـ query بتاعة «الكتب اللي بقراها مترتبة بالعنوان» بتعدّي على الجدول كله. مع 50 كتاب محدش حاسس، مع 3000 وwatch بيتعاد مع كل تعديل، بتبان. الـ <b>index</b> بيخلي SQLite يروح للصفوف على طول:
+
+<CodeBlock label="index على الأعمدة اللي بتفلتر وترتب بيها">
+
+```dart
+@TableIndex(name: 'books_status_title', columns: {#status, #title})
+@DataClassName('BookRow')
+class Books extends Table {
+  // ...
+}
+
+// existing installs don't have it: a migration creates it
+if (from < 4) {
+  await m.createIndex(booksStatusTitle); // generated from @TableIndex
+}
+```
+
+</CodeBlock>
+
+- <b>الـ index ليه تمن:</b> كل كتابة بتحدّث الـ index كمان، وبياخد مساحة. اعمله للـ queries اللي بتتنادى كتير على جداول كبيرة، مش لكل عمود.
+- <b>الـ `LIKE '%dart%'` مش بيستفيد من الـ index:</b> الـ `%` في الأول معناها «في أي حتة»، فلازم يعدّي على كل الصفوف. لمكتبة 3000 كتاب ده لسه ملي ثواني. لو البحث في نصوص كبيرة (الملاحظات مثلًا)، drift بيدعم FTS5، وده بحث نصي حقيقي بـ index بتاعه.
+- <b>اتأكد إن الـ DB مش على الـ UI isolate:</b> `driftDatabase` بيفتحها في isolate تاني. لو فتحتها بنفسك بـ `NativeDatabase(file)`، كل query بتشتغل على الـ UI. الصح `NativeDatabase.createInBackground(file)`. والـ mapping لـ entities بيفضل على الـ UI isolate، فماترجّعش 3000 صف لو الشاشة بتعرض 20: استخدم `limit` أو الـ pagination.
+
+### المستخدم نقل لموبايل جديد والـ app بيقع
+
+Android بيعمل backup للـ app على Google Drive، وبيرجّعه على الموبايل الجديد. الـ flutter_secure_storage بيحفظ القيم المتشفرة في ملف prefs اسمه `FlutterSecureStorage.xml`، والملف ده بيترجع مع الـ backup. لكن مفتاح فك التشفير عايش في الـ Keystore بتاع الموبايل القديم، ومابيتنقلش أبدًا. النتيجة: `InvalidKeyException` أول ما الـ app يحاول يقرا الـ token. في النسخ الجديدة من الـ package، الـ `resetOnError` (شغال by default) بيمسح كل حاجة بدل ما يقع، فالمستخدم بيلاقي نفسه برّه من غير سبب. وفي النسخ القديمة، أو لو قفلته، الـ app بيقع.
+
+الحل الشائع `android:allowBackup="false"`، بس ده بيلغي الـ backup كله، بما فيه الـ drift DB والإعدادات. الأحسن تستثني ملف الـ secure storage بس:
+
+<CodeBlock label="android/app/src/main/res/xml/data_extraction_rules.xml">
+
+```xml
+<!-- Android 12+; android:fullBackupContent needs the same exclude for older versions -->
+<data-extraction-rules>
+  <cloud-backup>
+    <exclude domain="sharedpref" path="FlutterSecureStorage.xml" />
+  </cloud-backup>
+  <device-transfer>
+    <exclude domain="sharedpref" path="FlutterSecureStorage.xml" />
+  </device-transfer>
+</data-extraction-rules>
+```
+
+</CodeBlock>
+
+وتربطه في الـ `AndroidManifest.xml` بـ `android:dataExtractionRules="@xml/data_extraction_rules"`. كده المكتبة بترجع على الموبايل الجديد، والـ tokens لأ، فالمستخدم يعمل login مرة. وفي درس الـ Session، الـ login بيشيّك على صاحب الداتا: لو نفس المستخدم، المكتبة اللي رجعت من الـ backup بتفضل.
+
+والـ iPhone عنده المشكلة العكسية: الـ Keychain بيفضل حتى بعد ما الـ app يتمسح، فالمستخدم يمسح الـ app وينزّله يلاقي نفسه داخل. الحل (علامة أول تشغيل في shared_preferences) في درس الـ Session.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>drift ولا حاجة تانية؟</b> اسأل 4 أسئلة: محتاج queries (filter وترتيب وjoins)؟ محتاج الشاشة تتحدث لوحدها (streams)؟ عندك migrations حقيقية؟ والـ package دي بتتصان ولا آخر release من سنتين؟ drift بيجاوب أيوه على الأربعة، وتمنه الـ codegen وإنك تعرف SQL شوية. الـ sqflite بيديك SQL خام من غير types ولا streams. الـ key-value stores (زي hive) مناسبة لكاش بسيط بـ key، مش لمكتبة بتتفلتر. والـ DB اللي على موبايل المستخدم بتعيش سنين، فـ package مهجورة خطر حقيقي.
+- <b>الـ BookRow مايطلعش فوق الـ repository:</b> نفس قاعدة الـ DTO بالظبط. لو الـ Cubit شاف BookRow، أي تغيير في الجدول هيوصل للـ UI.
+- <b>الأسماء على الجهاز أبدية:</b> مفاتيح الـ secure storage، ومفاتيح الـ prefs، وأسماء الجداول والأعمدة، وأسماء قيم الـ enum اللي `textEnum` بيخزّنها. تغيير اسم في الكود ممكن يخلي البيانات القديمة ماتتقريش: `textEnum` بيرمي error لو لقى اسم مايعرفوش، يعني لو غيّرت `reading` لـ `inProgress`، كل الكتب القديمة اللي حالتها `reading` هتبوّظ القراية. التغيير ده محتاج migration بتحدّث الصفوف.
+- <b>تشفير الـ DB نفسها؟</b> drift يقدر يشتغل على SQLCipher (`sqlcipher_flutter_libs`)، ومفتاح التشفير يتحفظ في الـ secure storage. لـ app صحة أو فلوس يستاهل. لـ Readly (أسماء كتب وملاحظات) الـ sandbox بتاع النظام كفاية، والتشفير بيبطّأ ويعقّد الـ debugging.
+- <b>التستات على DB حقيقية:</b> `AppDatabase(NativeDatabase.memory())` بيعمل SQLite في الذاكرة في ملي ثواني، فتختبر الـ DAO والـ local source بـ SQL حقيقي. ده بيمسك غلطات (query غلط، conflict مش متظبط) عمر ما fake هيمسكها. الـ fakes للحاجات اللي محتاجة native، زي الـ TokenStore.
+- <b>الـ prefs مش DB:</b> `SharedPreferencesWithCache` بيحمّل كل القيم في الذاكرة مرة واحدة. لو حفظت فيه ليست الكتب كـ JSON string، كل كتاب جديد = كتابة الملف كله، ومفيش queries، ومفيش migrations. وفي نسختين حديثتين: `SharedPreferencesWithCache` (القراية sync، واللي استخدمناه في درس الـ Settings) و`SharedPreferencesAsync` (كل قراية بتروح للـ native).
+
+<Note kind="interview" title="سؤال interview">
+
+«الـ app بيخزّن إيه على الجهاز وفين؟ وإزاي تغيّر شكل الـ DB من غير ما تبوّظ بيانات المستخدمين؟» البيانات الكتير اللي محتاجة queries وstreams في drift، والأسرار زي الـ tokens في flutter_secure_storage (Keychain وKeystore)، والإعدادات الصغيرة في shared_preferences، وكل واحد ورا contract في الـ data layer. والـ tokens عمرها ما تروح الـ prefs لأنها ملف نص بيدخل في الـ backups. وأي تغيير في الجداول بعد النشر: `schemaVersion` يزيد، و`onUpgrade` فيه خطوة `if (from < n)` لكل version عشان اللي بيقفز versions، والأعمدة الجديدة nullable أو ليها default، والـ migration المنشورة ماتتعدلش. وبحفظ شكل كل version بـ `drift_dev schema dump` وبختبر الترقية من كل version قديمة بـ `SchemaVerifier`.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### كاش المكتبة في shared_preferences
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+Future<void> cacheLibrary(List<BookDto> books) =>
+    _prefs.setString('library', jsonEncode(books));
+
+List<BookDto> cachedLibrary() {
+  final raw = _prefs.getString('library');
+  if (raw == null) return [];
+  return (jsonDecode(raw) as List)
+      .map((e) => BookDto.fromJson(e as Map<String, dynamic>))
+      .toList();
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+class LibraryLocalSource {
+  LibraryLocalSource(this._dao);
+  final BooksDao _dao;
+
+  Stream<List<BookRow>> watchBooks() => _dao.watchAll();
+
+  Future<void> upsertBooks(Iterable<BookRow> rows) =>
+      _run(() => _dao.upsertAll(rows));
+
+  // ... bookById, _run
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: تعديل حالة كتاب واحد بيكتب المكتبة كلها في الملف من جديد، والفلترة بالحالة بتحصل في الذاكرة بعد ما الـ JSON كله يتفك، ومفيش حاجة تقول للشاشة إن الكاش اتغير. ولو شكل الـ BookDto اتغير، الكاش القديم ممكن مايتقريش ومفيش migration. بعد: كل كتاب صف، والكتابة بالصف، والفلترة في SQL، والـ watch بيحدّث الشاشة، والـ schemaVersion بيحمي البيانات القديمة.
+
+### الـ database كاملة
+
+```dart
+// data/local/app_database.dart
+part 'app_database.g.dart';
+
+@TableIndex(name: 'books_status_title', columns: {#status, #title})
+@DataClassName('BookRow')
+class Books extends Table {
+  TextColumn get id => text()();
+  TextColumn get title => text()();
+  TextColumn get status => textEnum<BookStatus>()();
+  TextColumn get coverUrl => text().nullable()(); // v2
+  DateTimeColumn get updatedAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+@DriftDatabase(tables: [Books, Notes], daos: [BooksDao, NotesDao])
+class AppDatabase extends _$AppDatabase {
+  AppDatabase(super.e);
+  AppDatabase.open() : super(driftDatabase(name: 'readly'));
+
+  @override
+  int get schemaVersion => 4;
+
+  @override
+  MigrationStrategy get migration => MigrationStrategy(
+        onCreate: (m) => m.createAll(),
+        onUpgrade: (m, from, to) async {
+          if (from < 2) await m.addColumn(books, books.coverUrl);
+          if (from < 3) await m.createTable(notes);
+          if (from < 4) await m.createIndex(booksStatusTitle);
+        },
+        beforeOpen: (details) async {
+          await customStatement('PRAGMA foreign_keys = ON');
+        },
+      );
+}
+
+// di/setup.dart
+getIt
+  ..registerSingleton<AppDatabase>(AppDatabase.open())
+  ..registerLazySingleton(() => LibraryLocalSource(getIt<AppDatabase>().booksDao))
+  ..registerLazySingleton<TokenStore>(() => SecureTokenStore(const FlutterSecureStorage()));
+```
+
+الـ `AppDatabase` واحدة للـ app كله، لأن كل نسخة بتفتح اتصال لوحدها بنفس الملف، والـ streams بتاعة نسخة مابتعرفش بكتابات التانية. والـ `booksDao` getter drift بيولّده من `daos: [...]`.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="local-storage-1">
+<Ask>الـ refresh token، ومكتبة فيها 2000 كتاب، واللغة اللي المستخدم اختارها. كل واحد يتحفظ فين، وليه الـ token مايتحطش في shared_preferences؟</Ask>
+<Answer>
+
+الـ token في flutter_secure_storage، والمكتبة في drift، واللغة في shared_preferences. الـ prefs ملف نص عادي: أي حد على موبايل rooted يقراه، وبيدخل في الـ backups، والـ refresh token عايش شهور فاللي ياخده يبقى هو المستخدم.
+
+</Answer>
+</Question>
+
+<Question id="local-storage-2">
+<Ask>الـ schemaVersion بقى 3، ومستخدم لسه على v1 عمل update. ليه الـ onUpgrade بيكتب `if (from < 2)` و`if (from < 3)` مش `if (from == 2)`؟</Ask>
+<Answer>
+
+لأن المستخدم ده هيقفز من 1 لـ 3 مرة واحدة، والـ onUpgrade بيتنادى مرة واحدة بـ from = 1. بالـ `<`، الخطوتين بيتنفذوا بالترتيب. بالـ `==`، خطوة v2 هتتنسي والـ app هيقع على عمود مش موجود.
+
+</Answer>
+</Question>
+
+<Question id="local-storage-3">
+<Ask>مستخدمين على Android بيشتكوا إنهم لقوا نفسهم برّه الحساب (أو الـ app وقع) بعد ما نقلوا لموبايل جديد. ليه، وتصلحها إزاي من غير ما تلغي الـ backup كله؟</Ask>
+<Answer>
+
+الـ backup رجّع ملف الـ secure storage المتشفر، بس مفتاحه في الـ Keystore بتاع الموبايل القديم ومابيتنقلش، فالقراية بتفشل. استثني `FlutterSecureStorage.xml` بس من الـ backup بـ `dataExtractionRules` (و`fullBackupContent` للنسخ القديمة)، فالمكتبة ترجع والمستخدم يعمل login مرة.
+
+</Answer>
+</Question>
+
+</Quiz>

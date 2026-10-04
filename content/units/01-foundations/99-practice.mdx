@@ -8,9 +8,11 @@ type: "practice"
 <Task id="w1-1">اقرأ مقال Uncle Bob الأصلي ودليل Flutter الرسمي للـ app architecture، واكتب 3 فروق بينهم.</Task>
 <Task id="w1-2">اعمل هيكل المشروع: feature-first، مجلد core، very_good_analysis، وGitHub Actions بيشغّل analyze وtest.</Task>
 <Task id="w1-3">اكتب أول ADR: «ليه feature-first».</Task>
+<Task id="w1-4">ابني صفحة تفاصيل الكتاب في Readly بنفس ترتيب درس «أول feature ملف بملف»: كل ملف بإيدك من غير نسخ، والكود يعمل compile بعد كل خطوة قبل ما تكتب اللي بعدها.</Task>
+<Task id="w1-5">ضيف تست للـ WorkDto بيغطي الـ description في شكليه (نص وobject)، والـ architecture test اللي بيمنع أي import لـ Flutter أو dio في الـ domain (الكود في درس الطبقات)، واتأكد إن الـ CI بيشغّلهم.</Task>
 </Tasks>
 
-<Deliverable>repo فاضي بس الـ CI أخضر.</Deliverable>
+<Deliverable>repo فيه feature واحدة شغالة (تفاصيل الكتاب)، والـ CI أخضر.</Deliverable>
 
 <ReviewQuestion>feature الـ library محتاجة بيانات الـ user من feature الـ auth، تجيبها إزاي من غير ما تعمل import لـ internals؟</ReviewQuestion>
 

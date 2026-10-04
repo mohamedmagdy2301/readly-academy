@@ -1,18 +1,121 @@
 ---
 title: "المشروع: Readly"
-description: "Readly: المشروع اللي هتطبّق عليه كل حاجة."
+description: "Readly: المشروع اللي هتطبّق عليه كل حاجة. الـ features، والـ APIين، والهيكل، وهتبني إيه كل أسبوع."
 ---
 
 تطبيق Readly هو مكتبة قراءة شخصية: تدوّر على كتب، تضيفها لمكتبتك، تكتب ملاحظات، وكل ده شغال أوفلاين وبيتزامن. اخترته لأنه صغير كفكرة لكن بيغطي كل المحاور العشرة.
 
-الـ backend: اعمل API صغير بـ Node/Express وMongoDB (يوم شغل) فيه JWT access مدته قصيرة جدًا (مثلًا دقيقة) وrefresh token، عشان تجرب الـ token refresh فعليًا. الـ catalog من Open Library API (مجاني ومن غير key).
+### الـ app من عين المستخدم
+
+1. بيفتح الـ app، فيشوف splash لحظة والـ app بيقرا الـ session. لو مش داخل، صفحة الدخول أو إنشاء حساب.
+2. تحت 3 تابات: <b>المكتبة</b> و<b>الكتالوج</b> و<b>الإعدادات</b>، وكل تاب فاكر مكانه لما ترجعله.
+3. في الكتالوج بيكتب اسم كتاب، والنتايج بتظهر وهو بيكتب، ونازلة صفحة ورا صفحة مع الـ scroll.
+4. يدوس على كتاب، فتفتح صفحة التفاصيل: الغلاف والمؤلف والوصف. ومنها «ضيف لمكتبتي».
+5. في المكتبة كتبه بحالتها: عايز أقراه، بقراه، خلصته. يغيّر الحالة، ويكتب ملاحظات واقتباسات لكل كتاب.
+6. كل ده شغال والنت فاصل، ولما النت يرجع كل حاجة بتتبعت للسيرفر لوحدها.
+7. من الإعدادات: الثيم، واللغة (عربي وإنجليزي)، والخروج اللي بيمسح كل حاجة.
+
+### مصدرين للبيانات
+
+Readly بيكلّم APIين مختلفين خالص، وده مقصود: كل واحد بيعلّمك حاجة.
+
+|  | Open Library | الـ backend بتاعك |
+| --- | --- | --- |
+| بتاع مين | API عام مجاني | انت اللي بتكتبه |
+| الـ auth | من غير key ولا token | JWT: access قصير جدًا وrefresh token |
+| قراية ولا كتابة | قراية بس | قراية وكتابة |
+| بيستخدمه | الـ catalog وصفحة التفاصيل | auth وlibrary وnotes |
+| بيعلّمك | تتعامل مع JSON مش بتتحكم فيه، والـ pagination، والـ caching | الـ token refresh، والـ sync، والـ conflicts، وأخطاء السيرفر بأنواعها |
+| client في الـ app | Dio لوحده من غير `AuthInterceptor` | Dio عليه `AuthInterceptor` |
+
+إن الاتنين يبقوا Dio واحد غلطة: الـ token بتاع المستخدم هيتبعت لـ Open Library مع كل طلب. علشان كده كل واحد بيتسجّل في get_it باسم، وده في درس «أول feature ملف بملف» ودرس الـ DI.
+
+#### Open Library
+
+| الطلب | بيرجّع | بنستخدمه في |
+| --- | --- | --- |
+| `GET /search.json?q=...&page=2&limit=20` | `numFound` و`start` و`docs` | البحث والـ pagination |
+| `GET /works/OL45804W.json` | العنوان والوصف والـ covers والـ subjects وkeys المؤلفين | صفحة التفاصيل |
+| `GET /authors/OL34184A.json` | اسم المؤلف | صفحة التفاصيل |
+| `https://covers.openlibrary.org/b/id/<id>-M.jpg` | صورة الغلاف (S أو M أو L) | الليست والتفاصيل |
+
+حاجتين لازم تعرفهم من أول يوم. الـ JSON مش ثابت: الـ `description` مثلًا مرة نص ومرة object فيه `value`، والـ DTO هو المكان الوحيد اللي بيستحمل ده. وده API مجاني، فاتعامل معاه بأدب: ماتبعتش طلبات مالهاش لازمة، وابعت `User-Agent` فيه اسم الـ app.
+
+#### الـ backend بتاعك
+
+اعمل API صغير بـ Node/Express وMongoDB (يوم شغل). المهم مش جودة السيرفر، المهم إنه يرجّع الحالات اللي الـ app لازم يتعامل معاها:
+
+| الطلب | بيعمل إيه | الحالات اللي لازم يرجّعها | الدرس |
+| --- | --- | --- | --- |
+| `POST /auth/register` | حساب جديد | 409 لو الإيميل مستخدم | الـ Forms |
+| `POST /auth/login` | access وrefresh token | 401 باسورد غلط، 403 الإيميل ماتأكدش | الـ Forms، الـ Session |
+| `POST /auth/refresh` | tokens جديدة | 401 لو الـ refresh token انتهى أو اتلغى | dio والشبكة |
+| `GET /library` | كتب المستخدم | 401 لو الـ access انتهى، وcursor بـ `after` | الـ Data، الـ Pagination |
+| `POST /library` و`PATCH /library/:bookId` | إضافة كتاب أو تغيير حالته | 409 لو النسخة على السيرفر أحدث | Offline-first |
+| `GET` و`POST /books/:bookId/notes` | الملاحظات | 404 لو الكتاب مش في المكتبة | الـ Refactor في الوحدة 8 |
+
+خلي مدة الـ access token دقيقة واحدة بس، عشان تشوف الـ token refresh بيحصل فعلًا وانت شغال، مش مرة كل ساعة. وكل كتاب في المكتبة يرجع بالشكل ده تقريبًا:
+
+```json
+{ "key": "OL45804W", "title": "Fantastic Mr Fox", "status": "reading", "updatedAt": "2026-03-01T10:00:00Z" }
+```
+
+الـ `key` هو نفس id الـ work في Open Library، فالكتاب اللي جاي من الكتالوج والكتاب اللي في مكتبتك ليهم نفس الـ `BookId`. والـ `updatedAt` هو اللي بيحل الـ conflicts في الـ sync.
+
+### الـ features
 
 | الـ Feature | اللي بتعمله | المهارات المتقدمة | الأسبوع |
 | --- | --- | --- | --- |
 | auth | تسجيل، دخول، خروج، دخول تلقائي | الـ value objects، الـ token refresh interceptor، الـ secure storage، الـ router guards | 2–3، 5 |
-| catalog | بحث وتصفح كتب من Open Library | الـ pagination، الـ debounce وتجاهل النتائج القديمة في الـ Cubit، الـ caching، الـ deep links | 3، 5 |
+| catalog | بحث وتصفح كتب من Open Library، وصفحة التفاصيل | الـ pagination، الـ debounce وتجاهل النتائج القديمة في الـ Cubit، الـ caching، الـ deep links | 1، 3، 5 |
 | library | مكتبتك وحالة كل كتاب (أقرأه، بقراه، خلصته) | الـ offline-first، drift، الـ sync queue، سياسة الـ conflicts | 4 |
 | notes | ملاحظات واقتباسات لكل كتاب | تواصل بين features (بتحتاج BookId من library)، ومنع الحفظ المزدوج | 5–6 |
 | settings | الثيم، اللغة (عربي وإنجليزي)، الخروج | feature من غير domain تقريبًا: مثال عملي إنك مش لازم تطبق كل الطبقات دايمًا | 6 |
 
-بديل لو حابب: بعد الأسبوع 4، طبّق نفس الأفكار بالتوازي في refactor لـ feature واحدة من مشروع حقيقي عندك، لأن الـ refactor في كود موجود بيعلّم حاجات ماتظهرش في مشروع من الصفر.
+### الهيكل اللي هتبدأ بيه
+
+من الأسبوع 1، feature-first: كل feature ليها فولدر فيه طبقاتها، والحاجات المشتركة فعلًا بس في `core`.
+
+```text
+readly/
+├─ lib/
+│  ├─ main.dart
+│  ├─ core/              # Result, Failure, guard, BookId
+│  ├─ di/                # get_it setup: the only place that knows the implementations
+│  ├─ router/            # go_router + redirect
+│  ├─ l10n/              # app_ar.arb, app_en.arb
+│  └─ features/
+│     ├─ auth/
+│     │  ├─ domain/      # plain Dart: entities, contracts, use cases
+│     │  ├─ data/        # DTOs, mappers, data sources, repository impl
+│     │  └─ presentation/# Cubits, states, pages
+│     ├─ catalog/
+│     ├─ library/
+│     ├─ notes/
+│     └─ settings/       # presentation + a small store, no domain
+├─ test/                 # mirrors lib/
+├─ analysis_options.yaml # very_good_analysis
+└─ .github/workflows/    # analyze + test on every PR
+```
+
+في الأسبوع 6 الهيكل ده بيتقسم لـ packages (`core` و`core_network` و`feature_catalog` وغيرهم)، فالـ compiler نفسه يمنع أي import غلط بين الـ features. الشكل النهائي في درس «التوسّع والـ production».
+
+### هتبني إيه كل أسبوع
+
+| الأسبوع | في Readly | الـ deliverable |
+| --- | --- | --- |
+| 0 | feature «قائمة منتجات» في مشروع فاضي من غير الفيديوهات | الـ checkpoint كله متعلّم |
+| 1 | الهيكل، والـ lint، والـ CI، وصفحة تفاصيل الكتاب ملف بملف | feature واحدة شغالة والـ CI أخضر |
+| 2 | `Result` و`Failure`، والـ value objects، والـ domain كامل لـ auth وlibrary | الـ domain بيعدّي تستاته بـ `dart test` من غير Flutter |
+| 3 | dio والـ `AuthInterceptor` والـ token refresh، والـ DTOs بـ freezed، والبحث بالـ pagination | auth وcatalog شغالين مع backend حقيقي |
+| 4 | drift كمصدر وحيد للحقيقة، والـ sync queue، وسياسة الـ conflicts | 3 كتب اتضافت أوفلاين وصلت للسيرفر لما النت رجع |
+| 5 | Cubits من غير race conditions، وgo_router بالـ redirect والتابات، والترجمة، والـ Forms | كل الشاشات شغالة ومترجمة عربي وإنجليزي |
+| 6 | injectable، والـ flavors، والتقسيم لـ packages، والـ settings، والـ session والـ logout | import غلط بين features مابيعملش compile |
+| 7 | fakes وbuilders، وbloc_test، وgolden، وintegration test، والـ coverage في الـ CI | تغطية فوق 90% للـ domain والـ data |
+| 8 | الـ logging وSentry، والـ decision guide، والـ README بالـ ADRs | مشروع تقدر تدافع عن كل قرار فيه في interview |
+
+كل أسبوع مبني على اللي قبله، فماتعديش أسبوع والـ deliverable بتاعه مش شغال. المهام بالتفصيل في آخر درس في كل وحدة.
+
+### بديل لو حابب
+
+بعد الأسبوع 4، طبّق نفس الأفكار بالتوازي في refactor لـ feature واحدة من مشروع حقيقي عندك، لأن الـ refactor في كود موجود بيعلّم حاجات ماتظهرش في مشروع من الصفر. درس «Refactor feature قديمة لـ Clean» في الوحدة 8 بيمشي معاك خطوة خطوة.

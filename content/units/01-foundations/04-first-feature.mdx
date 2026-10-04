@@ -1,0 +1,858 @@
+---
+title: "أول feature ملف بملف"
+description: "صفحة تفاصيل الكتاب في Readly من الـ entity لحد التست: الصورة الكاملة قبل ما كل طبقة تاخد وحدة لوحدها."
+minutes: 30
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="طلب واحد من المطبخ للترابيزة">
+
+قبل ما تتعلم كل محطة في المطعم بالتفصيل، بتمشي ورا <b>طلب واحد</b> من أوله لآخره. الشيف بيكتب الوصفة الأول (إيه اللي الطبق محتاجه)، وبعدين ورقة الطلبات للمخزن، والمخزن بيعرف يجيب المكونات منين، والجرسون بيقدّم الطبق، والمدير بيوزّع مين يشتغل مع مين، وفي الآخر حد بيدوق قبل ما الطبق يطلع. بعد كده تقدر تتخصص في أي محطة وانت عارف هي فين في الصورة.
+
+</Analogy>
+
+الدرس ده هو الطلب الواحد. هنبني feature صغيرة في Readly: المستخدم بيدوس على كتاب في الكتالوج، وتفتح صفحة فيها الغلاف والعنوان والوصف والمواضيع، جاية من Open Library على `/works/<id>.json`. اخترناها لأنها قراية بس، وطلب واحد، ومن غير login، ومع ذلك بتعدّي على كل طبقة.
+
+الترتيب من جوه لبره: الـ Domain الأول، بعدين الـ Data، بعدين الـ Presentation، وبعدين التوصيل والتست. السبب إن الـ Domain مابيعتمدش على حد، فكل ملف بتكتبه بيعمل import لملفات اتكتبت قبله بس، والكود بيعمل compile في كل خطوة.
+
+<Diagram name="d-first-feature">
+
+الأرقام هي ترتيب الكتابة. الـ Domain في النص ومابيعملش import لحد، والـ Presentation والـ Data الاتنين بيشاوروا عليه. الـ DI بيوصّل الكل، والتست بيشتغل على الـ Domain بـ fake من غير نت.
+
+</Diagram>
+
+كل أداة هنا نسخة بسيطة. الوحدات 2 لـ 5 بتعمّق في كل طبقة، وهتلاقي في كل خطوة إشارة للدرس اللي بيكمّلها.
+
+</Level>
+
+<Level n="2" title="الكود ملف بملف">
+
+<Journey>
+
+<Step file="core/result.dart + core/failure.dart">قبل أي feature: نوع بيقول «نجاح أو فشل»، وأنواع الفشل. نسخة أولى صغيرة.</Step>
+
+<Step file="features/catalog/domain/book_details.dart">الـ entity: الكتاب بالشكل اللي الـ app محتاجه، مش بشكل Open Library.</Step>
+
+<Step file="features/catalog/domain/catalog_repository.dart">العقد: الـ Domain بيقول «أنا محتاج تفاصيل كتاب بالـ id»، ومايهمهوش منين.</Step>
+
+<Step file="features/catalog/domain/get_book_details.dart">الـ use case: بياخد الـ id الخام من الـ URL، يتأكد منه، ويطلب من الـ repository.</Step>
+
+<Step file="features/catalog/data/work_dto.dart + work_mapper.dart">شكل الـ JSON بالظبط، والتحويل منه للـ entity في مكان واحد.</Step>
+
+<Step file="features/catalog/data/catalog_remote_source.dart">الطلب نفسه بـ dio. بيرمي exceptions عادي.</Step>
+
+<Step file="features/catalog/data/catalog_repository_impl.dart">بينفّذ العقد: بينادي الـ data source، ويحوّل الـ DTO لـ entity، والـ exception لـ Failure.</Step>
+
+<Step file="features/catalog/presentation/book_details_cubit.dart">الـ states والـ Cubit: الحالة الوحيدة للشاشة.</Step>
+
+<Step file="features/catalog/presentation/book_details_page.dart">الشاشة بتعمل switch على الـ state وبس، والـ route بيعمل الـ Cubit.</Step>
+
+<Step file="di/setup.dart">get_it بيعمل كل حاجة ويوصّلها ببعض في مكان واحد.</Step>
+
+<Step file="test/features/catalog/domain/get_book_details_test.dart">تست بيشتغل في أجزاء من الثانية، من غير نت ولا Flutter UI.</Step>
+
+</Journey>
+
+### قبل ما نبدأ: الـ core
+
+<CodeBlock label="core/result.dart و core/failure.dart (نسخة أولى)">
+
+```dart
+// core/result.dart
+sealed class Result<T> {
+  const Result();
+}
+
+final class Success<T> extends Result<T> {
+  const Success(this.value);
+  final T value;
+}
+
+final class Err<T> extends Result<T> {
+  const Err(this.failure);
+  final Failure failure;
+}
+
+// core/failure.dart
+sealed class Failure {
+  const Failure(this.message);
+  final String message; // for logs, not for the user
+}
+
+final class NetworkFailure extends Failure {
+  const NetworkFailure() : super('No internet connection');
+}
+
+final class ServerFailure extends Failure {
+  const ServerFailure(super.message, {this.statusCode});
+  final int? statusCode;
+}
+
+final class ValidationFailure extends Failure {
+  const ValidationFailure(super.message);
+}
+
+// core/book_id.dart: a String with its own type
+extension type const BookId(String value) {}
+```
+
+</CodeBlock>
+
+ده نفس شكل `Result` و`Failure` في درس الأخطاء، بس بأنواع أقل. هنعمّق ده في درس الأخطاء: `UnauthorizedFailure` و`CacheFailure`، وليه الـ Failure sealed، وترجمتها لرسايل. والـ `BookId` هنا extension type بسيط بيمنعك تبعت عنوان كتاب مكان الـ id. في درس الـ Domain هيبقى ليه constructor خاص و`create` بيتحقق.
+
+### 1. الـ entity
+
+<CodeBlock label="features/catalog/domain/book_details.dart">
+
+```dart
+class BookDetails {
+  const BookDetails({
+    required this.id,
+    required this.title,
+    this.description,
+    this.coverUrl,
+    this.subjects = const [],
+  });
+
+  final BookId id;
+  final String title;
+  final String? description; // some works have none
+  final Uri? coverUrl;
+  final List<String> subjects;
+}
+```
+
+</CodeBlock>
+
+مفيش `fromJson` ولا `key` ولا `covers`. ده الكتاب زي ما الشاشة والقواعد بيفكروا فيه. ولاحظ إنه مش `Book` بتاع المكتبة: نتيجة البحث فيها عنوان وid بس، والتفاصيل فيها حاجات تانية، فكل واحد ليه entity.
+
+### 2. العقد
+
+<CodeBlock label="features/catalog/domain/catalog_repository.dart">
+
+```dart
+abstract interface class CatalogRepository {
+  Future<Result<BookDetails>> getBookDetails(BookId id);
+}
+```
+
+</CodeBlock>
+
+الـ signature بتقول كل حاجة: ممكن يفشل (`Result`)، وبيرجّع entity مش JSON. وفي درس الـ Pagination هيتزوّد على نفس العقد `search`.
+
+### 3. الـ use case
+
+<CodeBlock label="features/catalog/domain/get_book_details.dart">
+
+```dart
+class GetBookDetails {
+  GetBookDetails(this._repository);
+  final CatalogRepository _repository;
+
+  Future<Result<BookDetails>> call(String rawId) async {
+    final id = rawId.trim();
+    if (id.isEmpty) return const Err(ValidationFailure('Empty book id'));
+    return _repository.getBookDetails(BookId(id));
+  }
+}
+```
+
+</CodeBlock>
+
+الـ id جاي من الـ URL، يعني ممكن يبقى أي حاجة لو حد فتح deep link غلط. الـ use case هو اللي بيحوّل String خام لـ `BookId`، فالـ Cubit مايعملش validation. وعشان اسمها `call`، بتناديه كأنه function: `getBookDetails(id)`. والقاعدة دي هتتنقل جوه `BookId.create` في درس الـ Domain.
+
+### 4. الـ DTO والـ mapper
+
+Open Library بيرجّع الشكل ده لـ `GET https://openlibrary.org/works/OL45804W.json` (مختصر):
+
+<CodeBlock label="الـ JSON">
+
+```json
+{
+  "key": "/works/OL45804W",
+  "title": "Fantastic Mr Fox",
+  "description": "The main character of Fantastic Mr. Fox is an animal...",
+  "covers": [6498519],
+  "subjects": ["Animals", "Foxes", "Juvenile fiction"],
+  "authors": [{ "author": { "key": "/authors/OL34184A" } }]
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="features/catalog/data/work_dto.dart">
+
+```dart
+class WorkDto {
+  const WorkDto({
+    required this.key,
+    required this.title,
+    this.description,
+    this.covers = const [],
+    this.subjects = const [],
+  });
+
+  final String key; // "/works/OL45804W"
+  final String title;
+  final String? description;
+  final List<int> covers;
+  final List<String> subjects;
+
+  factory WorkDto.fromJson(Map<String, dynamic> json) => WorkDto(
+        key: json['key'] as String,
+        title: json['title'] as String,
+        description: json['description'] as String?,
+        covers: (json['covers'] as List?)?.whereType<int>().toList() ?? const [],
+        subjects: (json['subjects'] as List?)?.whereType<String>().toList() ?? const [],
+      );
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="features/catalog/data/work_mapper.dart">
+
+```dart
+extension WorkDtoMapper on WorkDto {
+  BookDetails toEntity() => BookDetails(
+        id: BookId(key.split('/').last), // "/works/OL45804W" -> "OL45804W"
+        title: title,
+        description: description,
+        coverUrl: covers.isEmpty
+            ? null
+            : Uri.parse('https://covers.openlibrary.org/b/id/${covers.first}-L.jpg'),
+        subjects: subjects,
+      );
+}
+```
+
+</CodeBlock>
+
+الـ DTO شبه الـ JSON بالظبط، والـ entity شبه الـ business، والـ mapper هو المكان الوحيد اللي بيعرف الاتنين. بناء لينك الغلاف من رقم مكانه هنا، لأنه تفصيلة من تفاصيل Open Library. هنعمّق ده في درس الـ Data: freezed وjson_serializable بدل الـ fromJson اليدوي.
+
+### 5. الـ remote data source
+
+<CodeBlock label="features/catalog/data/catalog_remote_source.dart">
+
+```dart
+class CatalogRemoteSource {
+  CatalogRemoteSource(this._dio); // Open Library client, no AuthInterceptor
+  final Dio _dio;
+
+  Future<WorkDto> fetchWork(String workId) async {
+    final res = await _dio.get<Map<String, dynamic>>('/works/$workId.json');
+    return WorkDto.fromJson(res.data!);
+  }
+}
+```
+
+</CodeBlock>
+
+لو النت فاصل أو السيرفر رجّع 404، dio بيرمي `DioException`. الـ data source مش شغلته يمسكها.
+
+### 6. الـ repository implementation
+
+<CodeBlock label="core/guard.dart (نسخة أولى)">
+
+```dart
+Future<Result<T>> guard<T>(Future<T> Function() run) async {
+  try {
+    return Success(await run());
+  } on DioException catch (e) {
+    return Err(switch (e.type) {
+      DioExceptionType.connectionError ||
+      DioExceptionType.connectionTimeout =>
+        const NetworkFailure(),
+      _ => ServerFailure(e.message ?? 'Unexpected error', statusCode: e.response?.statusCode),
+    });
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="features/catalog/data/catalog_repository_impl.dart">
+
+```dart
+class CatalogRepositoryImpl implements CatalogRepository {
+  CatalogRepositoryImpl(this._remote);
+  final CatalogRemoteSource _remote;
+
+  @override
+  Future<Result<BookDetails>> getBookDetails(BookId id) => guard(() async {
+        final dto = await _remote.fetchWork(id.value);
+        return dto.toEntity();
+      });
+}
+```
+
+</CodeBlock>
+
+ده الحد الفاصل: من تحته exceptions وDTOs، ومن فوقه Result وentities بس. الـ `guard` بيمسك `DioException` بس، وأي حاجة تانية bug لازم يضرب. هنعمّق ده في درس الأخطاء.
+
+### 7. الـ states والـ Cubit
+
+<CodeBlock label="features/catalog/presentation/book_details_cubit.dart">
+
+```dart
+sealed class BookDetailsState {
+  const BookDetailsState();
+}
+final class BookDetailsLoading extends BookDetailsState {
+  const BookDetailsLoading();
+}
+final class BookDetailsLoaded extends BookDetailsState {
+  const BookDetailsLoaded(this.book);
+  final BookDetails book;
+}
+final class BookDetailsError extends BookDetailsState {
+  const BookDetailsError(this.failure);
+  final Failure failure;
+}
+
+class BookDetailsCubit extends Cubit<BookDetailsState> {
+  BookDetailsCubit(this._getBookDetails) : super(const BookDetailsLoading());
+  final GetBookDetails _getBookDetails;
+
+  Future<void> load(String id) async {
+    emit(const BookDetailsLoading());
+    final result = await _getBookDetails(id);
+    emit(switch (result) {
+      Success(:final value) => BookDetailsLoaded(value),
+      Err(:final failure) => BookDetailsError(failure),
+    });
+  }
+}
+```
+
+</CodeBlock>
+
+الـ Cubit بيعمل import للـ Domain بس: `GetBookDetails` و`BookDetails` و`Failure`. مايعرفش إن في dio أو JSON أصلًا. هنعمّق ده في درس الـ Cubit: الـ race conditions والـ refresh والـ side effects.
+
+### 8. الشاشة والـ route
+
+<CodeBlock label="features/catalog/presentation/book_details_page.dart">
+
+```dart
+class BookDetailsPage extends StatelessWidget {
+  const BookDetailsPage({super.key, required this.id});
+  final String id;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(),
+        body: BlocBuilder<BookDetailsCubit, BookDetailsState>(
+          builder: (context, state) => switch (state) {
+            BookDetailsLoading() => const Center(child: CircularProgressIndicator()),
+            BookDetailsError() => Center(
+                child: TextButton(
+                  onPressed: () => context.read<BookDetailsCubit>().load(id),
+                  child: const Text('حصلت مشكلة، جرّب تاني'),
+                ),
+              ),
+            BookDetailsLoaded(:final book) => _DetailsView(book: book),
+          },
+        ),
+      );
+}
+
+class _DetailsView extends StatelessWidget {
+  const _DetailsView({required this.book});
+  final BookDetails book;
+
+  @override
+  Widget build(BuildContext context) => ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          if (book.coverUrl case final url?) Image.network(url.toString(), height: 240),
+          const SizedBox(height: 16),
+          Text(book.title, style: Theme.of(context).textTheme.headlineSmall),
+          if (book.description case final text?)
+            Padding(padding: const EdgeInsets.only(top: 12), child: Text(text)),
+          const SizedBox(height: 12),
+          Wrap(spacing: 8, children: [for (final s in book.subjects) Chip(label: Text(s))]),
+        ],
+      );
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ route: هنا بيتعمل الـ Cubit">
+
+```dart
+GoRoute(
+  path: '/catalog',
+  builder: (_, __) => const CatalogPage(),
+  routes: [
+    GoRoute(
+      path: 'books/:id',
+      builder: (_, state) {
+        final id = state.pathParameters['id']!;
+        return BlocProvider(
+          create: (_) => getIt<BookDetailsCubit>()..load(id),
+          child: BookDetailsPage(id: id),
+        );
+      },
+    ),
+  ],
+),
+
+// from a search result:
+onTap: () => context.push('/catalog/books/${book.id.value}'),
+```
+
+</CodeBlock>
+
+- <b>الـ switch على sealed state:</b> لو زوّدت state رابعة ونسيت تعرضها، الكود مش هيعمل compile.
+- <b>الـ `if (x case final url?)`:</b> بيدخل العنصر في الليست بس لو القيمة مش null، ويديك نسخة non-null منها. من درس Dart.
+- <b>الـ BlocProvider في الـ route:</b> الـ get_it بيتنادى في الـ routes والـ composition root بس، والشاشة نفسها ماتعرفهوش. هنعمّق ده في درس الـ DI ودرس go_router.
+- <b>النص العربي مكتوب في الكود:</b> مؤقتًا. هنعمّق ده في درس الترجمة: كل Failure ليه رسالة من ملفات الـ ARB.
+
+### 9. التوصيل
+
+<CodeBlock label="di/setup.dart">
+
+```dart
+final getIt = GetIt.instance;
+
+void setupDependencies() {
+  getIt
+    ..registerLazySingleton<Dio>(() => Dio(BaseOptions(
+          baseUrl: 'https://openlibrary.org',
+          connectTimeout: const Duration(seconds: 10),
+          receiveTimeout: const Duration(seconds: 15),
+        )))
+    ..registerLazySingleton<CatalogRemoteSource>(() => CatalogRemoteSource(getIt()))
+    ..registerLazySingleton<CatalogRepository>(() => CatalogRepositoryImpl(getIt()))
+    ..registerLazySingleton<GetBookDetails>(() => GetBookDetails(getIt()))
+    ..registerFactory<BookDetailsCubit>(() => BookDetailsCubit(getIt()));
+}
+
+void main() {
+  setupDependencies();
+  runApp(const ReadlyApp());
+}
+```
+
+</CodeBlock>
+
+ده الملف الوحيد اللي بيعرف إن `CatalogRepository` هو `CatalogRepositoryImpl`. الـ `getIt()` من غير نوع بيستنتج النوع من الـ parameter. والـ Cubit `registerFactory` عشان كل صفحة تاخد Cubit جديد يتقفل معاها، والباقي `registerLazySingleton`. هنعمّق ده في درس الـ DI.
+
+### 10. التست
+
+<CodeBlock label="test/features/catalog/domain/get_book_details_test.dart">
+
+```dart
+class FakeCatalogRepository implements CatalogRepository {
+  BookId? requested;
+
+  @override
+  Future<Result<BookDetails>> getBookDetails(BookId id) async {
+    requested = id;
+    return Success(BookDetails(id: id, title: 'Fantastic Mr Fox'));
+  }
+}
+
+void main() {
+  late FakeCatalogRepository repository;
+  late GetBookDetails getBookDetails;
+
+  setUp(() {
+    repository = FakeCatalogRepository();
+    getBookDetails = GetBookDetails(repository);
+  });
+
+  test('rejects an empty id without calling the repository', () async {
+    final result = await getBookDetails('   ');
+
+    expect(result, isA<Err<BookDetails>>());
+    expect(repository.requested, isNull);
+  });
+
+  test('trims the id before asking the repository', () async {
+    final result = await getBookDetails(' OL45804W ');
+
+    expect(result, isA<Success<BookDetails>>());
+    expect(repository.requested, BookId('OL45804W'));
+  });
+}
+```
+
+</CodeBlock>
+
+`flutter test` وخلاص. مفيش نت، ولا emulator، ولا mocktail: الـ fake class صغيرة بتنفّذ العقد وبتسجّل اتنادت بإيه. وده بالظبط اللي العقد في الـ Domain بيشتريه: أي حاجة بتنفّذه تنفع مكان الحقيقي. هنعمّق ده في درس الاختبارات: mocktail وbloc_test وتست الـ repository.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### الـ description مرة String ومرة Map
+
+افتح كتب كتير، وفجأة الـ app يقع بـ `type '_Map<String, dynamic>' is not a subtype of type 'String?' in type cast`. السبب إن Open Library بيرجّع الـ description بشكلين: نص عادي، أو object:
+
+```json
+"description": { "type": "/type/text", "value": "The main character of..." }
+```
+
+والـ `guard` مابيمسكش الـ TypeError، وده صح: ده bug في فهمنا للـ API، لازم يضرب ويتصلح، مش يتخبى ورا «حصلت مشكلة». الحل في مكان واحد، الـ `fromJson`، بـ switch على الشكل:
+
+<CodeBlock label="pattern لكل شكل">
+
+```dart
+factory WorkDto.fromJson(Map<String, dynamic> json) => WorkDto(
+      key: json['key'] as String,
+      title: json['title'] as String,
+      description: switch (json['description']) {
+        String text => text,
+        {'value': String text} => text, // {"type": "/type/text", "value": ...}
+        _ => null,
+      },
+      // ...covers, subjects as before
+    );
+```
+
+</CodeBlock>
+
+الـ map pattern `{'value': String text}` بيتأكد إن القيمة Map، وفيها مفتاح `value`، وقيمته String، وبيطلّعها في `text`، والمفاتيح الزيادة زي `type` مابتفرقش. وقبل ما تقفل الـ bug، اكتب التست اللي كان هيمسكه:
+
+<CodeBlock label="test/features/catalog/data/work_dto_test.dart">
+
+```dart
+test('reads description in both shapes', () {
+  final plain = WorkDto.fromJson({'key': '/works/OL1W', 'title': 'A', 'description': 'text'});
+  final typed = WorkDto.fromJson({
+    'key': '/works/OL1W',
+    'title': 'A',
+    'description': {'type': '/type/text', 'value': 'text'},
+  });
+
+  expect(plain.description, 'text');
+  expect(typed.description, 'text');
+});
+```
+
+</CodeBlock>
+
+لاحظ إن الـ entity والـ Cubit والشاشة ماتغيروش. تغيير في شكل الـ API وقف عند الـ DTO، وده بالظبط اللي الطبقات بتشتريه.
+
+### اسم المؤلف مش في الرد
+
+الـ `authors` فيها keys بس، زي `/authors/OL34184A`. الاسم محتاج طلب تاني لـ `/authors/OL34184A.json`، اللي بيرجّع `name`. لو حطيت الطلب التاني في الـ Cubit، الـ Cubit هيعرف تفاصيل Open Library. مكانه الـ repository: هو اللي بيجمّع الـ entity من أكتر من مصدر.
+
+<CodeBlock label="طلبين ورا الـ repository">
+
+```dart
+// work_dto.dart: read the author ids with a nested pattern
+authorIds: [
+  for (final a in json['authors'] as List? ?? const [])
+    if (a case {'author': {'key': String key}}) key.split('/').last,
+],
+
+// catalog_remote_source.dart
+Future<String> fetchAuthorName(String authorId) async {
+  final res = await _dio.get<Map<String, dynamic>>('/authors/$authorId.json');
+  return res.data!['name'] as String;
+}
+
+// catalog_repository_impl.dart
+@override
+Future<Result<BookDetails>> getBookDetails(BookId id) => guard(() async {
+      final work = await _remote.fetchWork(id.value);
+      final names = await Future.wait(work.authorIds.take(3).map(_authorNameOrNull));
+      return work.toEntity(authors: names.nonNulls.toList());
+    });
+
+Future<String?> _authorNameOrNull(String authorId) async {
+  try {
+    return await _remote.fetchAuthorName(authorId);
+  } on DioException {
+    return null; // a missing author name should not hide the whole book
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ Future.wait:</b> طلبات المؤلفين بتطلع مع بعض مش ورا بعض. 3 مؤلفين = وقت طلب واحد تقريبًا.
+- <b>الـ take(3):</b> في works ليها مؤلفين كتير. الصفحة مش محتاجاهم كلهم، والطلبات ليها تمن.
+- <b>فشل المؤلف مش فشل الكتاب:</b> لو طلب المؤلف وقع، الصفحة تظهر من غير اسمه أحسن من صفحة error. ده قرار business، ومكانه الـ repository مش الـ UI.
+
+والـ entity زاد فيها `final List<String> authors` بـ default `const []`، والـ mapper بقى بياخد الأسماء: `toEntity(authors: ...)`. الـ Cubit مايعرفش إن الطلب بقى 3 طلبات.
+
+### المستخدم رجع قبل ما الرد يوصل
+
+النت بطيء، والمستخدم فتح الكتاب ورجع على طول. الـ BlocProvider عمل close للـ Cubit، وبعدها الرد وصل والـ Cubit عمل emit، فيطلع `Bad state: Cannot emit new states after calling close`. الحل سطر واحد بعد كل await:
+
+<CodeBlock label="isClosed">
+
+```dart
+Future<void> load(String id) async {
+  emit(const BookDetailsLoading());
+  final result = await _getBookDetails(id);
+  if (isClosed) return; // the page is gone
+  emit(switch (result) {
+    Success(:final value) => BookDetailsLoaded(value),
+    Err(:final failure) => BookDetailsError(failure),
+  });
+}
+```
+
+</CodeBlock>
+
+### الكتاب مش موجود: زرار «جرّب تاني» مالوش لازمة
+
+حد فتح deep link لكتاب اتشال من Open Library، فالسيرفر رجّع 404. الشاشة بتقول «جرّب تاني»، والمستخدم هيدوس 10 مرات على طلب عمره ما هينجح. الـ 404 مش زي النت الفاصل، والقرار على نوع الـ Failure وتفاصيله، مش على نص:
+
+<CodeBlock label="رسالة لكل نوع">
+
+```dart
+BookDetailsError(:final failure) => switch (failure) {
+    ServerFailure(statusCode: 404) => const Center(child: Text('الكتاب ده مش موجود')),
+    NetworkFailure() => RetryView(
+        message: 'مفيش اتصال بالنت',
+        onRetry: () => context.read<BookDetailsCubit>().load(id),
+      ),
+    _ => RetryView(
+        message: 'حصلت مشكلة، جرّب تاني',
+        onRetry: () => context.read<BookDetailsCubit>().load(id),
+      ),
+  },
+```
+
+</CodeBlock>
+
+الـ `ServerFailure(statusCode: 404)` pattern بيتأكد من النوع والحقل مع بعض. ونفس الفكرة في درس الـ Forms مع الـ 403 والـ 409.
+
+### صفحة فاضية لما تفتح من نتيجة البحث
+
+نتيجة البحث في Open Library فيها `"key": "/works/OL45804W"`. لو الـ mapper بتاع البحث حط الـ key ده زي ما هو في `Book.id`، اللينك هيبقى `/catalog/books//works/OL45804W`، والـ route مش هيعمل match. القاعدة: الـ id في الـ entity نضيف، وشكل Open Library بيتشال في الـ mapper. فـ `key.split('/').last` لازم يبقى في mapper البحث كمان، مش في الـ UI قبل الـ push.
+
+### اتنين Dio من نفس النوع
+
+في الأسبوع 3 هتسجّل Dio تاني للـ backend بتاعك، عليه `AuthInterceptor` بيحط الـ token. لو سجّلته `registerLazySingleton<Dio>` هو كمان، get_it هيرمي error إن `Dio` متسجل قبل كده. والأخطر لو حد «حلّها» إن الاتنين يبقوا واحد: الـ token بتاع المستخدم هيتبعت لـ Open Library مع كل طلب. الحل اسم لكل نسخة:
+
+<CodeBlock label="instanceName">
+
+```dart
+getIt
+  ..registerLazySingleton<Dio>(
+    () => Dio(BaseOptions(baseUrl: 'https://openlibrary.org')),
+    instanceName: 'openLibrary',
+  )
+  ..registerLazySingleton<CatalogRemoteSource>(
+    () => CatalogRemoteSource(getIt<Dio>(instanceName: 'openLibrary')),
+  );
+```
+
+</CodeBlock>
+
+هنعمّق ده في درس الـ DI: injectable والـ `@Named`، والـ flavors.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>من جوه لبره ولا من بره لجوه؟</b> إحنا بدأنا بالـ Domain عشان كل خطوة تعمل compile وتتختبر. بس كتير من الفرق بتبدأ بالشاشة بـ state متكتبة بإيدها، عشان يتأكدوا من الـ UX مع الـ designer قبل أي API، وبعدين يدخلوا لجوه. الاتنين صح. اللي مش بيتغير هو اتجاه الـ imports، مش ترتيب الكتابة.
+- <b>الـ GetBookDetails تقريبًا pass-through:</b> فيه trim وcheck بس. ممكن تسيبه عشان كل الـ features شكلها واحد، أو الـ Cubit يكلّم الـ repository على طول. الغلط إنك تعمل كده من غير ما تقرر. درس الـ Domain بيدخل في السؤال ده.
+- <b>BookDetails منفصل ولا Book بحقول nullable؟</b> لو `Book` فيه `description?` و`subjects?` و`authors?` عشان صفحة التفاصيل، كل شاشة هتسأل «الحقل ده موجود ولا لأ؟». كل entity بالضمانات بتاعتها أوضح، والتمن mapper زيادة.
+- <b>الكاش:</b> تفاصيل الكتاب نادرًا ما تتغير، فهي مرشح ممتاز لـ cache-first: map في الذاكرة جوه الـ repository بيخلي الرجوع للكتاب فوري، والـ Cubit مش هيحس. وفي درس Offline-first ممكن تحفظها في drift. ماتحطش الكاش في الـ Cubit، لأنه بيتقفل مع الشاشة.
+- <b>اتعامل مع Open Library بأدب:</b> ده API مجاني ومن غير key، وبيطلب من الـ apps اللي بتكلّمه كتير تبعت `User-Agent` فيه اسم الـ app ووسيلة تواصل. حطه في `BaseOptions(headers: ...)` على الـ Dio بتاعه بس، وماتعملش طلبات مالهاش لازمة (زي المؤلفين كلهم).
+- <b>11 ملف لصفحة واحدة:</b> ده التمن اللي درس «ليه أصلًا محتاجين Architecture» اتكلم عنه. في MVVM الصفحة دي ممكن تبقى 4 ملفات. اللي بتاخده قصاده إن كل تغيير ليه مكان واحد: شكل الـ JSON في الـ DTO، والقاعدة في الـ use case، والنص في الشاشة. وده قرار هنرجعله في درس «Clean ولا MVVM؟».
+
+<Note kind="interview" title="سؤال interview">
+
+«احكيلي رحلة ضغطة على كتاب لحد ما التفاصيل تظهر.» الـ route بيعمل الـ Cubit من get_it وينادي `load(id)`. الـ Cubit بيعمل emit لـ Loading وينادي الـ use case، اللي بيتحقق من الـ id ويطلب من الـ repository contract. الـ implementation في الـ Data بينادي الـ remote source اللي بيعمل الطلب بـ dio، ويحوّل الـ DTO لـ entity بالـ mapper، والـ DioException لـ Failure بالـ guard. الـ Result بيطلع لفوق، والـ Cubit بيعمل switch ويعمل emit لـ Loaded أو Error، والـ BlocBuilder بيرسم. البيانات طالعة من تحت لفوق، والـ imports كلها بتشاور على الـ Domain.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### الـ feature كلها في الفولدرات
+
+```text
+lib/
+├─ core/
+│  ├─ result.dart
+│  ├─ failure.dart
+│  ├─ guard.dart
+│  └─ book_id.dart
+├─ di/
+│  └─ setup.dart
+└─ features/catalog/
+   ├─ domain/
+   │  ├─ book_details.dart
+   │  ├─ catalog_repository.dart
+   │  └─ get_book_details.dart
+   ├─ data/
+   │  ├─ work_dto.dart
+   │  ├─ work_mapper.dart
+   │  ├─ catalog_remote_source.dart
+   │  └─ catalog_repository_impl.dart
+   └─ presentation/
+      ├─ book_details_cubit.dart
+      └─ book_details_page.dart
+test/features/catalog/
+├─ domain/get_book_details_test.dart
+└─ data/work_dto_test.dart
+```
+
+### نفس الصفحة في widget واحد
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+class _BookPageState extends State<BookPage> {
+  Map<String, dynamic>? work;
+
+  @override
+  void initState() {
+    super.initState();
+    Dio()
+        .get('https://openlibrary.org/works/${widget.id}.json')
+        .then((r) => setState(() => work = r.data));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (work == null) return const CircularProgressIndicator();
+    return Text(work!['description']); // String or Map?
+  }
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+GoRoute(
+  path: 'books/:id',
+  builder: (_, state) {
+    final id = state.pathParameters['id']!;
+    return BlocProvider(
+      create: (_) => getIt<BookDetailsCubit>()..load(id),
+      child: BookDetailsPage(id: id),
+    );
+  },
+)
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: أول ما النت يفصل، الـ spinner بيفضل للأبد لأن مفيش catch. والـ description الـ Map بتوقّع الشاشة. ولو المستخدم رجع قبل الرد، `setState` بيتنادى على widget اتشال. ومفيش أي طريقة تختبر ده من غير Open Library. بعد: كل مشكلة من دول ليها مكان واحد اتصلحت فيه: الـ guard، والـ DTO، والـ `isClosed`، والـ fake في التست.
+
+### الـ data كاملة بعد Level 3
+
+```dart
+// work_dto.dart
+class WorkDto {
+  const WorkDto({
+    required this.key,
+    required this.title,
+    this.description,
+    this.covers = const [],
+    this.subjects = const [],
+    this.authorIds = const [],
+  });
+
+  final String key;
+  final String title;
+  final String? description;
+  final List<int> covers;
+  final List<String> subjects;
+  final List<String> authorIds;
+
+  factory WorkDto.fromJson(Map<String, dynamic> json) => WorkDto(
+        key: json['key'] as String,
+        title: json['title'] as String,
+        description: switch (json['description']) {
+          String text => text,
+          {'value': String text} => text,
+          _ => null,
+        },
+        covers: (json['covers'] as List?)?.whereType<int>().toList() ?? const [],
+        subjects: (json['subjects'] as List?)?.whereType<String>().toList() ?? const [],
+        authorIds: [
+          for (final a in json['authors'] as List? ?? const [])
+            if (a case {'author': {'key': String key}}) key.split('/').last,
+        ],
+      );
+}
+
+// work_mapper.dart
+extension WorkDtoMapper on WorkDto {
+  BookDetails toEntity({required List<String> authors}) => BookDetails(
+        id: BookId(key.split('/').last),
+        title: title,
+        authors: authors,
+        description: description,
+        coverUrl: covers.isEmpty
+            ? null
+            : Uri.parse('https://covers.openlibrary.org/b/id/${covers.first}-L.jpg'),
+        subjects: subjects,
+      );
+}
+
+// catalog_repository_impl.dart
+class CatalogRepositoryImpl implements CatalogRepository {
+  CatalogRepositoryImpl(this._remote);
+  final CatalogRemoteSource _remote;
+
+  @override
+  Future<Result<BookDetails>> getBookDetails(BookId id) => guard(() async {
+        final work = await _remote.fetchWork(id.value);
+        final names = await Future.wait(work.authorIds.take(3).map(_authorNameOrNull));
+        return work.toEntity(authors: names.nonNulls.toList());
+      });
+
+  Future<String?> _authorNameOrNull(String authorId) async {
+    try {
+      return await _remote.fetchAuthorName(authorId);
+    } on DioException {
+      return null;
+    }
+  }
+}
+```
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="first-feature-1">
+<Ask>ليه بدأنا بالـ entity والعقد قبل الـ data source والـ dio؟</Ask>
+<Answer>
+
+لأن الـ Domain مابيعتمدش على حد، فكل ملف بعده بيعمل import لحاجة اتكتبت قبله، والكود بيعمل compile في كل خطوة. والعقد بيحدد الـ Data لازم تقدّم إيه، وتقدر تختبر الـ use case بـ fake قبل ما تكتب أي طلب شبكة.
+
+</Answer>
+</Question>
+
+<Question id="first-feature-2">
+<Ask>Open Library بقى يرجّع الـ description كـ object فيه `value` بدل نص. أنهي ملفات هتتعدّل، وأنهي لأ؟</Ask>
+<Answer>
+
+الـ `WorkDto.fromJson` بس، وتست جديد ليه. الـ entity والـ use case والـ Cubit والشاشة مش هيتغيروا، لأن الـ DTO هو الوحيد اللي بيعرف شكل الـ JSON.
+
+</Answer>
+</Question>
+
+<Question id="first-feature-3">
+<Ask>ليه الـ Dio بتاع Open Library لازم يبقى نسخة منفصلة عن Dio الـ backend؟</Ask>
+<Answer>
+
+لأن Dio الـ backend عليه `AuthInterceptor` بيحط token المستخدم، ولو اتشارك هيتبعت لـ API خارجي. وكمان الـ baseUrl والـ timeouts والـ headers مختلفين. بتسجّل كل واحد باسم (`instanceName`) أو بـ `@Named` في injectable.
+
+</Answer>
+</Question>
+
+</Quiz>
