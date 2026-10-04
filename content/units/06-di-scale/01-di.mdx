@@ -1,0 +1,240 @@
+---
+title: "الـ Dependency Injection: مين بيعمل مين"
+description: "الـ class ماتعملش أدواتها بنفسها، بتستلمها جاهزة. وده اللي بيخلي التست والتبديل ممكنين."
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="الشيف والطماطم">
+
+شيف بيزرع الطماطم بنفسه في جنينة المطعم، مقابل شيف بتوصله الطماطم جاهزة. الأول مستحيل تجرّب وصفته بطماطم من مكان تاني، ولو الجنينة خربت الوصفة وقفت. التاني يشتغل بأي طماطم تديهاله، وتقدر تجرّب وصفته بطماطم بلاستيك في التدريب.
+
+</Analogy>
+
+الـ Dependency Injection (DI) معناها إن الـ class ماتعملش الحاجات اللي محتاجاها بنفسها، بتستلمها من بره. والتست هو «الطماطم البلاستيك»: بتدّي الـ class نسخة مزيفة تتحكم فيها.
+
+<Diagram name="d-6274af42d0">
+
+قبل: الـ Cubit بيعمل كل أدواته بنفسه، فمستحيل تختبره بأداة تانية. بعد: الأدوات بتتسلّم له جاهزة، والتوصيل كله في مكان واحد.
+
+</Diagram>
+
+
+</Level>
+
+<Level n="2" title="من new جوه الـ class لـ constructor injection">
+
+<CodeBlock label="قبل: الـ class بتعمل أدواتها">
+
+```dart
+class LibraryCubit extends Cubit<LibraryState> {
+  LibraryCubit() : super(const LibraryLoading());
+
+  final _repository = LibraryRepositoryImpl(LibraryRemoteSource(Dio()));
+}
+```
+
+</CodeBlock>
+
+عشان تختبر الـ Cubit ده، لازم سيرفر حقيقي، لأن مافيش أي طريقة تديله repository تاني.
+
+<CodeBlock label="بعد: الأدوات جاية من الـ constructor">
+
+```dart
+class LibraryCubit extends Cubit<LibraryState> {
+  LibraryCubit(this._getLibrary) : super(const LibraryLoading());
+
+  final GetLibrary _getLibrary;
+}
+
+// in a test:
+final cubit = LibraryCubit(MockGetLibrary());
+```
+
+</CodeBlock>
+
+دلوقتي الـ constructor بيقولك صراحة الـ class محتاجة إيه، وفي التست بتديها mock. بس لازم حد في مكان ما يعمل الحاجات دي ويوصّلها ببعض:
+
+<CodeBlock label="التوصيل يدوي في main">
+
+```dart
+void main() {
+  final dio = Dio(BaseOptions(baseUrl: 'https://api.readly.app'));
+  final remote = LibraryRemoteSource(dio);
+  final repository = LibraryRepositoryImpl(remote);
+  final getLibrary = GetLibrary(repository);
+
+  runApp(App(getLibrary: getLibrary));
+}
+```
+
+</CodeBlock>
+
+
+</Level>
+
+<Level n="3" title="get_it والـ composition root">
+
+التوصيل اليدوي بيبقى صعب مع 30 class. الـ `get_it` بيخليك تسجّل كل حاجة مرة واحدة في مكان واحد، اسمه <b>composition root</b>:
+
+<CodeBlock label="di/setup.dart">
+
+```dart
+final getIt = GetIt.instance;
+
+void setupDependencies() {
+  getIt
+    ..registerLazySingleton<Dio>(() => Dio(BaseOptions(baseUrl: baseUrl)))
+    ..registerLazySingleton<LibraryRemoteSource>(() => LibraryRemoteSource(getIt()))
+    ..registerLazySingleton<LibraryRepository>(() => LibraryRepositoryImpl(getIt()))
+    ..registerLazySingleton<GetLibrary>(() => GetLibrary(getIt()))
+    ..registerFactory<LibraryCubit>(() => LibraryCubit(getIt()));
+}
+```
+
+</CodeBlock>
+
+| النوع | بيعمل إيه | استخدمه لـ |
+| --- | --- | --- |
+| `registerFactory` | object جديد كل مرة تطلبه | الـ Cubits: كل شاشة ليها نسختها وتتقفل معاها |
+| `registerLazySingleton` | object واحد، بيتعمل أول ما حد يطلبه | Dio والـ repositories والـ data sources |
+| `registerSingleton` | object واحد بيتعمل فورًا وقت التسجيل | حاجات لازم تكون جاهزة من البداية زي الـ config |
+
+<CodeBlock label="الـ Cubit بيتعمل عند الـ route">
+
+```dart
+GoRoute(
+  path: '/library',
+  builder: (context, state) => BlocProvider(
+    create: (_) => getIt<LibraryCubit>(),
+    child: const LibraryView(),
+  ),
+)
+```
+
+</CodeBlock>
+
+<Note kind="warn" title="get_it جوه الـ class = نفس المشكلة القديمة">
+
+لو كتبت `final _repo = GetIt.I<LibraryRepository>()` جوه الـ Cubit، رجعت للمشكلة الأولى بس بشكل أشيك: الـ dependency مستخبية، والتست محتاج يسجّل حاجات في get_it الأول. القاعدة: get_it يتنادى في الـ composition root والـ routes بس، والـ classes تاخد كل حاجة من الـ constructor.
+
+</Note>
+
+
+</Level>
+
+<Level n="4" title="injectable والتوسّع">
+
+مع الوقت ملف الـ setup بيكبر. الـ `injectable` بيولّد التسجيل من annotations:
+
+<CodeBlock label="injectable">
+
+```dart
+@LazySingleton(as: LibraryRepository)
+class LibraryRepositoryImpl implements LibraryRepository {
+  LibraryRepositoryImpl(this._remote);
+  final LibraryRemoteSource _remote;
+}
+
+@injectable
+class LibraryCubit extends Cubit<LibraryState> { /* ... */ }
+
+// a fake repository only for the dev environment
+@LazySingleton(as: LibraryRepository, env: ['dev'])
+class FakeLibraryRepository implements LibraryRepository { /* ... */ }
+```
+
+</CodeBlock>
+
+ميزته الكبيرة الـ environments: تقدر تسجّل implementation مختلف لكل flavor، زي repository وهمي في dev عشان تشتغل من غير سيرفر.
+
+<Note kind="interview" title="سؤال interview">
+
+«registerFactory ولا registerLazySingleton للـ Cubit؟» Factory، عشان كل شاشة تاخد instance جديد يتقفل معاها. الـ singleton للحاجات اللي مالهاش state مرتبطة بشاشة. الاستثناء Cubit للـ app كله زي الـ AuthCubit.
+
+</Note>
+
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### الـ Cubit بيجيب الـ dependencies من get_it بنفسه
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+class LibraryCubit extends Cubit<LibraryState> {
+  LibraryCubit() : super(const LibraryLoading());
+
+  final _getLibrary = GetIt.I<GetLibrary>();
+}
+
+// in the page
+BlocProvider(
+  create: (_) => LibraryCubit(),
+  child: const LibraryView(),
+)
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+class LibraryCubit extends Cubit<LibraryState> {
+  LibraryCubit(this._getLibrary) : super(const LibraryLoading());
+
+  final GetLibrary _getLibrary;
+}
+
+// router: the only place that touches the container
+GoRoute(
+  path: '/library',
+  builder: (context, state) => BlocProvider(
+    create: (_) => getIt<LibraryCubit>(),
+    child: const LibraryView(),
+  ),
+)
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: مستحيل تعرف الـ Cubit محتاج إيه من غير ما تقرا الكود كله، وفي التست لازم تسجّل حاجات في get_it الأول. بعد: الـ constructor بيقول كل حاجة، والتست بيبعت mock مباشرة: `LibraryCubit(MockGetLibrary())`.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="di-1">
+<Ask>إيه علامة إن الـ class مش بتستخدم DI؟</Ask>
+<Answer>
+
+إنها بتعمل الـ dependencies بتاعتها بنفسها جوه (Dio() أو Repository())، أو بتجيبها من get_it جواها.
+
+</Answer>
+</Question>
+
+<Question id="di-2">
+<Ask>ليه الـ Cubit يتسجل factory؟</Ask>
+<Answer>
+
+عشان كل شاشة تاخد نسخة جديدة، ولما الشاشة تتقفل الـ Cubit يتقفل معاها ومايفضلش شايل state قديمة.
+
+</Answer>
+</Question>
+
+<Question id="di-3">
+<Ask>يعني إيه composition root؟</Ask>
+<Answer>
+
+المكان الوحيد في المشروع اللي بيتعمل فيه كل الـ objects وتتوصل ببعض، زي `di/setup.dart`.
+
+</Answer>
+</Question>
+
+</Quiz>

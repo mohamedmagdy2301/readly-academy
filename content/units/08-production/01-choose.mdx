@@ -1,0 +1,95 @@
+---
+title: "Clean ولا MVVM؟"
+description: "الاتنين صح. السؤال الحقيقي: المشروع ده محتاج إيه؟"
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="العربية النقل والموتوسيكل">
+
+العربية النقل بتشيل كتير ومستقرة، بس تقيلة ومكلفة. الموتوسيكل سريع ورخيص، بس مش هيشيل عفش شقة. محدش يقول إن واحد فيهم «أحسن» على طول، المشوار هو اللي بيحدد. Clean Architecture هي العربية النقل، وMVVM البسيط هو الموتوسيكل.
+
+</Analogy>
+
+
+</Level>
+
+<Level n="2" title="MVVM اللي Flutter بينصح بيه">
+
+| MVVM (دليل Flutter) | اللي انت تعرفه |
+| --- | --- |
+| View | الـ widgets |
+| ViewModel | الـ Cubit |
+| Repository | الـ repository (من غير contract في domain إجباري) |
+| Service | الـ data source (dio، drift) |
+| Domain layer (اختياري) | الـ use cases والـ entities |
+
+يعني MVVM بتاع Flutter هو تقريبًا اللي انت بتعمله، من غير ما الـ Domain يبقى طبقة إجبارية. الـ ViewModel بيكلّم الـ repository مباشرة، والـ use cases بتظهر بس لما يكون في logic يستاهل.
+
+
+</Level>
+
+<Level n="3" title="المقارنة الحقيقية">
+
+|  | MVVM + repositories | Clean Architecture |
+| --- | --- | --- |
+| عدد الملفات للـ feature | أقل | أكتر (entities، use cases، contracts، mappers) |
+| مكان القواعد | في الـ ViewModel أو الـ repository | في الـ Domain، مستقلة تمامًا |
+| اختبار القواعد | محتاج mock للـ repository | dart test صافي على الـ Domain |
+| تبديل الأدوات | الـ repository ممكن يحتاج تعديل | الـ Data بس |
+| مناسب لـ | apps عرض بيانات، MVP، فريق صغير | قواعد business كتير، عمر طويل، فريق، offline |
+
+<Diagram name="d-af5fd1e85c">
+
+نقطة بداية للقرار. ضيف عليها معاييرك: الـ offline، وحجم الفريق، وميزانية العميل.
+
+</Diagram>
+
+
+</Level>
+
+<Level n="4" title="المعمارية بتتطور">
+
+مش لازم تقرر مرة واحدة للأبد. ممكن تبدأ MVVM مع repositories، ولما قاعدة business تكبر أو تتكرر في أكتر من مكان، تطلّعها لـ use case. ولما الـ entities تبدأ يبقى ليها سلوك، تعمل Domain حقيقي. ده اسمه <b>evolutionary architecture</b>: المعمارية بتكبر مع المشروع بدل ما تتبني كاملة من أول يوم.
+
+وفي الـ interview، المطور اللي بيقول «أنا بستخدم Clean Architecture في كل حاجة» أضعف من اللي بيقول «بستخدم MVVM للمشاريع الصغيرة، وبضيف Domain layer لما يكون في قواعد business حقيقية أو المشروع طويل، وده مثال من شغلي». التانية بتقول إنك فاهم التمن مش حافظ الوصفة.
+
+<Note kind="info" title="الخطوة الجاية">
+
+كده خلصت دروس الكورس. اعمل مهام الوحدة دي في درس «التطبيق والمهام»، وبعدها راجع كل حاجة من صفحة المراجعة: الكروت اللي علّمتها «راجعها تاني» وأسئلة الـ interviews.
+
+</Note>
+
+
+</Level>
+
+<Quiz>
+
+<Question id="choose-1">
+<Ask>الـ Cubit في MVVM بتاع Flutter بيقابل إيه؟</Ask>
+<Answer>
+
+الـ ViewModel.
+
+</Answer>
+</Question>
+
+<Question id="choose-2">
+<Ask>امتى MVVM البسيط أحسن من Clean؟</Ask>
+<Answer>
+
+في app أغلبه عرض بيانات، أو MVP لازم يخلص بسرعة، أو مافيهوش قواعد business حقيقية.
+
+</Answer>
+</Question>
+
+<Question id="choose-3">
+<Ask>يعني إيه evolutionary architecture؟</Ask>
+<Answer>
+
+إنك تبدأ بمعمارية بسيطة، وتضيف طبقات (زي الـ Domain) لما المشروع يحتاجها فعلًا.
+
+</Answer>
+</Question>
+
+</Quiz>

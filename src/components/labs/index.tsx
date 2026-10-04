@@ -1,0 +1,27 @@
+"use client";
+import DebounceLab from "./DebounceLab";
+import LayersLab from "./LayersLab";
+import TokenRefreshLab from "./TokenRefreshLab";
+import OfflineLab from "./OfflineLab";
+
+/**
+ * Registry of interactive labs usable in MDX as <Lab name="..." />.
+ * To add a lab: create a client component in this folder and register it here.
+ */
+const LABS: Record<string, React.ComponentType> = {
+  debounce: DebounceLab,
+  layers: LayersLab,
+  "token-refresh": TokenRefreshLab,
+  "offline-sync": OfflineLab,
+};
+
+export default function Lab({ name }: { name: string }) {
+  const Component = LABS[name];
+  if (!Component) return <div className="note warn"><b>معمل مش موجود</b>مفيش معمل اسمه «{name}». سجّله في src/components/labs/index.tsx.</div>;
+  return (
+    <div className="lab-wrap">
+      <p className="kicker">جرّب بإيدك</p>
+      <Component />
+    </div>
+  );
+}

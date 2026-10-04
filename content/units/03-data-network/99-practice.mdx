@@ -1,0 +1,19 @@
+---
+title: "التطبيق والمهام"
+description: "مهام الأسبوع 3 في Readly: طبقة الـ Data في الـ production."
+type: "practice"
+---
+
+<Tasks>
+<Task id="w3-1">اعمل Dio مع interceptor للـ auth: يضيف الـ token، ويعمل refresh مرة واحدة لو جه 401، ويعيد الـ requests المتعلقة.</Task>
+<Task id="w3-2">ضيف retry مع backoff لطلبات الـ GET بس.</Task>
+<Task id="w3-3">اعمل الـ DTOs بـ freezed وjson_serializable، وmappers صريحة للـ entities.</Task>
+<Task id="w3-4">اكتب دالة guard واحدة بتحوّل الـ DioException إلى Failure.</Task>
+<Task id="w3-5">ضيف pagination في الـ catalog.</Task>
+</Tasks>
+
+<Deliverable>الـ auth والـ catalog شغالين مع backend حقيقي، وتستات repository لكل حالات الـ error.</Deliverable>
+
+<ReviewQuestion>3 requests رجعوا 401 في نفس اللحظة، إزاي تضمن refresh واحد بس؟</ReviewQuestion>
+
+<LogBox id="log-3" />

@@ -1,0 +1,19 @@
+---
+title: "التطبيق والمهام"
+description: "مهام الأسبوع 4 في Readly: الـ Offline-first."
+type: "practice"
+---
+
+<Tasks>
+<Task id="w4-1">استخدم drift كـ local DB، والـ UI بتسمع على stream من الـ DB بس (single source of truth).</Task>
+<Task id="w4-2">خلي الـ refresh يكتب في الـ DB، مش يرجع بيانات للـ UI.</Task>
+<Task id="w4-3">اعمل sync queue: أي إضافة أو تعديل أوفلاين يتخزن كـ pending operation ويتبعت لما النت يرجع.</Task>
+<Task id="w4-4">اختار سياسة conflict (last-write-wins أو server-wins) واكتبها ADR.</Task>
+<Task id="w4-5">اعمل abstraction للوقت (Clock) واستخدمه في الـ conflict resolution، وتست بـ FixedClock (DIP).</Task>
+</Tasks>
+
+<Deliverable>اقفل النت، ضيف 3 كتب وعدّل واحد، افتح النت، والسيرفر يبقى متزامن.</Deliverable>
+
+<ReviewQuestion>الـ sync queue تبع أنهي layer؟ ومين بيشغّلها؟</ReviewQuestion>
+
+<LogBox id="log-4" />

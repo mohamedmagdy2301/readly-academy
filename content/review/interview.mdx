@@ -1,0 +1,241 @@
+---
+title: "أسئلة الـ interviews"
+order: 0
+description: "أسئلة بتتسأل فعلًا، بإجابات نموذجية."
+---
+
+أسئلة بتتسأل فعلًا عن Clean Architecture وCubit وdio. جاوب بصوت عالي الأول، وبعدين افتح الإجابة النموذجية وقارن.
+
+### SOLID
+
+<Question id="interview-1">
+<Ask>اشرح Dependency Inversion بمثال من مشروعك.</Ask>
+<Answer>
+
+الـ use case AddBookToLibrary بيعتمد على LibraryRepository، وده interface معرّف في الـ domain. الـ LibraryRepositoryImpl في الـ data بيعمل implement ليه وبيستخدم dio وdrift. فالـ domain مايعرفش أي framework، وأقدر أتسته بـ fake، وأغيّر الـ DB من غير ما ألمسه.
+
+</Answer>
+</Question>
+
+<Question id="interview-2">
+<Ask>الـ sealed classes مش بتكسر Open/Closed؟</Ask>
+<Answer>
+
+أيوه، عن قصد. في المجموعات المقفولة زي الـ Failures والـ states، الأهم إن كل حالة تتعامل صح، فالـ compiler يجبرني أعدّل كل switch. في المجموعات اللي بتكبر زي الـ interceptors بطبّق OCP. الاختيار بينهم حسب طبيعة المجموعة.
+
+</Answer>
+</Question>
+
+<Question id="interview-3">
+<Ask>إزاي تتأكد إن الـ fake بتاعك مطابق للـ implementation الحقيقي؟</Ask>
+<Answer>
+
+بالـ contract tests: test suite واحد بياخد factory للـ repository، وبشغّله مرة على الـ fake ومرة على الـ implementation. لو الاتنين عدّوا، الـ fake بيحترم نفس الـ contract (LSP)، وتستات الـ Cubit اللي عليه موثوق فيها.
+
+</Answer>
+</Question>
+
+<Question id="interview-4">
+<Ask>إمتى interface صغير أحسن من repository كامل؟</Ask>
+<Answer>
+
+لما اللي بيستخدمه محتاج جزء صغير منه، خصوصًا بين features. زي notes اللي محتاجة findById بس: بعمل BookLookup، فالـ notes مش مربوطة بتغييرات الكتابة والمزامنة، والـ fake بتاعها method واحدة (ISP).
+
+</Answer>
+</Question>
+
+### الأسبوع 1: الأساس والحدود
+
+<Question id="interview-5">
+<Ask>إيه هي الـ dependency rule؟</Ask>
+<Answer>
+
+الـ imports بتشاور للداخل بس: الـ domain مايعرفش أي حاجة عن الـ UI أو الـ data أو أي framework. عمليًا: الـ domain مافيهوش import لـ Flutter أو dio، والـ data بتعمل implement لـ contracts معرّفة جوه الـ domain (dependency inversion)، فالاعتماد بيتعكس.
+
+</Answer>
+</Question>
+
+<Question id="interview-6">
+<Ask>feature-first ولا layer-first، وليه؟</Ask>
+<Answer>
+
+feature-first: كل اللي يخص feature في مكان واحد، فتقدر تشيلها أو تسلّمها لمطور تاني أو تحوّلها لـ package بسهولة. الـ layer-first بيخلي أي تعديل صغير يلف على 3 مجلدات بعيدة عن بعض، وبيسهّل الـ imports العشوائية بين الـ features.
+
+</Answer>
+</Question>
+
+<Question id="interview-7">
+<Ask>Clean Architecture مش over-engineering؟</Ask>
+<Answer>
+
+ممكن تكون، في app صغير أو CRUD عمره قصير. قيمتها بتبان مع business logic حقيقي، أو فريق، أو مشروع هيعيش سنين، أو تستات جدية. أنا بقرر حسب المشروع، وممكن أبدأ بـ MVVM وأضيف domain لما الـ logic يكبر.
+
+</Answer>
+</Question>
+
+### الأسبوع 2: الـ Domain والأخطاء
+
+<Question id="interview-8">
+<Ask>إيه الفرق بين الـ Entity والـ DTO؟</Ask>
+<Answer>
+
+الـ Entity بتمثل مفهوم في الـ business بقواعده، ومش بتتغير لو الـ API اتغير. الـ DTO بيمثل شكل البيانات على الشبكة أو في الـ DB بالظبط. الـ mapper بيترجم بينهم، فتغيير الـ API بيقف عند الـ data layer.
+
+</Answer>
+</Question>
+
+<Question id="interview-9">
+<Ask>ليه Result بدل ما ترمي exceptions؟</Ask>
+<Answer>
+
+الـ signature نفسها بتقول إن العملية ممكن تفشل، فاللي بينادي مايقدرش ينسى يتعامل مع الفشل. ومع الـ sealed classes الـ compiler بيجبرك تغطي كل أنواع الـ Failures. الـ exceptions بتفضل للحاجات اللي مش متوقعة، يعني الـ bugs.
+
+</Answer>
+</Question>
+
+<Question id="interview-10">
+<Ask>يعني إيه value object؟</Ask>
+<Answer>
+
+نوع صغير بيمثل قيمة واحدة بقواعدها، زي Email أو Money، ومايتعملش غير وهو valid. ده بيمنع الـ primitive obsession: بدل String ممكن يكون أي حاجة، عندك Email مضمون إنه صح في كل مكان.
+
+</Answer>
+</Question>
+
+### الأسبوع 3: طبقة الـ Data
+
+<Question id="interview-11">
+<Ask>إزاي تعمل token refresh لو في requests كتير رجعت 401 في نفس الوقت؟</Ask>
+<Answer>
+
+في الـ onError بتاع الـ interceptor: أول request يبدأ الـ refresh ويحط Completer كـ lock، والباقي يستنوا نفس الـ Future. بعدها كله يعيد المحاولة بالـ token الجديد. الـ refresh بيتعمل بـ Dio منفصل عشان مايدخلش نفس الـ interceptor، ولو فشل بتتمسح الـ session ويرجع UnauthorizedFailure.
+
+</Answer>
+</Question>
+
+<Question id="interview-12">
+<Ask>فين المكان الصح لتحويل الـ exceptions لـ Failures؟</Ask>
+<Answer>
+
+في الـ repository، لأنه الحد بين الـ data والـ domain. الـ data source بيرمي exceptions عادي، والـ repository بيحوّلها في مكان واحد (guard). فوق الـ repository مفيش exceptions خالص.
+
+</Answer>
+</Question>
+
+<Question id="interview-13">
+<Ask>تعمل retry لكل الطلبات؟</Ask>
+<Answer>
+
+لأ، الطلبات الـ idempotent بس زي GET. إعادة POST ممكن تضيف الحاجة مرتين. ولو لازم تعيد POST، بتبعت idempotency key عشان السيرفر يتجاهل التكرار.
+
+</Answer>
+</Question>
+
+### الأسبوع 4: الـ Offline-first
+
+<Question id="interview-14">
+<Ask>يعني إيه single source of truth؟</Ask>
+<Answer>
+
+الـ UI بتقرا من مصدر واحد بس، وهو stream من الـ local DB. الـ network بيكتب في الـ DB ومابيرجعش بيانات للـ UI مباشرة. كده مستحيل الشاشة تعرض بيانات من الـ API مختلفة عن اللي في الكاش.
+
+</Answer>
+</Question>
+
+<Question id="interview-15">
+<Ask>بتتعامل إزاي مع الـ conflicts؟</Ask>
+<Answer>
+
+بسياسة واضحة ومكتوبة: last-write-wins بـ updatedAt، أو server-wins، أو merge لكل حقل. السيرفر بيرجع 409، والـ sync بيطبّق السياسة. الأهم إنها قرار متفق عليه وعليه تست، مش سلوك عشوائي.
+
+</Answer>
+</Question>
+
+### الأسبوع 5: الـ Presentation بـ Cubit
+
+<Question id="interview-16">
+<Ask>إزاي تمنع race condition في البحث؟</Ask>
+<Answer>
+
+debounce عشان أقلل عدد الطلبات، وrequest id بيتزود مع كل طلب. أي نتيجة رجعت والـ id بتاعها مش الأحدث بتتجاهل. ولو عايز أوفّر الـ bandwidth كمان، بلغي الطلب نفسه في الـ data layer.
+
+</Answer>
+</Question>
+
+<Question id="interview-17">
+<Ask>Cubit ولا Bloc؟</Ask>
+<Answer>
+
+Cubit أبسط ومناسب لمعظم الشاشات. Bloc مفيد لما تحتاج تتبع كل event أو transformers جاهزة للـ concurrency. أنا بستخدم Cubit وبحل الـ concurrency بأنماط واضحة ومتستة، وده كفاية في أغلب المشاريع.
+
+</Answer>
+</Question>
+
+<Question id="interview-18">
+<Ask>فين تحط الـ navigation بعد ما العملية تنجح؟</Ask>
+<Answer>
+
+في BlocListener، ولو محتاج مع listenWhen. مش في build، لأن build ممكن يتنادى كذا مرة، فالـ navigation أو الـ snackbar هيتكرر.
+
+</Answer>
+</Question>
+
+### الأسبوع 6: الـ DI والـ Flavors
+
+<Question id="interview-19">
+<Ask>registerFactory ولا registerLazySingleton للـ Cubit؟</Ask>
+<Answer>
+
+Factory، عشان كل شاشة تاخد instance جديد يتقفل معاها. الـ singleton للحاجات اللي مالهاش state مرتبط بشاشة زي الـ repositories والـ Dio. الاستثناء Cubit على مستوى الـ app كله زي الـ AuthCubit.
+
+</Answer>
+</Question>
+
+<Question id="interview-20">
+<Ask>بتعمل الـ flavors إزاي؟</Ask>
+<Answer>
+
+entry points منفصلة (main_dev وmain_prod)، وproductFlavors في Android، وschemes في iOS، وconfig class بيتسجل في الـ DI. مش if (kDebugMode) متوزعة في الكود.
+
+</Answer>
+</Question>
+
+### الأسبوع 7: الاختبارات
+
+<Question id="interview-21">
+<Ask>إيه الفرق بين الـ fake والـ mock؟</Ask>
+<Answer>
+
+الـ mock بيتأكد من التفاعل: الـ method دي اتنادت بالـ parameters دي. الـ fake implementation بسيطة شغالة فعلًا، زي repository في الـ memory، وبيختبر السلوك. الـ fakes أقل عرضة للكسر لما التفاصيل الداخلية تتغير.
+
+</Answer>
+</Question>
+
+<Question id="interview-22">
+<Ask>بتختبر إيه في الـ Cubit؟</Ask>
+<Answer>
+
+تسلسل الـ states لكل سيناريو: نجاح، وكل نوع Failure، والنتيجة القديمة في البحث، والضغط المتكرر. بستخدم blocTest مع mock للـ use case.
+
+</Answer>
+</Question>
+
+### الأسبوع 8: الـ Production
+
+<Question id="interview-23">
+<Ask>بتقرر إزاي Clean ولا MVVM لمشروع جديد؟</Ask>
+<Answer>
+
+بمعايير محددة: كمية الـ business logic، وعمر المشروع، وحجم الفريق، ولو فيه offline أو قواعد معقدة. app عرض بيانات بسيط بيكفيه MVVM مع repositories. لو في قواعد business وتستات ومشروع طويل، بضيف الـ domain layer.
+
+</Answer>
+</Question>
+
+<Question id="interview-24">
+<Ask>بتعرف الـ crashes في الـ production إزاي؟</Ask>
+<Answer>
+
+Sentry أو Crashlytics مربوطين بـ FlutterError.onError وPlatformDispatcher.onError، والـ Failures غير المتوقعة بتتسجل مع context. وبتابع الـ release health بعد كل نسخة.
+
+</Answer>
+</Question>

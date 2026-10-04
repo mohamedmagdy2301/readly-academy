@@ -1,0 +1,254 @@
+---
+title: "الاختبارات من أول تست لحد الـ CI"
+description: "إزاي تتأكد إن الكود شغال من غير ما تفتح الـ app، وإن التعديل الجاي مش هيكسر حاجة."
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="تذوق الأكل">
+
+الشيف بيدوق كل مكوّن لوحده الأول: الصوص مظبوط؟ الملح كفاية؟ ده <b>unit test</b>. بعدين بيدوق الطبق كامل: ده <b>widget test</b>. وفي الآخر حد بيجرب كزبون حقيقي من الباب للحساب: ده <b>integration test</b>. والـ <b>golden test</b> زي صورة الطبق المرجعية: أي طبق يطلع شكله مختلف عن الصورة يتوقف.
+
+</Analogy>
+
+<Diagram name="d-602c0dca30">
+
+أغلب التستات في القاعدة لأنها سريعة ورخيصة. كل ما تطلع لفوق التست بيبقى أبطأ وأهش، فبتستخدمه للـ flows الحرجة بس.
+
+</Diagram>
+
+
+</Level>
+
+<Level n="2" title="أول تستات">
+
+<CodeBlock label="unit test: Arrange, Act, Assert">
+
+```dart
+void main() {
+  group('BookId.create', () {
+    test('rejects an empty id', () {
+      // Arrange
+      const raw = '   ';
+      // Act
+      final result = BookId.create(raw);
+      // Assert
+      expect(result, isA<Err<BookId>>());
+    });
+  });
+}
+```
+
+</CodeBlock>
+
+كل تست بيتقسم لـ 3 خطوات: تجهّز (Arrange)، تنفّذ (Act)، تتأكد (Assert). وبيتشغّل بـ `flutter test`.
+
+<CodeBlock label="تست use case بـ fake">
+
+```dart
+class FakeLibraryRepository implements LibraryRepository {
+  final _books = <Book>[];
+
+  @override
+  Future<bool> contains(BookId id) async => _books.any((b) => b.id == id);
+
+  @override
+  Future<Result<void>> addBook(Book book) async {
+    _books.add(book);
+    return const Success(null);
+  }
+  // ... other methods
+}
+
+test('cannot add the same book twice', () async {
+  final addBook = AddBookToLibrary(FakeLibraryRepository());
+  await addBook(tBook);
+  final result = await addBook(tBook);
+  expect(result, isA<Err<void>>());
+});
+```
+
+</CodeBlock>
+
+
+</Level>
+
+<Level n="3" title="كل أنواع التستات بالكود">
+
+### Mock: لما يهمك التفاعل
+
+<CodeBlock label="mocktail: تست الـ repository">
+
+```dart
+class MockRemote extends Mock implements LibraryRemoteSource {}
+
+test('maps connection errors to NetworkFailure', () async {
+  final remote = MockRemote();
+  when(() => remote.fetchLibrary()).thenThrow(DioException(
+    requestOptions: RequestOptions(),
+    type: DioExceptionType.connectionError,
+  ));
+
+  final result = await LibraryRepositoryImpl(remote).getLibrary();
+
+  expect(
+    result,
+    isA<Err<List<Book>>>().having((e) => e.failure, 'failure', isA<NetworkFailure>()),
+  );
+});
+```
+
+</CodeBlock>
+
+|  | Fake | Mock |
+| --- | --- | --- |
+| هو إيه | implementation بسيط شغال فعلًا (in-memory) | object فاضي بتبرمجه: «لما يتنادى كذا رجّع كذا» |
+| بيختبر | السلوك والنتيجة | التفاعل: الـ method اتنادت؟ كام مرة؟ |
+| ميزته | مابيتكسرش لما التفاصيل الداخلية تتغير | سريع تكتبه لأي حالة غريبة (زي exception معين) |
+
+### blocTest: تسلسل الـ states
+
+<CodeBlock label="blocTest للـ debounce">
+
+```dart
+class MockSearchBooks extends Mock implements SearchBooks {}
+
+void main() {
+  setUpAll(() => registerFallbackValue(const SearchParams(query: '')));
+  late MockSearchBooks search;
+  setUp(() => search = MockSearchBooks());
+
+  blocTest<CatalogSearchCubit, CatalogSearchState>(
+    'searches once after the user stops typing',
+    setUp: () => when(() => search(any())).thenAnswer((_) async => Success([tBook])),
+    build: () => CatalogSearchCubit(search),
+    act: (cubit) {
+      cubit.queryChanged('fl');
+      cubit.queryChanged('flu');
+      cubit.queryChanged('flutter');
+    },
+    wait: const Duration(milliseconds: 400),
+    expect: () => [isA<SearchLoading>(), isA<SearchLoaded>()],
+    verify: (_) => verify(() => search(any())).called(1),
+  );
+}
+```
+
+</CodeBlock>
+
+### Widget test: الشاشة لوحدها
+
+<CodeBlock label="widget test بـ MockCubit">
+
+```dart
+class MockLibraryCubit extends MockCubit<LibraryState> implements LibraryCubit {}
+
+testWidgets('shows retry on network failure', (tester) async {
+  final cubit = MockLibraryCubit();
+  when(() => cubit.state).thenReturn(const LibraryError(NetworkFailure()));
+
+  await tester.pumpWidget(MaterialApp(
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    home: BlocProvider<LibraryCubit>.value(value: cubit, child: const LibraryView()),
+  ));
+  await tester.pump();
+
+  expect(find.byType(RetryButton), findsOneWidget);
+});
+```
+
+</CodeBlock>
+
+### Golden test: الشكل
+
+<CodeBlock label="golden">
+
+```dart
+testWidgets('library screen in Arabic', (tester) async {
+  await tester.pumpWidget(buildTestApp(
+    locale: const Locale('ar'),
+    state: LibraryLoaded(tBooks),
+  ));
+  await expectLater(
+    find.byType(LibraryView),
+    matchesGoldenFile('goldens/library_ar.png'),
+  );
+});
+// first run / after an intended change: flutter test --update-goldens
+```
+
+</CodeBlock>
+
+### Integration test: الـ app كامل
+
+<CodeBlock label="integration_test">
+
+```dart
+void main() {
+  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+
+  testWidgets('login then add a book', (tester) async {
+    app.main();
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('email')), 'test@readly.app');
+    await tester.enterText(find.byKey(const Key('password')), 'secret123');
+    await tester.tap(find.byKey(const Key('login')));
+    await tester.pumpAndSettle();
+    expect(find.byType(LibraryView), findsOneWidget);
+  });
+}
+// flutter test integration_test
+```
+
+</CodeBlock>
+
+
+</Level>
+
+<Level n="4" title="عقلية الـ senior">
+
+- <b>اختبر السلوك مش التفاصيل:</b> تست بيتكسر لما تغيّر اسم variable داخلي تست وحش. التست يقول «لو حصل كذا، النتيجة كذا».
+- <b>التستات المتقلبة (flaky):</b> أغلبها جاي من الوقت أو الشبكة الحقيقية أو الترتيب. الحل: Clock ثابت، وmocks للشبكة، وكل تست مستقل بـ setUp جديد.
+- <b>الـ coverage مقياس مش هدف:</b> 90% في الـ domain والـ data معقولة. 100% في الـ UI غالبًا تضييع وقت.
+- <b>الـ CI بيشغّل كل حاجة:</b> أي PR مايتدمجش لو التستات أو الـ analyze فشلوا (درس «التوسّع والـ production» في الوحدة 6).
+
+<Note kind="interview" title="سؤال interview">
+
+«امتى fake وامتى mock؟» الـ mock لما يهمك التفاعل أو محتاج تحاكي حالة غريبة زي exception معين. الـ fake لما عايز تختبر السلوك، لأنه أقل عرضة للكسر مع تغيير التفاصيل الداخلية.
+
+</Note>
+
+
+</Level>
+
+<Quiz>
+
+<Question id="testing-1">
+<Ask>ليه أغلب التستات unit؟</Ask>
+<Answer>
+
+لأنها الأسرع والأرخص، وبتمسك أغلب المشاكل في الـ logic من غير ما تحتاج UI ولا جهاز.
+
+</Answer>
+</Question>
+
+<Question id="testing-2">
+<Ask>blocTest فيه `wait`. ليه؟</Ask>
+<Answer>
+
+عشان الـ debounce بيستنى 350ms، فلازم التست يستنى قبل ما يتأكد من الـ states.
+
+</Answer>
+</Question>
+
+<Question id="testing-3">
+<Ask>إيه فايدة الـ golden test في app عربي؟</Ask>
+<Answer>
+
+بيمسك أي حاجة اتقلبت غلط في الـ RTL، أو أي تغيير في الشكل محدش قصده.
+
+</Answer>
+</Question>
+
+</Quiz>

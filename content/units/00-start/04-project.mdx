@@ -1,0 +1,18 @@
+---
+title: "المشروع: Readly"
+description: "Readly: المشروع اللي هتطبّق عليه كل حاجة."
+---
+
+تطبيق Readly هو مكتبة قراءة شخصية: تدوّر على كتب، تضيفها لمكتبتك، تكتب ملاحظات، وكل ده شغال أوفلاين وبيتزامن. اخترته لأنه صغير كفكرة لكن بيغطي كل المحاور العشرة.
+
+الـ backend: اعمل API صغير بـ Node/Express وMongoDB (يوم شغل) فيه JWT access مدته قصيرة جدًا (مثلًا دقيقة) وrefresh token، عشان تجرب الـ token refresh فعليًا. الـ catalog من Open Library API (مجاني ومن غير key).
+
+| الـ Feature | اللي بتعمله | المهارات المتقدمة | الأسبوع |
+| --- | --- | --- | --- |
+| auth | تسجيل، دخول، خروج، دخول تلقائي | الـ value objects، الـ token refresh interceptor، الـ secure storage، الـ router guards | 2–3، 5 |
+| catalog | بحث وتصفح كتب من Open Library | الـ pagination، الـ debounce وتجاهل النتائج القديمة في الـ Cubit، الـ caching، الـ deep links | 3، 5 |
+| library | مكتبتك وحالة كل كتاب (أقرأه، بقراه، خلصته) | الـ offline-first، drift، الـ sync queue، سياسة الـ conflicts | 4 |
+| notes | ملاحظات واقتباسات لكل كتاب | تواصل بين features (بتحتاج BookId من library)، ومنع الحفظ المزدوج | 5–6 |
+| settings | الثيم، اللغة (عربي وإنجليزي)، الخروج | feature من غير domain تقريبًا: مثال عملي إنك مش لازم تطبق كل الطبقات دايمًا | 6 |
+
+بديل لو حابب: بعد الأسبوع 4، طبّق نفس الأفكار بالتوازي في refactor لـ feature واحدة من مشروع حقيقي عندك، لأن الـ refactor في كود موجود بيعلّم حاجات ماتظهرش في مشروع من الصفر.

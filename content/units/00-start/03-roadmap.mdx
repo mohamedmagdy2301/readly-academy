@@ -1,0 +1,31 @@
+---
+title: "خريطة الرحلة"
+description: "العشر محاور المتقدمة، والخط الزمني للـ 8 أسابيع."
+---
+
+الكورس بيديك الـ «إيه»، والعشر محاور دي هي الـ «إزاي في مشروع حقيقي». آخر عمود بيقولك المحور في أنهي أسبوع.
+
+| المحور | المواضيع | ليه مهم | الأسبوع |
+| --- | --- | --- | --- |
+| حدود الـ features | الـ feature-first مقابل الـ layer-first، التواصل بين الـ features، الـ core كـ shared kernel، فرض الـ dependency rule بالـ lint | المعمارية بتبوظ لما حد يعمل import غلط ومحدش يلاحظ | 1، 6 |
+| نمذجة الـ Domain | الـ value objects (Email وMoney)، الـ invariants، الـ sealed classes في Dart 3، الـ extension types، freezed | الـ domain الفاضي من الـ logic هو السبب الأول إن الناس تشوف Clean Arch مجرد boilerplate | 2 |
+| التعامل مع الأخطاء | هرم Failures بـ sealed classes، Result type خاص بيك، التحويل عند الحدود بس، ترجمة الـ Failures لرسائل بـ flutter_localizations في الـ presentation | الـ exhaustive switch بيخلي الـ compiler يقولك لو نسيت حالة | 2 |
+| الـ Use cases | امتى تشيلها، تركيب use cases، الـ StreamUseCase، الـ params objects | تفرّق بين business logic حقيقي وpass-through ملوش لازمة | 2 |
+| طبقة الـ Data | الـ Dio interceptors (token refresh وretry)، الـ DTO mapping، الـ pagination، استراتيجيات الـ caching | ده المكان اللي فيه أغلب باجات الـ production | 3 |
+| الـ Offline-first | الـ local DB كمصدر وحيد للحقيقة (drift)، الـ stale-while-revalidate، الـ sync queue، حل الـ conflicts | الفرق بين app بيشتغل وapp محترم | 4 |
+| الـ Presentation | أنماط Cubit المتقدمة: debounce، تجاهل النتائج القديمة، منع الضغط المتكرر، الـ sealed states، الـ pagination، go_router redirect مع refreshListenable، الـ deep links | الـ race conditions في الـ UI هي أشهر باجات الـ state management | 5 |
+| الـ DI والإعدادات | injectable، الـ flavors (dev وstaging وprod)، الـ environments، تسجيل لكل feature | نفس الكود يشتغل على أكتر من backend ويتبدل في التست | 6 |
+| التقسيم لـ packages | الـ pub workspaces أو melos، package لكل feature، public API لكل package | الـ compiler نفسه يمنع الـ imports الغلط، والـ build أسرع في المشاريع الكبيرة | 6 |
+| الاختبارات والجودة | mocktail، bloc_test (بيشتغل مع Cubit)، golden، integration_test، الـ test data builders، الـ CI، الـ ADRs | المعمارية النظيفة ملهاش لازمة من غير تستات بتستفيد منها | 7، 8 |
+
+محور إضافي في الأسبوع 8: decision guide مكتوب بين Clean Arch وMVVM (اللي انت بتشتغل بيهم الاتنين)، كامتداد لمحاضرة 38.
+
+### الخط الزمني
+
+8 أسابيع بعد المرحلة 0، وكل أسبوع بينتهي بـ deliverable في المشروع التطبيقي. لو أسبوع طوّل معاك عادي، المهم إن الـ deliverable يتسلم قبل ما تنتقل.
+
+<Diagram name="d-31a5d52906">
+
+المراحل من اليمين للشمال، والمعيّنات البرتقالي هي الـ deliverables اللي لازم تتسلم قبل ما تكمّل.
+
+</Diagram>

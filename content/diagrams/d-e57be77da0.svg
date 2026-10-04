@@ -1,0 +1,28 @@
+<svg viewBox="0 0 600 290" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="حالات الـ operation في الـ sync queue">
+<defs>
+<marker id="a3" markerheight="7" markerwidth="7" orient="auto-start-reverse" refx="9" refy="5" viewbox="0 0 10 10"><path d="M0 0 L10 5 L0 10z" fill="var(--ink)"></path></marker>
+</defs>
+<g font-family="IBM Plex Mono, monospace" font-size="14" text-anchor="middle">
+<rect fill="var(--surface)" height="44" rx="22" stroke="var(--ink)" stroke-width="1.5" width="120" x="30" y="60"></rect><text fill="var(--ink)" x="90" y="87">pending</text>
+<rect fill="var(--accent-soft)" height="44" rx="22" stroke="var(--accent)" stroke-width="1.5" width="120" x="240" y="60"></rect><text fill="var(--ink)" x="300" y="87">syncing</text>
+<rect fill="var(--accent)" height="44" rx="22" stroke="var(--accent)" stroke-width="1.5" width="120" x="450" y="60"></rect><text fill="#fff" x="510" y="87">synced</text>
+<rect fill="var(--warn-soft)" height="44" rx="22" stroke="var(--warn)" stroke-width="1.5" width="120" x="240" y="200"></rect><text fill="var(--ink)" x="300" y="227">failed</text>
+<rect fill="var(--warn-soft)" height="44" rx="22" stroke="var(--warn)" stroke-width="1.5" width="120" x="450" y="200"></rect><text fill="var(--ink)" x="510" y="227">conflict</text>
+</g>
+<g fill="none" stroke="var(--ink)" stroke-width="1.5">
+<line marker-end="url(#a3)" x1="150" x2="237" y1="82" y2="82"></line>
+<line marker-end="url(#a3)" x1="360" x2="447" y1="82" y2="82"></line>
+<line marker-end="url(#a3)" x1="300" x2="300" y1="104" y2="197"></line>
+<path d="M240 222 H90 V107" marker-end="url(#a3)"></path>
+<line marker-end="url(#a3)" x1="345" x2="478" y1="104" y2="198"></line>
+<line marker-end="url(#a3)" x1="510" x2="510" y1="200" y2="107"></line>
+</g>
+<g fill="var(--muted)" font-family="IBM Plex Mono, monospace" font-size="12">
+<text text-anchor="middle" x="195" y="73">online</text>
+<text text-anchor="middle" x="404" y="73">2xx</text>
+<text text-anchor="end" x="292" y="156">network / 5xx</text>
+<text text-anchor="middle" x="165" y="240">retry after backoff</text>
+<text text-anchor="start" x="420" y="140">409</text>
+<text text-anchor="start" x="520" y="156">policy</text>
+</g>
+</svg>

@@ -1,0 +1,358 @@
+---
+title: "الأخطاء: من try/catch لـ Result"
+description: "الفرق بين الخطأ المتوقع والـ bug، وإزاي الـ compiler يجبرك تتعامل مع كل حالة."
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="الحريق والصنف الخلصان">
+
+الـ <b>exception</b> زي حريق في المطبخ: حاجة مش متوقعة وبتوقف الشغل. الـ <b>failure</b> زي «الصنف ده خلصان النهارده»: حاجة متوقعة، وليها رد معروف. والجرسون عمره ما بيقول للزبون «الأنبوبة انفجرت»، بيقول «الطبق مش متاح، تحب حاجة تانية؟».
+
+</Analogy>
+
+في الـ app: النت فاصل، أو الـ session انتهت، أو الإيميل غلط، دي كلها failures متوقعة، والمستخدم لازم يشوف رسالة مفهومة لكل واحدة. أما null error في الكود فده bug، ومكانه تقرير crash مش رسالة للمستخدم.
+
+
+</Level>
+
+<Level n="2" title="من try/catch لـ Result">
+
+أول طريقة بيتعلمها أي حد:
+
+<CodeBlock label="try/catch في الـ Cubit">
+
+```dart
+try {
+  final books = await repository.getLibrary();
+  emit(LibraryLoaded(books));
+} catch (e) {
+  emit(LibraryError('Something went wrong'));
+}
+```
+
+</CodeBlock>
+
+المشكلة إن الـ signature بتاعة `getLibrary()` مابتقولش إنها ممكن تفشل، فسهل جدًا تنسى الـ try. الحل: الـ function ترجّع نوع بيقول صراحة «يا نجاح يا فشل»:
+
+<CodeBlock label="Result">
+
+```dart
+sealed class Result<T> {
+  const Result();
+}
+
+final class Success<T> extends Result<T> {
+  const Success(this.value);
+  final T value;
+}
+
+final class Err<T> extends Result<T> {
+  const Err(this.failure);
+  final Failure failure;
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="استخدامه في الـ Cubit">
+
+```dart
+final result = await repository.getLibrary();
+emit(switch (result) {
+  Success(:final value) => LibraryLoaded(value),
+  Err(:final failure) => LibraryError(failure),
+});
+```
+
+</CodeBlock>
+
+دلوقتي مستحيل تنسى حالة الفشل، لأن الـ switch لازم يغطي الاتنين.
+
+
+</Level>
+
+<Level n="3" title="الـ Failures كأنواع، والحد الفاصل">
+
+<CodeBlock label="Failure sealed">
+
+```dart
+sealed class Failure {
+  const Failure(this.message);
+  final String message;
+}
+
+final class NetworkFailure extends Failure {
+  const NetworkFailure() : super('No internet');
+}
+final class UnauthorizedFailure extends Failure {
+  const UnauthorizedFailure() : super('Session expired');
+}
+final class ServerFailure extends Failure {
+  const ServerFailure(super.message, {this.statusCode});
+  final int? statusCode;
+}
+final class ValidationFailure extends Failure {
+  const ValidationFailure(super.message);
+}
+```
+
+</CodeBlock>
+
+ولأن الأنواع sealed، تقدر تتصرف بشكل مختلف لكل نوع: NetworkFailure تعرض زرار «حاول تاني»، وUnauthorizedFailure تحوّل لصفحة الدخول.
+
+### guard: مكان واحد للتحويل
+
+<CodeBlock label="guard">
+
+```dart
+Future<Result<T>> guard<T>(Future<T> Function() run) async {
+  try {
+    return Success(await run());
+  } on DioException catch (e) {
+    return Err(_mapDio(e));
+  } on CacheException catch (e) {
+    return Err(CacheFailure(e.message));
+  }
+  // anything else is a bug: let it crash in debug, report it in production
+}
+```
+
+</CodeBlock>
+
+لاحظ إن الـ guard بيمسك أنواع معينة بس، مش `catch (e)`. لو حصل null error، هيعدّي ويضرب، وده الصح: الـ bug لازم يتشاف مش يتخبى ورا رسالة.
+
+<Diagram name="d-d9ae733dfd">
+
+الـ exceptions بتعيش في الجزء البرتقالي بس. من الـ repository ولفوق، كل حاجة Result.
+
+</Diagram>
+
+### الترجمة مكانها الـ Presentation
+
+<CodeBlock label="الـ Domain يقول النوع، والـ UI تختار النص">
+
+```dart
+extension FailureL10n on Failure {
+  String localized(AppLocalizations l10n) => switch (this) {
+        NetworkFailure() => l10n.errorNoInternet,
+        UnauthorizedFailure() => l10n.errorSessionExpired,
+        ServerFailure() => l10n.errorServer,
+        CacheFailure() => l10n.errorCache,
+        ValidationFailure() => l10n.errorInvalidInput,
+      };
+}
+```
+
+</CodeBlock>
+
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>Result خاص بيك ولا Either من fpdart؟</b> الـ Result بالـ sealed classes بيدّيك نفس الفايدة من غير dependency، والـ switch عليه مقروء لأي حد. fpdart مفيد لو الفريق متعود على functional programming ومحتاج أدوات زي TaskEither.
+- <b>الـ exceptions للـ bugs، والـ Failures للمتوقع:</b> أي حاجة المستخدم ممكن يتسبب فيها أو العالم الخارجي (نت، سيرفر، input) تبقى Failure. أي حاجة معناها إن الكود نفسه غلط تفضل exception وتوصل لـ Sentry.
+- <b>الـ message في الـ Failure للـ logs مش للمستخدم:</b> النص اللي المستخدم بيشوفه دايمًا من ملفات الترجمة. الـ message الإنجليزي جوه الـ Failure بيساعدك في الـ debugging بس.
+
+<Note kind="interview" title="سؤال interview">
+
+«ليه Result بدل exceptions؟» لأن الـ signature بتقول إن العملية ممكن تفشل، والـ compiler بيجبرك تتعامل مع كل نوع Failure. والـ exceptions بتفضل للحاجات غير المتوقعة، يعني الـ bugs.
+
+</Note>
+
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### الـ Result والـ Failure كـ sealed classes
+
+ميزتهم عن Either من dartz: الـ compiler بيجبرك تغطي كل الحالات في أي switch، ومفيش dependency خارجية.
+
+```dart
+sealed class Result<T> {
+  const Result();
+}
+
+final class Success<T> extends Result<T> {
+  const Success(this.value);
+  final T value;
+}
+
+final class Err<T> extends Result<T> {
+  const Err(this.failure);
+  final Failure failure;
+}
+
+sealed class Failure {
+  const Failure(this.message);
+  final String message;
+}
+
+final class NetworkFailure extends Failure {
+  const NetworkFailure() : super('No internet connection');
+}
+
+final class UnauthorizedFailure extends Failure {
+  const UnauthorizedFailure() : super('Session expired');
+}
+
+final class ServerFailure extends Failure {
+  const ServerFailure(super.message, {this.statusCode});
+  final int? statusCode;
+}
+
+final class CacheFailure extends Failure {
+  const CacheFailure(super.message);
+}
+
+final class ValidationFailure extends Failure {
+  const ValidationFailure(super.message);
+}
+```
+
+<Diagram name="d-de0e48db1d">
+
+كل الأنواع معروفة للـ compiler، فأي switch على Result أو Failure لازم يغطيهم كلهم. لو ضفت Failure جديد، كل مكان نسيه هيطلع error.
+
+</Diagram>
+
+### تحويل الـ exceptions في مكان واحد
+
+بدل try/catch متكرر في كل method في الـ repository، دالة واحدة هي الحد الفاصل بين عالم الـ exceptions وعالم الـ Failures.
+
+```dart
+Future<Result<T>> guard<T>(Future<T> Function() run) async {
+  try {
+    return Success(await run());
+  } on DioException catch (e) {
+    return Err(_mapDio(e));
+  } on CacheException catch (e) {
+    return Err(CacheFailure(e.message));
+  }
+}
+
+Failure _mapDio(DioException e) => switch (e.type) {
+      DioExceptionType.connectionError ||
+      DioExceptionType.connectionTimeout =>
+        const NetworkFailure(),
+      DioExceptionType.badResponse when e.response?.statusCode == 401 =>
+        const UnauthorizedFailure(),
+      _ => ServerFailure(
+          e.message ?? 'Unexpected error',
+          statusCode: e.response?.statusCode,
+        ),
+    };
+```
+
+<Diagram name="d-070f65e2d1">
+
+الـ exceptions بتعيش في الجزء البرتقالي بس. الـ guard في الـ repository هو الحد: من عنده ولفوق كل حاجة Result، والـ Cubit عمره ما يشوف DioException.
+
+</Diagram>
+
+### try/catch متكرر في كل method
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+Future<Either<Failure, List<Book>>> getLibrary() async {
+  try {
+    final res = await _remote.fetchLibrary();
+    return Right(res.map((e) => e.toEntity()).toList());
+  } catch (e) {
+    return Left(ServerFailure(e.toString()));
+  }
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+Future<Result<List<Book>>> getLibrary() => guard(() async {
+      final dtos = await _remote.fetchLibrary();
+      return dtos.map((d) => d.toEntity()).toList();
+    });
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: كل method نسخة من التانية، و`catch (e)` بيبلع أي bug (زي null error) ويعرضه للمستخدم كـ «خطأ في السيرفر». والنت الفاصل كمان بيظهر كـ server error. بعد: الـ guard بيمسك DioException وCacheException بس، فالـ bugs الحقيقية بتضرب بصوت عالي في الـ debug وبتوصل لـ Sentry في الـ production.
+
+### الـ Failure كنص ثابت
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+emit(LibraryError('No internet connection'));
+
+// in the UI
+if (state.message.contains('internet')) {
+  return RetryView(onRetry: cubit.load);
+}
+return Text(state.message);
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+emit(LibraryError(failure));
+
+// in the UI
+return switch (state.failure) {
+  NetworkFailure() => RetryView(onRetry: cubit.load),
+  _ => ErrorView(
+      message: state.failure.localized(AppLocalizations.of(context)!),
+    ),
+};
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: الرسالة إنجليزي بس ومش مترجمة، والـ UI بتاخد قرار بناءً على نص، فلو حد عدّل الرسالة زرار إعادة المحاولة يختفي من غير ما حد يلاحظ. بعد: القرار على النوع، والترجمة من ملفات الـ ARB، والـ compiler بيحرسك.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="errors-1">
+<Ask>ليه الـ guard مابيعملش `catch (e)` لكل حاجة؟</Ask>
+<Answer>
+
+عشان مايخبيش الـ bugs. أي exception غير DioException وCacheException معناها غلط في الكود، ولازم يظهر ويتسجل.
+
+</Answer>
+</Question>
+
+<Question id="errors-2">
+<Ask>فين تترجم «No internet» لـ «مفيش اتصال»؟</Ask>
+<Answer>
+
+في الـ Presentation، باستخدام AppLocalizations. الـ Domain بيرجّع NetworkFailure بس.
+
+</Answer>
+</Question>
+
+<Question id="errors-3">
+<Ask>ضفت `TimeoutFailure` جديدة. إيه اللي هيحصل؟</Ask>
+<Answer>
+
+كل switch على Failure في المشروع هيطلع compile error لحد ما تضيفها. ده مقصود: مستحيل تنساها.
+
+</Answer>
+</Question>
+
+</Quiz>

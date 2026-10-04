@@ -1,0 +1,54 @@
+---
+title: "رحلة request واحدة: إضافة كتاب لمكتبتك"
+description: "ضغطة «إضافة كتاب» ملف بملف في 3 سيناريوهات."
+---
+
+هنتتبع ضغطة زرار واحدة ملف بملف، في 3 سيناريوهات. أهم فكرة: الـ Cubit مابيستناش النت، بيستنى الكتابة في الـ DB بس، والمزامنة شغالة لوحدها في الخلفية.
+
+<Scenario title="السيناريو 1: النت شغال وكل حاجة تمام">
+
+<Journey>
+
+<Step file="feature_library/presentation/library_view.dart">المستخدم داس «إضافة»، والـ widget نادى `context.read<LibraryCubit>().addBook(book)`. الـ widget مايعرفش أي حاجة غير الـ Cubit.</Step>
+
+<Step file="feature_library/presentation/library_cubit.dart">الـ Cubit بيتأكد إن مفيش حفظ شغال (flag عشان الضغط المتكرر)، وبينادي use case اسمه `AddBookToLibrary`.</Step>
+
+<Step file="feature_library/domain/add_book_to_library.dart">هنا الـ business rule: الكتاب مش موجود في المكتبة أصلًا. لو موجود يرجع `Err(ValidationFailure)` من غير ما يلمس أي data.</Step>
+
+<Step file="feature_library/data/library_repository_impl.dart">الـ repository بيكتب الكتاب في drift بحالة pending، ويضيف operation في الـ sync queue، ويرجع `Success` فورًا. الكتاب بيظهر في الشاشة حالًا لأن الـ UI بتسمع على `watchLibrary()`.</Step>
+
+<Step file="feature_library/data/sync_service.dart">الـ SyncService لاحظ operation جديدة والنت شغال، فنادى `LibraryRemoteDataSource.addBook`.</Step>
+
+<Step file="core_network/auth_interceptor.dart">الـ interceptor ضاف الـ access token، والسيرفر رجع 201.</Step>
+
+<Step file="feature_library/data/sync_service.dart">الـ SyncService حدّث الصف في drift لـ synced، والـ stream طلّع الكتاب من غير علامة «مستني مزامنة».</Step>
+
+</Journey>
+
+</Scenario>
+
+<Scenario title="السيناريو 2: الـ token انتهى في النص">
+
+كل حاجة زي السيناريو 1 لحد خطوة 6. السيرفر رجع 401، والـ interceptor قفل lock، وعمل refresh بـ Dio منفصل، وأعاد الطلب بالـ token الجديد. الـ Cubit والـ UI ماحسّوش بحاجة.
+
+لو الـ refresh نفسه فشل: الـ session بتتمسح، والـ AuthCubit بيطلّع loggedOut، وgo_router بيسمع عليه بـ `refreshListenable` ويحوّل لصفحة الدخول. الـ operation فضلت في الـ queue، وهتتزامن تلقائي بعد الدخول.
+
+<Diagram name="d-6c2c7d6cd5">
+
+المستطيل البرتقالي هو الـ lock: أي request تاني رجع 401 في نفس الوقت بيستنى نفس الـ refresh بدل ما يعمل refresh جديد.
+
+</Diagram>
+
+</Scenario>
+
+<Scenario title="السيناريو 3: النت فاصل">
+
+خطوات 1 لـ 4 زي ما هي بالظبط، والكتاب بيظهر في الشاشة بعلامة «مستني اتصال». خطوة 5 مابتحصلش، والـ operation بتفضل pending. لما النت يرجع، الـ SyncService بيكمّل لوحده. ولو الطلب فشل بسبب النت أو 5xx، بيتعلّم failed ويرجع pending بعد backoff.
+
+<Diagram name="d-e57be77da0">
+
+الـ conflict بيتحل بالسياسة اللي كتبتها في ADR الأسبوع 4 (مثلًا server-wins)، مش بقرار عشوائي جوه الكود.
+
+</Diagram>
+
+</Scenario>

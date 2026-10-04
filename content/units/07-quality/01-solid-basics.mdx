@@ -1,0 +1,180 @@
+---
+title: "SOLID بالراحة"
+description: "خمس مبادئ بتشرح ليه كل قاعدة في المعمارية موجودة. لما تفهمها، مش هتحتاج تحفظ القواعد."
+---
+
+<Level n="1" title="كل مبدأ بتشبيه">
+
+<Diagram name="d-6069e1e44b">
+
+خمس مبادئ، كل واحد بيحل نوع مختلف من المشاكل. Clean Architecture هي المبادئ دي متطبقة على المشروع كله.
+
+</Diagram>
+
+| المبدأ | التشبيه |
+| --- | --- |
+| <b>S</b>: Single Responsibility | موظف الكاشير شغلته الحساب. لو خليته كمان يطبخ ويغسل، أي تغيير في المطبخ هيأثر على الحساب. |
+| <b>O</b>: Open/Closed | المشترك الكهربا: عايز توصّل جهاز جديد؟ بتحطه في المشترك، مش بتكسّر الحيطة وتعدّل السلك. |
+| <b>L</b>: Liskov Substitution | لما تطلب تاكسي، أي سواق معاه رخصة لازم يوصلك. لو سواق قالك «أنا مابطلعش كباري»، كسر الوعد اللي الرخصة بتقوله. |
+| <b>I</b>: Interface Segregation | ريموت التكييف مش محتاج زراير القنوات. ريموت فيه 80 زرار وانت بتستخدم 3 بيلخبطك. |
+| <b>D</b>: Dependency Inversion | اللمبة مش متلحمة في سلك الحيطة. الاتنين ملتزمين بشكل البريزة (المعيار)، فتقدر تغيّر أي واحد فيهم. |
+
+
+</Level>
+
+<Level n="2" title="كل مبدأ في Readly">
+
+### S: سبب واحد للتغيير
+
+اسأل عن أي class: «مين ممكن يطلب تعديل عليها؟» في Readly: تغيير شكل الـ API بيلمس الـ DTO بس، وتغيير الـ DB بيلمس الـ LocalSource بس، وتغيير قاعدة «مفيش تكرار» بيلمس الـ use case بس، وتغيير نص الرسالة بيلمس ملف الـ ARB بس.
+
+### O: ضيف قطعة، ماتفتحش الكود الشغال
+
+<CodeBlock label="نقطة تمديد">
+
+```dart
+dio.interceptors.addAll([
+  AuthInterceptor(tokens, refreshDio, dio),
+  RetryInterceptor(dio),
+  if (config.enableLogs) LogInterceptor(),
+  // need caching? add CacheInterceptor here. Nothing else changes.
+]);
+```
+
+</CodeBlock>
+
+### L: أي تنفيذ للعقد يتبدل بالتاني
+
+الـ `FakeLibraryRepository` اللي في التستات والـ `LibraryRepositoryImpl` الحقيقي لازم يتصرفوا بنفس الطريقة. لو الـ fake بيقبل كتاب متكرر والحقيقي بيرفضه، تستات الـ Cubit هتعدّي والـ app هيغلط.
+
+### I: interface على قد الحاجة
+
+<CodeBlock label="interface صغير">
+
+```dart
+abstract interface class BookLookup {
+  Future<Result<Book>> findById(BookId id);
+}
+// feature_notes depends on BookLookup only, not the whole LibraryRepository
+```
+
+</CodeBlock>
+
+### D: الـ Domain بيعرّف العقد، والـ Data بتنفّذه
+
+ده اللي شفناه من درس الطبقات في الوحدة 1: `LibraryRepository` في الـ Domain، و`LibraryRepositoryImpl` في الـ Data. الـ use case مايعرفش dio ولا drift.
+
+
+</Level>
+
+<Level n="3" title="إزاي تكتشف إن مبدأ اتكسر">
+
+| المبدأ | علامة إنه اتكسر |
+| --- | --- |
+| S | class بتعمل import لـ dio وdrift وفيها نصوص للمستخدم وقواعد مع بعض |
+| O | كل feature جديدة بتضيف if جديدة في نفس الملف القديم |
+| L | implementation بيرمي `UnimplementedError` أو `UnsupportedError` لـ method في العقد |
+| I | fake في التست مليان methods فاضية مش بتستخدمها |
+| D | الـ Domain فيه import لـ package خارجي، أو الـ use case بيعمل `LibraryRepositoryImpl()` بنفسه |
+
+### LSP بالكود: contract tests
+
+<CodeBlock label="نفس التستات على التنفيذين">
+
+```dart
+void libraryRepositoryContract(LibraryRepository Function() create) {
+  test('adding the same book twice fails', () async {
+    final repo = create();
+    await repo.addBook(tBook);
+    expect(await repo.addBook(tBook), isA<Err<void>>());
+  });
+}
+
+void main() {
+  group('fake', () => libraryRepositoryContract(FakeLibraryRepository.new));
+  group('impl', () => libraryRepositoryContract(
+        () => LibraryRepositoryImpl(FakeRemote(), InMemoryLocal()),
+      ));
+}
+```
+
+</CodeBlock>
+
+### DIP مش للـ repositories بس
+
+<CodeBlock label="الوقت كـ abstraction">
+
+```dart
+abstract interface class Clock {
+  DateTime now();
+}
+
+final class SystemClock implements Clock {
+  const SystemClock();
+  @override
+  DateTime now() => DateTime.now();
+}
+
+// in tests: FixedClock(DateTime(2026, 10, 4))
+```
+
+</CodeBlock>
+
+أي حاجة من بره الكود بتأثر على الـ logic (الوقت، الاتصال، التخزين الآمن) تستاهل abstraction عشان تقدر تختبرها.
+
+
+</Level>
+
+<Level n="4" title="الـ trade-offs">
+
+<Note kind="warn" title="الـ sealed classes عكس OCP عن قصد">
+
+لما تضيف Failure جديد، الـ compiler بيجبرك تعدّل كل switch، وده عكس OCP. ده مقصود: في المجموعات المقفولة (الـ Failures والـ states) الأهم إن كل حالة تتعامل صح. في المجموعات اللي بتكبر (الـ interceptors والـ data sources) الأهم OCP. انك تعرف تفرّق بينهم ده مستوى senior.
+
+</Note>
+
+<Note kind="warn" title="ماتعملش abstraction لكل حاجة">
+
+interface ليه implementation واحد، ومش بيتبدل في التست، ومش بيعزل حاجة من بره، ده boilerplate مش DIP. اعمل abstraction لما يكون في سبب: تست، أو تبديل، أو عزل framework.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«اشرح DIP بمثال من مشروعك.» الـ AddBookToLibrary بيعتمد على LibraryRepository، وده interface في الـ Domain. الـ LibraryRepositoryImpl في الـ Data بينفّذه بـ dio وdrift. فالـ Domain مايعرفش أي framework، وبتستته بـ fake.
+
+</Note>
+
+
+</Level>
+
+<Quiz>
+
+<Question id="solid-basics-1">
+<Ask>implementation بيرمي `UnsupportedError` لـ addBook. أنهي مبدأ اتكسر؟ وإيه الحل؟</Ask>
+<Answer>
+
+LSP. الحل غالبًا ISP: قسّم العقد لقراية وكتابة، والـ implementation اللي للقراية بس ماينفّذش عقد الكتابة.
+
+</Answer>
+</Question>
+
+<Question id="solid-basics-2">
+<Ask>ليه Clock abstraction مفيد؟</Ask>
+<Answer>
+
+عشان الـ logic اللي معتمد على الوقت (زي last-write-wins) يتختبر بوقت ثابت ومتوقع.
+
+</Answer>
+</Question>
+
+<Question id="solid-basics-3">
+<Ask>المبدأ اللي Clean Architecture كلها مبنية عليه؟</Ask>
+<Answer>
+
+Dependency Inversion: الـ Domain بيعرّف العقود، والطبقات الخارجية بتعتمد عليها.
+
+</Answer>
+</Question>
+
+</Quiz>

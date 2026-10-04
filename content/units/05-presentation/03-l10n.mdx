@@ -1,0 +1,223 @@
+---
+title: "الترجمة وflutter_localizations"
+description: "النصوص في ملفات منفصلة لكل لغة، والـ app يختار حسب لغة المستخدم، ويقلب الاتجاه لوحده."
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="المنيو بلغتين">
+
+المطعم عنده منيو عربي ومنيو إنجليزي. الأصناف نفسها (المفاتيح) واحدة، والنص بيتغير حسب الزبون. والمنيو العربي بيتقري من اليمين. الـ app بيعمل نفس الحكاية: كل نص ليه مفتاح، وكل لغة ليها ملف، والـ widgets بتطلب النص بالمفتاح.
+
+</Analogy>
+
+
+</Level>
+
+<Level n="2" title="الإعداد خطوة بخطوة">
+
+<CodeBlock label="pubspec.yaml">
+
+```yaml
+# pubspec.yaml
+dependencies:
+  flutter_localizations:
+    sdk: flutter
+  intl: any
+
+flutter:
+  generate: true
+```
+
+</CodeBlock>
+
+<CodeBlock label="l10n.yaml">
+
+```yaml
+# l10n.yaml
+arb-dir: lib/l10n
+template-arb-file: app_en.arb
+output-localization-file: app_localizations.dart
+```
+
+</CodeBlock>
+
+<CodeBlock label="ملفات الـ ARB">
+
+```json
+// lib/l10n/app_en.arb
+{
+  "libraryTitle": "My library",
+  "errorNoInternet": "No internet connection"
+}
+
+// lib/l10n/app_ar.arb
+{
+  "libraryTitle": "مكتبتي",
+  "errorNoInternet": "مفيش اتصال بالإنترنت"
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الاستخدام">
+
+```dart
+MaterialApp.router(
+  localizationsDelegates: AppLocalizations.localizationsDelegates,
+  supportedLocales: AppLocalizations.supportedLocales,
+  routerConfig: router,
+);
+
+// anywhere in the UI
+Text(AppLocalizations.of(context)!.libraryTitle);
+```
+
+</CodeBlock>
+
+بعد ما تعدّل أي ملف ARB، الكود بيتولد تاني (مع الـ build أو بـ `flutter gen-l10n`)، وكل مفتاح بيبقى getter بنوعه. لو كتبت اسم مفتاح غلط، compile error.
+
+
+</Level>
+
+<Level n="3" title="الحالات الصعبة">
+
+### Placeholders
+
+<CodeBlock label="نص فيه متغير">
+
+```json
+"welcome": "أهلًا {name}",
+"@welcome": { "placeholders": { "name": { "type": "String" } } }
+
+// usage
+l10n.welcome('محمود');
+```
+
+</CodeBlock>
+
+### الجمع في العربي
+
+العربي فيه صيغ جمع أكتر من الإنجليزي: مفيش، واحد، اتنين، كام (3 لـ 10)، وكتير. لو استخدمت if بإيدك هتغلط. الـ ICU plural بيعملها صح:
+
+<CodeBlock label="plural">
+
+```json
+"booksCount": "{count, plural, =0{مفيش كتب} =1{كتاب واحد} =2{كتابين} few{{count} كتب} many{{count} كتاب} other{{count} كتاب}}",
+"@booksCount": { "placeholders": { "count": { "type": "int" } } }
+```
+
+</CodeBlock>
+
+### الاتجاه
+
+لما اللغة عربي، Flutter بيقلب الـ layout لوحده. بس لازم تستخدم الـ widgets اللي بتفهم الاتجاه: `EdgeInsetsDirectional.only(start: 16)` بدل `EdgeInsets.only(left: 16)`، و`AlignmentDirectional.centerStart` بدل `Alignment.centerLeft`.
+
+### تغيير اللغة من جوه الـ app
+
+<CodeBlock label="SettingsCubit">
+
+```dart
+class SettingsCubit extends Cubit<Locale> {
+  SettingsCubit(this._prefs) : super(_prefs.savedLocale ?? const Locale('ar'));
+  final SettingsStore _prefs;
+
+  Future<void> changeLocale(Locale locale) async {
+    await _prefs.saveLocale(locale);
+    emit(locale);
+  }
+}
+
+BlocBuilder<SettingsCubit, Locale>(
+  builder: (context, locale) => MaterialApp.router(locale: locale, /* ... */),
+)
+```
+
+</CodeBlock>
+
+
+</Level>
+
+<Level n="4" title="عقلية الـ production">
+
+- <b>ماتركّبش جمل بالـ +:</b> `'لديك ' + n + ' كتب'` هتطلع غلط في العربي، وترتيب الكلام مختلف بين اللغات. الجملة كلها مفتاح واحد فيه placeholder.
+- <b>الأرقام والتواريخ:</b> استخدم `DateFormat` و`NumberFormat` من intl بالـ locale الحالي، مش toString.
+- <b>الـ Failures بتترجم في الـ Presentation:</b> زي ما شفنا في درس الأخطاء في الوحدة 2، الـ Domain بيرجّع النوع والـ UI تختار المفتاح.
+- <b>اختبر الـ RTL:</b> golden test لكل شاشة مهمة بالعربي بيمسك أي حاجة اتقلبت غلط (درس الاختبارات في الوحدة 7).
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي تتعامل مع الجمع في العربي؟» بـ ICU plural في ملف الـ ARB، لأن العربي فيه صيغ للصفر والواحد والاتنين والقليل والكتير، وif يدوي هيغلط.
+
+</Note>
+
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### ترجمة الـ Failures بـ flutter_localizations
+
+الـ domain بيرجع نوع الخطأ بس، والـ presentation هي اللي بتحوّله لنص باللغة الحالية. لو ضفت Failure جديد، الـ compiler هيوقفك لحد ما تضيف ترجمته.
+
+```dart
+extension FailureL10n on Failure {
+  String localized(AppLocalizations l10n) => switch (this) {
+        NetworkFailure() => l10n.errorNoInternet,
+        UnauthorizedFailure() => l10n.errorSessionExpired,
+        ServerFailure() => l10n.errorServer,
+        CacheFailure() => l10n.errorCache,
+        ValidationFailure() => l10n.errorInvalidInput,
+      };
+}
+
+// in the UI
+BlocBuilder<CatalogSearchCubit, CatalogSearchState>(
+  builder: (context, state) => switch (state) {
+    SearchIdle() => const SearchHint(),
+    SearchLoading() => const LoadingList(),
+    SearchLoaded(:final books) => BookList(books: books),
+    SearchError(:final failure) =>
+      ErrorView(message: failure.localized(AppLocalizations.of(context)!)),
+  },
+)
+```
+
+<Diagram name="d-d69f4b9051">
+
+الـ domain بيرجع نوع الخطأ بس. الـ presentation بتختار المفتاح المناسب، وflutter_localizations بيجيب النص من ملف اللغة الحالية.
+
+</Diagram>
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="l10n-1">
+<Ask>ليه `EdgeInsetsDirectional` بدل `EdgeInsets`؟</Ask>
+<Answer>
+
+لأنه بيستخدم start وend بدل left وright، فبيتقلب لوحده مع العربي.
+
+</Answer>
+</Question>
+
+<Question id="l10n-2">
+<Ask>فين تترجم رسالة NetworkFailure؟</Ask>
+<Answer>
+
+في الـ Presentation، عن طريق extension بيختار المفتاح من AppLocalizations.
+
+</Answer>
+</Question>
+
+<Question id="l10n-3">
+<Ask>ليه ماتعملش `'عندك ' + n + ' كتب'`؟</Ask>
+<Answer>
+
+لأن الجمع وترتيب الكلام بيختلف بين اللغات. الجملة كلها لازم تبقى مفتاح واحد بـ placeholder وplural.
+
+</Answer>
+</Question>
+
+</Quiz>

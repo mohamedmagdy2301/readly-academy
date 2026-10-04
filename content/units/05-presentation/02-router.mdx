@@ -1,0 +1,146 @@
+---
+title: "go_router والتنقل"
+description: "الـ routes والـ parameters، والـ redirect اللي بيحمي الشاشات حسب حالة الدخول."
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="العناوين وبواب العمارة">
+
+كل شاشة ليها عنوان زي عنوان الشقة: `/library` أو `/books/OL1`. والـ <b>redirect</b> هو بواب العمارة: قبل ما يدخّلك أي شقة بيسألك «انت مسجّل؟»، ولو لأ بيوديك لمكتب الاستقبال (صفحة الدخول). ولو انت مسجّل ورايح لمكتب الاستقبال تاني، بيقولك «انت جوه خلاص» ويطلّعك على شقتك.
+
+</Analogy>
+
+
+</Level>
+
+<Level n="2" title="الأساسيات">
+
+<CodeBlock label="routes">
+
+```dart
+final router = GoRouter(
+  initialLocation: '/library',
+  routes: [
+    GoRoute(path: '/login', builder: (_, __) => const LoginPage()),
+    GoRoute(
+      path: '/library',
+      builder: (_, __) => const LibraryPage(),
+      routes: [
+        GoRoute(
+          path: 'books/:id',
+          builder: (_, state) => BookPage(id: state.pathParameters['id']!),
+        ),
+      ],
+    ),
+  ],
+);
+```
+
+</CodeBlock>
+
+| الـ method | بيعمل إيه |
+| --- | --- |
+| `context.go('/library')` | بيروح للعنوان ده وبيبني الـ stack من جديد حسب شجرة الـ routes |
+| `context.push('/library/books/OL1')` | بيحط الشاشة فوق الحالية، وزرار الرجوع يرجّعك |
+| `context.pop()` | بيرجع خطوة |
+
+
+</Level>
+
+<Level n="3" title="الـ redirect مع الـ Cubit">
+
+الـ redirect بيتنادى قبل أي تنقل. بس go_router مايعرفش إن حالة الـ auth اتغيرت لوحده، لازم تقوله عن طريق `refreshListenable`. والـ Cubit بيطلّع stream مش Listenable، فبنعمل كوبري صغير:
+
+<CodeBlock label="redirect + refreshListenable">
+
+```dart
+class StreamListenable extends ChangeNotifier {
+  StreamListenable(Stream<dynamic> stream) {
+    _sub = stream.asBroadcastStream().listen((_) => notifyListeners());
+  }
+  late final StreamSubscription<dynamic> _sub;
+
+  @override
+  void dispose() {
+    _sub.cancel();
+    super.dispose();
+  }
+}
+
+GoRouter buildRouter(AuthCubit auth) => GoRouter(
+      refreshListenable: StreamListenable(auth.stream),
+      redirect: (context, state) {
+        final loggedIn = auth.state is Authenticated;
+        final onLogin = state.matchedLocation == '/login';
+        if (!loggedIn && !onLogin) return '/login';
+        if (loggedIn && onLogin) return '/library';
+        return null; // stay where you are
+      },
+      routes: [/* ... */],
+    );
+```
+
+</CodeBlock>
+
+<Diagram name="d-3549cdb506">
+
+كل ما الـ AuthCubit يطلّع state جديدة، go_router بيعيد تشغيل الـ redirect ويقرر يوديك فين.
+
+</Diagram>
+
+دلوقتي لما الـ token يبوظ والـ AuthCubit يطلّع loggedOut (من الـ interceptor في درس dio والشبكة في الوحدة 3)، المستخدم بيتحول لصفحة الدخول من أي مكان في الـ app، من غير ما أي شاشة تكتب كود للموضوع ده.
+
+### Deep links
+
+لو حد فتح لينك `readly.app/library/books/OL1`، go_router بيبني الـ stack كامل: المكتبة تحت وصفحة الكتاب فوقها. والـ redirect بيتطبق برضه: لو مش مسجّل يروح للـ login الأول.
+
+
+</Level>
+
+<Level n="4" title="تفاصيل بتفرق">
+
+- <b>الـ redirect لازم يبقى سريع:</b> بيتنادى مع كل تنقل، فماتعملش فيه طلبات شبكة. اقرا الحالة من الـ Cubit وبس.
+- <b>متى go ومتى push؟</b> go للتنقل بين أقسام رئيسية (زي تابات)، وpush لما عايز المستخدم يرجع للي كان فيه (زي فتح تفاصيل كتاب).
+- <b>الـ routes بأنواع:</b> الـ `go_router_builder` بيخليك تكتب `BookRoute(id: 'OL1').go(context)` بدل string، فأي غلطة في الـ path تبقى compile error.
+- <b>الـ router نفسه مايتبنيش جوه build:</b> لو اتعمل من جديد مع كل rebuild، الـ navigation state هيضيع.
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي تحوّل المستخدم لصفحة الدخول من أي مكان لما الـ session تنتهي؟» top-level redirect بيقرا حالة الـ AuthCubit، وrefreshListenable بيسمع على الـ stream بتاعه، فأي تغيير في الحالة بيعيد تشغيل الـ redirect تلقائيًا.
+
+</Note>
+
+
+</Level>
+
+<Quiz>
+
+<Question id="router-1">
+<Ask>ليه محتاجين `refreshListenable`؟</Ask>
+<Answer>
+
+لأن go_router مش بيعرف إن حالة الـ auth اتغيرت لوحده. الـ refreshListenable بيقوله «اعيد تشغيل الـ redirect».
+
+</Answer>
+</Question>
+
+<Question id="router-2">
+<Ask>الـ redirect رجّع null. معناها إيه؟</Ask>
+<Answer>
+
+إن المستخدم يفضل في العنوان اللي رايحله، من غير تحويل.
+
+</Answer>
+</Question>
+
+<Question id="router-3">
+<Ask>ليه ماينفعش تعمل طلب شبكة جوه الـ redirect؟</Ask>
+<Answer>
+
+لأنه بيتنادى مع كل تنقل، فهيبطّأ كل حركة في الـ app.
+
+</Answer>
+</Question>
+
+</Quiz>

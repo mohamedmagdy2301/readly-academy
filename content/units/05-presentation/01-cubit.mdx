@@ -1,0 +1,311 @@
+---
+title: "Cubit من الصفر للاحتراف"
+description: "الـ state هي الحقيقة الوحيدة للشاشة، والـ Cubit هو الوحيد المسموح له يغيّرها."
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="لوحة المطار">
+
+لوحة مواعيد الطيارات في المطار بتعرض حالة كل رحلة: «في الموعد»، «متأخرة»، «بتصعد دلوقتي». الـ <b>state</b> هو المكتوب على اللوحة دلوقتي. الـ <b>Cubit</b> هو الموظف الوحيد اللي مسموح له يغيّر اللوحة. والشاشات في الصالة (الـ widgets) بتبص على اللوحة وتعرض اللي عليها، ومش بتقرر حاجة لوحدها.
+
+</Analogy>
+
+<Diagram name="d-82c6ceff39">
+
+الـ UI بتنادي method في الـ Cubit، والـ Cubit بيكلّم الـ use case، وبيعمل emit لـ state جديدة، والـ BlocBuilder بيعيد رسم الشاشة.
+
+</Diagram>
+
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+<CodeBlock label="الـ states">
+
+```dart
+sealed class LibraryState {
+  const LibraryState();
+}
+final class LibraryLoading extends LibraryState {
+  const LibraryLoading();
+}
+final class LibraryLoaded extends LibraryState {
+  const LibraryLoaded(this.books);
+  final List<Book> books;
+}
+final class LibraryError extends LibraryState {
+  const LibraryError(this.failure);
+  final Failure failure;
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ Cubit">
+
+```dart
+class LibraryCubit extends Cubit<LibraryState> {
+  LibraryCubit(this._getLibrary) : super(const LibraryLoading());
+
+  final GetLibrary _getLibrary;
+
+  Future<void> load() async {
+    emit(const LibraryLoading());
+    final result = await _getLibrary();
+    emit(switch (result) {
+      Success(:final value) => LibraryLoaded(value),
+      Err(:final failure) => LibraryError(failure),
+    });
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ UI">
+
+```dart
+BlocProvider(
+  create: (_) => getIt<LibraryCubit>()..load(),
+  child: BlocBuilder<LibraryCubit, LibraryState>(
+    builder: (context, state) => switch (state) {
+      LibraryLoading() => const Center(child: CircularProgressIndicator()),
+      LibraryLoaded(:final books) => BookList(books: books),
+      LibraryError(:final failure) => ErrorView(
+          message: failure.localized(AppLocalizations.of(context)!),
+          onRetry: context.read<LibraryCubit>().load,
+        ),
+    },
+  ),
+)
+```
+
+</CodeBlock>
+
+| الـ widget | بيعمل إيه |
+| --- | --- |
+| `BlocProvider` | بيعمل الـ Cubit وبيقفله لما الـ widget يتشال |
+| `BlocBuilder` | بيعيد رسم الـ UI مع كل state جديدة |
+| `BlocListener` | بينفّذ حاجة مرة واحدة مع كل state (snackbar، navigation) من غير ما يرسم |
+| `BlocConsumer` | Builder وListener مع بعض |
+| `context.read` | يجيب الـ Cubit عشان تنادي method، من غير ما تسمع على التغييرات |
+
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### الـ side effects مكانها BlocListener
+
+الـ `build` ممكن يتنادى كذا مرة لنفس الـ state (مثلًا لما الكيبورد يفتح). لو حطيت navigation أو snackbar جواه، هيتكرروا:
+
+<CodeBlock label="مرة واحدة بس">
+
+```dart
+BlocListener<AddBookCubit, AddBookState>(
+  listenWhen: (prev, curr) => curr is AddBookSaved,
+  listener: (context, state) => context.pop(),
+  child: const AddBookForm(),
+)
+```
+
+</CodeBlock>
+
+### البحث: debounce وتجاهل النتايج القديمة
+
+<CodeBlock label="debounce + request id">
+
+```dart
+class CatalogSearchCubit extends Cubit<CatalogSearchState> {
+  CatalogSearchCubit(this._searchBooks) : super(const SearchIdle());
+
+  final SearchBooks _searchBooks;
+  Timer? _debounce;
+  int _latestRequest = 0;
+
+  void queryChanged(String input) {
+    _debounce?.cancel();
+    final query = input.trim();
+    if (query.length < 2) {
+      _latestRequest++;            // any in-flight result becomes stale
+      emit(const SearchIdle());
+      return;
+    }
+    _debounce = Timer(const Duration(milliseconds: 350), () => _search(query));
+  }
+
+  Future<void> _search(String query) async {
+    final requestId = ++_latestRequest;
+    emit(const SearchLoading());
+    final result = await _searchBooks(SearchParams(query: query));
+    if (isClosed || requestId != _latestRequest) return; // stale
+    emit(switch (result) {
+      Success(:final value) => SearchLoaded(value),
+      Err(:final failure) => SearchError(failure),
+    });
+  }
+
+  @override
+  Future<void> close() {
+    _debounce?.cancel();
+    return super.close();
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ debounce:</b> بيستنى 350ms من آخر حرف قبل ما يبحث، فبدل 7 طلبات لـ «flutter» بيبقى طلب واحد.
+- <b>الـ request id:</b> لو طلب «flu» البطيء رجع بعد طلب «flutter»، الـ id بتاعه هيبقى قديم فيتجاهل.
+- <b>الـ isClosed:</b> لو المستخدم قفل الشاشة والطلب لسه راجع، الـ emit بعد القفل بيرمي error.
+
+### منع الضغط المتكرر
+
+<CodeBlock label="flag">
+
+```dart
+bool _saving = false;
+
+Future<void> save(Book book) async {
+  if (_saving) return;
+  _saving = true;
+  emit(const AddBookSaving());
+  final result = await _addBook(book);
+  _saving = false;
+  if (isClosed) return;
+  emit(switch (result) {
+    Success() => const AddBookSaved(),
+    Err(:final failure) => AddBookError(failure),
+  });
+}
+```
+
+</CodeBlock>
+
+### الاشتراك في stream لازم يتلغي
+
+<CodeBlock label="close">
+
+```dart
+StreamSubscription<List<Book>>? _sub;
+
+void watch() {
+  _sub = _repository.watchLibrary().listen((books) => emit(LibraryLoaded(books)));
+}
+
+@override
+Future<void> close() async {
+  await _sub?.cancel();
+  return super.close();
+}
+```
+
+</CodeBlock>
+
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>Cubit ولا Bloc؟</b> الـ Cubit أبسط وكفاية لأغلب الشاشات. الـ Bloc مفيد لما تحتاج تتبع كل event، أو transformers جاهزة للـ concurrency. اللي بيفرق مش الأداة، اللي بيفرق إنك تحل الـ race conditions بنمط واضح ومتستّ.
+- <b>التواصل بين Cubitين:</b> ماتخليش Cubit يمسك reference لـ Cubit تاني. خليهم الاتنين يسمعوا على stream من نفس الـ repository. مثلًا LibraryCubit وHomeCubit الاتنين يسمعوا `watchLibrary()`، فأي إضافة تظهر في الاتنين لوحدها.
+- <b>الـ state لازم تبقى immutable وبتتقارن صح:</b> لو بتعمل emit لـ list وعدّلت فيها نفسها، الـ Cubit ممكن مايعرفش إن في تغيير. اعمل list جديدة دايمًا، واستخدم equatable أو freezed للـ states اللي فيها بيانات.
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي تمنع race condition في البحث؟» debounce يقلل الطلبات، وrequest id بيتزود مع كل طلب، وأي نتيجة الـ id بتاعها مش الأحدث بتتجاهل. ولو عايز توفّر bandwidth، تلغي الطلب نفسه في الـ data layer.
+
+</Note>
+
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### البحث في Cubit بـ debounce وتجاهل النتائج القديمة
+
+الـ debounce بيقلل عدد الطلبات، والـ request id بيضمن إن نتيجة بحث قديم بطيئة ماتغطيش على الجديدة. الـ Cubit مايعرفش dio، فالإلغاء الحقيقي للطلب (لو احتجته) مكانه الـ data layer.
+
+```dart
+class CatalogSearchCubit extends Cubit<CatalogSearchState> {
+  CatalogSearchCubit(this._searchBooks) : super(const SearchIdle());
+
+  final SearchBooks _searchBooks;
+  Timer? _debounce;
+  int _latestRequest = 0;
+
+  void queryChanged(String input) {
+    _debounce?.cancel();
+    final query = input.trim();
+    if (query.length < 2) {
+      _latestRequest++; // any in-flight result becomes stale
+      emit(const SearchIdle());
+      return;
+    }
+    _debounce = Timer(
+      const Duration(milliseconds: 350),
+      () => _search(query),
+    );
+  }
+
+  Future<void> _search(String query) async {
+    final requestId = ++_latestRequest;
+    emit(const SearchLoading());
+    final result = await _searchBooks(SearchParams(query: query, page: 1));
+    if (isClosed || requestId != _latestRequest) return; // stale result
+    emit(switch (result) {
+      Success(:final value) => SearchLoaded(value),
+      Err(:final failure) => SearchError(failure),
+    });
+  }
+
+  @override
+  Future<void> close() {
+    _debounce?.cancel();
+    return super.close();
+  }
+}
+```
+
+<Diagram name="d-46c4268a8c">
+
+المستخدم كتب «flu» ووقف، فالبحث الأول اتبعت بعد 350ms. بعدها كمّل «flutter». الطلب التاني رجع الأول واتعرض، ولما الطلب الأول البطيء رجع، الـ request id بتاعه كان قديم فاتجاهل. من غير الـ id، كانت نتايج «flu» هتمسح نتايج «flutter».
+
+</Diagram>
+
+</LessonPart>
+
+<Lab name="debounce" />
+
+<Quiz>
+
+<Question id="cubit-1">
+<Ask>ليه navigation في `build` فكرة وحشة؟</Ask>
+<Answer>
+
+لأن build ممكن يتنادى أكتر من مرة لنفس الـ state، فالـ navigation هيتكرر. مكانه BlocListener.
+
+</Answer>
+</Question>
+
+<Question id="cubit-2">
+<Ask>إيه اللي بيحصل لو عملت emit بعد ما الـ Cubit اتقفل؟</Ask>
+<Answer>
+
+بيرمي StateError. علشان كده بنتشيك على `isClosed` بعد أي await.
+
+</Answer>
+</Question>
+
+<Question id="cubit-3">
+<Ask>Cubitين محتاجين نفس البيانات. توصلهم ببعض إزاي؟</Ask>
+<Answer>
+
+مش ببعض. الاتنين يسمعوا على stream من نفس الـ repository.
+
+</Answer>
+</Question>
+
+</Quiz>

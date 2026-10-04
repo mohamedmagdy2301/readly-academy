@@ -1,0 +1,27 @@
+<svg viewBox="0 0 640 350" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="الطبقات الثلاث واتجاه الـ dependencies واتجاه البيانات">
+<defs>
+<marker id="a1" markerheight="7" markerwidth="7" orient="auto-start-reverse" refx="9" refy="5" viewbox="0 0 10 10"><path d="M0 0 L10 5 L0 10z" fill="var(--ink)"></path></marker>
+<marker id="a1m" markerheight="7" markerwidth="7" orient="auto-start-reverse" refx="9" refy="5" viewbox="0 0 10 10"><path d="M0 0 L10 5 L0 10z" fill="var(--muted)"></path></marker>
+</defs>
+<g font-family="IBM Plex Sans Arabic, sans-serif" text-anchor="middle">
+<rect fill="var(--surface)" height="70" rx="12" stroke="var(--line)" stroke-width="1.5" width="480" x="40" y="20"></rect>
+<text fill="var(--ink)" font-size="17" font-weight="700" x="280" y="50">Presentation</text>
+<text fill="var(--muted)" font-family="IBM Plex Mono, monospace" font-size="13" x="280" y="74">Widgets, Cubits, go_router, l10n</text>
+<rect fill="var(--accent-soft)" height="72" rx="12" stroke="var(--accent)" stroke-width="2" width="480" x="40" y="140"></rect>
+<text fill="var(--ink)" font-size="17" font-weight="700" x="280" y="170">Domain</text>
+<text fill="var(--muted)" font-family="IBM Plex Mono, monospace" font-size="13" x="280" y="194">Entities, value objects, use cases, contracts, Failures</text>
+<rect fill="var(--surface)" height="70" rx="12" stroke="var(--line)" stroke-width="1.5" width="480" x="40" y="262"></rect>
+<text fill="var(--ink)" font-size="17" font-weight="700" x="280" y="292">Data</text>
+<text fill="var(--muted)" font-family="IBM Plex Mono, monospace" font-size="13" x="280" y="316">Repository impl, DTOs, data sources, dio, drift</text>
+</g>
+<g stroke="var(--ink)" stroke-width="1.8">
+<line marker-end="url(#a1)" x1="160" x2="160" y1="90" y2="137"></line>
+<line marker-end="url(#a1)" x1="160" x2="160" y1="262" y2="215"></line>
+</g>
+<g fill="var(--ink)" font-family="IBM Plex Mono, monospace" font-size="12">
+<text x="170" y="119">depends on</text>
+<text x="170" y="243">implements contracts</text>
+</g>
+<line marker-end="url(#a1m)" stroke="var(--muted)" stroke-dasharray="6 5" stroke-width="1.8" x1="575" x2="575" y1="325" y2="30"></line>
+<text fill="var(--muted)" font-family="IBM Plex Mono, monospace" font-size="12" text-anchor="middle" transform="translate(598 178) rotate(-90)" x="0" y="0">data flows up: Result&lt;T&gt;</text>
+</svg>

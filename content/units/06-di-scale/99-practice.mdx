@@ -1,0 +1,31 @@
+---
+title: "التطبيق والمهام"
+description: "مهام الأسبوع 6 في Readly: الـ DI والـ Flavors والتقسيم لـ packages."
+type: "practice"
+---
+
+<Tasks>
+<Task id="w6-1">استخدم injectable فوق get_it، وكل feature تسجّل نفسها.</Task>
+<Task id="w6-2">اعمل 3 flavors: dev وstaging وprod، كل واحد بـ base URL واسم app مختلف.</Task>
+<Task id="w6-3">قسّم المشروع لـ packages بـ pub workspaces (أو melos)، وكل package ليها barrel file هو الـ public API بس.</Task>
+<Task id="w6-4">تأكد إن packages الـ domain مافيهاش Flutter في الـ pubspec أصلًا.</Task>
+<Task id="w6-5">اعمل BookLookup interface صغير في الـ public API بتاع library، وخلي feature الـ notes تعتمد عليه بس (ISP).</Task>
+</Tasks>
+
+<Diagram name="d-ace81d5baa">
+
+الـ registration كله في مكان واحد. اللي مالوش state مرتبط بشاشة بيتعمل مرة واحدة (lazySingleton)، والـ Cubit بيتعمل جديد مع كل شاشة (factory) ويتقفل معاها.
+
+</Diagram>
+
+<Diagram name="d-70c5aaa8bb">
+
+كل flavor ليه entry point بيسجّل config مختلف في الـ DI (base URL، اسم الـ app، الـ logging). مفيش if (kDebugMode) متوزعة في الكود.
+
+</Diagram>
+
+<Deliverable>أي import غلط من feature لـ internals feature تانية مايعملش compile.</Deliverable>
+
+<ReviewQuestion>إزاي تمنع الـ core package إنه يبقى god package؟</ReviewQuestion>
+
+<LogBox id="log-6" />

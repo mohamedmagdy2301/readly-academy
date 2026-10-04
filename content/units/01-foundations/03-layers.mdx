@@ -1,0 +1,171 @@
+---
+title: "الطبقات التلاتة والقاعدة الذهبية"
+description: "3 طبقات، وقاعدة واحدة: الـ imports بتشاور ناحية الـ Domain بس."
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="المطعم تاني">
+
+الـ <b>Presentation</b> هي الصالة والجرسون: بتتعامل مع الزبون (المستخدم) وبتعرض له. الـ <b>Domain</b> هو الشيف ووصفاته: القواعد الحقيقية لشغل المطعم، زي «الطبق ده مايتعملش من غير صوص». الـ <b>Data</b> هي المخزن والموردين: بتجيب المكونات منين ما تجيبها.
+
+</Analogy>
+
+الشيف بيقول «عايز كيلو طماطم» ومايهمهوش المخزن جابها من أنهي مورد. ولو المطعم غيّر المورد، الشيف مش هيعرف أصلًا. ده بالظبط معنى إن الـ Domain مستقل.
+
+<Diagram name="d-1d0ee70723">
+
+الشيف (الـ Domain) في النص ومش معتمد على حد. الجرسون بيطلب منه، والمخزن بينفّذ اللي هو محدده. لو غيّرت المورد، الشيف والجرسون مش هيحسوا.
+
+</Diagram>
+
+
+</Level>
+
+<Level n="2" title="كل طبقة فيها إيه">
+
+| الطبقة | فيها | مافيهاش |
+| --- | --- | --- |
+| Presentation | الـ widgets، والـ Cubits، والـ navigation، والنصوص المترجمة | أي كود بيكلّم dio أو DB، أو قواعد business |
+| Domain | الـ entities، والـ value objects، والـ use cases، والـ repository contracts، والـ Failures | أي import لـ Flutter أو dio أو JSON |
+| Data | الـ DTOs، والـ mappers، والـ data sources، وتنفيذ الـ repositories | widgets أو Cubits |
+
+وده شكلها في الفولدرات بطريقة feature-first، يعني كل feature ليها فولدر فيه الطبقات التلاتة بتوعها:
+
+<CodeBlock label="feature-first">
+
+```text
+lib/
+├─ core/                      # shared: Result, Failure, dio setup
+└─ features/
+   ├─ library/
+   │  ├─ domain/
+   │  │  ├─ book.dart                     # entity
+   │  │  ├─ library_repository.dart       # contract
+   │  │  └─ add_book_to_library.dart      # use case
+   │  ├─ data/
+   │  │  ├─ book_dto.dart
+   │  │  ├─ library_remote_source.dart
+   │  │  └─ library_repository_impl.dart
+   │  └─ presentation/
+   │     ├─ library_cubit.dart
+   │     └─ library_view.dart
+   └─ auth/ ...
+```
+
+</CodeBlock>
+
+### القاعدة الذهبية في imports
+
+<CodeBlock label="المسموح والممنوع">
+
+```dart
+// presentation/library_cubit.dart
+import '../domain/add_book_to_library.dart';   // OK: presentation -> domain
+import '../data/library_remote_source.dart';   // NO: presentation -> data
+
+// data/library_repository_impl.dart
+import '../domain/library_repository.dart';    // OK: data -> domain
+
+// domain/add_book_to_library.dart
+import 'package:dio/dio.dart';                 // NO: domain knows nothing outside
+import 'package:flutter/material.dart';        // NO
+```
+
+</CodeBlock>
+
+<Diagram name="d-1b7d15617d">
+
+الـ Presentation بتعمل import للـ Domain، والـ Data بتنفّذ contracts من الـ Domain. الـ Domain نفسه مابيعملش import لأي حد. والبيانات نفسها ماشية من تحت لفوق.
+
+</Diagram>
+
+
+</Level>
+
+<Level n="3" title="ليه الـ Domain في النص؟">
+
+ممكن تسأل: الـ Data هي اللي بتجيب البيانات، فمنطقي إن الـ Domain يعتمد عليها؟ لأ، وده أهم فكرة في الفصل.
+
+الـ Domain فيه أكتر حاجة ثابتة في المشروع: قواعد الـ business. قاعدة «مفيش كتاب يتضاف مرتين» مش هتتغير لو غيّرت dio بـ http، أو غيّرت DB من Hive لـ drift. فمنطقي إن الحاجة الثابتة ماتعتمدش على الحاجات اللي بتتغير.
+
+طب الـ Domain هيجيب البيانات إزاي من غير ما يعرف الـ Data؟ بيعرّف العقد بنفسه (`LibraryRepository`)، والـ Data هي اللي بتلتزم بيه. السهم اتعكس: بدل ما الـ Domain يعتمد على الـ Data، الـ Data بقت معتمدة على الـ Domain. ده اسمه <b>Dependency Inversion</b>، وهنفصّل فيه في فصل SOLID.
+
+<Note kind="info" title="اتجاه الـ dependencies مش اتجاه البيانات">
+
+البيانات بتطلع من الـ Data للـ Domain للـ Presentation. بس الـ imports عكس كده في نص الطريق: الـ Data هي اللي بتعمل import للـ Domain. افتكر الرسم اللي فوق: الأسهم المتصلة imports، والمتقطع حركة البيانات.
+
+</Note>
+
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>feature-first ولا layer-first؟</b> الـ layer-first (فولدر data واحد لكل المشروع) بيخلي أي feature متفرقة على 3 أماكن، وبيسهّل الـ imports العشوائية بين الـ features. الـ feature-first بيخليك تشيل feature كاملة أو تحوّلها لـ package مرة واحدة.
+- <b>الـ core:</b> مكان الحاجات المشتركة فعلًا (Result، Failure، إعداد dio). لو حاجة بتخدم feature واحدة أو اتنين بس، خليها في واحدة منهم. الـ core اللي بيكبر من غير ضابط بيبقى «مكان أي حاجة»، وده عكس الهدف.
+- <b>القاعدة لازم تتفرض بأداة:</b> «إحنا متفقين محدش يعمل import غلط» بيتكسر في أول deadline. الحل: تقسيم لـ packages (درس «التوسّع والـ production» في الوحدة 6) أو lint rules، فالـ import الغلط يبقى error.
+
+<Note kind="interview" title="سؤال interview">
+
+«إيه الـ dependency rule؟» الإجابة: الـ source code dependencies بتشاور للداخل بس. الطبقات الداخلية (الـ Domain) ماتعرفش أي حاجة عن الخارجية، والـ Data بتنفّذ contracts معرّفة في الـ Domain.
+
+</Note>
+
+
+</Level>
+
+<LessonPart title="الصورة الكبيرة بالرسم">
+
+
+
+اتجاه الـ dependencies عكس اتجاه البيانات. الـ Presentation والـ Data الاتنين بيعتمدوا على الـ Domain، والـ Domain مابيعتمدش على حد. البيانات نفسها بتطلع من تحت لفوق في شكل entities وResult.
+
+<Diagram name="d-ccbf96fbe9">
+
+الأسهم المتصلة: مين يعرف مين (import). السهم المتقطع: البيانات ماشية في أنهي اتجاه.
+
+</Diagram>
+
+### ليه feature-first؟
+
+<Diagram name="d-7912b34fc2">
+
+الملفات المظللة هي feature الـ library. في layer-first متفرقة على 3 فولدرات، وفي feature-first كلها مع بعض وتقدر تشيلها أو تحوّلها لـ package مرة واحدة.
+
+</Diagram>
+
+</LessonPart>
+
+<Lab name="layers" />
+
+<Quiz>
+
+<Question id="layers-1">
+<Ask>الـ Cubit عايز يجيب الكتب. يعمل import لمين؟</Ask>
+<Answer>
+
+للـ use case أو للـ repository contract في الـ Domain. أبدًا مش للـ data source أو dio.
+
+</Answer>
+</Question>
+
+<Question id="layers-2">
+<Ask>ليه الـ Domain هو اللي يعرّف `LibraryRepository` مش الـ Data؟</Ask>
+<Answer>
+
+عشان الـ Domain مايعتمدش على حاجة بتتغير. هو بيقول «أنا محتاج كده»، والـ Data تلتزم. كده تغيير dio أو الـ DB مايوصلش للقواعد.
+
+</Answer>
+</Question>
+
+<Question id="layers-3">
+<Ask>إيه علامة إن الـ core بقى مشكلة؟</Ask>
+<Answer>
+
+إنه بقى فيه حاجات بتخدم feature واحدة، وأي تغيير فيه بيأثر على المشروع كله.
+
+</Answer>
+</Question>
+
+</Quiz>

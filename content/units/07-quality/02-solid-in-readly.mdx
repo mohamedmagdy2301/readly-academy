@@ -1,0 +1,283 @@
+---
+title: "SOLID في Readly بالكود"
+description: "المبادئ الخمسة في Readly بكود قبل وبعد."
+---
+
+الـ Clean Architecture هي مبادئ SOLID متطبقة على مستوى المشروع كله، مش بس على مستوى الـ class. لما تفهم المبادئ دي، هتعرف ليه كل قاعدة في الخطة موجودة، بدل ما تحفظها.
+
+| المبدأ | معناه في سطر | فين في Readly | لو اتكسر يحصل إيه |
+| --- | --- | --- | --- |
+| S: Single Responsibility | كل class ليها سبب واحد بس يخليها تتغير | DTO للشكل، LocalSource للتخزين، use case للقاعدة، Cubit لسير الشاشة | تعديل صغير في الـ API بيكسر شاشة |
+| O: Open/Closed | تضيف سلوك جديد من غير ما تعدّل الكود الشغال | سلسلة الـ Dio interceptors، وdata source جديد ورا نفس الـ contract | كل feature جديدة بتفتح نفس الملف وتزوّد if |
+| L: Liskov Substitution | أي implementation للـ contract يتبدل بالتاني من غير مفاجآت | FakeLibraryRepository وLibraryRepositoryImpl بيعدّوا نفس الـ contract tests | التستات خضرا والـ app بيقع |
+| I: Interface Segregation | ماتجبرش حد يعتمد على methods مش بيستخدمها | BookLookup الصغير اللي feature الـ notes بتستخدمه | features مربوطة ببعض أكتر من اللازم |
+| D: Dependency Inversion | الـ policy والـ details الاتنين بيعتمدوا على abstraction | الـ contracts في domain، والـ implementations في data، والتوصيل في الـ composition root | الـ domain بيعرف dio وdrift ومايتستش لوحده |
+
+### مبدأ المسؤولية الواحدة (SRP)
+
+المقياس مش «الـ class بتعمل حاجة واحدة»، المقياس «في كام سبب يخليها تتغير». اسأل نفسك: مين ممكن يطلب تعديل على الملف ده؟ لو الإجابة أكتر من جهة، الـ class محتاجة تتقسم.
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+class LibraryCubit extends Cubit<LibraryState> {
+  LibraryCubit(this._dio, this._db) : super(const LibraryLoading());
+
+  final Dio _dio;
+  final AppDatabase _db;
+
+  Future<void> addBook(Map<String, dynamic> json) async {
+    if (await _db.findBook(json['key']) != null) {
+      emit(const LibraryError('Book already exists'));
+      return;
+    }
+    final res = await _dio.post('/library', data: json);
+    await _db.insertBook(
+      BookRow(key: res.data['key'], title: res.data['title']),
+    );
+    emit(LibraryLoaded(await _db.allBooks()));
+  }
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+class LibraryCubit extends Cubit<LibraryState> {
+  LibraryCubit(this._addBook) : super(const LibraryLoading());
+
+  final AddBookToLibrary _addBook;
+
+  Future<void> addBook(Book book) async {
+    final result = await _addBook(book);
+    if (result case Err(:final failure)) {
+      emit(LibraryError(failure));
+    }
+    // the list itself updates through watchLibrary()
+  }
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+<Diagram name="d-90b7af6b6e">
+
+على الشمال: Cubit بيكلّم dio وdrift وفيه قواعد ونصوص، فأي تغيير في أي حاجة من الأربعة بيلمسه. على اليمين: كل سبب تغيير ليه class واحدة، والـ Cubit بقى مسؤول عن سير الشاشة بس.
+
+</Diagram>
+
+في Readly: تغيير شكل الـ API بيلمس الـ BookDto بس، وتغيير الـ DB بيلمس الـ LocalSource بس، وتغيير قاعدة «مفيش كتاب مكرر» بيلمس الـ use case بس، وتغيير نص الرسالة بيلمس ملف الـ ARB بس.
+
+### مبدأ الفتح للإضافة والقفل للتعديل (OCP)
+
+الكود الشغال والمتست مايتفتحش عشان تضيف سلوك جديد. بتضيف قطعة جديدة في نقطة تمديد معمولة لكده.
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+class ApiClient {
+  Future<Response> post(String path, Object data, {bool auth = true}) async {
+    final headers = <String, String>{};
+    if (auth) headers['Authorization'] = 'Bearer ${await _store.token}';
+    if (kDebugMode) print('POST $path');
+    var res = await _dio.post(path, data: data,
+        options: Options(headers: headers));
+    if (res.statusCode == 401) {
+      // refresh logic copied here... and in get(), put(), delete()
+    }
+    return res;
+  }
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+final dio = Dio(BaseOptions(baseUrl: config.baseUrl))
+  ..interceptors.addAll([
+    AuthInterceptor(tokenStore, refreshDio: Dio(BaseOptions(baseUrl: config.baseUrl))),
+    RetryInterceptor(maxAttempts: 3), // retries idempotent requests only
+    if (config.enableLogs) LogInterceptor(responseBody: false),
+  ]);
+```
+
+</Side>
+
+</BeforeAfter>
+
+<Diagram name="d-aede75cd41">
+
+عايز caching أو header جديد؟ بتضيف interceptor في السلسلة، ومش بتفتح الـ client ولا أي interceptor تاني. ده بالظبط معنى «مفتوح للإضافة ومقفول للتعديل».
+
+</Diagram>
+
+<Note kind="warn" title="انتبه: الـ sealed classes عكس OCP عن قصد">
+
+لما تضيف Failure جديد، الـ compiler بيجبرك تعدّل كل switch، وده عكس OCP. ده trade-off مقصود: المجموعات المقفولة اللي لازم كل حالة فيها تتعامل صح (الـ Failures والـ states) الأولوية فيها للـ exhaustiveness. المجموعات المفتوحة اللي بتكبر (الـ interceptors والـ data sources) الأولوية فيها لـ OCP. انك تعرف تفرّق بين الاتنين ده مستوى senior.
+
+</Note>
+
+### مبدأ الاستبدال (LSP)
+
+أي class بتعمل implement لـ contract لازم تحترم وعوده كلها: نفس أنواع المدخلات والمخرجات، ونفس السلوك المتوقع، ومن غير exceptions مفاجئة. لو implementation مش قادر يحترم الـ contract، يبقى الـ contract غلط أو الـ class مش مكانها هنا.
+
+<BeforeAfter>
+
+<Side label="كسر LSP" kind="before">
+
+```dart
+class CachedLibraryRepository implements LibraryRepository {
+  @override
+  Stream<List<Book>> watchLibrary() => _cache.watch();
+
+  @override
+  Future<Result<void>> addBook(Book book) =>
+      throw UnsupportedError('read-only cache'); // the caller expected a Result
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+اللي بينادي واخد وعد إن addBook بترجع Result، فهو مش عامل try/catch، والـ app هيقع. الحل هنا مش try/catch، الحل إن الـ cache اللي للقراية بس مايعملش implement للـ contract الكامل (شوف ISP تحت).
+
+الطريقة العملية تضمن بيها LSP هي الـ contract tests: test suite واحد بيشتغل على كل implementation.
+
+```dart
+void libraryRepositoryContract(LibraryRepository Function() create) {
+  test('addBook then watchLibrary emits the book', () async {
+    final repo = create();
+    await repo.addBook(tBook);
+    expect(await repo.watchLibrary().first, contains(tBook));
+  });
+
+  test('adding the same book twice returns ValidationFailure', () async {
+    final repo = create();
+    await repo.addBook(tBook);
+    final result = await repo.addBook(tBook);
+    expect(result, isA<Err<void>>());
+  });
+}
+
+// test/library_repository_contract_test.dart
+void main() {
+  group('fake', () => libraryRepositoryContract(FakeLibraryRepository.new));
+  group('impl', () => libraryRepositoryContract(
+        () => LibraryRepositoryImpl(FakeRemoteSource(), InMemoryLocalSource()),
+      ));
+}
+```
+
+<Diagram name="d-617e302402">
+
+لو الـ fake والـ implementation الحقيقي بيعدّوا نفس الـ contract tests، يبقى تقدر تبدّل واحد بالتاني من غير مفاجآت، وتستات الـ Cubit اللي على الـ fake بتقول الحقيقة.
+
+</Diagram>
+
+### مبدأ فصل الـ interfaces (ISP)
+
+الـ interface الكبير بيربط اللي بيستخدمه بحاجات مالوش دعوة بيها. أي تغيير في method مش بيستخدمها ممكن يجبره يتغير أو يتعمل له rebuild، والـ fake بتاعه في التست بيبقى ضخم من غير لازمة.
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+class AddNote {
+  AddNote(this._library, this._notes);
+
+  final LibraryRepository _library; // 6 methods, AddNote needs 1
+  final NotesRepository _notes;
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+// exported from feature_library.dart (the public API)
+abstract interface class BookLookup {
+  Future<Result<Book>> findById(BookId id);
+}
+
+class LibraryRepositoryImpl implements LibraryRepository, BookLookup {
+  // ...
+}
+
+// feature_notes
+class AddNote {
+  AddNote(this._books, this._notes);
+
+  final BookLookup _books;
+  final NotesRepository _notes;
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+<Diagram name="d-d4cbefead6">
+
+feature الـ notes محتاجة تعرف الكتاب موجود ولا لأ بس. بدل ما تعتمد على repository فيه 6 methods، بتعتمد على BookLookup صغير، والـ implementation واحد بيعمل الاتنين.
+
+</Diagram>
+
+ده نفس حل سؤال المراجعة في الأسبوع 1: feature الـ notes بتعتمد على interface صغير بتصدّره feature الـ library في الـ public API، ومش بتشوف أي حاجة من الـ internals.
+
+### مبدأ عكس الاعتماد (DIP)
+
+ده المبدأ اللي الـ Clean Architecture كلها مبنية عليه. الـ use case (الـ policy) مايعتمدش على dio أو drift (الـ details). الاتنين بيعتمدوا على interface الـ domain هو اللي بيعرّفه.
+
+<Diagram name="d-c37d82ecee">
+
+فوق: الـ use case بيعتمد على class في الـ data، فأي تغيير في dio أو drift ممكن يوصله. تحت: الـ domain بيعرّف الـ interface، والـ data هي اللي بتعتمد عليه. السهم اللي بين الطبقتين اتعكس، ومن هنا جه الاسم.
+
+</Diagram>
+
+DIP مش للـ repositories بس. أي حاجة من بره الكود بتاعك تستاهل abstraction لو بتأثر على الـ logic: الوقت، والاتصال بالنت، والـ secure storage. مثال الوقت في الـ conflict resolution بتاع الأسبوع 4:
+
+```dart
+// core: an abstraction for time
+abstract interface class Clock {
+  DateTime now();
+}
+
+final class SystemClock implements Clock {
+  const SystemClock();
+  @override
+  DateTime now() => DateTime.now();
+}
+
+// data: last-write-wins needs "now", so it asks for a Clock
+class ConflictResolver {
+  ConflictResolver(this._clock);
+  final Clock _clock;
+
+  BookRow resolve(BookRow local, BookRow remote) =>
+      local.updatedAt.isAfter(remote.updatedAt)
+          ? local.copyWith(syncedAt: _clock.now())
+          : remote.copyWith(syncedAt: _clock.now());
+}
+
+// test: time is now fixed and predictable
+final resolver = ConflictResolver(FixedClock(DateTime(2026, 10, 4)));
+```
+
+<Note kind="warn" title="انتبه: ماتعملش abstraction لكل حاجة">
+
+interface ليه implementation واحد ومش بيتبدل في التست، ومش بيعزل حاجة من بره، ده boilerplate مش DIP. اعمل abstraction لما يكون في سبب: تست، أو تبديل، أو عزل framework.
+
+</Note>

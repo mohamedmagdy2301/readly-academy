@@ -1,0 +1,206 @@
+---
+title: "dio والشبكة"
+description: "الـ client والـ interceptors والـ token refresh: إزاي تكلّم السيرفر بطريقة متحملة الأعطال."
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="مكتب البريد">
+
+كل جواب (request) بيعدّي على سير فيه موظفين قبل ما يخرج. واحد بيلزق الطابع (الـ token)، وواحد بيسجّل الجواب في الدفتر (الـ log). ولو الجواب رجع مكتوب عليه «الطابع منتهي»، في موظف بيجيب طابع جديد ويبعته تاني من غير ما صاحب الجواب يحس. الموظفين دول هما الـ <b>interceptors</b>.
+
+</Analogy>
+
+<Diagram name="d-ec24d6d7de">
+
+كل request بيعدّي على الـ interceptors بالترتيب قبل ما يوصل للسيرفر، والـ response بيرجع عليهم بالعكس.
+
+</Diagram>
+
+
+</Level>
+
+<Level n="2" title="الأساسيات">
+
+<CodeBlock label="Dio واحد للمشروع كله">
+
+```dart
+final dio = Dio(BaseOptions(
+  baseUrl: 'https://api.readly.app',
+  connectTimeout: const Duration(seconds: 10),
+  receiveTimeout: const Duration(seconds: 15),
+));
+
+final res = await dio.get<List<dynamic>>('/library');
+final created = await dio.post('/library', data: {'key': 'OL1'});
+```
+
+</CodeBlock>
+
+اعمل instance واحد من Dio وسجّله في get_it كـ lazySingleton. لو كل data source عمل Dio بتاعه، الـ interceptors والإعدادات هتتكرر.
+
+| نوع الـ DioException | معناه | بيتحول لـ |
+| --- | --- | --- |
+| `connectionError` و`connectionTimeout` | مفيش نت أو السيرفر مش بيرد | NetworkFailure |
+| `badResponse` مع 401 | الـ token انتهى أو مش صالح | UnauthorizedFailure (بعد محاولة refresh) |
+| `badResponse` مع 4xx أو 5xx | السيرفر رفض أو عنده مشكلة | ServerFailure |
+| `cancel` | الطلب اتلغى عن قصد | غالبًا تتجاهله |
+
+
+</Level>
+
+<Level n="3" title="الـ interceptors والـ token refresh">
+
+أصعب جزء في الشبكة: الـ access token بينتهي كل شوية، ولازم تجدده من غير ما المستخدم يحس. والمشكلة الحقيقية لما 3 طلبات يرجعوا 401 في نفس اللحظة: مش عايز 3 refresh، عايز واحد والباقي يستنوه.
+
+<CodeBlock label="AuthInterceptor كامل">
+
+```dart
+class AuthInterceptor extends Interceptor {
+  AuthInterceptor(this._tokens, this._refreshDio, this._dio);
+
+  final TokenStore _tokens;
+  final Dio _refreshDio; // separate client: no AuthInterceptor on it
+  final Dio _dio;        // the main client, used to retry
+  Completer<String?>? _refreshing;
+
+  @override
+  void onRequest(RequestOptions options, RequestInterceptorHandler handler) async {
+    final token = await _tokens.accessToken;
+    if (token != null) options.headers['Authorization'] = 'Bearer $token';
+    handler.next(options);
+  }
+
+  @override
+  void onError(DioException err, ErrorInterceptorHandler handler) async {
+    final is401 = err.response?.statusCode == 401;
+    final alreadyRetried = err.requestOptions.extra['retried'] == true;
+    if (!is401 || alreadyRetried) return handler.next(err);
+
+    final newToken = await _refreshOnce();
+    if (newToken == null) return handler.next(err); // becomes UnauthorizedFailure
+
+    final options = err.requestOptions
+      ..headers['Authorization'] = 'Bearer $newToken'
+      ..extra['retried'] = true;
+    try {
+      handler.resolve(await _dio.fetch(options));
+    } on DioException catch (e) {
+      handler.next(e);
+    }
+  }
+
+  Future<String?> _refreshOnce() {
+    final running = _refreshing;
+    if (running != null) return running.future; // wait for the same refresh
+
+    final completer = Completer<String?>();
+    _refreshing = completer;
+    () async {
+      try {
+        final res = await _refreshDio.post('/auth/refresh',
+            data: {'refreshToken': await _tokens.refreshToken});
+        final access = res.data['accessToken'] as String;
+        await _tokens.save(access: access, refresh: res.data['refreshToken'] as String);
+        completer.complete(access);
+      } catch (_) {
+        await _tokens.clear();
+        completer.complete(null);
+      } finally {
+        _refreshing = null;
+      }
+    }();
+    return completer.future;
+  }
+}
+```
+
+</CodeBlock>
+
+1. <b>الـ onRequest:</b> بيضيف الـ token لكل طلب.
+2. <b>الـ onError:</b> لو 401 ومحاولناش قبل كده، يجدد الـ token ويعيد نفس الطلب.
+3. <b>الـ Completer:</b> أول طلب يبدأ الـ refresh ويحط Completer. أي طلب تاني يلاقيه موجود فيستنى نفس الـ future بدل ما يبدأ refresh جديد.
+4. <b>الـ refreshDio منفصل:</b> لو الـ refresh نفسه رجع 401 وهو معدّي على نفس الـ interceptor، هيدخل في loop لا نهائي.
+5. <b>الـ extra['retried']:</b> بيمنع إن نفس الطلب يتعاد مرتين لو رجع 401 تاني.
+
+<CodeBlock label="Retry مع backoff للـ GET بس">
+
+```dart
+class RetryInterceptor extends Interceptor {
+  RetryInterceptor(this._dio, {this.maxAttempts = 3});
+  final Dio _dio;
+  final int maxAttempts;
+
+  @override
+  void onError(DioException err, ErrorInterceptorHandler handler) async {
+    final options = err.requestOptions;
+    final attempt = (options.extra['attempt'] as int?) ?? 0;
+    final isNetwork = err.type == DioExceptionType.connectionError ||
+        err.type == DioExceptionType.connectionTimeout;
+    if (options.method != 'GET' || !isNetwork || attempt >= maxAttempts) {
+      return handler.next(err);
+    }
+    await Future.delayed(Duration(milliseconds: 300 * (1 << attempt))); // 300, 600, 1200
+    options.extra['attempt'] = attempt + 1;
+    try {
+      handler.resolve(await _dio.fetch(options));
+    } on DioException catch (e) {
+      handler.next(e);
+    }
+  }
+}
+```
+
+</CodeBlock>
+
+
+</Level>
+
+<Level n="4" title="تفاصيل الـ production">
+
+- <b>ليه الـ retry للـ GET بس؟</b> لأن إعادة POST ممكن تضيف الكتاب مرتين. لو لازم تعيد POST، ابعت idempotency key، والسيرفر يتجاهل أي طلب بنفس المفتاح.
+- <b>الإلغاء مكانه الـ data layer:</b> الـ `CancelToken` بتاع dio مايدخلش الـ Cubit عشان الـ Cubit مايعرفش dio. لو محتاج إلغاء، الـ data source يمسكه.
+- <b>الـ LogInterceptor في dev بس:</b> الـ logs في الـ production ممكن تطبع tokens وبيانات المستخدم.
+- <b>الـ timeouts:</b> من غيرها الطلب ممكن يفضل معلّق دقايق على نت ضعيف، والمستخدم شايف loading للأبد.
+
+<Note kind="interview" title="سؤال interview">
+
+«3 requests رجعوا 401 في نفس الوقت، إزاي تضمن refresh واحد؟» بـ Completer كـ lock: أول طلب يبدأ الـ refresh، والباقي يستنوا نفس الـ future، وبعدين كله يعيد بالـ token الجديد. والـ refresh بيتعمل بـ Dio منفصل عشان مايدخلش loop.
+
+</Note>
+
+
+</Level>
+
+<Lab name="token-refresh" />
+
+<Quiz>
+
+<Question id="network-1">
+<Ask>ليه الـ refresh بيتعمل بـ Dio تاني منفصل؟</Ask>
+<Answer>
+
+عشان لو رجع 401، مايعدّيش على نفس الـ AuthInterceptor ويحاول يعمل refresh للـ refresh، وده loop لا نهائي.
+
+</Answer>
+</Question>
+
+<Question id="network-2">
+<Ask>وظيفة الـ Completer في الـ AuthInterceptor إيه؟</Ask>
+<Answer>
+
+إنه lock: بيخلي كل الطلبات اللي رجعت 401 مع بعض يستنوا refresh واحد بدل ما كل واحد يعمل refresh.
+
+</Answer>
+</Question>
+
+<Question id="network-3">
+<Ask>ليه منعملش retry لـ POST؟</Ask>
+<Answer>
+
+لأن إعادته ممكن تكرر العملية على السيرفر، زي إضافة نفس الكتاب مرتين.
+
+</Answer>
+</Question>
+
+</Quiz>

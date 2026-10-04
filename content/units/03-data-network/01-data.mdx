@@ -1,0 +1,239 @@
+---
+title: "الـ Data: البيانات بتيجي منين"
+description: "الـ DTO والـ mapper والـ data sources وتنفيذ الـ repository: المكان اللي بيتعامل مع العالم الخارجي."
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="المترجم ومسؤول المخزن">
+
+الـ <b>DTO</b> زي فاتورة جاية من مورد أجنبي بلغته وبتنسيقه. الـ <b>mapper</b> هو المترجم اللي بيحوّلها لورقة يفهمها الشيف. الـ <b>Data Sources</b> هما الموردين: <b>Remote</b> هو السيرفر، و<b>Local</b> هو تلاجة المطعم. والـ <b>Repository Implementation</b> هو مسؤول المخزن اللي بيقرر يجيب منين: من التلاجة لو موجود، ولا يطلب من المورد.
+
+</Analogy>
+
+<Diagram name="d-84db6532b9">
+
+الـ DTO بيشبه الـ JSON بالظبط، والـ Entity بتشبه الـ business. الـ mapper هو المكان الوحيد اللي بيعرف الاتنين، فأي تغيير في الـ API بيقف عنده.
+
+</Diagram>
+
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+<CodeBlock label="DTO بشكل الـ JSON بالظبط">
+
+```dart
+// data/book_dto.dart
+class BookDto {
+  const BookDto({required this.key, required this.title, required this.status});
+
+  final String key;
+  final String title;
+  final String status;
+
+  factory BookDto.fromJson(Map<String, dynamic> json) => BookDto(
+        key: json['key'] as String,
+        title: json['title'] as String,
+        status: json['status'] as String,
+      );
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="Mapper">
+
+```dart
+// data/book_mapper.dart
+extension BookDtoMapper on BookDto {
+  Book toEntity() => Book(
+        id: BookId.fromTrusted(key),
+        title: title,
+        status: switch (status) {
+          'reading' => BookStatus.reading,
+          'finished' => BookStatus.finished,
+          _ => BookStatus.wantToRead,
+        },
+      );
+}
+```
+
+</CodeBlock>
+
+`BookId.fromTrusted` constructor تاني للـ BookId، بنستخدمه مع البيانات الجاية من السيرفر بتاعنا اللي متأكدين من شكلها، عشان الـ mapper مايرجّعش Result. الـ `create` اللي بيتحقق بيفضل للـ input اللي جاي من المستخدم.
+
+<CodeBlock label="Remote data source">
+
+```dart
+// data/library_remote_source.dart
+class LibraryRemoteSource {
+  LibraryRemoteSource(this._dio);
+  final Dio _dio;
+
+  Future<List<BookDto>> fetchLibrary() async {
+    final res = await _dio.get<List<dynamic>>('/library');
+    return res.data!
+        .map((e) => BookDto.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+}
+```
+
+</CodeBlock>
+
+الـ data source بيرمي exceptions عادي لو حاجة باظت (dio بيرمي `DioException`). مش شغلته يحوّلها، دي شغلة الـ repository.
+
+<CodeBlock label="Repository implementation">
+
+```dart
+// data/library_repository_impl.dart
+class LibraryRepositoryImpl implements LibraryRepository {
+  LibraryRepositoryImpl(this._remote);
+  final LibraryRemoteSource _remote;
+
+  @override
+  Future<Result<List<Book>>> getLibrary() => guard(() async {
+        final dtos = await _remote.fetchLibrary();
+        return dtos.map((d) => d.toEntity()).toList();
+      });
+}
+```
+
+</CodeBlock>
+
+
+</Level>
+
+<Level n="3" title="تفاصيل بتفرق">
+
+### ليه الـ Model مايورثش من الـ Entity؟
+
+في كورسات كتير بتلاقي `class BookModel extends Book`. ده بيوفّر mapper، بس بيربط الـ Domain بشكل الـ JSON: لو الـ API زوّد حقل، الـ entity ممكن تضطر تتغير. وكمان الـ repository ممكن يرجّع BookModel وانت فاكره Book، فتفاصيل الـ JSON تتسرب للـ UI من غير ما تاخد بالك.
+
+### خلي الـ codegen يكتب الـ fromJson
+
+<CodeBlock label="freezed + json_serializable">
+
+```dart
+@freezed
+abstract class BookDto with _$BookDto {
+  const factory BookDto({
+    required String key,
+    required String title,
+    @Default('want_to_read') String status,
+  }) = _BookDto;
+
+  factory BookDto.fromJson(Map<String, dynamic> json) =>
+      _$BookDtoFromJson(json);
+}
+```
+
+</CodeBlock>
+
+بتكتب الشكل، وتشغّل `dart run build_runner build`، فيتولّد الـ fromJson والـ toJson والـ copyWith والمساواة. أخطاء الكتابة اليدوية بتختفي.
+
+### الـ repository بيقرر الاستراتيجية
+
+| الاستراتيجية | بتعمل إيه | مناسبة لـ |
+| --- | --- | --- |
+| network-first | السيرفر الأول، ولو فشل الكاش | بيانات لازم تبقى حديثة: الرصيد، الأسعار |
+| cache-first | الكاش الأول، ولو مش موجود السيرفر | بيانات نادرًا ما تتغير: الإعدادات، الدول |
+| stale-while-revalidate | اعرض الكاش فورًا وحدّث في الخلفية | أغلب الشاشات: المكتبة، الكتالوج |
+| single source of truth | الـ UI تقرا من الـ DB بس، والشبكة تكتب في الـ DB | الـ offline-first (درس Offline-first في الوحدة 4) |
+
+
+</Level>
+
+<Level n="4" title="عقلية الـ production">
+
+- <b>الـ JSON مش مضمون:</b> السيرفر ممكن يرجّع null في حقل انت فاكره دايمًا موجود. الـ `as String` هترمي exception، والـ guard هيحوّله لـ Failure. ده أحسن من إن الـ app يقع، بس الأحسن إنك تحط default معقول في الـ DTO للحقول اللي مش حرجة.
+- <b>الـ data source بيرجّع DTO مش response خام:</b> كده الـ repository مايعرفش حاجة عن dio خالص، وتقدر تبدّل dio بـ http من غير ما تلمسه.
+- <b>الـ mapper في اتجاهين:</b> للقراية `toEntity()`، وللكتابة `BookDto.fromEntity()`. خليهم جنب بعض في نفس الملف.
+
+<Note kind="interview" title="سؤال interview">
+
+«ليه تعمل DTO منفصل عن الـ Entity؟» عشان شكل الـ API وشكل الـ business يتغيروا كل واحد لوحده. الـ mapper بيمتص أي تغيير في الـ API، والـ Domain والـ UI مايحسوش.
+
+</Note>
+
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### الـ Model بيورث من الـ Entity
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+class BookModel extends Book {
+  BookModel({required super.id, required super.title});
+
+  factory BookModel.fromJson(Map<String, dynamic> json) =>
+      BookModel(id: json['key'], title: json['title']);
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+@freezed
+abstract class BookDto with _$BookDto {
+  const factory BookDto({
+    required String key,
+    required String title,
+  }) = _BookDto;
+
+  factory BookDto.fromJson(Map<String, dynamic> json) =>
+      _$BookDtoFromJson(json);
+}
+
+extension BookDtoMapper on BookDto {
+  Book toEntity() => Book(id: BookId(key), title: title);
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: الـ Book بقى مربوط بشكل الـ JSON، ولو الـ API غيّر اسم حقل التغيير بيوصل لحد الـ UI. وكمان الـ repository ممكن يرجع BookModel وانت فاكره Book ومحدش ياخد باله. بعد: الـ DTO شكل الـ API، والـ entity شكل الـ business، والـ mapper هو المكان الوحيد اللي بيعرف الاتنين.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="data-1">
+<Ask>السيرفر غيّر `title` لـ `name`. هتعدّل كام ملف؟</Ask>
+<Answer>
+
+ملف واحد: الـ DTO (أو الـ mapper). الـ Entity والـ Cubit والـ UI مش هيتغيروا.
+
+</Answer>
+</Question>
+
+<Question id="data-2">
+<Ask>مين المفروض يحوّل الـ DioException لـ Failure؟</Ask>
+<Answer>
+
+الـ repository، لأنه الحد بين الـ Data والـ Domain. الـ data source بيرمي عادي.
+
+</Answer>
+</Question>
+
+<Question id="data-3">
+<Ask>إمتى تستخدم stale-while-revalidate؟</Ask>
+<Answer>
+
+لما عايز الشاشة تظهر فورًا بآخر بيانات معروفة، وفي نفس الوقت تتحدث من السيرفر في الخلفية.
+
+</Answer>
+</Question>
+
+</Quiz>

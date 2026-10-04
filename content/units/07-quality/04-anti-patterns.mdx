@@ -1,0 +1,40 @@
+---
+title: "الأخطاء الشائعة وقائمة المراجعة"
+description: "أشهر الأخطاء، وقائمة مراجعة قبل أي PR."
+---
+
+دي أشهر الأخطاء اللي بتظهر في مشاريع Clean Arch في Flutter، وهستخدمها وأنا بعمل review لكودك.
+
+| الخطأ | المشكلة | البديل |
+| --- | --- | --- |
+| الـ Model بيعمل extends للـ Entity | الـ domain بيترتبط بشكل الـ JSON، وأي تغيير في الـ API بيوصل للـ UI | DTO منفصل مع mapper صريح |
+| الـ Repository بيرجع DTO | نفس المشكلة بس أسوأ | الـ contract بيرجع entities بس |
+| الـ Failure كـ String أو class عادية | مفيش exhaustive handling، والـ UI بتعمل if على نصوص | هرم Failures بـ sealed classes |
+| use case pass-through لكل method | boilerplate بيخلي الناس تكره المعمارية | قرار فريق واضح: إما تسيبه وانت واعي ليه، أو الـ Cubit يكلّم الـ repository مباشرة لما مفيش logic |
+| استدعاء get_it جوه الـ widgets والـ Cubits | الـ dependencies مخفية والتست صعب | constructor injection، وget_it في الـ composition root بس |
+| الـ Cubit بيعرف Dio أو بيعمل parse لـ JSON | الـ presentation عرفت تفاصيل الـ data | الـ Cubit يكلّم use case أو repository contract |
+| try/catch في كل طبقة أو ابتلاع الأخطاء | الأخطاء بتتوه ومفيش logging | تحويل واحد عند الحد (guard) مع log |
+| feature بتعمل import لـ internals feature تانية | الـ features بتتشابك ومتنفعش تتشال | public API (barrel) أو contract في core |
+| الـ core بقى مكان أي حاجة مشتركة | god package، وأي تغيير فيه بيعيد build كل حاجة | core صغير، والحاجة اللي بتخدم featureين بس تفضل في واحدة منهم |
+| الـ side effects جوه build | الـ navigation أو الـ snackbar بيتكرر مع كل rebuild | BlocListener |
+
+الخطأ رقم 8 في الجدول بالرسم: الـ import المسموح والممنوع بين الـ features.
+
+<Diagram name="d-b80eff8ef5">
+
+feature الـ notes تقدر تستخدم اللي feature الـ library بتصدّره في الـ barrel بس. بعد التقسيم لـ packages في الأسبوع 6، الـ import للـ src بيبقى compile error مش مجرد اتفاق.
+
+</Diagram>
+
+### قائمة المراجعة قبل أي PR
+
+<Tasks>
+<Task id="pr-1">الـ domain مافيهوش import لـ Flutter أو packages بتاعة data.</Task>
+<Task id="pr-2">كل الـ Failures الجديدة متغطية في كل switch (الـ compiler ماشتكاش).</Task>
+<Task id="pr-3">مفيش Exception بيعدّي من الـ repository لفوق.</Task>
+<Task id="pr-4">كل dependency جاية من الـ constructor.</Task>
+<Task id="pr-5">أي method async في الـ Cubit محمية من النتائج القديمة والضغط المتكرر.</Task>
+<Task id="pr-6">في تست لكل سلوك جديد، والـ coverage مانزلش.</Task>
+<Task id="pr-8">أي نص جديد ظاهر للمستخدم موجود في ملفات الـ ARB بالعربي والإنجليزي.</Task>
+<Task id="pr-7">لو في قرار معماري جديد، في ADR ليه.</Task>
+</Tasks>

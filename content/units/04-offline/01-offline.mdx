@@ -1,0 +1,223 @@
+---
+title: "Offline-first"
+description: "الـ app يشتغل من غير نت، والسيرفر يلحق بعدين."
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="دفتر الجرسون">
+
+لما سيستم المطعم يقع، الجرسون الشاطر مابيقفش. بيكتب الطلبات في دفتر ويكمّل شغله، والزبون شايف طلبه اتسجّل. ولما السيستم يرجع، بيدخّل الطلبات من الدفتر واحد واحد. الدفتر ده هو الـ <b>sync queue</b>، والـ app اللي بيشتغل بالطريقة دي اسمه <b>offline-first</b>.
+
+</Analogy>
+
+
+</Level>
+
+<Level n="2" title="مستويات الـ offline">
+
+| المستوى | الـ app بيعمل إيه من غير نت | الصعوبة |
+| --- | --- | --- |
+| 0: مفيش | شاشة خطأ | سهل |
+| 1: كاش للقراية | بيعرض آخر بيانات اتحملت، والكتابة ممنوعة | متوسط |
+| 2: offline-first كامل | بيقرا ويكتب عادي، والمزامنة في الخلفية | صعب |
+
+Readly هيوصل للمستوى 2. أول خطوة: جدول في drift، وstream بيسمع عليه:
+
+<CodeBlock label="drift: جدول وstream">
+
+```dart
+class Books extends Table {
+  TextColumn get id => text()();
+  TextColumn get title => text()();
+  TextColumn get syncState => text().withDefault(const Constant('synced'))();
+  DateTimeColumn get updatedAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+@DriftDatabase(tables: [Books])
+class AppDatabase extends _$AppDatabase {
+  AppDatabase(super.e);
+  @override
+  int get schemaVersion => 1;
+
+  Stream<List<BookRow>> watchBooks() => select(books).watch();
+}
+```
+
+</CodeBlock>
+
+الـ `watch()` بيرجّع stream بيطلّع قيمة جديدة كل ما الجدول يتغير. ده سر الـ offline-first: أي كتابة في الـ DB بتظهر في الشاشة فورًا.
+
+
+</Level>
+
+<Level n="3" title="Single source of truth والـ sync queue">
+
+<Diagram name="d-b57f03dfab">
+
+الـ UI بتقرا من الـ DB بس. الكتابة بتروح للـ DB والـ queue، والـ SyncService هو الوحيد اللي بيكلّم الـ API.
+
+</Diagram>
+
+<CodeBlock label="الـ repository">
+
+```dart
+class LibraryRepositoryImpl implements LibraryRepository {
+  LibraryRepositoryImpl(this._db, this._remote, this._queue);
+  final AppDatabase _db;
+  final LibraryRemoteSource _remote;
+  final SyncQueue _queue;
+
+  @override
+  Stream<List<Book>> watchLibrary() =>
+      _db.watchBooks().map((rows) => rows.map((r) => r.toEntity()).toList());
+
+  @override
+  Future<Result<void>> addBook(Book book) => guard(() async {
+        await _db.transaction(() async {
+          await _db.upsertBook(BookRow.fromEntity(book, syncState: 'pending'));
+          await _queue.enqueue(SyncOp.addBook(book.id));
+        });
+      });
+
+  @override
+  Future<Result<void>> refresh() => guard(() async {
+        final dtos = await _remote.fetchLibrary();
+        await _db.upsertBooks(dtos.map(BookRow.fromDto));
+      });
+}
+```
+
+</CodeBlock>
+
+- <b>الـ addBook</b> مابيستناش النت: بيكتب في الـ DB بحالة pending ويضيف عملية في الـ queue، والاتنين في transaction واحدة عشان مايحصلش واحد من غير التاني.
+- <b>الـ refresh</b> مابيرجّعش بيانات للـ UI: بيكتب في الـ DB، والـ stream يوصّل التحديث لوحده.
+
+<Diagram name="d-eef8045129">
+
+كل عملية اتعملت أوفلاين بتعدّي على الحالات دي لحد ما توصل للسيرفر.
+
+</Diagram>
+
+<CodeBlock label="SyncService مبسّط">
+
+```dart
+class SyncService {
+  SyncService(this._queue, this._remote, this._db, this._connectivity);
+  // ...
+
+  void start() {
+    _connectivity.onOnline.listen((_) => _drain());
+  }
+
+  Future<void> _drain() async {
+    for (final op in await _queue.pending()) {
+      await _queue.mark(op, SyncState.syncing);
+      try {
+        await _remote.apply(op);
+        await _db.markSynced(op.bookId);
+        await _queue.remove(op);
+      } on DioException catch (e) {
+        if (e.response?.statusCode == 409) {
+          await _resolveConflict(op);
+        } else {
+          await _queue.mark(op, SyncState.failed); // retried later with backoff
+          break; // keep the order: stop at the first failure
+        }
+      }
+    }
+  }
+}
+```
+
+</CodeBlock>
+
+
+</Level>
+
+<Level n="4" title="قرارات صعبة">
+
+- <b>الـ conflict:</b> عدّلت الكتاب أوفلاين، وفي نفس الوقت اتعدّل من جهاز تاني. محتاج سياسة مكتوبة: last-write-wins بـ updatedAt، أو server-wins، أو merge لكل حقل. أي واحدة تنفع، الغلط إنه يبقى سلوك عشوائي.
+- <b>الترتيب:</b> «ضيف كتاب» ثم «غيّر حالته» لازم يوصلوا بالترتيب ده. علشان كده الـ drain بيقف عند أول عملية فشلت.
+- <b>الحذف:</b> لو حذفت الصف من الـ DB فورًا، السيرفر عمره ما هيعرف. بتعلّمه «محذوف» (tombstone) لحد ما الحذف يتزامن، وبعدين تشيله.
+- <b>الوقت:</b> الـ last-write-wins معتمد على الوقت، فخلي الوقت جاي من abstraction اسمها Clock عشان تقدر تختبرها (شوف فصل SOLID).
+- <b>تمنه عالي:</b> offline-first بيضاعف تعقيد الـ data layer. لو الـ app مالوش استخدام حقيقي من غير نت، المستوى 1 كفاية.
+
+<Note kind="interview" title="سؤال interview">
+
+«يعني إيه single source of truth؟» الـ UI بتقرا من مصدر واحد بس هو stream من الـ local DB، والشبكة بتكتب في الـ DB ومابترجّعش بيانات للـ UI مباشرة. كده مستحيل الشاشة تعرض حاجة مختلفة عن الكاش.
+
+</Note>
+
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### الـ offline-first: الـ DB هي مصدر الحقيقة الوحيد
+
+الـ UI مابتاخدش بيانات من الـ network مباشرة خالص. الـ refresh بيكتب في الـ DB، والـ stream بيوصّل التحديث لوحده.
+
+```dart
+class LibraryRepositoryImpl implements LibraryRepository {
+  LibraryRepositoryImpl(this._remote, this._local);
+
+  final LibraryRemoteDataSource _remote;
+  final LibraryLocalDataSource _local;
+
+  @override
+  Stream<List<Book>> watchLibrary() => _local
+      .watchBooks()
+      .map((rows) => rows.map((row) => row.toEntity()).toList());
+
+  @override
+  Future<Result<void>> refreshLibrary() => guard(() async {
+        final dtos = await _remote.fetchLibrary();
+        await _local.upsertBooks(dtos.map(BookRow.fromDto));
+      });
+}
+```
+
+<Diagram name="d-1302fd365d">
+
+الـ UI بتقرا من الـ DB بس (الأسهم الزرقا). الكتابة بتروح للـ DB والـ queue، والـ SyncService هو الوحيد اللي بيكلّم الـ API. مفيش بيانات بتعدّي من الشبكة للشاشة مباشرة.
+
+</Diagram>
+
+</LessonPart>
+
+<Lab name="offline-sync" />
+
+<Quiz>
+
+<Question id="offline-1">
+<Ask>ليه الكتابة في الـ DB والـ queue في transaction واحدة؟</Ask>
+<Answer>
+
+عشان لو الـ app وقع بينهم، مايبقاش في كتاب pending مالوش عملية في الـ queue، أو عملية لكتاب مش موجود.
+
+</Answer>
+</Question>
+
+<Question id="offline-2">
+<Ask>الـ refresh بيرجّع الكتب للـ Cubit؟</Ask>
+<Answer>
+
+لأ، بيكتبها في الـ DB بس، والـ Cubit بيستلمها من الـ stream.
+
+</Answer>
+</Question>
+
+<Question id="offline-3">
+<Ask>ليه الـ drain بيقف عند أول عملية فشلت؟</Ask>
+<Answer>
+
+عشان يحافظ على ترتيب العمليات. لو كمّل، ممكن «غيّر الحالة» يوصل قبل «ضيف الكتاب».
+
+</Answer>
+</Question>
+
+</Quiz>

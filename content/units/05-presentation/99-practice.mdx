@@ -1,0 +1,33 @@
+---
+title: "التطبيق والمهام"
+description: "مهام الأسبوع 5 في Readly: الـ Presentation المتقدم بـ Cubit."
+type: "practice"
+---
+
+<Tasks>
+<Task id="w5-1">اعمل search في Cubit بـ debounce (Timer) وrequest id يتجاهل أي نتيجة قديمة رجعت متأخر (الكود في درس Cubit).</Task>
+<Task id="w5-2">امنع الضغط المتكرر على «إضافة» و«حفظ» بـ flag جوه الـ Cubit بدل ما تعتمد على تعطيل الزرار في الـ UI بس.</Task>
+<Task id="w5-3">خلي الـ states كلها sealed classes، واستخدم exhaustive switch في الـ UI.</Task>
+<Task id="w5-4">ضيف infinite scroll في الـ catalog بـ Cubit بيمنع تحميل نفس الصفحة مرتين.</Task>
+<Task id="w5-5">اربط go_router بحالة الـ auth: redirect مع refreshListenable بيسمع على stream الـ AuthCubit، وdeep link لصفحة كتاب.</Task>
+<Task id="w5-6">ترجم الـ Failures لرسائل بـ AppLocalizations في الـ presentation، مش في الـ domain (الكود في درس الترجمة).</Task>
+<Task id="w5-7">حط الـ side effects (snackbar وnavigation) في BlocListener مش في build.</Task>
+</Tasks>
+
+<Diagram name="d-673ce9b888">
+
+كل حالة sealed class، والـ UI بتعمل switch عليهم كلهم. الأسهم المتقطعة هي الرجوع لـ Loading مع بحث جديد، أو لـ Idle لو المستخدم مسح البحث.
+
+</Diagram>
+
+<Diagram name="d-f4ff554a03">
+
+كل ما الـ AuthCubit يطلّع state جديدة، go_router بيعيد تشغيل الـ redirect. لو المستخدم خرج بيتحول لـ login، ولو دخل وهو واقف في صفحة الـ login بيتحول للمكتبة، وغير كده بيفضل مكانه.
+
+</Diagram>
+
+<Deliverable>كل الشاشات شغالة من غير race conditions، والرسائل كلها مترجمة عربي وإنجليزي.</Deliverable>
+
+<ReviewQuestion>المستخدم كتب «flu» وبعدين «flutter»، والطلب الأول رجع بعد التاني. إيه اللي هيحصل من غير request id؟ وليه إلغاء الطلب بـ CancelToken بتاع dio ماينفعش يتعمل في الـ Cubit مباشرة؟</ReviewQuestion>
+
+<LogBox id="log-5" />

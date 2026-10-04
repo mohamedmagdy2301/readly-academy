@@ -1,0 +1,25 @@
+---
+title: "التطبيق والمهام"
+description: "مهام الأسبوع 7 في Readly: الاختبارات بعمق."
+type: "practice"
+---
+
+<Tasks>
+<Task id="w7-1">اعمل test data builders وfakes بدل الـ mocks في الأماكن اللي تستاهل.</Task>
+<Task id="w7-2">اكتب bloc_test لكل Cubit، بما فيهم الـ debounce وحالة النتيجة القديمة.</Task>
+<Task id="w7-3">اكتب widget tests وgolden tests للشاشات الأساسية (light وdark وRTL).</Task>
+<Task id="w7-4">اكتب integration test بـ integration_test الرسمي لـ flow: login ثم إضافة كتاب أوفلاين ثم sync.</Task>
+<Task id="w7-5">ضيف الـ coverage في الـ CI، ويفشل لو نزل عن الحد.</Task>
+</Tasks>
+
+<Diagram name="d-dbbe7a7e7b">
+
+كل ما تطلع لفوق التست بيبقى أبطأ وأغلى وأهش. أغلب التستات في القاعدة (domain وrepositories)، والـ integration للـ flows الحرجة بس زي login والـ sync.
+
+</Diagram>
+
+<Deliverable>تغطية فوق 90% للـ domain والـ data.</Deliverable>
+
+<ReviewQuestion>امتى تستخدم fake وامتى mock؟</ReviewQuestion>
+
+<LogBox id="log-7" />

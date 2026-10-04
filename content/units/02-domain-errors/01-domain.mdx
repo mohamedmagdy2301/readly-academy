@@ -1,0 +1,220 @@
+---
+title: "الـ Domain: قلب المشروع"
+description: "الـ entities والـ value objects والـ contracts والـ use cases: القواعد اللي مش هتتغير لو غيّرت كل الأدوات."
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="الكتاب والفلوس والوصفة">
+
+الـ <b>Entity</b> هي الكتاب نفسه في مكتبتك، ليه هوية (id) حتى لو غيّرت عنوانه. الـ <b>Value Object</b> زي الفلوس: ورقة الـ 100 جنيه زي أي ورقة 100 جنيه تانية، المهم القيمة مش الورقة نفسها، ومافيش حاجة اسمها «سالب 5 جنيه». الـ <b>Use Case</b> زي وصفة: خطوات محددة لعملية واحدة، زي «ضيف كتاب لمكتبتك». والـ <b>Repository Contract</b> هو ورقة الطلبات اللي الشيف بيبعتها للمخزن.
+
+</Analogy>
+
+كل الحاجات دي مكتوبة بـ Dart صافي: مفيش Flutter، ولا dio، ولا JSON. لو بكرة قررت تعمل نسخة ويب أو CLI من Readly، الـ Domain هيتنقل زي ما هو.
+
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+<CodeBlock label="Entity">
+
+```dart
+// domain/book.dart
+class Book {
+  const Book({required this.id, required this.title, required this.status});
+
+  final BookId id;
+  final String title;
+  final BookStatus status;
+}
+
+enum BookStatus { wantToRead, reading, finished }
+```
+
+</CodeBlock>
+
+<CodeBlock label="Repository contract">
+
+```dart
+// domain/library_repository.dart
+abstract interface class LibraryRepository {
+  Future<Result<List<Book>>> getLibrary();
+  Stream<List<Book>> watchLibrary();
+  Future<Result<void>> addBook(Book book);
+  Future<bool> contains(BookId id);
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="Use case">
+
+```dart
+// domain/add_book_to_library.dart
+class AddBookToLibrary {
+  AddBookToLibrary(this._repository);
+
+  final LibraryRepository _repository;
+
+  Future<Result<void>> call(Book book) async {
+    if (await _repository.contains(book.id)) {
+      return const Err(ValidationFailure('Book already in library'));
+    }
+    return _repository.addBook(book);
+  }
+}
+```
+
+</CodeBlock>
+
+لاحظ إن الـ use case فيه قاعدة حقيقية: «الكتاب مايتضافش مرتين». وعشان اسم الـ method هو `call`، تقدر تناديه كأنه function: `addBook(book)`.
+
+
+</Level>
+
+<Level n="3" title="القواعد تعيش فين؟">
+
+### Invariants: قواعد لازم تفضل صح دايمًا
+
+الـ invariant قاعدة مايصحش تتكسر أبدًا، زي «الـ BookId مايبقاش فاضي». أحسن مكان تحميها فيه هو لحظة إنشاء الـ object، عشان مايبقاش في أي object غلط في المشروع أصلًا:
+
+<CodeBlock label="Value object بيحمي نفسه">
+
+```dart
+extension type const BookId._(String value) {
+  static Result<BookId> create(String raw) {
+    final v = raw.trim();
+    if (v.isEmpty) return const Err(ValidationFailure('Empty book id'));
+    return Success(BookId._(v));
+  }
+}
+```
+
+</CodeBlock>
+
+الـ constructor خاص (`._`)، فالطريقة الوحيدة إنك تعمل BookId هي `create` اللي بتتحقق. ده اسمه <b>valid by construction</b>.
+
+<Diagram name="d-e4975a558e">
+
+الـ validation بتحصل عند الباب بس. أي حتة في الكود ماسكة BookId متأكدة إنه صح، ومش محتاجة تتحقق تاني.
+
+</Diagram>
+
+### Entity غنية ولا فاضية؟
+
+الـ entity «الفاضية» (anemic) فيها حقول بس، وكل الـ logic بره. الـ entity «الغنية» فيها سلوكها:
+
+<CodeBlock label="سلوك جوه الـ entity">
+
+```dart
+class Book {
+  // ...fields
+  Book markAsFinished() => Book(id: id, title: title, status: BookStatus.finished);
+
+  bool get canBeReviewed => status == BookStatus.finished;
+}
+```
+
+</CodeBlock>
+
+كده قاعدة «تقدر تكتب review بس للكتاب اللي خلصته» مكتوبة في مكان واحد، بدل ما تتكرر في كل شاشة.
+
+### Use case بـ params
+
+<CodeBlock label="params object">
+
+```dart
+class SearchParams {
+  const SearchParams({required this.query, this.page = 1});
+  final String query;
+  final int page;
+}
+
+class SearchBooks {
+  SearchBooks(this._repository);
+  final CatalogRepository _repository;
+
+  Future<Result<List<Book>>> call(SearchParams params) =>
+      _repository.search(params.query, page: params.page);
+}
+```
+
+</CodeBlock>
+
+
+</Level>
+
+<Level n="4" title="قرارات صعبة">
+
+- <b>الـ use case الـ pass-through:</b> لو الـ use case بينادي الـ repository وبس من غير أي قاعدة، فهو ملف زيادة. عندك اختيارين: تسيبه عشان كل الـ features شكلها واحد، أو الـ Cubit يكلّم الـ repository مباشرة لما مفيش logic. الاتنين صح، الغلط إنك تعمل كده من غير ما تقرر.
+- <b>تركيب الـ use cases:</b> use case ممكن يستخدم أكتر من repository. مثلًا «انقل الكتاب للمكتبة واحذفه من قائمة الأمنيات» بيكلّم repositoryين في عملية واحدة. ده مكانه الطبيعي use case مش Cubit.
+- <b>الـ Domain بيتختبر بـ dart test:</b> لأنه مافيهوش Flutter، تستاته بتشتغل في أجزاء من الثانية. لو احتجت Flutter عشان تختبر قاعدة، يبقى القاعدة دي في مكان غلط.
+
+<Note kind="interview" title="سؤال interview">
+
+«إيه الفرق بين Entity وValue Object؟» الـ Entity ليها هوية (id) وبتفضل نفس الحاجة حتى لو بياناتها اتغيرت. الـ Value Object مالوش هوية: اتنين بنفس القيمة يبقوا نفس الحاجة، وبيحمي قواعده من لحظة إنشائه.
+
+</Note>
+
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### الـ value object بـ extension type
+
+الـ Email مايتعملش غير وهو valid، فأي كود ماسك Email مش محتاج validation تاني. والـ extension type ملوش تكلفة في الـ runtime.
+
+```dart
+extension type const Email._(String value) {
+  static final _pattern = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
+
+  static Result<Email> create(String input) {
+    final normalized = input.trim().toLowerCase();
+    return _pattern.hasMatch(normalized)
+        ? Success(Email._(normalized))
+        : const Err(ValidationFailure('Invalid email'));
+  }
+}
+```
+
+<Diagram name="d-0bbc7b00b5">
+
+الـ validation بتحصل مرة واحدة بس عند الإنشاء. أي function بتاخد Email مش String مش محتاجة تتحقق تاني.
+
+</Diagram>
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="domain-1">
+<Ask>فين أحسن مكان تتحقق فيه إن الإيميل صح؟</Ask>
+<Answer>
+
+جوه value object اسمه Email عند إنشائه، عشان أي Email في المشروع يبقى مضمون.
+
+</Answer>
+</Question>
+
+<Question id="domain-2">
+<Ask>use case بينادي `repository.getLibrary()` وبس. تعمل فيه إيه؟</Ask>
+<Answer>
+
+ده pass-through. يا إما تسيبه بقرار واعي عشان الاتساق، يا إما الـ Cubit يكلّم الـ repository مباشرة.
+
+</Answer>
+</Question>
+
+<Question id="domain-3">
+<Ask>محتاج Flutter عشان تختبر قاعدة في الـ Domain. ده معناه إيه؟</Ask>
+<Answer>
+
+إن في حاجة من Flutter دخلت الـ Domain، والقاعدة أو الـ dependency دي في المكان الغلط.
+
+</Answer>
+</Question>
+
+</Quiz>

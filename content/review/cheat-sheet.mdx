@@ -1,0 +1,70 @@
+---
+title: "الملخص"
+order: 1
+description: "كل قاعدة في سطر."
+---
+
+كل قاعدة في سطر. ارجعله قبل أي مشروع جديد أو interview.
+
+<CheatGrid>
+
+<CheatCard title="Domain">
+
+- مفيش Flutter ولا dio ولا json.
+- الـ entities والـ value objects جواها قواعدها.
+- الـ contracts بترجع entities وResult.
+- use case بس لما في logic حقيقي.
+
+</CheatCard>
+
+<CheatCard title="Data">
+
+- DTO منفصل مع mapper صريح.
+- الـ data source بيرمي exceptions.
+- الـ repository هو الحد: guard واحد.
+- الـ DB هي مصدر الحقيقة الوحيد.
+- retry للطلبات الـ idempotent بس.
+
+</CheatCard>
+
+<CheatCard title="Presentation">
+
+- الـ Cubit مايعرفش الـ data layer.
+- الـ states كلها sealed مع exhaustive switch.
+- أي async محمي: debounce وrequest id وflag.
+- الـ side effects في BlocListener.
+- الـ Failure بيتترجم هنا بـ l10n.
+
+</CheatCard>
+
+<CheatCard title="التوصيل (wiring)">
+
+- constructor injection دايمًا.
+- get_it في الـ composition root بس.
+- factory للـ Cubits، وsingleton للـ repositories.
+- flavors بـ entry points منفصلة.
+- كل feature ليها barrel هو الـ public API.
+
+</CheatCard>
+
+<CheatCard title="SOLID">
+
+- S: سبب واحد للتغيير لكل class.
+- O: ضيف قطعة، ماتفتحش الكود الشغال.
+- L: نفس الـ contract tests على كل implementation.
+- I: interface صغير على قد اللي بيستخدمه.
+- D: الـ domain بيعرّف الـ interface، والـ data بتنفّذه.
+
+</CheatCard>
+
+<CheatCard title="الاختبارات">
+
+- الـ domain بتغطية 100%.
+- الـ repository: تست لكل نوع Failure.
+- blocTest لكل سيناريو في الـ Cubit.
+- golden بالعربي والـ dark mode.
+- integration للـ flow الحرج بس.
+
+</CheatCard>
+
+</CheatGrid>

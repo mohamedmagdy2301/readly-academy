@@ -1,0 +1,255 @@
+---
+title: "Dart اللي هتحتاجه"
+description: "الأدوات اللغوية اللي المعمارية كلها مبنية عليها: abstract، generics، Future وStream، وsealed classes."
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="قالب الكحك والعقد">
+
+الـ <b>class</b> زي قالب الكحك، والـ <b>object</b> هو الكحكة اللي بتطلع منه. ممكن تعمل كحك كتير من قالب واحد. الـ <b>abstract class</b> أو الـ <b>interface</b> زي عقد شغل: مكتوب فيه «المطلوب منك تعمل كذا وكذا»، بس مش مكتوب إزاي. أي حد يمضي العقد لازم ينفّذ كل البنود.
+
+</Analogy>
+
+<Analogy title="الدليفري والجرنال">
+
+الـ <b>Future</b> زي طلب دليفري: بتطلب مرة، وبتستنى، وبيوصلك حاجة واحدة (أو مشكلة). الـ <b>Stream</b> زي اشتراك في جرنال: بيوصلك عدد جديد كل شوية لحد ما تلغي الاشتراك.
+
+</Analogy>
+
+
+</Level>
+
+<Level n="2" title="الأساسيات في الكود">
+
+### class بحقول final
+
+<CodeBlock label="class عادية">
+
+```dart
+class Book {
+  const Book({required this.id, required this.title});
+
+  final String id;
+  final String title;
+}
+
+const book = Book(id: 'OL1', title: 'Atomic Habits');
+```
+
+</CodeBlock>
+
+`final` معناها إن القيمة ماتتغيرش بعد ما الـ object يتعمل. في المعمارية بنحب الـ objects اللي ماتتغيرش (immutable)، لأن محدش يقدر يعدّلها من ورا ضهرك.
+
+### abstract interface class: العقد
+
+<CodeBlock label="العقد والتنفيذ">
+
+```dart
+abstract interface class LibraryRepository {
+  Future<List<Book>> getLibrary();
+  Future<void> addBook(Book book);
+}
+
+class LibraryRepositoryImpl implements LibraryRepository {
+  @override
+  Future<List<Book>> getLibrary() async {
+    // real implementation with dio...
+    return [];
+  }
+
+  @override
+  Future<void> addBook(Book book) async {
+    // ...
+  }
+}
+```
+
+</CodeBlock>
+
+أي حد هيستخدم `LibraryRepository` مش محتاج يعرف إن في `LibraryRepositoryImpl` أصلًا. ده أهم سطر في المعمارية كلها، وهنرجعله كتير.
+
+### Generics: نوع بيتحدد بعدين
+
+<CodeBlock label="Generics">
+
+```dart
+class Box<T> {
+  const Box(this.value);
+  final T value;
+}
+
+final a = Box<int>(5);        // value is int
+final b = Box<Book>(book);    // value is Book
+```
+
+</CodeBlock>
+
+لما تشوف `Result<T>` في الخطة، معناها «نتيجة جواها حاجة من نوع T»: ممكن تكون `Result<Book>` أو `Result<List<Book>>`.
+
+### Future وStream
+
+<CodeBlock label="Future وStream">
+
+```dart
+// Future: one value, later
+Future<Book> fetchBook() async {
+  final res = await dio.get('/books/OL1');
+  return Book(id: res.data['id'], title: res.data['title']);
+}
+
+// Stream: many values over time
+Stream<int> countdown() async* {
+  for (var i = 3; i > 0; i--) {
+    await Future.delayed(const Duration(seconds: 1));
+    yield i;
+  }
+}
+
+countdown().listen((n) => print(n)); // 3, 2, 1
+```
+
+</CodeBlock>
+
+
+</Level>
+
+<Level n="3" title="Dart 3: الأدوات اللي الخطة معتمدة عليها">
+
+### sealed class + switch expression
+
+الـ `sealed` معناها: «الأنواع الفرعية للـ class دي محددة ومعروفة كلها، ومحدش يقدر يزوّد عليها من ملف تاني». وده بيخلي الـ compiler يقدر يتأكد إنك غطيت كل الحالات:
+
+<CodeBlock label="sealed + switch">
+
+```dart
+sealed class LoadState {}
+final class Loading extends LoadState {}
+final class Loaded extends LoadState {
+  Loaded(this.books);
+  final List<Book> books;
+}
+final class Failed extends LoadState {
+  Failed(this.message);
+  final String message;
+}
+
+String describe(LoadState state) => switch (state) {
+      Loading() => 'loading...',
+      Loaded(:final books) => '${books.length} books',
+      Failed(:final message) => 'error: $message',
+    };
+```
+
+</CodeBlock>
+
+لو شلت سطر `Failed` من الـ switch، الكود مش هيعمل compile. ده بالظبط اللي بنستخدمه في الـ states والـ Failures.
+
+`Loaded(:final books)` اسمه <b>pattern</b>: بيتأكد إن النوع Loaded، وبيطلّع الحقل `books` في متغير بنفس الاسم في خطوة واحدة.
+
+### if-case
+
+<CodeBlock label="لما يهمك حالة واحدة بس">
+
+```dart
+if (state case Failed(:final message)) {
+  showSnackBar(message);
+}
+```
+
+</CodeBlock>
+
+### extension methods
+
+<CodeBlock label="تزوّد method على class مش بتاعتك">
+
+```dart
+extension BookTitle on Book {
+  String get shortTitle =>
+      title.length > 20 ? '${title.substring(0, 20)}...' : title;
+}
+
+book.shortTitle; // works like a real method
+```
+
+</CodeBlock>
+
+### المساواة: ليه == بتخدعك
+
+<CodeBlock label="المساواة الافتراضية">
+
+```dart
+final a = Book(id: '1', title: 'X');
+final b = Book(id: '1', title: 'X');
+print(a == b); // false! different objects in memory
+```
+
+</CodeBlock>
+
+بشكل افتراضي، `==` بتقارن مكان الـ object في الميموري مش محتواه. ده مهم جدًا مع Cubit: لو بتعمل emit لـ state جديدة بنفس المحتوى، الـ Cubit مش هيعرف إنها نفس القديمة. الحل إنك تعمل override لـ `==` و`hashCode`، أو تستخدم `equatable` أو `freezed` يعملوها عنك.
+
+
+</Level>
+
+<Level n="4" title="class modifiers والاختيار بينهم">
+
+| الـ modifier | بيسمح بإيه | بنستخدمه في |
+| --- | --- | --- |
+| `abstract` | ماينفعش تعمل منه object مباشرة | classes أساسية فيها كود مشترك |
+| `interface` | ينفع implements بس، مش extends | الـ contracts زي الـ repositories |
+| `abstract interface` | الاتنين مع بعض: عقد صافي | `LibraryRepository` |
+| `sealed` | أنواع فرعية محددة في نفس الملف بس، والـ switch عليها exhaustive | الـ states والـ Failures والـ Result |
+| `final` | ماحدش يورث منها خالص | الأنواع الفرعية للـ sealed |
+| `base` | ينفع extends بس، مش implements | نادرًا في الـ apps |
+
+<Note kind="info" title="sealed ولا enum؟">
+
+الـ enum كويس لما كل الحالات مالهاش بيانات (زي `BookStatus.reading`). الـ sealed لما كل حالة شايلة بيانات مختلفة (Loaded شايلة كتب، وFailed شايلة رسالة).
+
+</Note>
+
+<Note kind="warn" title="extension type ليه حدود">
+
+الـ extension type (زي Email في الخطة) مالوش تكلفة في الـ runtime لأنه في الحقيقة String متغطي. ده معناه إن `is Email` وقت التشغيل مش هيفرق بينه وبين أي String. الحماية كلها وقت الـ compile، وده كفاية لمعظم الاستخدامات.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«إيه الفرق بين abstract class وinterface في Dart 3؟» الـ abstract ينفع يكون فيه كود ويتورث بـ extends. الـ interface class بيتنفّذ بـ implements بس، فالكلاس اللي بينفّذه لازم يكتب كل حاجة بنفسه.
+
+</Note>
+
+
+</Level>
+
+<Quiz>
+
+<Question id="dart-1">
+<Ask>إيه الفرق بين Future وStream في جملة؟</Ask>
+<Answer>
+
+الـ Future بيرجّع قيمة واحدة بعدين، والـ Stream بيرجّع قيم كتير على مدار الوقت.
+
+</Answer>
+</Question>
+
+<Question id="dart-2">
+<Ask>ليه sealed class أحسن من abstract class للـ states؟</Ask>
+<Answer>
+
+لأن الـ compiler بيعرف كل الأنواع الفرعية، فأي switch مش مغطي كل الحالات مش هيعمل compile.
+
+</Answer>
+</Question>
+
+<Question id="dart-3">
+<Ask>اتنين Book بنفس الـ id والـ title، `a == b` بترجع إيه من غير equatable؟ وليه ده مهم مع Cubit؟</Ask>
+<Answer>
+
+بترجع false لأنها بتقارن مكان الـ objects في الميموري. مع Cubit ده ممكن يخلي الـ UI تعمل rebuild من غير داعي، أو تفشل مقارنات في التستات.
+
+</Answer>
+</Question>
+
+</Quiz>

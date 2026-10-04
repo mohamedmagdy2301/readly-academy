@@ -1,0 +1,8 @@
+node_modules
+.next
+out
+public/search-index.json
+public/stats.json
+public/cards.json
+*.tsbuildinfo
+next-env.d.ts

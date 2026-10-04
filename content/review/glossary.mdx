@@ -1,0 +1,29 @@
+---
+title: "المسرد"
+order: 2
+description: "كل مصطلح بمعناه ومثال من Readly."
+---
+
+كل مصطلح بمعناه البسيط ومثال من Readly.
+
+| المصطلح | معناه | مثال من Readly |
+| --- | --- | --- |
+| Dependency rule | الكود الداخلي مايعرفش الخارجي، والـ imports بتشاور للداخل بس | feature_library/domain مافيهوش import لـ drift |
+| Dependency inversion | الطبقة الداخلية بتعرّف الـ interface، والخارجية بتعمل implement | LibraryRepository في domain وLibraryRepositoryImpl في data |
+| Entity | مفهوم business بقواعده، مش مربوط بشكل الـ API | Book |
+| DTO | شكل البيانات على الشبكة أو في الـ DB بالظبط | BookDto من Open Library |
+| Value object | قيمة صغيرة مضمون إنها valid من لحظة إنشائها | Email، BookId |
+| Invariant | قاعدة لازم تفضل صح طول الوقت | مفيش كتاب يتضاف للمكتبة مرتين |
+| Use case | عملية business واحدة بقواعدها | AddBookToLibrary |
+| Composition root | المكان الوحيد اللي بيتعمل فيه توصيل الـ dependencies | apps/readly/lib/di |
+| Single source of truth | مصدر واحد بس الـ UI بتقرا منه | stream من drift |
+| Failure | نوع خطأ متوقع، جزء من الـ business | NetworkFailure |
+| Sealed class | class أنواعها الفرعية محددة، والـ compiler يعرفها كلها | Result وFailure والـ states |
+| Debounce | استنى لحد ما المستخدم يبطّل كتابة قبل ما تنفّذ | البحث بعد 350ms |
+| Stale result | نتيجة رجعت متأخر بعد ما الطلب بقى قديم | بحث «flu» رجع بعد «flutter» |
+| Idempotent | تكرار الطلب مايغيرش النتيجة | GET /library |
+| Contract test | نفس التستات بتشتغل على كل implementation للـ interface | libraryRepositoryContract على الـ fake والـ impl |
+| Barrel file | ملف بيصدّر الـ public API بتاع الـ package بس | feature_auth.dart |
+| ADR | مستند قصير بيسجل قرار معماري وسببه | «ليه feature-first» |
+| Flavor | نسخة من الـ app بإعدادات مختلفة | dev وstaging وprod |
+| Golden test | تست بيقارن شكل الـ widget بصورة محفوظة | شاشة المكتبة بالعربي |

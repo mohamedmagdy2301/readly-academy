@@ -1,0 +1,263 @@
+---
+title: "التوسّع والـ production"
+description: "الـ flavors والتقسيم لـ packages والـ CI والـ ADRs ومراقبة الأخطاء: الحاجات اللي بتفرق بين مشروع شخصي ومنتج حقيقي."
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="سلسلة مطاعم">
+
+لما المطعم يبقى سلسلة: كل <b>فرع</b> بنفس المنيو بس بإعدادات مختلفة (ده الـ <b>flavor</b>). كل <b>قسم</b> ليه باب مقفول وشباك واحد بيتعامل منه مع الباقي (ده الـ <b>package</b> والـ barrel). في <b>مراقب جودة</b> على الباب مابيعدّيش أي طبق مش مظبوط (ده الـ <b>CI</b>). في <b>دفتر قرارات</b> مكتوب فيه «ليه بنشتري من المورد ده» عشان أي مدير جديد يفهم (ده الـ <b>ADR</b>). وفي <b>كاميرات</b> بتسجّل أي مشكلة بتحصل في أي فرع (ده <b>Sentry</b>).
+
+</Analogy>
+
+
+</Level>
+
+<Level n="2" title="الـ Flavors">
+
+<CodeBlock label="entry point لكل flavor">
+
+```dart
+class AppConfig {
+  const AppConfig({required this.name, required this.baseUrl, required this.enableLogs});
+  final String name;
+  final String baseUrl;
+  final bool enableLogs;
+}
+
+// lib/main_dev.dart
+void main() => bootstrap(const AppConfig(
+      name: 'dev',
+      baseUrl: 'https://api-dev.readly.app',
+      enableLogs: true,
+    ));
+
+// lib/main_prod.dart
+void main() => bootstrap(const AppConfig(
+      name: 'prod',
+      baseUrl: 'https://api.readly.app',
+      enableLogs: false,
+    ));
+```
+
+</CodeBlock>
+
+<CodeBlock label="التشغيل">
+
+```bash
+flutter run --flavor dev -t lib/main_dev.dart
+flutter build appbundle --flavor prod -t lib/main_prod.dart
+```
+
+</CodeBlock>
+
+والـ `bootstrap` بيسجّل الـ AppConfig في get_it، فأي حتة محتاجة الـ base URL تاخده من هناك. ومع الكود ده، بتضيف productFlavors في Android وschemes في iOS عشان كل flavor يبقى app منفصل على الموبايل باسم وأيقونة مختلفين.
+
+<Diagram name="d-12b5f1fea5">
+
+كل flavor ليه entry point بيسجّل config مختلف: الـ base URL واسم الـ app ومستوى الـ logging.
+
+</Diagram>
+
+
+</Level>
+
+<Level n="3" title="Packages والـ CI والـ ADRs وSentry">
+
+### التقسيم لـ packages بـ pub workspaces
+
+<CodeBlock label="root">
+
+```yaml
+# pubspec.yaml (root)
+name: readly_workspace
+publish_to: none
+environment:
+  sdk: ^3.6.0
+workspace:
+  - apps/readly
+  - packages/core
+  - packages/feature_library
+  - packages/feature_notes
+```
+
+</CodeBlock>
+
+<CodeBlock label="package">
+
+```yaml
+# packages/feature_library/pubspec.yaml
+name: feature_library
+resolution: workspace
+environment:
+  sdk: ^3.6.0
+dependencies:
+  core:
+  flutter:
+    sdk: flutter
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ public API">
+
+```dart
+// packages/feature_library/lib/feature_library.dart (the barrel)
+export 'src/domain/book.dart';
+export 'src/domain/book_lookup.dart';
+export 'src/presentation/library_page.dart';
+// everything else in src/ stays private to the package
+```
+
+</CodeBlock>
+
+دلوقتي لو feature_notes حاولت تعمل import لـ `feature_library/src/data/...`، الـ analyzer هيطلّع تحذير إنك بتستخدم implementation مش public. الحدود بقت حقيقية.
+
+### CI على GitHub Actions
+
+<CodeBlock label=".github/workflows/ci.yml">
+
+```yaml
+name: ci
+on: [pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - run: flutter pub get
+      - run: dart format --set-exit-if-changed .
+      - run: flutter analyze
+      - run: flutter test --coverage
+```
+
+</CodeBlock>
+
+### ADR: دفتر القرارات
+
+<CodeBlock label="docs/adr/004-sync-conflicts.md">
+
+```markdown
+# ADR 004: Last-write-wins for sync conflicts
+
+## Context
+Users edit books offline on more than one device.
+
+## Decision
+The version with the newest updatedAt wins. Time comes from the Clock abstraction.
+
+## Consequences
+Simple to implement and test. An older edit can be lost silently; acceptable for book status.
+```
+
+</CodeBlock>
+
+### Sentry: تعرف الـ crashes قبل المستخدم ما يشتكي
+
+<CodeBlock label="Sentry">
+
+```dart
+Future<void> bootstrap(AppConfig config) async {
+  await SentryFlutter.init(
+    (options) {
+      options.dsn = const String.fromEnvironment('SENTRY_DSN');
+      options.environment = config.name;
+    },
+    appRunner: () {
+      setupDependencies(config);
+      runApp(const ReadlyApp());
+    },
+  );
+}
+```
+
+</CodeBlock>
+
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>امتى تقسّم لـ packages؟</b> لما المشروع يكبر والفريق يزيد، أو لما الحدود بتتكسر كتير. لمشروع شخصي صغير، الفولدرات مع lint كفاية.
+- <b>الـ core package:</b> خليه صغير. كل ما يكبر، أي تغيير فيه بيعيد build لكل الـ packages.
+- <b>الـ ADR بيتكتب وقت القرار:</b> بعد 6 شهور محدش هيفتكر ليه اخترتوا last-write-wins، والـ ADR بيوفّر نقاش طويل.
+- <b>الأسرار مش في الكود:</b> الـ DSN والـ API keys بـ `--dart-define` أو secrets في الـ CI، مش مكتوبين في الـ repo.
+
+<Note kind="interview" title="سؤال interview">
+
+«بتعمل الـ flavors إزاي؟» entry point منفصل لكل flavor، وproductFlavors في Android، وschemes في iOS، وconfig class بيتسجّل في الـ DI. مش if (kDebugMode) متوزعة في الكود.
+
+</Note>
+
+
+</Level>
+
+<LessonPart title="الهيكل كامل بالرسم">
+
+ده شكل Readly بعد التقسيم لـ packages في الوحدة دي:
+
+```text
+readly/
+├─ pubspec.yaml                 # workspace root
+├─ apps/readly/
+│  └─ lib/
+│     ├─ main_dev.dart / main_prod.dart
+│     ├─ di/                      # composition root (injectable)
+│     └─ router/                  # go_router + guards
+└─ packages/
+   ├─ core/                       # Result, Failure, guard, UseCase base
+   ├─ core_network/               # Dio, interceptors
+   ├─ core_ui/                    # theme, shared widgets
+   ├─ feature_auth/
+   │  └─ lib/
+   │     ├─ feature_auth.dart     # public API (barrel)
+   │     └─ src/{domain,data,presentation}/
+   ├─ feature_catalog/
+   ├─ feature_library/
+   └─ feature_notes/
+```
+
+نفس الهيكل كرسم: مين بيعتمد على مين بين الـ packages.
+
+<Diagram name="d-62babefe28">
+
+الـ app بيجمّع الـ features، وكل feature بتعتمد على packages الـ core. الـ features مابتعتمدش على بعض غير عن طريق الـ public API، زي notes اللي محتاجة BookId من library.
+
+</Diagram>
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="scale-1">
+<Ask>إيه فايدة الـ barrel file؟</Ask>
+<Answer>
+
+إنه الـ public API بتاع الـ package. أي حاجة مش متصدرة فيه بتفضل داخلية، فالـ features التانية ماتقدرش تعتمد على تفاصيلها.
+
+</Answer>
+</Question>
+
+<Question id="scale-2">
+<Ask>الـ CI بيمنع إيه؟</Ask>
+<Answer>
+
+إن أي كود مش متنسق أو فيه warnings أو تستات فاشلة يتدمج في المشروع.
+
+</Answer>
+</Question>
+
+<Question id="scale-3">
+<Ask>ليه ADR؟</Ask>
+<Answer>
+
+عشان يسجّل القرار وسببه وعواقبه، فأي حد جديد (أو انت بعد شهور) يفهم ليه المشروع معمول كده.
+
+</Answer>
+</Question>
+
+</Quiz>
