@@ -215,6 +215,7 @@ tr:last-child td{border-bottom:none}
 .code{position:relative;margin:10px 0 18px}
 .code-label{display:inline-block;font-size:13px;color:var(--muted);margin-bottom:4px}
 pre{direction:ltr;text-align:left;background:var(--code-bg);color:var(--code-ink);padding:16px 18px;border-radius:12px;overflow-x:auto;font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:13.5px;line-height:1.6;margin:0}
+pre code{background:none;color:inherit;padding:0;border-radius:0;font-size:inherit}
 .copy{position:absolute;top:34px;left:10px;background:rgba(255,255,255,.1);color:var(--code-ink);border:1px solid rgba(255,255,255,.2);border-radius:6px;font:inherit;font-size:12px;padding:1px 10px;cursor:pointer}
 .diagram{overflow-x:auto;margin:16px 0 10px;background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:12px}
 .diagram svg{display:block;min-width:560px;width:100%;height:auto;direction:ltr;unicode-bidi:isolate}
