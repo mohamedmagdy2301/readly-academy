@@ -1,59 +1,569 @@
 ---
 title: "الـ Logging والـ Monitoring"
-description: "سطر واحد بيقول الدرس ده عن إيه."
-minutes: 15
+description: "الـ logs بتحكيلك الـ app عمل إيه، والـ monitoring بيقولك إن حاجة اتكسرت عند مستخدم حقيقي، من غير ما تسرّب بياناته."
+minutes: 30
 draft: true
 ---
 
 <Level n="1" title="الفكرة بتشبيه">
 
-<Analogy title="اسم التشبيه">
+<Analogy title="الصندوق الأسود في الطيارة">
 
-اشرح الفكرة بحاجة من الحياة اليومية، من غير كود.
+كل طيارة فيها <b>صندوق أسود</b> بيسجّل طول الرحلة: السرعة والارتفاع وكلام الكابتن. في الرحلات العادية محدش بيفتحه. بس لو حصلت حادثة، المحققين بيقروا آخر دقايق قبلها ويعرفوا اللي حصل بالظبط، من غير ما يسألوا حد. والصندوق مش بيسجّل كلام الركاب، بيسجّل اللي التحقيق محتاجه بس. وفي نفس الوقت، <b>برج المراقبة</b> شايف كل الطيارات اللي في الجو، وأول ما واحدة تبعت إشارة استغاثة بيعرف فورًا، من غير ما حد يتصل بيه.
 
 </Analogy>
+
+الـ <b>logging</b> هو الصندوق الأسود: الـ app بيسجّل هو بيعمل إيه. والـ <b>monitoring</b> هو البرج: Sentry بيقولك إن في crash عند مستخدم حقيقي، ومعاه آخر خطوات قبله. من غيرهم، لما مستخدم يقولك «المكتبة مابتفتحش»، انت بتخمّن. ومش أي حاجة تتسجل: الـ token والإيميل زي كلام الركاب، مالهمش مكان في الصندوق.
+
 
 </Level>
 
 <Level n="2" title="الكود الأساسي">
 
-اشرح أبسط كود للفكرة.
+أول حاجة أي حد بيعملها: `print` في كل حتة. المشكلة إن print مالهاش levels، وبتشتغل في كل الـ flavors، ولو عايز تبعت الـ logs لحتة تانية لازم تلف على الكود كله. الحل: contract واحد، والـ implementation بيتحدد في الـ DI حسب الـ flavor.
 
-<CodeBlock label="وصف قصير للكود">
+<CodeBlock label="الـ contract">
 
 ```dart
-// code here
+// core/logging/app_logger.dart: no Flutter, no Sentry imports
+abstract interface class AppLogger {
+  void debug(String message);
+  void info(String message);
+  void warning(String message, {Object? error});
+  void error(String message, {Object? error, StackTrace? stackTrace});
+}
 ```
 
 </CodeBlock>
 
+الـ AppLogger مكانه `core`، وأي class محتاجة تسجّل حاجة بتاخده من الـ constructor زي أي dependency.
+
+| الـ level | امتى | مثال من Readly |
+| --- | --- | --- |
+| `debug` | تفاصيل للمطوّر وهو بيشتغل | الـ body بتاع الـ request |
+| `info` | حاجة عادية حصلت وتفيد كسياق | `GET /library` رجع 200 |
+| `warning` | حاجة فشلت بس متوقعة وليها رد | NetworkFailure في `library.getLibrary` |
+| `error` | حاجة لازم حد في الفريق يصلحها | exception محدش مسكها |
+
+<CodeBlock label="ConsoleLogger للـ dev">
+
+```dart
+import 'dart:developer' as dev;
+
+class ConsoleLogger implements AppLogger {
+  const ConsoleLogger();
+
+  @override
+  void debug(String message) => dev.log(message, name: 'readly', level: 500);
+
+  @override
+  void info(String message) => dev.log(message, name: 'readly', level: 800);
+
+  @override
+  void warning(String message, {Object? error}) =>
+      dev.log(message, name: 'readly', level: 900, error: error);
+
+  @override
+  void error(String message, {Object? error, StackTrace? stackTrace}) =>
+      dev.log(message, name: 'readly', level: 1000, error: error, stackTrace: stackTrace);
+}
+
+// prod, for now: logs go nowhere
+class NoopLogger implements AppLogger {
+  const NoopLogger();
+  @override
+  void debug(String message) {}
+  @override
+  void info(String message) {}
+  @override
+  void warning(String message, {Object? error}) {}
+  @override
+  void error(String message, {Object? error, StackTrace? stackTrace}) {}
+}
+```
+
+</CodeBlock>
+
+الـ `dev.log` بيظهر في الـ debug console وفي DevTools، وتقدر تفلتر بالاسم والـ level، وده مش موجود في print.
+
+<CodeBlock label="التسجيل في get_it حسب الـ flavor">
+
+```dart
+Future<void> setupDependencies(AppConfig config) async {
+  // prefs from the Settings lesson are loaded here first
+  getIt
+    ..registerSingleton<AppConfig>(config)
+    ..registerLazySingleton<AppLogger>(
+        () => config.enableLogs ? const ConsoleLogger() : const NoopLogger())
+    ..registerLazySingleton<LibraryRepository>(
+        () => LibraryRepositoryImpl(getIt(), getIt()));
+  // ...
+}
+```
+
+</CodeBlock>
+
+الـ `enableLogs` هو نفس الـ field اللي في `AppConfig` من درس الـ flavors: `true` في `main_dev.dart` و`false` في `main_prod.dart`. القرار في مكان واحد، ومفيش `if (kDebugMode)` متوزعة في الكود.
+
+<Note kind="info" title="الـ guard اتغيّر هنا">
+
+في درس الأخطاء، الـ guard كان بياخد function بس: `guard(() async => ...)`. من الدرس ده بياخد كمان `logger` و`operation`، وفي Level 3 هيزيد `expected`. كل repository بقى ياخد `AppLogger` في الـ constructor ويبعته للـ guard.
+
+</Note>
+
+<CodeBlock label="الـ logging جوه الـ guard">
+
+```dart
+Future<Result<T>> guard<T>(
+  Future<T> Function() run, {
+  required AppLogger logger,
+  required String operation,
+}) async {
+  try {
+    return Success(await run());
+  } on DioException catch (e) {
+    final failure = _mapDio(e);
+    logger.warning('$operation → ${failure.runtimeType}', error: e);
+    return Err(failure);
+  } on CacheException catch (e) {
+    final failure = CacheFailure(e.message);
+    logger.warning('$operation → ${failure.runtimeType}', error: e);
+    return Err(failure);
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ repository بيبعت الـ logger">
+
+```dart
+class LibraryRepositoryImpl implements LibraryRepository {
+  LibraryRepositoryImpl(this._remote, this._logger);
+
+  final LibraryRemoteSource _remote;
+  final AppLogger _logger;
+
+  @override
+  Future<Result<List<Book>>> getLibrary() => guard(
+        () async {
+          final dtos = await _remote.fetchLibrary();
+          return dtos.map((d) => d.toEntity()).toList();
+        },
+        logger: _logger,
+        operation: 'library.getLibrary',
+      );
+}
+```
+
+</CodeBlock>
+
+- <b>الـ operation:</b> اسم ثابت للعملية زي `library.getLibrary`. بيقولك أنهي عملية فشلت من غير ما تطبع الـ URL أو الـ parameters.
+- <b>الـ guard هو المكان الوحيد:</b> هو اللي بيحوّل الـ exception لـ Failure، فهو اللي يسجّلها. الـ Cubit مش محتاج يعمل log تاني، وإلا نفس الفشل هيتسجل مرتين.
+
+
 </Level>
 
-<Level n="3" title="التفاصيل والحالات الصعبة">
+<Level n="3" title="من الـ console لـ Sentry">
 
-الحالات اللي بتظهر في المشاريع الحقيقية.
+### الـ logs بتطبع الـ token
+
+الـ LogInterceptor بتاع dio بيطبع الـ headers كاملة، فالـ token بيوصل لـ screenshots ولـ issues على GitHub حتى من dev، وفي الـ production مش هتقدر تشغّله خالص. الحل interceptor بتاعك، بيعدّي على AppLogger وبيخفي الحساس:
+
+<CodeBlock label="LoggingInterceptor">
+
+```dart
+class LoggingInterceptor extends Interceptor {
+  LoggingInterceptor(this._logger);
+
+  final AppLogger _logger;
+
+  static const _secretKeys = {
+    'authorization', 'cookie', 'password', 'email', 'accesstoken', 'refreshtoken',
+  };
+
+  @override
+  void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
+    options.extra['startedAt'] = DateTime.now();
+    _logger.debug('→ ${options.method} ${options.path} '
+        'headers: ${_redact(options.headers)} body: ${_redactBody(options.data)}');
+    handler.next(options);
+  }
+
+  @override
+  void onResponse(Response<dynamic> response, ResponseInterceptorHandler handler) {
+    final options = response.requestOptions;
+    _logger.info('← ${response.statusCode} ${options.method} ${options.path}${_took(options)}');
+    handler.next(response);
+  }
+
+  @override
+  void onError(DioException err, ErrorInterceptorHandler handler) {
+    final options = err.requestOptions;
+    final status = err.response?.statusCode ?? err.type.name;
+    // info only: deciding if this is an error is the guard's job
+    _logger.info('✕ $status ${options.method} ${options.path}${_took(options)}');
+    handler.next(err);
+  }
+
+  Object? _redactBody(Object? data) =>
+      data is Map<String, dynamic> ? _redact(data) : data?.runtimeType;
+
+  Map<String, Object?> _redact(Map<String, dynamic> map) => {
+        for (final MapEntry(:key, :value) in map.entries)
+          key: _secretKeys.contains(key.toLowerCase()) ? '***' : value,
+      };
+
+  String _took(RequestOptions options) {
+    final start = options.extra['startedAt'] as DateTime?;
+    return start == null ? '' : ' ${DateTime.now().difference(start).inMilliseconds}ms';
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="آخر واحد في السلسلة">
+
+```dart
+dio.interceptors.addAll([
+  authInterceptor,
+  RetryInterceptor(dio),
+  LoggingInterceptor(getIt<AppLogger>()), // sees the final headers, then hides them
+]);
+```
+
+</CodeBlock>
+
+- <b>الـ path مش الـ uri:</b> الـ query فيها كلام المستخدم، زي اللي بيدوّر عليه في الـ catalog، فمش بتتسجل.
+- <b>الـ body في `debug` بس:</b> وده level مابيطلعش من الجهاز في الـ production، زي ما هنشوف تحت. والـ redact هنا على أول مستوى من الـ map بس.
+- <b>آخر واحد في السلسلة:</b> عشان يشوف الـ Authorization اللي الـ AuthInterceptor حطه ويخفيه، ويسجّل الطلب اللي اتعاد بعد الـ refresh.
+
+### الـ logs في الـ production بتروح فين؟
+
+الـ NoopLogger كان بيرمي كل حاجة في prod. هنبدله بـ SentryLogger: الـ `info` والـ `warning` بيبقوا <b>breadcrumbs</b>، والـ `error` بس هو اللي بيبقى issue. الـ breadcrumbs هي آخر خطوات قبل الخطأ، زي آخر دقايق في الصندوق الأسود: Sentry بيحتفظ بآخر 100 منهم على الجهاز، ومابيبعتهمش غير مع أول error يتبعت.
+
+<CodeBlock label="SentryLogger">
+
+```dart
+class SentryLogger implements AppLogger {
+  const SentryLogger();
+
+  @override
+  void debug(String message) {} // never leaves the device
+
+  @override
+  void info(String message) => _crumb(message, SentryLevel.info);
+
+  @override
+  void warning(String message, {Object? error}) => _crumb(message, SentryLevel.warning);
+
+  @override
+  void error(String message, {Object? error, StackTrace? stackTrace}) {
+    _crumb(message, SentryLevel.error);
+    if (error == null) {
+      Sentry.captureMessage(message, level: SentryLevel.error);
+    } else {
+      Sentry.captureException(error, stackTrace: stackTrace);
+    }
+  }
+
+  void _crumb(String message, SentryLevel level) =>
+      Sentry.addBreadcrumb(Breadcrumb(message: message, level: level));
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="نفس التسجيل، والـ Noop راح">
+
+```dart
+..registerLazySingleton<AppLogger>(
+    () => config.enableLogs ? const ConsoleLogger() : const SentryLogger())
+```
+
+</CodeBlock>
+
+الـ Cubits والـ repositories والـ guard ماتغيّرش فيهم سطر، لأنهم بيكلّموا الـ AppLogger مش Sentry.
+
+### Sentry اتملى أخطاء محدش هيصلحها
+
+لو الـ guard بعت كل Failure كـ error، أول يوم النت فيه ضعيف هيعمل آلاف الـ issues من NetworkFailure، والـ crash الحقيقي هيضيع وسطهم، والفريق هيبطّل يفتح Sentry أصلًا. السؤال لكل Failure: <b>هل حد في الفريق يقدر يصلحها؟</b>
+
+| الـ Failure | تتبعت لـ Sentry؟ | ليه |
+| --- | --- | --- |
+| `NetworkFailure` | لأ، breadcrumb بس | ده نت المستخدم، مش bug |
+| `UnauthorizedFailure` | لأ | الـ session انتهت والـ refresh فشل، والمستخدم يدخل تاني |
+| `ValidationFailure` | لأ | input المستخدم، والـ UI بتقوله يصلحه |
+| `ServerFailure` بـ 4xx متوقع من الـ endpoint | لأ، warning | رد business ليه رسالة، زي 403 «الإيميل ماتأكدش» في الـ login، و409 «الإيميل مستخدم» في إنشاء الحساب |
+| `ServerFailure` بأي 4xx تاني | أيوه | الـ app بعت request السيرفر رافضه: يا bug عندنا يا الـ API اتغير |
+| `ServerFailure` بـ 5xx أو من غير status | لأ، warning | مشكلة في السيرفر، والـ backend عنده الـ monitoring بتاعه |
+| `CacheFailure` | أيوه | الـ DB المحلية فيها مشكلة، والمستخدم مايقدرش يعمل حاجة |
+
+الـ Failure لوحدها مش كفاية عشان تقرر. الـ 403 من الـ login رد متوقع والـ Cubit بيعرض له رسالة على حقل الإيميل، بس نفس الـ 403 من `/library` معناه إن في حاجة غلط. يعني القرار محتاج حاجة من الـ endpoint نفسه: إيه الـ statuses اللي بيرجّعها كنتيجة business.
+
+<CodeBlock label="القرار في مكان واحد">
+
+```dart
+extension FailureReporting on Failure {
+  // only failures a developer must fix go to Sentry
+  bool get isReportable => switch (this) {
+        NetworkFailure() || UnauthorizedFailure() || ValidationFailure() => false,
+        ServerFailure(:final statusCode) =>
+          statusCode != null && statusCode >= 400 && statusCode < 500,
+        CacheFailure() => true,
+      };
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ guard وهو بيكبر">
+
+```dart
+Future<Result<T>> guard<T>(
+  Future<T> Function() run, {
+  required AppLogger logger,
+  required String operation,
+  Set<int> expected = const {}, // business answers of this endpoint
+}) async {
+  try {
+    return Success(await run());
+  } on DioException catch (e, st) {
+    return Err(_logged(_mapDio(e), e, st, logger, operation, expected));
+  } on CacheException catch (e, st) {
+    return Err(_logged(CacheFailure(e.message), e, st, logger, operation, expected));
+  }
+}
+
+Failure _logged(
+  Failure failure,
+  Object error,
+  StackTrace stackTrace,
+  AppLogger logger,
+  String operation,
+  Set<int> expected,
+) {
+  final message = '$operation → ${failure.runtimeType}';
+  final isExpected = failure is ServerFailure && expected.contains(failure.statusCode);
+  if (failure.isReportable && !isExpected) {
+    logger.error(message, error: error, stackTrace: stackTrace);
+  } else {
+    logger.warning(message, error: error); // a breadcrumb, not an issue
+  }
+  return failure;
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="كل endpoint بيقول ردوده المتوقعة">
+
+```dart
+class AuthRepositoryImpl implements AuthRepository {
+  AuthRepositoryImpl(this._remote, this._tokens, this._logger);
+
+  final AuthRemoteSource _remote;
+  final TokenStore _tokens;
+  final AppLogger _logger;
+
+  @override
+  Future<Result<void>> login(Email email, Password password) => guard(
+        () async {
+          final dto = await _remote.login(email.value, password.value);
+          await _tokens.save(access: dto.accessToken, refresh: dto.refreshToken);
+        },
+        logger: _logger,
+        operation: 'auth.login',
+        expected: const {403}, // email not verified
+      );
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `expected` بيتكتب جنب الـ endpoint:</b> الـ repository هو اللي عارف الـ API ده بيرجّع إيه. وإنشاء الحساب بيبعت `expected: const {409}` بنفس الشكل.
+- <b>الـ Failure نفسها ماتغيّرتش:</b> الـ Cubit لسه بياخد `ServerFailure(statusCode: 403)` ويعرض الرسالة على الحقل زي درس الـ Forms. الـ `expected` بيغيّر الـ log بس، مش النتيجة.
+- <b>الـ sealed بيحرسك:</b> لو ضفت نوع Failure جديد، الـ switch في `isReportable` هيطلع compile error لحد ما تقرر هو يتبعت ولا لأ.
+
+### الـ crash وصل من غير سياق
+
+Sentry قالك إن `LibraryCubit` ضرب، بس مش عارف المستخدم كان فين ولا عمل إيه قبلها. الـ breadcrumbs من الـ guard والـ interceptor بتقولك الطلبات بس. ضيف تغييرات الـ states والتنقل بين الشاشات:
+
+<CodeBlock label="AppBlocObserver">
+
+```dart
+class AppBlocObserver extends BlocObserver {
+  AppBlocObserver(this._logger);
+
+  final AppLogger _logger;
+
+  @override
+  void onChange(BlocBase<dynamic> bloc, Change<dynamic> change) {
+    super.onChange(bloc, change);
+    // type names only: states can hold the user's books and notes
+    _logger.info('${bloc.runtimeType}: '
+        '${change.currentState.runtimeType} → ${change.nextState.runtimeType}');
+  }
+
+  @override
+  void onError(BlocBase<dynamic> bloc, Object error, StackTrace stackTrace) {
+    _logger.error('${bloc.runtimeType} failed', error: error, stackTrace: stackTrace);
+    super.onError(bloc, error, stackTrace);
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="التنقل كـ breadcrumbs">
+
+```dart
+final router = GoRouter(
+  observers: [SentryNavigatorObserver()],
+  routes: [/* ... */],
+);
+```
+
+</CodeBlock>
+
+- <b>الـ BlocObserver:</b> class واحدة بتسمع على كل الـ Cubits في الـ app، فمش محتاج تكتب log في كل Cubit.
+- <b>الـ runtimeType بس:</b> `LibraryLoaded(books)` كاملة ممكن تبقى مئات الكتب، والـ states بتاعة notes فيها كلام المستخدم نفسه.
+- <b>الـ onError:</b> بيوصله اللي الـ Cubit بيعمله `addError` بس. الـ exception اللي بتطلع من method في الـ Cubit مابتعدّيش عليه، دي مكانها الجزء الجاي.
+
+دلوقتي الـ issue بيوصل ومعاه: فتح `/library`، و`LibraryCubit: LibraryLoading → LibraryError`، و`✕ 422 POST /library`، وبعدين الـ crash.
+
+### الـ crashes بطّلت توصل Sentry
+
+في نوعين من الأخطاء محدش بيمسكهم:
+
+- <b>`FlutterError.onError`:</b> أخطاء جوه Flutter نفسه وهو بيرسم، زي null في `build` أو layout مكسور.
+- <b>`PlatformDispatcher.instance.onError`:</b> أي exception في كود async محدش عمل لها catch، زي bug في method بتاعة Cubit بعد `await`، أو exception الـ guard سابها تعدّي عن قصد.
+
+الـ `SentryFlutter.init` بيركّب الاتنين لوحده. المشكلة لما حد يحط handler بتاعه <b>بعد</b> الـ init (مثلًا منسوخ من tutorial بتاع Crashlytics): بيمسح handler بتاع Sentry، والـ crashes بتختفي من غير أي error. لو عايز handler بتاعك، حطه <b>قبل</b> الـ init: Sentry بيلفّه، يبعت الـ crash، وبعدين ينادي بتاعك.
+
+<CodeBlock label="الـ bootstrap وهو بيكبر">
+
+```dart
+Future<void> bootstrap(AppConfig config) async {
+  WidgetsFlutterBinding.ensureInitialized(); // plugins need the binding first
+  await setupDependencies(config);           // loads prefs, registers the logger
+  final logger = getIt<AppLogger>();
+  Bloc.observer = AppBlocObserver(logger);
+
+  // set BEFORE Sentry: it wraps these, reports the crash, then calls ours
+  FlutterError.onError = (details) {
+    logger.debug('FlutterError: ${details.exceptionAsString()}');
+    FlutterError.presentError(details); // keep the usual console dump
+  };
+  PlatformDispatcher.instance.onError = (error, stack) {
+    logger.debug('Uncaught: $error');
+    return true; // handled: keep the app running
+  };
+
+  await SentryFlutter.init(
+    (options) {
+      options.dsn = const String.fromEnvironment('SENTRY_DSN');
+      options.environment = config.name;
+    },
+    appRunner: () => runApp(const ReadlyApp()),
+  );
+}
+```
+
+</CodeBlock>
+
+الـ `setupDependencies` بقت قبل `SentryFlutter.init` مش جوه الـ `appRunner` زي درس التوسّع، عشان الـ logger والـ handlers يبقوا جاهزين قبل الـ init. ولأنها بتحمّل الـ prefs (درس الـ Settings)، بقت async ومحتاجة `ensureInitialized` قبلها.
+
+لاحظ إن الـ handlers بتوعنا بيكتبوا `debug` مش `error`. إرسال الـ crash شغلة Sentry، ولو كتبناه `error` الـ SentryLogger هيبعته تاني، والـ crash الواحد هيتسجل مرتين.
+
+### الـ crash ده من أنهي نسخة؟
+
+Sentry قالك إن في crash، بس لازم تعرف هو من أنهي flavor وأنهي نسخة، وإلا مش هتعرف الـ fix بتاعك وصل ولا لأ. الـ <b>environment</b> بيقول الـ flavor، والـ <b>release</b> بيقول النسخة.
+
+الـ release مش محتاج تعمل فيه حاجة: `sentry_flutter` بيحطه لوحده من بيانات الـ app، بالشكل `package@version+build` (يعني `app.readly@1.4.0+42`). الـ `SENTRY_RELEASE` محتاجه في حالتين بس: عشان الاسم يطابق الاسم اللي `sentry_dart_plugin` بيرفع بيه الـ symbols، أو عشان تتحكم في الاسم بنفسك.
+
+<CodeBlock label="الـ options">
+
+```dart
+(options) {
+  options.dsn = const String.fromEnvironment('SENTRY_DSN');
+  options.environment = config.name; // dev or prod, from the flavor
+  // optional: the default is package@version+build from the app itself
+  const release = String.fromEnvironment('SENTRY_RELEASE');
+  if (release.isNotEmpty) options.release = release;
+},
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ build في الـ CI">
+
+```bash
+flutter build appbundle --flavor prod -t lib/main_prod.dart \
+  --obfuscate --split-debug-info=build/symbols \
+  --dart-define=SENTRY_DSN=$SENTRY_DSN \
+  --dart-define=SENTRY_RELEASE=readly@1.4.0+42
+```
+
+</CodeBlock>
+
+- <b>الـ environment من الـ AppConfig:</b> فمش هتلاقي crash من موبايلك وسط crashes المستخدمين. والأبسط إن dev مايتبنيش بـ DSN أصلًا، فـ Sentry يفضل مقفول فيه.
+- <b>الـ release بيربط الـ issue بالنسخة:</b> أول ما تنزّل 1.4.1، Sentry يقولك الـ issue اختفت، ولو رجعت تاني بيعلّمها regression.
+- <b>الـ obfuscate:</b> الـ stack trace بيبقى رموز مش مفهومة، و`sentry_dart_plugin` بيرفع الـ symbols بعد الـ build عشان Sentry يفكها. لو الـ plugin بيرفع باسم release غير اللي الـ app بيبعته، ابعت نفس الاسم للاتنين من الـ CI، وده سبب الـ `SENTRY_RELEASE` في الـ build اللي فوق.
+
+<Diagram name="d-observability-flow">
+
+كل مصادر الـ logs بتكلّم AppLogger بس. في dev بتروح الـ console، وفي prod الـ info والـ warning بيبقوا breadcrumbs على الجهاز، والـ error بس بيبقى issue وبياخد الـ breadcrumbs معاه. والـ crashes اللي محدش مسكها بيبعتها Sentry بنفسه.
+
+</Diagram>
+
 
 </Level>
 
 <Level n="4" title="قرارات الـ senior">
 
-الـ trade-offs والأخطاء الشائعة.
+- <b>الـ level هو قرار مين يتحرك:</b> `error` معناها إن حد في الفريق لازم يفتح الكود. لو محدش هيعمل حاجة، يبقى `warning` أو `info`. ده اللي بيخلي كل issue في Sentry تستاهل تتفتح.
+- <b>الضوضاء بتقتل الـ monitoring:</b> لو الـ dashboard فيه 500 issue كل يوم، محدش هيلاحظ الـ crash الجديد. اعمل alerts على الـ issues الجديدة والـ regressions بس، مش على كل event. ولو 404 لكتاب اتمسح بقى بيوصل كتير، يبقى ده فشل متوقع ويستاهل Failure خاص بيه مش issue.
+- <b>الـ sampling:</b> `options.sampleRate` للأخطاء خليه `1.0`، لأن كل crash مهم. الـ `tracesSampleRate` بتاع الـ performance حاجة تانية، وخليه قليل زي `0.1`. ولو error واحد بيتكرر آلاف المرات في loop، الـ sampling مش هو الحل: الحل تصلحه.
+- <b>الخصوصية من البداية:</b> `sendDefaultPii` يفضل `false`. حط المستخدم بـ `SentryUser(id: ...)` بالـ id بتاعه مش الإيميل. ماتسجّلش states ولا bodies كاملة، وبالذات notes. واستخدم `options.beforeSend` كآخر شبكة تشيل أي حاجة فاتت قبل ما الـ event يخرج من الجهاز.
+- <b>الـ Domain يفضل نضيف:</b> الـ use cases غالبًا مش محتاجة logger، لأن الـ guard والـ BlocObserver مغطيين. ولو احتاجته، الـ AppLogger contract مافيهوش import لـ Sentry، فالـ Domain مايعرفش مين بيسمع.
+- <b>Sentry ولا Crashlytics؟</b> Crashlytics مجاني ولو انت أصلًا على Firebase. Sentry فيه breadcrumbs أغنى وreleases وperformance، وممكن تعمله self-host. ولأن الكل بيكلّم AppLogger، التبديل class واحدة. ولو عندك staging، اعمل logger بيوزّع على ConsoleLogger وSentryLogger مع بعض.
 
 <Note kind="interview" title="سؤال interview">
 
-السؤال، والإجابة القوية.
+«تفرّق إزاي بين error لازم يتبعت لـ Sentry وerror يتعرض للمستخدم بس؟» بسؤال واحد: مين يقدر يصلحه؟ لو المستخدم أو الظروف (النت فاصل، الـ session انتهت، input غلط، أو رد business زي 409 «الإيميل مستخدم»)، تبقى Failure متوقعة: رسالة مترجمة للمستخدم وbreadcrumb بس. لو مفيش غير المطوّر اللي يصلحه (bug، 4xx الـ endpoint مابيرجّعهوش كرد طبيعي، cache بايظ، exception محدش مسكها)، تتبعت لـ Sentry. وفي حالات الاتنين مع بعض، زي CacheFailure: المستخدم يشوف رسالة، والفريق ياخد issue. والقرار ده في مكانين معروفين بس: `isReportable` جنب الـ sealed Failure للقاعدة العامة، و`expected` جنب كل endpoint للاستثناءات بتاعته، مش متوزع في الـ Cubits.
 
 </Note>
+
 
 </Level>
 
 <Quiz>
 
 <Question id="observability-1">
-<Ask>السؤال الأول؟</Ask>
+<Ask>ليه NetworkFailure مابتتبعتش لـ Sentry كـ error؟</Ask>
 <Answer>
 
-الإجابة.
+لأنها متوقعة وسببها نت المستخدم، ومحدش في الفريق يقدر يصلحها. لو اتبعتت هتغرق الـ dashboard وتخبّي الـ crashes الحقيقية، فبتبقى breadcrumb بس.
+
+</Answer>
+</Question>
+
+<Question id="observability-2">
+<Ask>مستخدم بعتلك screenshot لـ crash في نسخة 1.4.0. هتلاقيه في Sentry إزاي، وتعرف هو عمل إيه قبله منين؟</Ask>
+<Answer>
+
+تفلتر بالـ environment `prod` والـ release `readly@1.4.0+42`، وتفتح الـ issue. والـ breadcrumbs اللي معاه بتوريك الشاشات اللي فتحها والطلبات وتغييرات الـ states قبل الـ crash.
+
+</Answer>
+</Question>
+
+<Question id="observability-3">
+<Ask>بعد release جديد، `AddBookToLibrary` بيرجع 422 لـ 300 مستخدم. يتبعت لـ Sentry ولا ده input غلط والمستخدم يتصرف؟</Ask>
+<Answer>
+
+يتبعت. الـ 422 مش في الـ `expected` بتاع الـ endpoint ده، يعني مش رد business ليه رسالة. معناه إن الـ app بيبعت request السيرفر رافضه: bug عندنا أو الـ API اتغير، والمستخدم مايقدرش يصلحه. وSentry هيجمعهم في issue واحد عليه 300 مستخدم، وده بالظبط الإشارة اللي محتاجها.
 
 </Answer>
 </Question>

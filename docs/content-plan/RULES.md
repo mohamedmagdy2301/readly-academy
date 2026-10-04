@@ -52,14 +52,45 @@
 | الـ entities | `Book`، `BookId` (extension type)، `Email`، `Password` |
 | library | `LibraryRepository` (contract)، `LibraryRepositoryImpl`، `LibraryRemoteSource`، `GetLibrary`، `AddBookToLibrary`، `LibraryCubit` بـ `LibraryLoading`/`LibraryLoaded`/`LibraryError` |
 | catalog | `SearchBooks`، `CatalogSearchCubit` بـ `SearchIdle`/`SearchLoading`/`SearchLoaded`/`SearchError` |
-| auth | `AuthCubit`، `AuthInterceptor(_tokens, _refreshDio, _dio)`، `TokenStore` |
+| auth | `AuthCubit`، `AuthInterceptor(_tokens, _refreshDio, _dio)` (بيعدّي الطلبات اللي عليها `extra['skipAuth']`، وبيمسح الـ tokens بس لو الـ refresh رجع 401)، `TokenStore` (`accessToken`، `refreshToken`، `save`، `clear`، `onCleared`) |
 | settings | `SettingsCubit` (في درس الترجمة) |
 | offline | `AppDatabase` (drift)، `SyncService`، `Clock`/`SystemClock` |
 | DI | `final getIt = GetIt.instance;`، والـ Cubits بـ `registerFactory` والباقي بـ `registerLazySingleton` |
 | الترجمة | `AppLocalizations.of(context)!`، و`failure.localized(l10n)` |
 | الـ UI | `BlocProvider(create: (_) => getIt<X>()..load())`، والـ `switch` على الـ state |
+| auth (الدروس الجديدة) | `AuthState` ← `AuthUnknown`/`Authenticated`/`Unauthenticated(sessionExpired:)`، و`AuthRepository`/`AuthRepositoryImpl`، و`SignIn(SignInParams(email:, password:))`، و`LoginCubit` بـ `LoginFormState` و`FormStatus` |
+| الصفحات | `PagedResult<T>(items:, hasMore:)`، و`CatalogRepository`/`CatalogRepositoryImpl`، و`CatalogRemoteSource`، و`CatalogCubit` بـ `CatalogLoading`/`CatalogLoaded(books:, hasReachedEnd:, loadMoreFailure:)`/`CatalogError`. والـ `CatalogCubit` هو `CatalogSearchCubit` بعد ما كبر، مش Cubit تاني |
+| settings | `SettingsStore`/`SettingsStoreImpl` فوق `SharedPreferencesWithCache`، و`SettingsState(themeMode:, locale:)` |
+| الـ logging | `AppLogger` (contract في `core`) ← `ConsoleLogger` في dev، و`SentryLogger` في prod |
 
 لو احتجت اسم جديد، خليه بنفس النمط ده.
+
+### أنماط ثابتة
+
+- <b>الـ Cubits بتتسجل `registerFactory`</b>، ما عدا `AuthCubit`. ده بيتسجل `registerLazySingleton`، لأن كود بره الـ widget tree بيوصله بـ `getIt<AuthCubit>()` (الـ router والـ reset بعد الـ logout)، فلازم يبقى نفس النسخة. أما `SettingsCubit` فـ factory عادي، بس الـ provider بتاعه فوق الـ `MaterialApp`، فبيتعمل مرة واحدة بس.
+- <b>الـ error اللي بيحصل والبيانات ظاهرة مش state لوحده.</b> زي error الصفحة 4 أو فشل الـ refresh، ده حقل جوه الـ Loaded state (`loadMoreFailure` أو `refreshFailure`)، فالبيانات تفضل والـ UI تعرض الخطأ في الـ footer أو في snackbar من `BlocListener`.
+- <b>الـ bootstrap بالترتيب ده</b> (`main_<flavor>.dart` بينادي `bootstrap(config)`):
+
+```dart
+Future<void> bootstrap(AppConfig config) async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await setupDependencies(config);        // async: loads prefs, clears stale Keychain
+  // error handlers, then Bloc.observer (unit 8)
+  await SentryFlutter.init(/* ... */, appRunner: () => runApp(const ReadlyApp()));
+}
+```
+
+### الكود بيكبر مع الكورس
+
+بعض الـ APIs بتتغير في دروس متأخرة. استخدم الشكل اللي يناسب <b>الوحدة اللي بتكتب فيها</b>، ماتستخدمش شكل لسه ماتشرحش:
+
+| الـ API | قبل | من أول |
+| --- | --- | --- |
+| `SearchBooks` | بيرجّع `Future<Result<List<Book>>>` | درس الـ Pagination (`05-presentation/05`): بيرجّع `PagedResult<Book>` |
+| `guard` | `guard(() async => ...)` | درس الـ Observability (`08-production/02`): بياخد `logger:` و`operation:` و`expected:` |
+| `setupDependencies` | `void setupDependencies()` في درس الـ DI | درس الـ Settings (`06-di-scale/03`): `Future<void> setupDependencies(...) async` |
+
+ولو انت اللي بتغيّر API في درسك، قول ده في `<Note kind="info" title="X اتغيّر هنا">`: كان إيه، وبقى إيه، ومين اللي بينادي عليه لازم يتغير.
 
 ## 6. قواعد الـ MDX
 

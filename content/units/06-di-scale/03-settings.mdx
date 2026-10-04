@@ -1,47 +1,418 @@
 ---
 title: "Settings: feature من غير domain"
-description: "سطر واحد بيقول الدرس ده عن إيه."
-minutes: 15
+description: "مش كل feature محتاجة الطبقات التلاتة. الإعدادات بتقرا وتكتب قيم وخلاص، فالـ Cubit بيكلّم الـ storage من ورا contract على طول."
+minutes: 30
 draft: true
 ---
 
 <Level n="1" title="الفكرة بتشبيه">
 
-<Analogy title="اسم التشبيه">
+<Analogy title="تكييف الصالة">
 
-اشرح الفكرة بحاجة من الحياة اليومية، من غير كود.
+في المطعم، طلب الأكل بيعدّي على الجرسون والشيف والمخزن، لأن الشيف عنده وصفات وقواعد لازم تتطبق. لكن لو زبون قال «وطّي التكييف شوية»، الجرسون بيروح للريموت على طول، ومش بيدخل المطبخ. مفيش وصفة لدرجة الحرارة. والمدير بيكتب في كشكول إن الصالة دي بتحب 22، عشان بكرة تتظبط من أول ما المطعم يفتح.
 
 </Analogy>
+
+في Readly الإعدادات (الثيم واللغة) هي التكييف ده. مفيش قاعدة business تحميها، القيمة بتتقرا وتتحفظ وخلاص. لو عدّيناها على use case وentity وrepository، هنكتب 3 classes كل واحدة بتنادي اللي بعدها من غير ما تضيف حاجة.
+
+<Diagram name="d-settings-layers">
+
+library فيها قواعد ومصادر بيانات كتير، فبتعدّي على كل الطبقات. settings مالهاش قواعد، فالـ Cubit بيكلّم الـ contract على طول، والخانة بتاعة الـ domain فاضية.
+
+</Diagram>
 
 </Level>
 
 <Level n="2" title="الكود الأساسي">
 
-اشرح أبسط كود للفكرة.
+في درس الترجمة عملنا `SettingsCubit` بيمسك اللغة بس (`Cubit<Locale>`)، وكان بيقرا من `SettingsStore` من غير ما نشوفه. هنا هنكبّره: يمسك الثيم كمان، ونكتب الـ contract والـ implementation بتاعه.
 
-<CodeBlock label="وصف قصير للكود">
+الـ feature كلها فولدرين بس:
 
-```dart
-// code here
+<CodeBlock label="هيكل الـ feature">
+
+```text
+lib/features/settings/
+  data/
+    settings_store.dart        // contract + SharedPreferences impl
+  presentation/
+    settings_cubit.dart
+    settings_page.dart
 ```
 
 </CodeBlock>
 
+الـ <b>shared_preferences</b> هو package بيحفظ قيم صغيرة (key-value) على الجهاز، وبيفضل موجود بعد ما الـ app يتقفل. ونسخته `SharedPreferencesWithCache` بتحمّل القيم في الذاكرة مرة واحدة، وبعدها القراية sync.
+
+<CodeBlock label="الـ contract والـ implementation">
+
+```dart
+abstract interface class SettingsStore {
+  ThemeMode get themeMode;
+  Locale? get savedLocale;
+  Future<void> saveThemeMode(ThemeMode mode);
+  Future<void> saveLocale(Locale locale);
+}
+
+class SettingsStoreImpl implements SettingsStore {
+  SettingsStoreImpl(this._prefs);
+  final SharedPreferencesWithCache _prefs;
+
+  static const _themeKey = 'settings.theme_mode';
+  static const _localeKey = 'settings.locale';
+
+  @override
+  ThemeMode get themeMode =>
+      ThemeMode.values.asNameMap()[_prefs.getString(_themeKey)] ?? ThemeMode.light;
+
+  @override
+  Locale? get savedLocale {
+    final code = _prefs.getString(_localeKey);
+    return code == null ? null : Locale(code);
+  }
+
+  @override
+  Future<void> saveThemeMode(ThemeMode mode) => _prefs.setString(_themeKey, mode.name);
+
+  @override
+  Future<void> saveLocale(Locale locale) =>
+      _prefs.setString(_localeKey, locale.languageCode);
+}
+```
+
+</CodeBlock>
+
+- <b>الـ ThemeMode بيتحفظ بالاسم</b> (`'dark'`) مش بالـ index، عشان لو ترتيب الـ enum اتغير القيمة المحفوظة ماتبوظش.
+- <b>الـ contract هنا مش عشان «نقاوة» الطبقات.</b> هو عشان الـ Cubit مايعرفش shared_preferences، فتقدر تختبره بنسخة مزيفة وتبدّل الـ storage من غير ما تلمسه.
+
+<CodeBlock label="الـ state والـ Cubit">
+
+```dart
+final class SettingsState {
+  const SettingsState({required this.themeMode, required this.locale});
+  final ThemeMode themeMode;
+  final Locale locale;
+
+  SettingsState copyWith({ThemeMode? themeMode, Locale? locale}) => SettingsState(
+        themeMode: themeMode ?? this.themeMode,
+        locale: locale ?? this.locale,
+      );
+}
+
+class SettingsCubit extends Cubit<SettingsState> {
+  SettingsCubit(this._store)
+      : super(SettingsState(
+          themeMode: _store.themeMode,
+          locale: _store.savedLocale ?? const Locale('ar'),
+        ));
+
+  final SettingsStore _store;
+
+  Future<void> changeTheme(ThemeMode mode) async {
+    await _store.saveThemeMode(mode);
+    emit(state.copyWith(themeMode: mode));
+  }
+
+  Future<void> changeLocale(Locale locale) async {
+    await _store.saveLocale(locale);
+    emit(state.copyWith(locale: locale));
+  }
+}
+```
+
+</CodeBlock>
+
+مفيش use case ولا `Result` ولا `Failure`. الـ Cubit بيقرا القيم وهو بيتعمل، وبيحفظ قبل ما يعمل emit، زي اللي عملناه في درس الترجمة بالظبط.
+
+<CodeBlock label="الـ MaterialApp بيقرا من الـ Cubit">
+
+```dart
+class ReadlyApp extends StatelessWidget {
+  const ReadlyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) => BlocProvider(
+        create: (_) => getIt<SettingsCubit>(),
+        child: BlocBuilder<SettingsCubit, SettingsState>(
+          builder: (context, settings) => MaterialApp.router(
+            theme: AppTheme.light,
+            darkTheme: AppTheme.dark,
+            themeMode: settings.themeMode,
+            locale: settings.locale,
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            routerConfig: router,
+          ),
+        ),
+      );
+}
+```
+
+</CodeBlock>
+
+الـ `BlocProvider` هنا فوق الـ MaterialApp نفسه، فالـ Cubit ده بيعيش طول عمر الـ app، وأي شاشة تقدر توصله بـ `context.read<SettingsCubit>()`. ومن غير `darkTheme`، الـ `themeMode` مالوش أي تأثير.
+
+<CodeBlock label="صفحة الإعدادات">
+
+```dart
+BlocBuilder<SettingsCubit, SettingsState>(
+  builder: (context, settings) => SwitchListTile(
+    title: Text(AppLocalizations.of(context)!.darkMode),
+    value: settings.themeMode == ThemeMode.dark,
+    onChanged: (on) => context
+        .read<SettingsCubit>()
+        .changeTheme(on ? ThemeMode.dark : ThemeMode.light),
+  ),
+)
+```
+
+</CodeBlock>
+
+| الحاجة | بتتحفظ فين | ليه |
+| --- | --- | --- |
+| الثيم واللغة | shared_preferences | قيم صغيرة ومش سرية |
+| الـ tokens (`TokenStore`) | flutter_secure_storage | سرية، لازم تتشفّر |
+| الكتب والملاحظات | drift (`AppDatabase`) | بيانات كتير ليها علاقات وبتتزامن |
+
 </Level>
 
-<Level n="3" title="التفاصيل والحالات الصعبة">
+<Level n="3" title="المشاكل الحقيقية وحلولها">
 
-الحالات اللي بتظهر في المشاريع الحقيقية.
+### الثيم الغلط بيوَمّض أول ما الـ app يفتح
+
+<b>اللي بيبوظ:</b> المستخدم مختار dark. الـ app بيفتح أبيض لجزء من الثانية، وبعدين يقلب أسود. ولو لغته إنجليزي، أول frame بيطلع عربي.
+
+<b>ليه:</b> الـ getters في `SettingsStoreImpl` sync، بس ده بيشتغل بس لو الـ prefs اتحمّلت قبل كده. لو حمّلتها بعد `runApp` (في `FutureBuilder`، أو بـ `load()` async في الـ Cubit)، أول frame بيترسم بالـ state الافتراضية، وبعدين القيم الحقيقية توصل والشاشة تتعاد قدام المستخدم.
+
+<Diagram name="d-settings-startup">
+
+فوق: أول frame اترسم قبل ما الـ prefs تجهز، فاتعاد رسمه بالقيم الحقيقية قدام المستخدم. تحت: الـ prefs بتتحمّل قبل runApp والـ splash لسه ظاهرة، فأول frame بيطلع صح.
+
+</Diagram>
+
+<b>الحل:</b> حمّل الـ prefs قبل `runApp`، وسجّلها في get_it كـ `registerSingleton` (اللي بيتعمل فورًا، زي ما شفنا في درس الـ DI). كده `SettingsCubit` بيقرا القيم الصح في الـ constructor نفسه:
+
+<CodeBlock label="di/setup.dart وmain.dart">
+
+```dart
+Future<void> setupDependencies() async {
+  final prefs = await SharedPreferencesWithCache.create(
+    cacheOptions: const SharedPreferencesWithCacheOptions(),
+  );
+
+  getIt
+    ..registerSingleton<SharedPreferencesWithCache>(prefs)
+    ..registerLazySingleton<SettingsStore>(() => SettingsStoreImpl(getIt()))
+    ..registerFactory<SettingsCubit>(() => SettingsCubit(getIt()));
+  // ... library, catalog, auth as before
+}
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized(); // plugins need the binding first
+  await setupDependencies();
+  runApp(const ReadlyApp());
+}
+```
+
+</CodeBlock>
+
+الـ await ده بياخد ملّي ثواني، والـ native splash بتفضل ظاهرة لحد أول frame، فالمستخدم مش بيشوف أي تأخير. والـ `SettingsCubit` بيتسجل factory عادي، بس بيتعمل مرة واحدة بس لأن الـ `BlocProvider` بتاعه فوق الـ app كله.
+
+### ThemeMode.system: الـ Switch بيكدب
+
+<b>اللي بيبوظ:</b> موبايل المستخدم dark، والـ app فاتح (light) لأن الافتراضي `ThemeMode.light`. ولو غيّرت الافتراضي لـ `ThemeMode.system`، الـ app هيبقى dark صح، بس الـ Switch هيبان مقفول، لأن `system == dark` غلط. ولو المستخدم داس عليه مرة، اختيار «زي الجهاز» بيضيع ومايرجعش.
+
+<b>ليه:</b> الثيم ليه 3 قيم مش اتنين. الـ Switch بيعرض bool، فمش هيعرف يعرض «زي الجهاز». وأي كود بيسأل «هل الـ app dark دلوقتي؟» من الـ state هيغلط، لأن الإجابة في الحالة دي في إيد نظام التشغيل.
+
+<b>الحل:</b> الافتراضي `system`، والـ UI بيعرض التلات اختيارات، واللي عايز يعرف الثيم الفعلي يسأل `Theme.of(context)`:
+
+<CodeBlock label="الافتراضي system، والـ UI بتلات اختيارات">
+
+```dart
+// SettingsStoreImpl
+@override
+ThemeMode get themeMode =>
+    ThemeMode.values.asNameMap()[_prefs.getString(_themeKey)] ?? ThemeMode.system;
+
+// settings page
+BlocBuilder<SettingsCubit, SettingsState>(
+  builder: (context, settings) {
+    final l10n = AppLocalizations.of(context)!;
+    return SegmentedButton<ThemeMode>(
+      segments: [
+        ButtonSegment(value: ThemeMode.system, label: Text(l10n.themeSystem)),
+        ButtonSegment(value: ThemeMode.light, label: Text(l10n.themeLight)),
+        ButtonSegment(value: ThemeMode.dark, label: Text(l10n.themeDark)),
+      ],
+      selected: {settings.themeMode},
+      onSelectionChanged: (s) => context.read<SettingsCubit>().changeTheme(s.single),
+    );
+  },
+)
+
+// anywhere: the theme actually on screen
+final isDark = Theme.of(context).brightness == Brightness.dark;
+```
+
+</CodeBlock>
+
+اللغة ليها نفس الحكاية: `locale: null` في الـ MaterialApp معناها «اتبع لغة الجهاز». لو عايز الاختيار ده، خلي `locale` في `SettingsState` nullable بدل `Locale('ar')` الثابتة.
+
+### الإعدادات بتتمسح مع الـ logout
+
+<b>اللي بيبوظ:</b> حد كتب في الـ logout `prefs.clear()` «عشان نبقى في الأمان». المستخدم مختار إنجليزي وdark، يعمل logout، يلاقي شاشة الـ login عربي وفاتحة.
+
+<b>ليه:</b> نفس ملف الـ prefs فيه حاجات تبع الجهاز (الثيم واللغة) وحاجات تبع الحساب. `clear()` مابيفرّقش. والعكس كمان بيحصل: لو مسحت الـ storage من تحت الـ Cubit من غير ما يعمل emit، الشاشة هتفضل على القيم القديمة لحد ما الـ app يتقفل ويتفتح، فالـ UI والـ storage مش متفقين.
+
+<b>الحل:</b> قسّم كل key حسب صاحبه. الثيم واللغة تبع الجهاز، فبيفضلوا بعد الـ logout. والـ logout بيمسح اللي تبع الحساب بس، وكل store بيمسح مفاتيحه هو (`TokenStore` يمسح الـ tokens، و`AppDatabase` بيانات المستخدم). ماحدش يعمل `clear()` على الملف كله.
+
+ولو المنتج قرر إن الإعدادات ترجع للافتراضي مع الـ logout (مثلًا جهاز مشترك في مكتبة)، يبقى الـ Cubit هو اللي يعمل ده، عشان الـ state والـ storage يتغيروا مع بعض:
+
+<CodeBlock label="reset من الـ Cubit نفسه">
+
+```dart
+// SettingsStore
+Future<void> clear();
+
+// SettingsStoreImpl: removes its own keys only
+@override
+Future<void> clear() async {
+  await _prefs.remove(_themeKey);
+  await _prefs.remove(_localeKey);
+}
+
+// SettingsCubit
+Future<void> reset() async {
+  await _store.clear();
+  emit(const SettingsState(themeMode: ThemeMode.system, locale: Locale('ar')));
+}
+```
+
+</CodeBlock>
+
+الـ `SettingsCubit` مايعرفش `AuthCubit`، فالـ UI هي اللي بتوصلهم. والـ `BlocListener` لازم يبقى <b>تحت</b> الـ provider بتاع الاتنين، لأن لو حطيته بره `ReadlyApp`، الـ `context.read<SettingsCubit>()` هيرمي `ProviderNotFoundException`. علشان كده الـ `ReadlyApp` بتاع Level 2 بيكبر:
+
+<CodeBlock label="ReadlyApp: الـ providers فوق والـ listener جواهم">
+
+```dart
+class ReadlyApp extends StatelessWidget {
+  const ReadlyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) => MultiBlocProvider(
+        providers: [
+          BlocProvider(create: (_) => getIt<AuthCubit>()),
+          BlocProvider(create: (_) => getIt<SettingsCubit>()),
+        ],
+        // below both providers, so context.read finds them
+        child: BlocListener<AuthCubit, AuthState>(
+          listenWhen: (prev, curr) => prev is Authenticated && curr is! Authenticated,
+          listener: (context, _) => context.read<SettingsCubit>().reset(),
+          child: BlocBuilder<SettingsCubit, SettingsState>(
+            builder: (context, settings) => MaterialApp.router(
+              theme: AppTheme.light,
+              darkTheme: AppTheme.dark,
+              themeMode: settings.themeMode,
+              locale: settings.locale,
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              routerConfig: router,
+            ),
+          ),
+        ),
+      );
+}
+```
+
+</CodeBlock>
+
+### التست: shared_preferences مش موجود في الـ unit test
+
+<b>اللي بيبوظ:</b> تكتب تست للـ `SettingsCubit` بالـ `SettingsStoreImpl` الحقيقي، فيقع بـ `MissingPluginException`.
+
+<b>ليه:</b> shared_preferences plugin بيكلّم Android وiOS، والـ unit test بيشتغل على الـ Dart VM من غير موبايل. في طرق تعمل mock للـ plugin، بس كده التست بيعرف أسماء الـ keys وتفاصيل الـ package، وده مش شغله.
+
+<b>الحل:</b> ده بالظبط سبب وجود الـ contract. اعمل fake store في الذاكرة. وهنا الـ fake أحسن من mock، لأنك عايز تتأكد من القيمة اللي اتحفظت، مش من مين نادى مين:
+
+<CodeBlock label="FakeSettingsStore وblocTest">
+
+```dart
+class FakeSettingsStore implements SettingsStore {
+  FakeSettingsStore({this.themeMode = ThemeMode.system, this.savedLocale});
+
+  @override
+  ThemeMode themeMode;
+  @override
+  Locale? savedLocale;
+
+  @override
+  Future<void> saveThemeMode(ThemeMode mode) async => themeMode = mode;
+  @override
+  Future<void> saveLocale(Locale locale) async => savedLocale = locale;
+  @override
+  Future<void> clear() async {
+    themeMode = ThemeMode.system;
+    savedLocale = null;
+  }
+}
+
+void main() {
+  late FakeSettingsStore store;
+  setUp(() => store = FakeSettingsStore());
+
+  test('starts from saved values, so the first frame is right', () {
+    store
+      ..themeMode = ThemeMode.dark
+      ..savedLocale = const Locale('en');
+    final cubit = SettingsCubit(store);
+    expect(cubit.state.themeMode, ThemeMode.dark);
+    expect(cubit.state.locale, const Locale('en'));
+  });
+
+  blocTest<SettingsCubit, SettingsState>(
+    'changeTheme saves and emits',
+    build: () => SettingsCubit(store),
+    act: (cubit) => cubit.changeTheme(ThemeMode.dark),
+    expect: () => [
+      isA<SettingsState>().having((s) => s.themeMode, 'themeMode', ThemeMode.dark),
+    ],
+    verify: (_) => expect(store.themeMode, ThemeMode.dark),
+  );
+
+  blocTest<SettingsCubit, SettingsState>(
+    'reset clears the store and the state together',
+    build: () => SettingsCubit(store..themeMode = ThemeMode.dark),
+    act: (cubit) => cubit.reset(),
+    expect: () => [
+      isA<SettingsState>().having((s) => s.themeMode, 'themeMode', ThemeMode.system),
+    ],
+    verify: (_) => expect(store.themeMode, ThemeMode.system),
+  );
+}
+```
+
+</CodeBlock>
+
+التست الأول بيحمي من الوميض: لو حد رجّع تحميل القيم لـ `load()` async، الـ state الأولى هتبقى غلط والتست هيقع.
 
 </Level>
 
 <Level n="4" title="قرارات الـ senior">
 
-الـ trade-offs والأخطاء الشائعة.
+الـ domain مش قاعدة بتتطبق على كل feature. هو بيستاهل لما يكون عنده حاجة يحميها:
+
+- <b>في business rule؟</b> «الكتاب مايتضافش للمكتبة مرتين»، «الملاحظة مالهاش لازمة من غير BookId». دي قواعد ليها مكان واحد وتست لوحدها، فمكانها use case. الثيم مالوش قاعدة: أي قيمة من التلاتة صح.
+- <b>في أكتر من مصدر للبيانات؟</b> library بتجيب من الـ API وتكاش في drift وتتزامن وتحل conflicts، فالـ repository بيخبي كل ده. settings مصدرها واحد على الجهاز.
+- <b>في حد تاني بيستخدم نفس المنطق؟</b> لو اتنين features أو Cubitين محتاجين نفس الحسبة، الـ use case بيمنع إنها تتكتب مرتين. الثيم بيقراه Cubit واحد.
+- <b>الـ entity هتبقى نسخة من الـ model؟</b> لو هتعمل `Settings` entity و`SettingsModel` وmapper بينهم وهما نفس الحقول ومفيش invariant، يبقى ده شغل من غير قيمة.
+- <b>اللي مابيتكسرش أبدًا: اتجاه الـ dependencies.</b> تخطّي الـ domain مش معناه إن الـ Cubit يعمل import لـ shared_preferences. الـ Cubit بيعتمد على contract، وget_it بيوصّل الـ implementation في الـ composition root.
+- <b>إزاي يكبر:</b> لو المنتج طلب إن الإعدادات تتزامن مع الحساب على كل الأجهزة، هيبقى في remote وlocal وسياسة conflicts. ساعتها الـ contract يبقى `SettingsRepository` ويتضاف use case. والتغيير ده رخيص، لأن الـ Cubit بيعتمد على contract، فالـ UI مش هتتلمس.
+- <b>بديل: hydrated_bloc.</b> بيحفظ الـ state بتاعة الـ Cubit لوحده من غير store خالص. أقل كود، بس الـ storage بقى لازق في الـ Cubit، ولسه محتاج تجهّز الـ storage بتاعه قبل `runApp`، والتست محتاج يعمل له setup. كويس لو عندك إعدادات كتير، ومش ضروري لقيمتين.
+- <b>الاستثناء لازم يبقى مكتوب.</b> لو الفريق متفق إن كل feature ليها 3 طبقات، اكتب سطرين في README الـ feature ليه settings مختلفة وإيه اللي هيخليها تاخد domain. كده الاستثناء قرار، مش كسل.
 
 <Note kind="interview" title="سؤال interview">
 
-السؤال، والإجابة القوية.
+«امتى تتخطى طبقة الـ domain؟ وإزاي تبرر ده في code review؟» أتخطاها لما الـ feature مافيهاش business rules، ومصدر بياناتها واحد، ومحدش تاني بيستخدم منطقها، زي الثيم واللغة. في الـ review بقول إن الـ domain هنا هيبقى use case بينادي repository بينادي store من غير ما حد فيهم يضيف حاجة. وبوضّح إن الحاجة المهمة اتحافظ عليها: الـ Cubit بيعتمد على contract مش على الـ package، والتست شغال بـ fake. وبحدد امتى القرار يتعكس: لما الإعدادات تتزامن مع السيرفر أو يظهر فيها rule. ولأن الـ Cubit بيعتمد على contract، إضافة الـ domain ساعتها مش هتلمس الـ UI.
 
 </Note>
 
@@ -50,10 +421,28 @@ draft: true
 <Quiz>
 
 <Question id="settings-1">
-<Ask>السؤال الأول؟</Ask>
+<Ask>ليه `SettingsCubit` مش محتاج use case؟</Ask>
 <Answer>
 
-الإجابة.
+لأن مفيش business rule يحميها. هو بيقرا قيمة ويحفظها، فالـ use case هيبقى method بتنادي method من غير ما تضيف حاجة.
+
+</Answer>
+</Question>
+
+<Question id="settings-2">
+<Ask>المستخدم بيشتكي إن الـ app بيفتح أبيض لحظة وبعدين يقلب dark. السبب إيه والحل إيه؟</Ask>
+<Answer>
+
+الـ prefs بتتحمّل بعد أول frame. حمّلها قبل `runApp` وسجّلها بـ `registerSingleton`، فالـ Cubit يقرا القيم الصح في الـ constructor.
+
+</Answer>
+</Question>
+
+<Question id="settings-3">
+<Ask>المنتج طلب إن الثيم واللغة يتزامنوا مع الحساب على كل الأجهزة. إيه اللي يتغير في التصميم؟</Ask>
+<Answer>
+
+بقى في remote وlocal وconflicts، فالـ feature تستاهل domain: `SettingsRepository` وuse case. والـ Cubit بيغيّر الـ dependency بس، والـ UI مابتتلمسش.
 
 </Answer>
 </Question>

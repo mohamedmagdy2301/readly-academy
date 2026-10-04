@@ -1,59 +1,546 @@
 ---
 title: "الـ Forms والـ validation"
-description: "سطر واحد بيقول الدرس ده عن إيه."
-minutes: 15
+description: "الـ TextField بيبعت، والـ Cubit بيمسك حالة الفورم، والـ value objects بتحكم. وإمتى الخطأ يظهر، وعلى أنهي حقل."
+minutes: 30
 draft: true
 ---
 
 <Level n="1" title="الفكرة بتشبيه">
 
-<Analogy title="اسم التشبيه">
+<Analogy title="موظف الشباك">
 
-اشرح الفكرة بحاجة من الحياة اليومية، من غير كود.
+قبل ما تقدّم استمارة في الشهر العقاري، في موظف على الشباك بيبص عليها الأول: «الرقم القومي ناقص رقم»، «نسيت تمضي هنا». الموظف الشاطر <b>مابيقفش فوق راسك وانت بتكتب</b>. بيراجع الخانة لما تخلّصها، أو لما تمد إيدك بالاستمارة. وبيراجع بـ <b>لائحة القواعد الرسمية</b> نفسها اللي جوه بيستخدموها، مش بمزاجه. وفي حاجات هو مايعرفهاش، زي «الرقم ده متسجّل قبل كده». دي بترجع من جوه، ويتكتب جنب نفس الخانة، مش على ورقة لوحدها.
 
 </Analogy>
+
+الفورم في الـ app محتاج نفس الموظف ده. القواعد تتكتب مرة واحدة في مكان واحد. الخطأ يظهر في الوقت الصح، مش من أول حرف. الرد اللي جاي من السيرفر يتكتب جنب الخانة اللي تخصه. والاستمارة ماتتقدّمش مرتين لو المستخدم ضغط مرتين.
 
 </Level>
 
 <Level n="2" title="الكود الأساسي">
 
-اشرح أبسط كود للفكرة.
+في درس الـ Domain عملنا `Email` كـ value object: مايتعملش غير وهو صح. `Password` بنفس الشكل:
 
-<CodeBlock label="وصف قصير للكود">
+<CodeBlock label="Password في الـ domain">
 
 ```dart
-// code here
+// domain/password.dart
+extension type const Password._(String value) {
+  static const minLength = 8;
+
+  static Result<Password> create(String input) => input.length >= minLength
+      ? Success(Password._(input)) // no trim: spaces are part of a password
+      : const Err(ValidationFailure('Password too short'));
+}
 ```
 
 </CodeBlock>
 
+الـ state بتاعة الفورم بتمسك النص زي ما المستخدم كتبه، و<b>بتسأل الـ domain</b> هو صح ولا لأ:
+
+<CodeBlock label="LoginFormState">
+
+```dart
+enum FormStatus { editing, submitting, success, failure }
+
+final class LoginFormState {
+  const LoginFormState({
+    this.email = '',
+    this.password = '',
+    this.status = FormStatus.editing,
+  });
+
+  final String email;
+  final String password;
+  final FormStatus status;
+
+  // the rules live in the domain, the state just asks
+  Result<Email> get emailResult => Email.create(email);
+  Result<Password> get passwordResult => Password.create(password);
+
+  LoginFormState copyWith({String? email, String? password, FormStatus? status}) =>
+      LoginFormState(
+        email: email ?? this.email,
+        password: password ?? this.password,
+        status: status ?? this.status,
+      );
+}
+```
+
+</CodeBlock>
+
+ليه `String` مش `Email`؟ لأن وهو بيكتب «ali@» ده مش Email لسه. الـ Email بيتولد بس لحظة الـ submit، لما يبقى صح.
+
+<CodeBlock label="LoginCubit">
+
+```dart
+class LoginCubit extends Cubit<LoginFormState> {
+  LoginCubit(this._signIn) : super(const LoginFormState());
+
+  final SignIn _signIn;
+
+  void emailChanged(String value) => emit(state.copyWith(email: value));
+  void passwordChanged(String value) => emit(state.copyWith(password: value));
+
+  Future<void> submit() async {
+    if ((state.emailResult, state.passwordResult)
+        case (Success(value: final email), Success(value: final password))) {
+      emit(state.copyWith(status: FormStatus.submitting));
+      final result = await _signIn(SignInParams(email: email, password: password));
+      if (isClosed) return;
+      emit(state.copyWith(
+        status: switch (result) {
+          Success() => FormStatus.success,
+          Err() => FormStatus.failure,
+        },
+      ));
+    }
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `if (... case ...)`:</b> بيطابق النتيجتين مرة واحدة. لو الاتنين Success، بيطلّع `email` و`password` بأنواعهم الحقيقية، `Email` و`Password`.
+- <b>الـ `SignIn`:</b> use case بياخد `SignInParams(email:, password:)` وبيرجّع `Future<Result<void>>`. ولأنه بياخد `Email` مش `String`، مستحيل يوصله إيميل غلط، ومش محتاج يتحقق تاني.
+- <b>بعد النجاح:</b> مش محتاج navigation. الـ AuthCubit هيطلّع loggedIn، والـ redirect اللي عملناه في درس go_router هيوديك للمكتبة لوحده.
+
+<CodeBlock label="الـ UI">
+
+```dart
+class LoginPage extends StatelessWidget {
+  const LoginPage({super.key});
+
+  @override
+  Widget build(BuildContext context) => BlocProvider(
+        create: (_) => getIt<LoginCubit>(),
+        child: const LoginView(),
+      );
+}
+
+class LoginView extends StatelessWidget {
+  const LoginView({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final cubit = context.read<LoginCubit>();
+    return BlocConsumer<LoginCubit, LoginFormState>(
+      listenWhen: (prev, curr) =>
+          prev.status != curr.status && curr.status == FormStatus.failure,
+      listener: (context, state) => ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(l10n.errorLoginFailed))),
+      builder: (context, state) => Column(
+        children: [
+          TextField(
+            onChanged: cubit.emailChanged,
+            keyboardType: TextInputType.emailAddress,
+            decoration: InputDecoration(
+              labelText: l10n.emailLabel,
+              errorText: switch (state.emailResult) {
+                Success() => null,
+                Err(:final failure) => failure.localized(l10n),
+              },
+            ),
+          ),
+          TextField(
+            onChanged: cubit.passwordChanged,
+            obscureText: true,
+            decoration: InputDecoration(
+              labelText: l10n.passwordLabel,
+              errorText: switch (state.passwordResult) {
+                Success() => null,
+                Err(:final failure) => failure.localized(l10n),
+              },
+            ),
+          ),
+          FilledButton(onPressed: cubit.submit, child: Text(l10n.loginButton)),
+        ],
+      ),
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+مفيش `TextEditingController` هنا. الـ TextField بيمسك النص بتاعه لوحده، والـ Cubit بياخد نسخة مع كل حرف عن طريق `onChanged`. يعني الـ Cubit هو اللي بيقرر، والـ TextField بيعرض وبس.
+
+| الحاجة | مكانها | ليه |
+| --- | --- | --- |
+| القاعدة (شكل الإيميل، طول الباسورد) | الـ domain: `Email.create` و`Password.create` | تتكتب مرة، وتتستّ بـ dart test |
+| النص اللي اتكتب، وحالة الإرسال | الـ Cubit: `LoginFormState` | الـ state هي الحقيقة الوحيدة للشاشة |
+| عرض الخطأ ونصه | الـ UI: `errorText` | الترجمة مكانها الـ Presentation |
+
+الكود ده شغال، بس جرّبه وهتلاقي مشاكل على طول: أول ما الشاشة تفتح، الحقلين أحمر. وتحت الاتنين نفس الرسالة. ودي بداية الـ Level الجاي.
+
 </Level>
 
-<Level n="3" title="التفاصيل والحالات الصعبة">
+<Level n="3" title="الفورم في الاستخدام الحقيقي">
 
-الحالات اللي بتظهر في المشاريع الحقيقية.
+### الخطأ بيظهر من أول حرف
+
+الإيميل الفاضي `Err`، فالشاشة بتفتح والحقول حمرا قبل ما المستخدم يعمل أي حاجة. ولما يكتب «a» بيتقاله «الإيميل غلط» وهو لسه بيكتب. القاعدة: <b>الخطأ يظهر بعد ما المستخدم يسيب الحقل، أو بعد ما يضغط «دخول»</b>. ومن بعدها يفضل يتحدث مع كل حرف، فيختفي أول ما يصلّحه.
+
+<CodeBlock label="touched وsubmitAttempted في الـ state">
+
+```dart
+// LoginFormState: new fields (copyWith grows the same way)
+final bool emailTouched;
+final bool passwordTouched;
+final bool submitAttempted;
+
+bool get showEmailError =>
+    (emailTouched || submitAttempted) && emailResult is Err;
+bool get showPasswordError =>
+    (passwordTouched || submitAttempted) && passwordResult is Err;
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ Cubit">
+
+```dart
+void emailBlurred() => emit(state.copyWith(emailTouched: true));
+void passwordBlurred() => emit(state.copyWith(passwordTouched: true));
+
+Future<void> submit() async {
+  emit(state.copyWith(submitAttempted: true)); // show every error now
+  if ((state.emailResult, state.passwordResult)
+      case (Success(value: final email), Success(value: final password))) {
+    // ...same as before
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ UI: Focus بيقول إمتى الحقل اتساب">
+
+```dart
+Focus(
+  onFocusChange: (hasFocus) {
+    if (!hasFocus) cubit.emailBlurred();
+  },
+  child: TextField(
+    onChanged: cubit.emailChanged,
+    // ...
+  ),
+)
+```
+
+</CodeBlock>
+
+<Diagram name="d-forms-timing">
+
+وهو بيكتب «ali@gm» الإيميل غلط، بس الخطأ مستخبي. أول ما يسيب الحقل يظهر. ولما يكمّل «.com»، الـ emailResult بيبقى Success والخطأ بيختفي مع نفس الحرف، من غير ما يستنى يسيب الحقل تاني.
+
+</Diagram>
+
+### نفس الرسالة تحت كل الحقول
+
+`failure.localized(l10n)` بيحوّل أي `ValidationFailure` لـ `l10n.errorInvalidInput`، يعني «البيانات مش صح» تحت الإيميل وتحت الباسورد. ورسالة `'Invalid email'` اللي جوه الـ Failure إنجليزي ومعمولة للـ logs، مش للمستخدم (زي ما قلنا في درس الأخطاء). الحل: الـ ValidationFailure بيقول «اترفض»، و<b>الحقل هو اللي عارف إيه اللي اترفض</b>، فهو اللي يختار المفتاح:
+
+<CodeBlock label="ترجمة الأخطاء حسب الحقل">
+
+```dart
+// presentation/login/login_form_l10n.dart
+extension LoginFormL10n on LoginFormState {
+  String? emailErrorText(AppLocalizations l10n) {
+    if (!showEmailError) return null;
+    if (email.trim().isEmpty) return l10n.errorFieldRequired;
+    return l10n.errorEmailInvalid;
+  }
+
+  String? passwordErrorText(AppLocalizations l10n) {
+    if (!showPasswordError) return null;
+    if (password.isEmpty) return l10n.errorFieldRequired;
+    return l10n.errorPasswordTooShort(Password.minLength);
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="app_ar.arb">
+
+```json
+"errorFieldRequired": "الخانة دي مطلوبة",
+"errorEmailInvalid": "الإيميل ده شكله مش صح",
+"errorPasswordTooShort": "الباسورد لازم يبقى {min} حروف على الأقل",
+"@errorPasswordTooShort": { "placeholders": { "min": { "type": "int" } } }
+```
+
+</CodeBlock>
+
+وفي الـ UI: `errorText: state.emailErrorText(l10n)`. لاحظ إن الرقم 8 جاي من `Password.minLength`. لو الـ domain غيّره لـ 10، الرسالة هتتغير لوحدها، ومفيش رقم مكتوب في مكانين.
+
+### الضغط مرتين على «دخول»
+
+الطلب بياخد ثانية، والمستخدم بيضغط تاني. أو بيضغط Done في الكيبورد والزرار في نفس الوقت. النتيجة طلبين login. هنا مش محتاجين flag زي `_saving` في درس الـ Cubit، لأن الـ status موجودة في الـ state أصلًا:
+
+<CodeBlock label="الـ Cubit">
+
+```dart
+Future<void> submit() async {
+  if (state.status == FormStatus.submitting) return; // already sending
+  emit(state.copyWith(submitAttempted: true));
+  // ...
+}
+```
+
+</CodeBlock>
+
+الـ `emit` بيغيّر الـ state على طول، فالضغطة التانية بتلاقي `submitting` وبترجع. وفي الـ UI بنقفل الزرار والحقول، ونعرض loading:
+
+<CodeBlock label="الـ UI">
+
+```dart
+final submitting = state.status == FormStatus.submitting;
+
+TextField(
+  enabled: !submitting,
+  textInputAction: TextInputAction.done,
+  onSubmitted: (_) => cubit.submit(), // second way to submit
+  // ...
+),
+FilledButton(
+  onPressed: submitting ? null : cubit.submit,
+  child: submitting
+      ? const SizedBox.square(
+          dimension: 20,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        )
+      : Text(l10n.loginButton),
+),
+```
+
+</CodeBlock>
+
+قفل الزرار لوحده مش كفاية، لأن `onSubmitted` من الكيبورد طريق تاني للـ submit. الحماية الحقيقية في الـ Cubit، والزرار المقفول للشكل.
+
+### خطأ من السيرفر يظهر على الحقل نفسه
+
+في حاجات الـ domain مايقدرش يعرفها، والسيرفر بس اللي يعرفها. أشهرها «الإيميل مستخدم» في شاشة إنشاء حساب. وفي الـ login عندنا حالتين زيها: الإيميل أو الباسورد غلط (401)، والإيميل لسه ماتأكدش (403). الـ snackbar العام بتاع Level 2 بيقول «الدخول فشل» لكل ده، وبيختفي بعد ثانيتين، ومش بيشاور على الخانة الغلط.
+
+وفي مشكلة أخطر: الـ guard بيحوّل أي 401 لـ `UnauthorizedFailure`، و`localized` بيترجمها «انتهت الجلسة». المستخدم كتب باسورد غلط، فيتقاله «انتهت الجلسة»! على endpoint الـ login، الـ 401 معناها حاجة تانية، والـ Cubit هو اللي عارف ده:
+
+<CodeBlock label="الـ state">
+
+```dart
+// LoginFormState: server errors that belong to a field
+final bool wrongCredentials;
+final bool emailNotVerified;
+final Failure? failure; // anything else, shown in a snackbar
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ Cubit">
+
+```dart
+void emailChanged(String value) => emit(state.copyWith(
+      email: value,
+      wrongCredentials: false, // the error was about the old value
+      emailNotVerified: false,
+    ));
+
+void passwordChanged(String value) =>
+    emit(state.copyWith(password: value, wrongCredentials: false));
+
+// inside submit(), after the await
+if (isClosed) return;
+emit(switch (result) {
+  Success() => state.copyWith(status: FormStatus.success),
+  // on the login endpoint 401 means wrong credentials, not an expired session
+  Err(failure: UnauthorizedFailure()) =>
+    state.copyWith(status: FormStatus.editing, wrongCredentials: true),
+  Err(failure: ServerFailure(statusCode: 403)) =>
+    state.copyWith(status: FormStatus.editing, emailNotVerified: true),
+  Err(:final failure) =>
+    state.copyWith(status: FormStatus.failure, failure: failure),
+});
+```
+
+</CodeBlock>
+
+<CodeBlock label="الترجمة: خطأ السيرفر الأول">
+
+```dart
+String? emailErrorText(AppLocalizations l10n) {
+  if (emailNotVerified) return l10n.errorEmailNotVerified;
+  if (!showEmailError) return null;
+  // ...
+}
+
+String? passwordErrorText(AppLocalizations l10n) {
+  if (wrongCredentials) return l10n.errorWrongCredentials;
+  if (!showPasswordError) return null;
+  // ...
+}
+```
+
+</CodeBlock>
+
+- <b>الخطأ بيختفي لما القيمة تتغير:</b> «الإيميل ماتأكدش» كان عن الإيميل ده بالذات. أول ما المستخدم يعدّله، الكلام ده ماعادش صح.
+- <b>«الإيميل أو الباسورد غلط» من غير ما تقول أنهي فيهم:</b> لو قلت «الإيميل ده مش متسجّل»، أي حد يقدر يعرف مين عنده حساب في Readly.
+- <b>endpoints الـ auth تعدّي من غير refresh:</b> الـ AuthInterceptor بتاع درس الشبكة بيعمل refresh مع أي 401، ومابيستثنيش `/auth/login`. يعني الباسورد الغلط بيعمل طلب refresh مالوش لازمة، ولو الـ refresh فشل بيمسح الـ session كأنها انتهت. الحل: الـ remote source يعلّم طلبات الـ auth بـ `options.extra['skipAuth'] = true`، والـ interceptor يشيّك عليه في `onError` ويعدّي الخطأ زي ما هو. كده الـ 401 توصل للـ Cubit على طول.
+- <b>الـ snackbar للباقي بس:</b> النت الفاصل والسيرفر الواقع مالهمش خانة، فبيروحوا لـ `failure.localized(l10n)` في الـ listener.
+
+وشاشة إنشاء الحساب بتمشي بنفس الشكل بالظبط: الـ 409 بتبقى `emailTaken: true` على حقل الإيميل، وبتتمسح مع `emailChanged`.
+
+### الـ TextEditingController والـ dispose
+
+لحد دلوقتي الـ Cubit بيسمع من الـ TextField بس. بس لما الباسورد يطلع غلط، عايزين نمسحه. يعني الـ Cubit محتاج يغيّر النص المكتوب، وده محتاج controller. وهنا في 3 فخاخ:
+
+- <b>تعمل الـ controller جوه `build`:</b> مع كل rebuild بيتعمل controller جديد، فالنص بيتمسح والـ cursor بيتنطط.
+- <b>ماتعملوش dispose:</b> كل مرة الشاشة تفتح وتتقفل، controller بيفضل في الميموري.
+- <b>`controller.clear()` مابينادّيش `onChanged`:</b> الحقل اتمسح، بس الـ state لسه فيها الباسورد القديم، فلو ضغط «دخول» هيتبعت الباسورد القديم.
+
+الحل: الـ Cubit هو اللي يمسح الباسورد في الـ state، والـ widget يمشي وراه:
+
+<CodeBlock label="الـ Cubit">
+
+```dart
+Err(failure: UnauthorizedFailure()) => state.copyWith(
+    status: FormStatus.editing,
+    wrongCredentials: true,
+    password: '', // the state owns the text, the controller follows
+  ),
+```
+
+</CodeBlock>
+
+<CodeBlock label="LoginView بقى StatefulWidget">
+
+```dart
+class LoginView extends StatefulWidget {
+  const LoginView({super.key});
+
+  @override
+  State<LoginView> createState() => _LoginViewState();
+}
+
+class _LoginViewState extends State<LoginView> {
+  final _password = TextEditingController(); // created once per screen
+
+  @override
+  void dispose() {
+    _password.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocListener<LoginCubit, LoginFormState>(
+      // fires only when the Cubit changed the text, not the user
+      listenWhen: (prev, curr) => curr.password != _password.text,
+      listener: (context, state) => _password.text = state.password,
+      child: /* same form, and the password TextField gets controller: _password */,
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+وهو بيكتب، `onChanged` بيخلي الـ state زي الـ controller، فالـ listener مابيشتغلش. بيشتغل بس لما الـ Cubit يغيّر النص بنفسه. ونفس الفكرة لو عايز تملا الإيميل من آخر مرة: `TextEditingController(text: ...)` بالقيمة اللي في الـ state.
 
 </Level>
 
 <Level n="4" title="قرارات الـ senior">
 
-الـ trade-offs والأخطاء الشائعة.
+- <b>`Form` و`GlobalKey<FormState>` ولا الـ Cubit؟</b> الـ `TextFormField` بـ `validator` و`_formKey.currentState!.validate()` أسرع لفورم صغير، و`autovalidateMode: AutovalidateMode.onUserInteraction` بيديك سلوك «بعد ما يلمس الحقل» ببلاش. بس الـ validator function جوه الـ widget: القاعدة بتتكرر جنب الـ domain، والاختبار محتاج widget test، وخطأ السيرفر مالوش مكان طبيعي لأن الـ validator sync. في Readly: Cubit وvalue objects لأي فورم بيكلّم use case. والـ `Form` يكفي لفورم مالوش domain، زي «ابعتلنا رأيك» في الـ settings. المهم ماتخلطش الاتنين في نفس الشاشة.
+- <b>زرار مقفول لحد ما الفورم يبقى صح؟</b> شكله حلو، بس المستخدم بيضغط على زرار رمادي ومش فاهم ليه. الأحسن الزرار يفضل مفتوح، والـ submit يعرض كل الأخطاء مرة واحدة (`submitAttempted`). وده أحسن كمان لقارئ الشاشة (screen reader).
+- <b>امتى تستاهل package؟</b> `formz` بيديك `FormzInput` فيه pure وdirty، وده نفس فكرة touched. و`reactive_forms` بيعمل الفورم كله كـ model. يستاهلوا لما يبقى عندك فورمز كتير وكبيرة: 10 حقول، وخطوات، وحقول بتظهر حسب اختيارات. في Readly (login، وإنشاء حساب، وإضافة note) الـ 30 سطر دول أوضح من dependency جديدة. ولو استخدمت formz، خلي الـ `validator` بتاعه ينادي `Email.create`، عشان القاعدة ماتتكتبش مرتين.
+- <b>الـ validation وانت بتكتب من السيرفر:</b> زي «الإيميل متاح؟» في شاشة إنشاء الحساب. ده نفس البحث بالظبط: debounce وrequest id زي `CatalogSearchCubit`. وغالبًا مش مستاهل، لأن خطأ السيرفر على الحقل بعد الـ submit كفاية.
+- <b>السيرفر هو الحكم الأخير:</b> الـ validation في الـ app عشان تجربة المستخدم بس. أي حد يقدر يبعت request من غير الـ app، فالسيرفر لازم يتحقق تاني من كل حاجة.
 
 <Note kind="interview" title="سؤال interview">
 
-السؤال، والإجابة القوية.
+«الـ validation مكانها فين: الـ UI ولا الـ Cubit ولا الـ domain؟» في التلاتة، وكل واحد ليه شغلانة. <b>القاعدة</b> في الـ domain جوه value object زي `Email.create`، فبتتكتب مرة وتتستّ بـ dart test، والـ use case بياخد `Email` فمستحيل يوصله حاجة غلط. <b>الـ Cubit</b> بيسأل الـ domain ويمسك حالة الفورم: النص، وtouched، وsubmitted، وأخطاء السيرفر. <b>الـ UI</b> بتعرض بس، وبتختار النص من الترجمة حسب الحقل. وفوق ده كله، السيرفر بيتحقق تاني، لأن الـ client مايتوثقش فيه.
 
 </Note>
 
 </Level>
 
+<LessonPart title="قبل وبعد والكود">
+
+### الـ LoginCubit كامل
+
+كل اللي في Level 3 متجمّع: الـ touched، ومنع الـ submit المتكرر، وأخطاء السيرفر على الحقول.
+
+```dart
+class LoginCubit extends Cubit<LoginFormState> {
+  LoginCubit(this._signIn) : super(const LoginFormState());
+
+  final SignIn _signIn;
+
+  void emailChanged(String value) => emit(state.copyWith(
+        email: value,
+        wrongCredentials: false,
+        emailNotVerified: false,
+      ));
+
+  void passwordChanged(String value) =>
+      emit(state.copyWith(password: value, wrongCredentials: false));
+
+  void emailBlurred() => emit(state.copyWith(emailTouched: true));
+  void passwordBlurred() => emit(state.copyWith(passwordTouched: true));
+
+  Future<void> submit() async {
+    if (state.status == FormStatus.submitting) return;
+    emit(state.copyWith(submitAttempted: true));
+
+    if ((state.emailResult, state.passwordResult)
+        case (Success(value: final email), Success(value: final password))) {
+      emit(state.copyWith(status: FormStatus.submitting));
+      final result = await _signIn(SignInParams(email: email, password: password));
+      if (isClosed) return;
+      emit(switch (result) {
+        Success() => state.copyWith(status: FormStatus.success),
+        Err(failure: UnauthorizedFailure()) => state.copyWith(
+            status: FormStatus.editing,
+            wrongCredentials: true,
+            password: '',
+          ),
+        Err(failure: ServerFailure(statusCode: 403)) =>
+          state.copyWith(status: FormStatus.editing, emailNotVerified: true),
+        Err(:final failure) =>
+          state.copyWith(status: FormStatus.failure, failure: failure),
+      });
+    }
+  }
+}
+```
+
+</LessonPart>
+
 <Quiz>
 
 <Question id="forms-1">
-<Ask>السؤال الأول؟</Ask>
+<Ask>ليه الـ `LoginFormState` بيخزّن الإيميل `String` مش `Email`؟</Ask>
 <Answer>
 
-الإجابة.
+لأن وهو بيكتب «ali@» ده مش Email صح، والـ Email مايتعملش غير وهو صح. الـ state بتمسك النص الخام، والـ Email بيتولد لحظة الـ submit ويتبعت للـ use case.
+
+</Answer>
+</Question>
+
+<Question id="forms-2">
+<Ask>بعد «الباسورد غلط» عملت `_password.clear()` في الـ widget. المستخدم ضغط «دخول» على طول، والـ Cubit بعت الباسورد القديم. ليه، وتصلّحها إزاي؟</Ask>
+<Answer>
+
+`clear()` مابينادّيش `onChanged`، فالـ state لسه فيها الباسورد القديم. الـ Cubit هو اللي يمسح الباسورد في الـ state، والـ controller يمشي وراه بـ BlocListener.
+
+</Answer>
+</Question>
+
+<Question id="forms-3">
+<Ask>في شاشة إنشاء الحساب، السيرفر رد إن الإيميل مستخدم. تعرضه فين، وإمتى يختفي؟</Ask>
+<Answer>
+
+على حقل الإيميل، كـ flag في الـ state (`emailTaken`)، مش snackbar. ويتمسح في `emailChanged` بس، لأنه كان عن الإيميل ده بالذات. تعديل الباسورد مالوش دعوة بيه.
 
 </Answer>
 </Question>

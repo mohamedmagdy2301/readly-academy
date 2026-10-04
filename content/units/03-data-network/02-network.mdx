@@ -75,9 +75,16 @@ class AuthInterceptor extends Interceptor {
   void onError(DioException err, ErrorInterceptorHandler handler) async {
     final is401 = err.response?.statusCode == 401;
     final alreadyRetried = err.requestOptions.extra['retried'] == true;
-    if (!is401 || alreadyRetried) return handler.next(err);
+    final skipAuth = err.requestOptions.extra['skipAuth'] == true; // login, register
+    if (!is401 || alreadyRetried || skipAuth) return handler.next(err);
 
-    final newToken = await _refreshOnce();
+    final String? newToken;
+    try {
+      newToken = await _refreshOnce();
+    } catch (e) {
+      // the refresh never reached a verdict (offline, server down): pass that error on
+      return handler.next(e is DioException ? e : err);
+    }
     if (newToken == null) return handler.next(err); // becomes UnauthorizedFailure
 
     final options = err.requestOptions
@@ -103,9 +110,14 @@ class AuthInterceptor extends Interceptor {
         final access = res.data['accessToken'] as String;
         await _tokens.save(access: access, refresh: res.data['refreshToken'] as String);
         completer.complete(access);
-      } catch (_) {
-        await _tokens.clear();
-        completer.complete(null);
+      } catch (e) {
+        final rejected = e is DioException && e.response?.statusCode == 401;
+        if (rejected) {
+          await _tokens.clear(); // the server said no: the session is over
+          completer.complete(null);
+        } else {
+          completer.completeError(e); // keep the tokens, the user stays logged in
+        }
       } finally {
         _refreshing = null;
       }
@@ -122,6 +134,8 @@ class AuthInterceptor extends Interceptor {
 3. <b>الـ Completer:</b> أول طلب يبدأ الـ refresh ويحط Completer. أي طلب تاني يلاقيه موجود فيستنى نفس الـ future بدل ما يبدأ refresh جديد.
 4. <b>الـ refreshDio منفصل:</b> لو الـ refresh نفسه رجع 401 وهو معدّي على نفس الـ interceptor، هيدخل في loop لا نهائي.
 5. <b>الـ extra['retried']:</b> بيمنع إن نفس الطلب يتعاد مرتين لو رجع 401 تاني.
+6. <b>الـ extra['skipAuth']:</b> طلبات الـ login والتسجيل الـ remote source بيعلّمها بيه. الـ 401 هناك معناها «الإيميل أو الباسورد غلط»، مش token خلص، فمفيش refresh.
+7. <b>المسح مع 401 بس:</b> الـ tokens بتتمسح بس لو السيرفر رفض الـ refresh token نفسه. لو النت قطع وقت الـ refresh، الـ refresh token لسه سليم، فبيفضل محفوظ والطلب بيفشل كـ NetworkFailure، والمستخدم يفضل جوه.
 
 <CodeBlock label="Retry مع backoff للـ GET بس">
 

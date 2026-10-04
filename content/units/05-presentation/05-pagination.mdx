@@ -1,59 +1,621 @@
 ---
 title: "الـ Pagination والـ infinite scroll"
-description: "سطر واحد بيقول الدرس ده عن إيه."
-minutes: 15
+description: "الكتالوج بيتجاب صفحة ورا صفحة وانت بتعمل scroll، من غير طلبات متكررة، ومن غير ما الليست تتمسح لو حصل error."
+minutes: 30
 draft: true
 ---
 
 <Level n="1" title="الفكرة بتشبيه">
 
-<Analogy title="اسم التشبيه">
+<Analogy title="أمين المكتبة">
 
-اشرح الفكرة بحاجة من الحياة اليومية، من غير كود.
+انت في مكتبة فيها مليون كتاب، وطلبت «كتب عن الطبخ». أمين المكتبة مش هيرمي قدامك 5000 كتاب مرة واحدة. بيجيبلك <b>رف واحد</b>. ولما يشوفك قربت تخلص الرف، بيروح يجيب اللي بعده عشان يوصل قبل ما تخلص. لو ناديته تاني وهو لسه رايح، مش هيروح مرتين. ولو قالك «ده آخر رف» بيبطّل يروح. ولو الرف وقع منه في الطريق، الكتب اللي قدامك بتفضل قدامك، وتقوله «حاول تاني».
 
 </Analogy>
+
+البحث عن «flutter» في الكتالوج ممكن يرجّع آلاف الكتب. لو جبتهم كلهم مرة واحدة، الشاشة هتستنى كتير، والموبايل هيحمّل بيانات مش هيشوفها. الحل إنك تجيب 20 كتاب بس (<b>صفحة</b>)، ولما المستخدم يقرب من آخرهم تجيب الـ 20 اللي بعدهم وتزوّدهم تحت. تقسيم البيانات لصفحات اسمه <b>pagination</b>، وإن الصفحة الجاية تيجي لوحدها وانت بتنزل اسمه <b>infinite scroll</b>.
 
 </Level>
 
 <Level n="2" title="الكود الأساسي">
 
-اشرح أبسط كود للفكرة.
+الـ Open Library بيقسم نتايج البحث لصفحات لوحده. بتبعتله رقم الصفحة وحجمها، وهو بيرجّع الصفحة دي بس:
 
-<CodeBlock label="وصف قصير للكود">
+<CodeBlock label="GET /search.json?q=flutter&page=2&limit=20">
 
-```dart
-// code here
+```json
+{
+  "numFound": 1342,
+  "start": 20,
+  "docs": [{ "key": "/works/OL123W", "title": "Flutter in Action" }]
+}
 ```
 
 </CodeBlock>
 
+`numFound` عدد النتايج كلها، و`start` ترتيب أول كتاب في الصفحة دي. من الاتنين دول نعرف لو في صفحة بعدها ولا لأ.
+
+<CodeBlock label="الـ data: الـ page بيتبعت كـ query parameter">
+
+```dart
+// data/catalog_remote_source.dart
+class CatalogRemoteSource {
+  CatalogRemoteSource(this._dio); // Open Library client, no AuthInterceptor
+  final Dio _dio;
+
+  static const pageSize = 20;
+
+  Future<SearchPageDto> search(String query, {required int page}) async {
+    final res = await _dio.get<Map<String, dynamic>>(
+      '/search.json',
+      queryParameters: {'q': query, 'page': page, 'limit': pageSize},
+    );
+    return SearchPageDto.fromJson(res.data!);
+  }
+}
+
+class SearchPageDto {
+  const SearchPageDto({required this.numFound, required this.start, required this.docs});
+  final int numFound;
+  final int start;
+  final List<BookDto> docs;
+
+  factory SearchPageDto.fromJson(Map<String, dynamic> json) => SearchPageDto(
+        numFound: json['numFound'] as int,
+        start: json['start'] as int,
+        docs: (json['docs'] as List)
+            .map((e) => BookDto.fromJson(e as Map<String, dynamic>))
+            .toList(),
+      );
+}
+```
+
+</CodeBlock>
+
+الـ `queryParameters` بتاع dio بيبني الـ `?q=...&page=...` ويعمل encoding للكلام العربي والمسافات. والـ `BookDto` هنا هو نسخة freezed من درس الـ Data، اللي فيها default للـ status لأن Open Library مابيرجّعهوش.
+
+<CodeBlock label="الـ domain: PagedResult">
+
+```dart
+// domain/paged_result.dart
+class PagedResult<T> {
+  const PagedResult({required this.items, required this.hasMore});
+  final List<T> items;
+  final bool hasMore;
+}
+
+abstract interface class CatalogRepository {
+  Future<Result<PagedResult<Book>>> search(String query, {int page = 1});
+}
+
+class SearchBooks {
+  SearchBooks(this._repository);
+  final CatalogRepository _repository;
+
+  Future<Result<PagedResult<Book>>> call(SearchParams params) =>
+      _repository.search(params.query, page: params.page);
+}
+```
+
+</CodeBlock>
+
+الـ `PagedResult` بيقول حاجتين وبس: الكتب، وهل في صفحة بعدها. الـ Domain مايعرفش `numFound` ولا `start`، دول شكل Open Library. ولو الـ API اتغير بكرة، الـ repository بس اللي هيتعدل.
+
+<Note kind="info" title="SearchBooks اتغيّر هنا">
+
+في درس الـ Domain ودرس الـ Cubit كان `SearchBooks` بيرجّع `List<Book>`. من الدرس ده بيرجّع `PagedResult<Book>`، فأي حد بينادي عليه بياخد `value.items`.
+
+</Note>
+
+<CodeBlock label="الـ repository بيحسب hasMore">
+
+```dart
+// data/catalog_repository_impl.dart
+class CatalogRepositoryImpl implements CatalogRepository {
+  CatalogRepositoryImpl(this._remote);
+  final CatalogRemoteSource _remote;
+
+  @override
+  Future<Result<PagedResult<Book>>> search(String query, {int page = 1}) =>
+      guard(() async {
+        final dto = await _remote.search(query, page: page);
+        return PagedResult(
+          items: dto.docs.map((d) => d.toEntity()).toList(),
+          hasMore: dto.start + dto.docs.length < dto.numFound,
+        );
+      });
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ states">
+
+```dart
+sealed class CatalogState {
+  const CatalogState();
+}
+final class CatalogLoading extends CatalogState {
+  const CatalogLoading();
+}
+final class CatalogError extends CatalogState {
+  const CatalogError(this.failure);
+  final Failure failure;
+}
+final class CatalogLoaded extends CatalogState {
+  const CatalogLoaded(this.books);
+  final List<Book> books;
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ Cubit: loadFirst وloadMore">
+
+```dart
+class CatalogCubit extends Cubit<CatalogState> {
+  CatalogCubit(this._searchBooks) : super(const CatalogLoading());
+
+  final SearchBooks _searchBooks;
+  String _query = '';
+  int _page = 0; // last page we loaded
+
+  Future<void> loadFirst(String query) async {
+    _query = query;
+    emit(const CatalogLoading());
+    final result = await _searchBooks(SearchParams(query: query, page: 1));
+    if (isClosed) return;
+    switch (result) {
+      case Success(:final value):
+        _page = 1;
+        emit(CatalogLoaded(value.items));
+      case Err(:final failure):
+        emit(CatalogError(failure));
+    }
+  }
+
+  Future<void> loadMore() async {
+    final current = state;
+    if (current is! CatalogLoaded) return;
+    final result = await _searchBooks(SearchParams(query: _query, page: _page + 1));
+    if (isClosed) return;
+    if (result case Success(:final value)) {
+      _page++;
+      emit(CatalogLoaded([...current.books, ...value.items])); // new list, not add()
+    }
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ loadFirst:</b> بيبدأ من الصفحة 1، وبيعرض loading الشاشة كلها.
+- <b>الـ loadMore:</b> بيجيب الصفحة اللي بعد آخر صفحة، ويزوّدها تحت الكتب اللي موجودة. مافيش loading للشاشة كلها، المستخدم شايف الليست.
+
+الـ `CatalogCubit` هو الـ `CatalogSearchCubit` بتاع درس الـ Cubit وهو بيكبر، مش Cubit تاني جنبه. الـ `queryChanged` والـ debounce بيفضلوا زي ما هما، بس بعد الـ 350ms بينادوا `loadFirst(query)` بدل `_search`. يعني شاشة الكتالوج فيها Cubit واحد: الكتابة من درس الـ Cubit، والليست والصفحات من هنا. والـ debounce مش ظاهر في الكود هنا عشان نركّز على الصفحات، مش لأنه اتشال.
+
+<CodeBlock label="الـ UI: اطلب الصفحة الجاية قرب الآخر">
+
+```dart
+BlocProvider(
+  create: (_) => getIt<CatalogCubit>()..loadFirst(query),
+  child: BlocBuilder<CatalogCubit, CatalogState>(
+    builder: (context, state) => switch (state) {
+      CatalogLoading() => const Center(child: CircularProgressIndicator()),
+      CatalogError(:final failure) => ErrorView(
+          message: failure.localized(AppLocalizations.of(context)!),
+          onRetry: () => context.read<CatalogCubit>().loadFirst(query),
+        ),
+      CatalogLoaded(:final books) => NotificationListener<ScrollNotification>(
+          onNotification: (n) {
+            if (n.metrics.extentAfter < 500) context.read<CatalogCubit>().loadMore();
+            return false; // let the notification keep bubbling
+          },
+          child: ListView.builder(
+            itemCount: books.length,
+            itemBuilder: (context, i) => BookTile(book: books[i]),
+          ),
+        ),
+    },
+  ),
+)
+```
+
+</CodeBlock>
+
+| الأداة | بتعمل إيه |
+| --- | --- |
+| `ListView.builder` | بيبني الـ items اللي ظاهرة على الشاشة بس، فـ 500 كتاب زي 20 |
+| `NotificationListener<ScrollNotification>` | بيسمع على كل حركة scroll من غير `ScrollController` |
+| `metrics.extentAfter` | المسافة بالـ pixels اللي فاضلة تحت الشاشة لحد آخر الليست |
+
+<Diagram name="d-pagination-scroll">
+
+أول ما المسافة اللي فاضلة تحت الشاشة تقل عن 500px، الـ UI بتنادي loadMore، فالصفحة 3 بتوصل قبل ما المستخدم يخلص الصفحة 2.
+
+</Diagram>
+
 </Level>
 
-<Level n="3" title="التفاصيل والحالات الصعبة">
+<Level n="3" title="المشاكل الحقيقية وحلولها">
 
-الحالات اللي بتظهر في المشاريع الحقيقية.
+### نفس الصفحة بتتحمّل مرتين
+
+الـ `onNotification` بيتنادى مع كل pixel scroll. وانت تحت الـ 500px، الطلب الأول لسه ماوصلش، فـ loadMore بيتنادى 30 مرة، والصفحة 2 بتتطلب 30 مرة وتتزوّد في الليست 30 مرة. الحل flag زي بتاع درس الـ Cubit. لازم يتحط <b>قبل</b> الـ await، عشان الكود اللي قبل أول await بيتنفذ كله مرة واحدة، فمحدش يقدر يعدّي من الباب بعدك:
+
+<CodeBlock label="flag">
+
+```dart
+bool _loadingMore = false;
+
+Future<void> loadMore() async {
+  final current = state;
+  if (current is! CatalogLoaded || _loadingMore) return;
+  _loadingMore = true;
+  final result = await _searchBooks(SearchParams(query: _query, page: _page + 1));
+  _loadingMore = false;
+  if (isClosed) return;
+  if (result case Success(:final value)) {
+    _page++;
+    emit(CatalogLoaded([...current.books, ...value.items]));
+  }
+}
+```
+
+</CodeBlock>
+
+### آخر الليست: hasReachedEnd
+
+لما المستخدم يوصل لآخر كتاب، الـ extentAfter بيفضل أقل من 500، فكل scroll بيبعت طلب لصفحة فاضية. الـ `hasMore` اللي جاي من الـ repository لازم يتحفظ في الـ state:
+
+<CodeBlock label="hasReachedEnd في الـ state">
+
+```dart
+final class CatalogLoaded extends CatalogState {
+  const CatalogLoaded({required this.books, this.hasReachedEnd = false});
+  final List<Book> books;
+  final bool hasReachedEnd;
+}
+
+// in loadFirst
+emit(CatalogLoaded(books: value.items, hasReachedEnd: !value.hasMore));
+
+// in loadMore
+if (current is! CatalogLoaded || _loadingMore || current.hasReachedEnd) return;
+// ...
+emit(CatalogLoaded(
+  books: [...current.books, ...value.items],
+  hasReachedEnd: !value.hasMore,
+));
+```
+
+</CodeBlock>
+
+وبكده الـ UI كمان تقدر تعرض footer تحت: spinner طول ما في صفحات، ولا حاجة لما الليست تخلص.
+
+### error في الصفحة 4: الليست تفضل وretry تحت
+
+لو عملت emit لـ `CatalogError` لما الصفحة 4 تفشل، الـ 60 كتاب اللي المستخدم شافهم هيتمسحوا ويظهرله error الشاشة كلها. الـ error بتاع الصفحات اللي بعد الأولى مش state لوحده، ده <b>حقل جوه CatalogLoaded</b>:
+
+<CodeBlock label="loadMoreFailure">
+
+```dart
+final class CatalogLoaded extends CatalogState {
+  const CatalogLoaded({required this.books, this.hasReachedEnd = false, this.loadMoreFailure});
+  final List<Book> books;
+  final bool hasReachedEnd;
+  final Failure? loadMoreFailure;
+
+  // loadMoreFailure is not "?? this": leaving it out clears it
+  CatalogLoaded copyWith({List<Book>? books, bool? hasReachedEnd, Failure? loadMoreFailure}) =>
+      CatalogLoaded(
+        books: books ?? this.books,
+        hasReachedEnd: hasReachedEnd ?? this.hasReachedEnd,
+        loadMoreFailure: loadMoreFailure,
+      );
+}
+
+Future<void> loadMore() async {
+  final current = state;
+  if (current is! CatalogLoaded || _loadingMore) return;
+  if (current.hasReachedEnd || current.loadMoreFailure != null) return; // no auto-retry on scroll
+  _loadingMore = true;
+  final result = await _searchBooks(SearchParams(query: _query, page: _page + 1));
+  _loadingMore = false;
+  if (isClosed) return;
+  switch (result) {
+    case Success(:final value):
+      _page++;
+      emit(current.copyWith(
+        books: [...current.books, ...value.items],
+        hasReachedEnd: !value.hasMore,
+      ));
+    case Err(:final failure):
+      emit(current.copyWith(loadMoreFailure: failure)); // books stay
+  }
+}
+
+void retryMore() {
+  final current = state;
+  if (current is CatalogLoaded) emit(current.copyWith()); // clears the failure
+  loadMore();
+}
+```
+
+</CodeBlock>
+
+- <b>الـ _page مابيزيدش لو الطلب فشل:</b> فالـ retry بيطلب نفس الصفحة 4، مش 5.
+- <b>الـ scroll مابيعملش retry لوحده:</b> من غير الشرط ده، كل pixel scroll وانت offline هيبعت طلب جديد. الـ retry بيبقى بزرار بس.
+
+<CodeBlock label="الـ footer في الـ UI">
+
+```dart
+CatalogLoaded(:final books, :final hasReachedEnd, :final loadMoreFailure) =>
+    ListView.builder(
+      itemCount: books.length + 1, // +1 for the footer
+      itemBuilder: (context, i) {
+        if (i < books.length) return BookTile(book: books[i]);
+        if (loadMoreFailure != null) {
+          return RetryTile(
+            message: loadMoreFailure.localized(AppLocalizations.of(context)!),
+            onRetry: context.read<CatalogCubit>().retryMore,
+          );
+        }
+        if (hasReachedEnd) return const SizedBox.shrink();
+        return const Center(child: CircularProgressIndicator());
+      },
+    ),
+```
+
+</CodeBlock>
+
+### pull-to-refresh: رجوع لأول صفحة
+
+الـ `RefreshIndicator` بيستنى Future، وبيعرض الـ spinner بتاعه لحد ما يخلص. لو ناديت `loadFirst`، هيعمل emit لـ `CatalogLoading` فالليست تختفي ويظهر spinner تاني في نص الشاشة. الـ refresh بيجيب الصفحة 1 والليست القديمة لسه ظاهرة، ولما توصل بتبدّلها كلها:
+
+<CodeBlock label="refresh">
+
+```dart
+Future<void> refresh() async {
+  final current = state;
+  if (current is! CatalogLoaded) return loadFirst(_query);
+  _loadingMore = true; // no loadMore while page 1 is coming
+  final result = await _searchBooks(SearchParams(query: _query, page: 1));
+  _loadingMore = false;
+  if (isClosed) return;
+  switch (result) {
+    case Success(:final value):
+      _page = 1;
+      emit(CatalogLoaded(books: value.items, hasReachedEnd: !value.hasMore));
+    case Err(:final failure):
+      emit(current.copyWith(refreshFailure: failure)); // keep the old list
+  }
+}
+```
+
+</CodeBlock>
+
+```dart
+RefreshIndicator(
+  onRefresh: context.read<CatalogCubit>().refresh,
+  child: ListView.builder(/* ... */),
+)
+```
+
+لو الـ refresh فشل، الليست القديمة أحسن من شاشة error. ضيف `Failure? refreshFailure` لـ `CatalogLoaded` بنفس طريقة `loadMoreFailure`، واعرضه snackbar من `BlocListener` بـ `listenWhen: (_, curr) => curr is CatalogLoaded && curr.refreshFailure != null`.
+
+### كلمة البحث اتغيرت والصفحة لسه بتحمّل
+
+المستخدم نزل لحد الصفحة 3 بتاعة «flutter»، والطلب لسه راجع، فكتب «dart». الـ loadFirst جاب الصفحة 1 بتاعة dart، وبعدها وصلت الصفحة 3 بتاعة flutter، فالـ loadMore زوّد كتب flutter تحت نتايج dart، وزوّد الـ `_page` كمان. نفس مشكلة درس الـ Cubit، ونفس الحل: <b>request id</b>.
+
+<CodeBlock label="request id">
+
+```dart
+int _latestRequest = 0;
+
+Future<void> loadFirst(String query) async {
+  _query = query;
+  final requestId = ++_latestRequest; // anything in flight becomes stale
+  _loadingMore = false;
+  emit(const CatalogLoading());
+  final result = await _searchBooks(SearchParams(query: query, page: 1));
+  if (isClosed || requestId != _latestRequest) return;
+  // ...same switch as before
+}
+
+Future<void> loadMore() async {
+  // ...same guards
+  _loadingMore = true;
+  final requestId = _latestRequest; // read it, don't bump it
+  final result = await _searchBooks(SearchParams(query: _query, page: _page + 1));
+  if (isClosed || requestId != _latestRequest) return; // query changed or refreshed
+  _loadingMore = false;
+  // ...same switch as before
+}
+```
+
+</CodeBlock>
+
+- <b>الـ loadFirst والـ refresh بيزوّدوا الـ id:</b> لأنهم بيبدأوا ليست جديدة، فأي صفحة جاية للِّيست القديمة تبقى قديمة.
+- <b>الـ loadMore بيقرا الـ id بس:</b> لو زوّده، كان هيخلّي نتيجة refresh شغال تبان قديمة وتتجاهل.
+- <b>الـ _loadingMore = false بقى بعد الـ check:</b> الطلب القديم مايلمسش الـ flag، لأن اللي زوّد الـ id هو اللي مسؤول عنه دلوقتي: الـ loadFirst بيرجّعه false، والـ refresh بيخليه true لحد ما الصفحة 1 توصل.
+
+### كتاب ظهر في صفحتين
+
+بين ما جبت الصفحة 1 والصفحة 2، اتضاف كتاب جديد في أول النتايج على السيرفر. كل الكتب اتزحزحت خطوة، فآخر كتاب في الصفحة 1 بقى أول كتاب في الصفحة 2، والمستخدم شافه مرتين. ولو بتستخدم `ValueKey(book.id)` في الليست، Flutter هيرمي error عشان في مفتاحين زي بعض. الحل تفلتر المتكرر بالـ id وانت بتزوّد:
+
+<CodeBlock label="dedupe بالـ id">
+
+```dart
+case Success(:final value):
+  _page++;
+  final seen = current.books.map((b) => b.id).toSet();
+  final fresh = value.items.where((b) => seen.add(b.id)); // add() is false for dupes
+  emit(current.copyWith(
+    books: [...current.books, ...fresh],
+    hasReachedEnd: !value.hasMore,
+  ));
+```
+
+</CodeBlock>
+
+ده بيخفي التكرار بس. لو كتاب اتشال من السيرفر، الكتب هتتزحزح للناحية التانية وكتاب هيضيع بين الصفحتين، والـ client مايقدرش يعرف. الحل الحقيقي في Level 4.
 
 </Level>
 
 <Level n="4" title="قرارات الـ senior">
 
-الـ trade-offs والأخطاء الشائعة.
+- <b>offset ولا cursor؟</b> الـ offset (`page=3` أو `skip=40`) بسيط وبيخليك تروح لصفحة معينة، بس بيتزحزح لما البيانات تتغير (تكرار وكتب ناقصة)، وفي الـ DB الـ `OFFSET 10000` بيعدّي على 10000 صف عشان يرميهم. الـ cursor (`after=<id آخر كتاب>` أو `nextCursor` بيرجعه السيرفر) ثابت وسريع، بس مفيش «روح للصفحة 7»، ولازم السيرفر يدعمه. Open Library عنده page بس، فبنعمل dedupe. الـ backend بتاعك (Node وMongo) اعمل فيه cursor على `_id`. والحلو إن الـ Cubit مش هيتغير كتير: الـ `PagedResult` بيشيل `nextCursor` بدل ما الـ Cubit يعد صفحات، و`hasMore` يبقى `nextCursor != null`.
+- <b>حجم الصفحة:</b> خليه يملا الشاشة مرتين على الأقل. لو الصفحة الأولى ماملتش الشاشة (تابلت كبير، أو كتب قليلة اتشالت بالـ dedupe)، الليست مابتعملش scroll، فمفيش `ScrollNotification` خالص، والصفحة 2 <b>مش هتتطلب أبدًا</b>. 20 لـ 30 كتاب مناسب لليست فيها صور صغيرة. صفحة أكبر يعني أول ظهور أبطأ وbytes أكتر، وأصغر يعني طلبات أكتر. والرقم مكانه الـ data source، مش الـ UI.
+
+<CodeBlock label="املا الشاشة لو الصفحة قصيرة">
+
+```dart
+// inside a StatefulWidget that owns _scroll = ScrollController()
+BlocListener<CatalogCubit, CatalogState>(
+  listenWhen: (_, curr) => curr is CatalogLoaded && !curr.hasReachedEnd,
+  listener: (context, state) {
+    // wait for the list to be laid out, then check if it can scroll at all
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!context.mounted || !_scroll.hasClients) return;
+      if (_scroll.position.maxScrollExtent == 0) {
+        context.read<CatalogCubit>().loadMore();
+      }
+    });
+  },
+  child: RefreshIndicator(
+    onRefresh: context.read<CatalogCubit>().refresh,
+    child: ListView.builder(
+      controller: _scroll,
+      physics: const AlwaysScrollableScrollPhysics(), // pull works on short lists
+      // ...
+    ),
+  ),
+)
+```
+
+</CodeBlock>
+
+- <b>الـ addPostFrameCallback:</b> الـ `maxScrollExtent` مابيتعرفش غير بعد ما الليست تترسم. الـ listener بيشتغل مع كل `CatalogLoaded`، فلو الصفحة 2 كمان ماملتش الشاشة، هيطلب الصفحة 3، لحد ما الشاشة تتملي أو الصفحات تخلص. والـ guards اللي في loadMore بتمنع أي طلب زيادة.
+- <b>الـ AlwaysScrollableScrollPhysics:</b> الليست القصيرة مابتتسحبش لتحت، فالـ `RefreshIndicator` مش هيشتغل عليها. الـ physics دي بتخليها تتسحب حتى لو مش مليانة.
+- <b>الـ caching في drift:</b> احفظ الصفحة الأولى لكل كلمة بحث في جدول فيه `query` و`page` و`fetchedAt` (بالـ `Clock` عشان تتستّ)، واعرضها فورًا وانت بتجيب الجديدة، يعني stale-while-revalidate من درس الـ Data. ماتحفظش كل الصفحات للأبد: أول صفحة أو اتنين، ومدة صلاحية، والـ refresh يمسح كاش الكلمة دي. الـ single source of truth الكامل مع pagination (الـ UI تسمع على الجدول والشبكة تكتب فيه) صعب: ترتيب الصفحات وحدودها لازم يتحفظوا في الـ DB. للكتالوج مايستاهلش، للمكتبة بتاعة المستخدم يستاهل.
+- <b>امتى ماتعملش infinite scroll:</b> لو الليست صغيرة (مكتبة المستخدم 50 كتاب، هاتها مرة واحدة)، أو المستخدم محتاج يرجع لمكان معين ("كان في الصفحة 5")، أو في footer مهم تحت الليست مش هيوصله أبدًا. ساعتها زرار «حمّل أكتر» أو أرقام صفحات أوضح.
+- <b>لو استخدمت Bloc:</b> الـ `droppable()` transformer من bloc_concurrency بيعمل شغل الـ `_loadingMore`: أي event جاي وفي واحد شغال بيترمي. الفكرة واحدة، بس الـ Cubit بـ flag أوضح لما يبقى عندك method أو اتنين بس.
 
 <Note kind="interview" title="سؤال interview">
 
-السؤال، والإجابة القوية.
+«إزاي تعمل infinite scroll من غير ما تحمّل نفس الصفحة مرتين، ومن غير ما تخسر البيانات لو حصل error؟» الحماية في الـ Cubit مش في الـ UI: flag بيتحط قبل أول await، و`hasReachedEnd` بيقفل الطلبات لما الصفحات تخلص، وrequest id بيتجاهل أي صفحة راجعة لكلمة بحث قديمة أو ليست اتعملها refresh. والـ error بتاع الصفحة N حقل جوه الـ Loaded state مش state لوحده، فالليست بتفضل والـ footer يعرض retry، ورقم الصفحة مابيزيدش فالـ retry بيطلب نفس الصفحة. وفوق ده dedupe بالـ id، ولو السيرفر بتاعك، cursor بدل offset.
 
 </Note>
 
 </Level>
 
+<LessonPart title="قبل وبعد والكود">
+
+### الـ CatalogCubit كامل
+
+كل الحلول اللي فاتت في class واحدة. `CatalogLoaded` فيه `books` و`hasReachedEnd` و`loadMoreFailure` و`refreshFailure`، والـ `copyWith` بيمسح الـ failures لو ماتبعتتش.
+
+```dart
+class CatalogCubit extends Cubit<CatalogState> {
+  CatalogCubit(this._searchBooks) : super(const CatalogLoading());
+
+  final SearchBooks _searchBooks;
+  String _query = '';
+  int _page = 0;
+  bool _loadingMore = false;
+  int _latestRequest = 0;
+
+  Future<void> loadFirst(String query) async {
+    _query = query;
+    final requestId = ++_latestRequest;
+    _loadingMore = false;
+    emit(const CatalogLoading());
+    final result = await _searchBooks(SearchParams(query: query, page: 1));
+    if (isClosed || requestId != _latestRequest) return;
+    switch (result) {
+      case Success(:final value):
+        _page = 1;
+        emit(CatalogLoaded(books: value.items, hasReachedEnd: !value.hasMore));
+      case Err(:final failure):
+        emit(CatalogError(failure));
+    }
+  }
+
+  Future<void> loadMore() async {
+    final current = state;
+    if (current is! CatalogLoaded || _loadingMore) return;
+    if (current.hasReachedEnd || current.loadMoreFailure != null) return;
+    _loadingMore = true;
+    final requestId = _latestRequest;
+    final result = await _searchBooks(SearchParams(query: _query, page: _page + 1));
+    if (isClosed || requestId != _latestRequest) return;
+    _loadingMore = false;
+    switch (result) {
+      case Success(:final value):
+        _page++;
+        final seen = current.books.map((b) => b.id).toSet();
+        emit(current.copyWith(
+          books: [...current.books, ...value.items.where((b) => seen.add(b.id))],
+          hasReachedEnd: !value.hasMore,
+        ));
+      case Err(:final failure):
+        emit(current.copyWith(loadMoreFailure: failure));
+    }
+  }
+
+  void retryMore() {
+    final current = state;
+    if (current is CatalogLoaded) emit(current.copyWith());
+    loadMore();
+  }
+
+  Future<void> refresh() async {
+    final current = state;
+    if (current is! CatalogLoaded) return loadFirst(_query);
+    final requestId = ++_latestRequest;
+    _loadingMore = true;
+    final result = await _searchBooks(SearchParams(query: _query, page: 1));
+    if (isClosed || requestId != _latestRequest) return;
+    _loadingMore = false;
+    switch (result) {
+      case Success(:final value):
+        _page = 1;
+        emit(CatalogLoaded(books: value.items, hasReachedEnd: !value.hasMore));
+      case Err(:final failure):
+        emit(current.copyWith(refreshFailure: failure));
+    }
+  }
+}
+```
+
+</LessonPart>
+
 <Quiz>
 
 <Question id="pagination-1">
-<Ask>السؤال الأول؟</Ask>
+<Ask>`PagedResult` فيه `hasMore`. الـ Cubit بيستخدمه في إيه؟</Ask>
 <Answer>
 
-الإجابة.
+بيحفظه في الـ state كـ `hasReachedEnd`، فـ loadMore يبطّل يبعت طلبات لما الصفحات تخلص، والـ UI تشيل الـ spinner اللي تحت.
+
+</Answer>
+</Question>
+
+<Question id="pagination-2">
+<Ask>المستخدم شايف 60 كتاب والصفحة 4 فشلت. الـ Cubit يعمل emit لإيه؟ ولما يدوس retry هيطلب أنهي صفحة؟</Ask>
+<Answer>
+
+نفس `CatalogLoaded` بنفس الـ 60 كتاب ومعاه `loadMoreFailure`، مش `CatalogError`. والـ retry هيطلب الصفحة 4 تاني، لأن `_page` مابيزيدش غير لما الطلب ينجح.
+
+</Answer>
+</Question>
+
+<Question id="pagination-3">
+<Ask>الـ backend بتاعك بيضيف ويمسح كتب كل دقيقة، والمستخدمين بيشتكوا من كتب متكررة وكتب ناقصة. الـ dedupe بالـ id هيحل إيه، وإيه الحل الكامل؟</Ask>
+<Answer>
+
+الـ dedupe بيخفي التكرار بس، لكن الكتب اللي ضاعت بين الصفحتين بسبب الزحزحة مش هيرجّعها. الحل الكامل cursor pagination: السيرفر يرجّع الكتب اللي بعد آخر id شفته، فالإضافة والمسح مابيزحزحوش حاجة.
 
 </Answer>
 </Question>

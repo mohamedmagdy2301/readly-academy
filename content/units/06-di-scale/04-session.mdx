@@ -1,0 +1,506 @@
+---
+title: "الـ Session والتخزين الآمن"
+description: "الـ tokens بتتحفظ فين، والـ app بيفتح على الحساب لوحده إزاي، والـ logout بيمسح كل أثر للمستخدم إزاي."
+minutes: 30
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="كارنيه النادي">
+
+كارنيه النادي بتاعك بتشيله في محفظتك، مش بتسيبه على ترابيزة الكافيه. كل مرة تدخل النادي بتطلّعه للأمن من غير ما تسجّل من الأول. لما مدته تخلص بتجدده من الشباك، ولو اتلغى خالص الأمن بيرجّعك لمكتب العضوية. ولو بطّلت تروح النادي، مش كفاية تشيل الكارنيه من المحفظة: لازم تفضّي اللوكر بتاعك كمان، عشان اللي ياخده بعدك مايلاقيش حاجتك.
+
+</Analogy>
+
+الـ app بيعمل نفس الحكاية. بعد الـ login السيرفر بيدّيك tokens (الكارنيه)، والـ <b>session</b> هي الفترة اللي الـ tokens دي شغالة فيها. الدرس ده بيجاوب على 4 أسئلة:
+
+- نحفظ الـ tokens فين عشان محدش يسرقها؟ (المحفظة مش الترابيزة)
+- إزاي الـ app يفتح على حساب المستخدم من غير ما يكتب الباسورد كل مرة؟
+- لما الـ session تخلص، المستخدم يحس بإيه؟
+- لما يعمل logout، إزاي نتأكد إن مفيش أي حاجة من بياناته فضلت؟ (اللوكر)
+
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+من درس dio والشبكة: الـ <b>access token</b> عمره قصير وبيتبعت مع كل طلب، والـ <b>refresh token</b> عمره طويل وبنجدد بيه الـ access. الاتنين لازم يتحفظوا على الجهاز، عشان لو الـ app اتقفل مايطلبش login تاني.
+
+<CodeBlock label="الـ contract">
+
+```dart
+// core/auth/token_store.dart
+abstract interface class TokenStore {
+  Future<String?> get accessToken;
+  Future<String?> get refreshToken;
+  Future<void> save({required String access, required String refresh});
+  Future<void> clear();
+}
+```
+
+</CodeBlock>
+
+الـ AuthInterceptor والـ repository يعرفوا إن «في حاجة بتحفظ الـ tokens»، ومايعرفوش هي إيه. وفي التست بتديهم نسخة بسيطة بتحفظ في الذاكرة.
+
+الـ <b>flutter_secure_storage</b> package بيحفظ key-value متشفّر: في iOS بيحطه في الـ <b>Keychain</b> (خزنة النظام للباسوردات)، وفي Android بيشفّره بمفتاح محفوظ في الـ <b>Keystore</b> (خزنة المفاتيح بتاعة النظام).
+
+<CodeBlock label="SecureTokenStore">
+
+```dart
+// core/auth/secure_token_store.dart
+class SecureTokenStore implements TokenStore {
+  SecureTokenStore(this._storage);
+  final FlutterSecureStorage _storage;
+
+  // renaming these after release logs everyone out
+  static const _accessKey = 'access_token';
+  static const _refreshKey = 'refresh_token';
+
+  @override
+  Future<String?> get accessToken => _storage.read(key: _accessKey);
+
+  @override
+  Future<String?> get refreshToken => _storage.read(key: _refreshKey);
+
+  @override
+  Future<void> save({required String access, required String refresh}) async {
+    await _storage.write(key: _accessKey, value: access);
+    await _storage.write(key: _refreshKey, value: refresh);
+  }
+
+  @override
+  Future<void> clear() async {
+    await _storage.delete(key: _accessKey);
+    await _storage.delete(key: _refreshKey);
+  }
+}
+```
+
+</CodeBlock>
+
+الحفظ بيحصل في الـ repository بعد ما السيرفر يقبل الـ login:
+
+<CodeBlock label="الحفظ بعد الـ login">
+
+```dart
+// feature_auth/data/auth_repository_impl.dart
+class AuthRepositoryImpl implements AuthRepository {
+  AuthRepositoryImpl(this._remote, this._tokens);
+  final AuthRemoteSource _remote;
+  final TokenStore _tokens;
+
+  @override
+  Future<Result<void>> login(Email email, Password password) => guard(() async {
+        final dto = await _remote.login(email.value, password.value);
+        await _tokens.save(access: dto.accessToken, refresh: dto.refreshToken);
+      });
+}
+```
+
+</CodeBlock>
+
+لو السيرفر رفض، الـ `_remote.login` بيرمي `DioException`، والـ guard بيحوّله لـ Failure، ومفيش حاجة بتتحفظ.
+
+والقراية بتحصل في الـ AuthInterceptor اللي كتبناه في درس dio، وهو بيضيف الـ token لكل طلب:
+
+<CodeBlock label="القراية في الـ AuthInterceptor (موجودة خلاص)">
+
+```dart
+@override
+void onRequest(RequestOptions options, RequestInterceptorHandler handler) async {
+  final token = await _tokens.accessToken;
+  if (token != null) options.headers['Authorization'] = 'Bearer $token';
+  handler.next(options);
+}
+```
+
+</CodeBlock>
+
+والـ refresh في نفس الـ interceptor بيكتب الـ tokens الجديدة بـ `save`، ولو فشل بيعمل `clear`. يعني الـ TokenStore هو المكان الوحيد اللي الـ tokens عايشة فيه، وأي حد عايزها بيعدّي عليه.
+
+| المكان | بنحط فيه إيه في Readly | متشفّر؟ | بيتمسح لما الـ app يتمسح؟ |
+| --- | --- | --- | --- |
+| `flutter_secure_storage` | الـ access والـ refresh token | أيوه | في Android أيوه، وفي iOS لأ |
+| drift (`AppDatabase`) | المكتبة والملاحظات والتعديلات اللي مستنية sync | لأ | أيوه |
+| `shared_preferences` | إعدادات صغيرة زي اللغة والثيم | لأ | أيوه |
+
+الـ `AppDatabase` هو نفسه بتاع درس Offline-first، والـ shared_preferences هو نفسه اللي حفظنا فيه الإعدادات في درس الـ Settings.
+
+
+</Level>
+
+<Level n="3" title="الـ session في الاستخدام الحقيقي">
+
+### الـ app بيفتح على صفحة الـ login لحظة وبعدين يدخل
+
+لما الـ app يفتح لازم يقرر: المستخدم داخل ولا لأ؟ ده اسمه <b>auto-login</b>. الإجابة محتاجة قراية من الـ secure storage، والقراية async. لو الحالة الابتدائية «مش داخل»، الـ app هيعرض الـ login، وبعد جزء من الثانية يلاقي الـ token فيحوّل للمكتبة. المستخدم بيشوف صفحة الـ login بترعش.
+
+الحل حالة تالتة: «لسه مانعرفش». الـ AuthCubit بيبدأ بيها، وهي AuthUnknown:
+
+<CodeBlock label="الحالات">
+
+```dart
+sealed class AuthState {
+  const AuthState();
+}
+final class AuthUnknown extends AuthState {
+  const AuthUnknown();
+}
+final class Authenticated extends AuthState {
+  const Authenticated();
+}
+final class Unauthenticated extends AuthState {
+  const Unauthenticated();
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="AuthCubit">
+
+```dart
+class AuthCubit extends Cubit<AuthState> {
+  AuthCubit(this._auth) : super(const AuthUnknown());
+
+  final AuthRepository _auth;
+
+  // called without await (from main or the splash page),
+  // otherwise AuthUnknown is never shown
+  Future<void> checkSession() async {
+    final hasSession = await _auth.hasSession();
+    emit(hasSession ? const Authenticated() : const Unauthenticated());
+  }
+
+  // called by the login page after a successful login
+  void loggedIn() => emit(const Authenticated());
+}
+```
+
+</CodeBlock>
+
+مفيش logic تستاهل use case هنا، فالـ AuthCubit بيكلّم الـ repository مباشرة (القرار ده من درس الـ Domain في الوحدة 2).
+
+الـ AuthCubit هو الاستثناء اللي قلناه في درس الـ DI: بيتسجّل `registerLazySingleton` مش `registerFactory`، لأنه واحد للـ app كله والـ router وكل الشاشات بيسمعوا على نفس النسخة. لو اتسجّل factory، كل `getIt<AuthCubit>()` هيعمل نسخة جديدة بتبدأ AuthUnknown، ومحدش هيسمع الـ emit بتاع التاني.
+
+والـ repository بيكبر بـ method واحدة:
+
+<CodeBlock label="hasSession في AuthRepositoryImpl">
+
+```dart
+@override
+Future<bool> hasSession() async => await _tokens.refreshToken != null;
+```
+
+</CodeBlock>
+
+بنسأل عن الـ refresh token مش الـ access. الـ access ممكن يكون خلص من امبارح وده عادي: أول طلب هيرجع 401 والـ interceptor هيجدده. وكمان مفيش طلب شبكة هنا، فالـ auto-login شغال من غير نت.
+
+الـ redirect اللي عملناه في درس go_router كان فيه حالتين. دلوقتي بقى فيه 3:
+
+<CodeBlock label="الـ redirect">
+
+```dart
+redirect: (context, state) {
+  final at = state.matchedLocation;
+  return switch (auth.state) {
+    AuthUnknown() => at == '/splash' ? null : '/splash',
+    Unauthenticated() => at == '/login' ? null : '/login',
+    Authenticated() => at == '/splash' || at == '/login' ? '/library' : null,
+  };
+},
+```
+
+</CodeBlock>
+
+<Diagram name="d-session-states">
+
+الـ app بيبدأ في AuthUnknown والـ splash ظاهرة. أول ما الـ checkSession يخلص بيروح لحالة من الاتنين، وبعدها التنقل بينهم بيحصل بالـ login أو الـ logout أو فشل الـ refresh.
+
+</Diagram>
+
+### الـ refresh فشل والمستخدم لسه جوه
+
+في درس dio، لو السيرفر رفض الـ refresh بـ 401، الـ interceptor بيعمل `_tokens.clear()` والطلب بيرجع UnauthorizedFailure. بس الـ AuthCubit لسه Authenticated، فالمستخدم واقف في المكتبة وكل طلب بيفشل. لازم <b>logout إجباري</b>: الـ AuthCubit يعرف إن الـ tokens اتمسحت، فيحوّل للـ login.
+
+الـ TokenStore بيكبر بـ stream بيطلّع حدث مع كل clear:
+
+<CodeBlock label="onCleared">
+
+```dart
+abstract interface class TokenStore {
+  // ... accessToken, refreshToken, save, clear
+  Stream<void> get onCleared;
+}
+
+class SecureTokenStore implements TokenStore {
+  // ...
+  final _cleared = StreamController<void>.broadcast();
+
+  @override
+  Stream<void> get onCleared => _cleared.stream;
+
+  @override
+  Future<void> clear() async {
+    await _storage.delete(key: _accessKey);
+    await _storage.delete(key: _refreshKey);
+    _cleared.add(null);
+  }
+}
+```
+
+</CodeBlock>
+
+الـ repository بيوصّله للـ Cubit من غير ما الـ Cubit يعرف TokenStore: `Stream<void> get sessionCleared => _tokens.onCleared;`. والـ AuthCubit بيسمع عليه:
+
+<CodeBlock label="AuthCubit بيسمع">
+
+```dart
+final class Unauthenticated extends AuthState {
+  const Unauthenticated({this.sessionExpired = false});
+  final bool sessionExpired; // the login page shows "session expired"
+}
+
+class AuthCubit extends Cubit<AuthState> {
+  AuthCubit(this._auth) : super(const AuthUnknown()) {
+    _clearedSub = _auth.sessionCleared.listen((_) {
+      if (state is Authenticated) emit(const Unauthenticated(sessionExpired: true));
+    });
+  }
+
+  final AuthRepository _auth;
+  late final StreamSubscription<void> _clearedSub;
+
+  // checkSession() and loggedIn() as before
+
+  @override
+  Future<void> close() async {
+    await _clearedSub.cancel();
+    return super.close();
+  }
+}
+```
+
+</CodeBlock>
+
+الـ AuthInterceptor نفسه ماتغيرش. هو بيعمل clear زي ما هو، والـ Cubit بيسمع. والـ redirect بيعمل الباقي: الـ state اتغيرت، فالـ refreshListenable بيعيد تشغيله، فيحوّل للـ login من أي شاشة. والـ `sessionExpired` بيخلي صفحة الـ login تكتب «الجلسة خلصت، ادخل تاني» بدل ما المستخدم يلاقي نفسه برّه من غير سبب.
+
+### بيانات المستخدم القديم فاضلة بعد الـ logout
+
+مسح الـ tokens لوحده مش logout. مستخدم عمل logout، وواحد تاني دخل بحسابه على نفس الموبايل، فلقى كتب الأول لسه في المكتبة، وصور الأغلفة في الكاش، ونتايج بحثه محفوظة في الذاكرة. البيانات عايشة في 4 أماكن، والـ logout لازم يمسحهم كلهم:
+
+1. <b>الـ tokens</b> في الـ secure storage.
+2. <b>الـ drift DB</b>: كل الجداول.
+3. <b>الـ caches</b>: زي صور الأغلفة اللي Flutter شايلها في الذاكرة.
+4. <b>الـ singletons في get_it</b>: أي `registerLazySingleton` شايل بيانات في الذاكرة هيفضل عايش بعد الـ logout.
+
+<CodeBlock label="AppDatabase بيمسح نفسه">
+
+```dart
+// inside AppDatabase
+Future<void> wipe() => transaction(() async {
+      for (final table in allTables) {
+        await delete(table).go();
+      }
+    });
+```
+
+</CodeBlock>
+
+الـ `allTables` بيرجّع كل جداول الـ DB، فأي جدول يتضاف بعدين هيتمسح لوحده من غير ما حد يفتكره.
+
+<CodeBlock label="logout في AuthRepositoryImpl">
+
+```dart
+class AuthRepositoryImpl implements AuthRepository {
+  AuthRepositoryImpl(this._remote, this._tokens, this._db);
+  final AuthRemoteSource _remote;
+  final TokenStore _tokens;
+  final AppDatabase _db;
+
+  @override
+  Future<void> logout() async {
+    final refresh = await _tokens.refreshToken;
+    if (refresh != null) _remote.revoke(refresh).ignore(); // best effort, works offline
+    await _tokens.clear();
+    await _db.wipe();
+  }
+}
+```
+
+</CodeBlock>
+
+الـ `revoke` بيقول للسيرفر يلغي الـ refresh token، عشان لو حد كان واخد نسخة منه ماتنفعش. بس مابنستناهوش: الـ logout لازم يشتغل من غير نت.
+
+<CodeBlock label="logout في AuthCubit">
+
+```dart
+bool _loggingOut = false;
+
+Future<void> logout() async {
+  if (_loggingOut) return;
+  _loggingOut = true;
+  await _auth.logout();
+  _loggingOut = false;
+  emit(const Unauthenticated());
+}
+
+// and the listener in the constructor becomes:
+if (state is Authenticated && !_loggingOut) {
+  emit(const Unauthenticated(sessionExpired: true));
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `_loggingOut`:</b> الـ `_auth.logout()` بيعمل clear، فالـ onCleared هيطلّع حدث. من غير الـ flag، الـ Cubit هيفتكرها session خلصت، ويقول «الجلسة خلصت» لمستخدم داس logout بنفسه.
+- <b>الـ emit بعد المسح مش قبله:</b> لو حوّلت للـ login الأول، ممكن حد يدخل بحساب جديد والمسح لسه شغال، فالـ clear يمسح الـ tokens الجديدة.
+- <b>عمليات pending في الـ sync queue:</b> الـ logout اليدوي بيمسح الـ DB، فأي كتاب اتضاف أوفلاين ولسه مااتزامنش هيضيع. قبل المسح اسأل الـ queue بـ `pending()`، ولو فيها حاجة اعرض تحذير: «عندك تعديلات لسه مااتبعتتش، لو خرجت هتضيع»، مع اختيار يستنى الـ sync الأول.
+
+فاضل الـ caches والـ singletons. دول بتوع الـ app كله مش الـ data layer، فمكانهم الـ composition root اللي عملناه في درس الـ DI:
+
+<CodeBlock label="di/setup.dart">
+
+```dart
+void resetOnLogout() {
+  getIt<AuthCubit>().stream.where((s) => s is Unauthenticated).listen((_) async {
+    PaintingBinding.instance.imageCache.clear(); // old covers in memory
+    await getIt.resetLazySingleton<CatalogRepository>(); // in-memory search cache
+  });
+}
+```
+
+</CodeBlock>
+
+الـ `resetLazySingleton` بيرمي النسخة الحالية، وأول ما حد يطلبها تاني get_it بيعمل واحدة جديدة فاضية. والـ `getIt<AuthCubit>()` هنا بيرجّع نفس النسخة اللي الـ router بيسمع عليها، لأنها lazySingleton. لو كانت factory، كان هيعمل Cubit جديد عمره ما هيطلّع Unauthenticated، والـ reset عمره ما هيحصل. والـ Cubits بتوع الشاشات مش محتاجين حاجة: متسجلين `registerFactory`، فبيتقفلوا مع شاشاتهم لما الـ redirect يحوّل للـ login.
+
+### الـ session خلصت وفي تعديلات لسه ماتزامنتش
+
+الـ logout الإجباري بيمسح الـ tokens بس، مش الـ DB، وده مقصود. لو المستخدم ضاف كتاب أوفلاين والعملية لسه في الـ sync queue بتاعة درس Offline-first، مسح الـ DB هيضيّع الكتاب. الصح زي ما شفنا في درس رحلة الطلب: العملية تستنى، وتتزامن بعد ما يدخل تاني.
+
+بس لو اللي دخل حد تاني؟ تعديلات الأول هتتبعت بحساب التاني. الحل إن الـ DB تعرف هي بتاعة مين، والـ login يقارن:
+
+<CodeBlock label="login بيتشيك على صاحب الداتا">
+
+```dart
+@override
+Future<Result<void>> login(Email email, Password password) => guard(() async {
+      final dto = await _remote.login(email.value, password.value);
+      final owner = await _db.ownerId();
+      if (owner != null && owner != dto.userId) await _db.wipe(); // someone else's data
+      await _tokens.save(access: dto.accessToken, refresh: dto.refreshToken);
+      await _db.setOwner(dto.userId);
+    });
+```
+
+</CodeBlock>
+
+الـ `ownerId` صف واحد في جدول صغير جوه نفس الـ DB، فالـ wipe بيمسحه مع الباقي. لو نفس المستخدم رجع، الـ queue بتكمّل. لو مستخدم تاني، الـ DB بتتمسح قبل ما يشوف أي حاجة.
+
+### الـ iPhone فاكر الحساب بعد ما الـ app اتمسح
+
+في iOS، الـ Keychain مش جوه الـ app، فلما المستخدم يمسح الـ app وينزّله تاني الـ tokens القديمة بتفضل موجودة. يعني المستخدم يمسح الـ app عشان يخرج، ولما ينزّله يلاقي نفسه داخل.
+
+الحل علامة <b>first-run</b> في shared_preferences، لأنه بيتمسح مع الـ app. لو العلامة مش موجودة، يبقى ده أول تشغيل بعد تسطيب، فبنمسح أي حاجة قديمة في الـ Keychain:
+
+<CodeBlock label="SecureTokenStore بيكبر">
+
+```dart
+class SecureTokenStore implements TokenStore {
+  SecureTokenStore(this._storage, this._prefs);
+  final FlutterSecureStorage _storage;
+  final SharedPreferencesWithCache _prefs;
+
+  // iOS keeps Keychain items after uninstall, prefs don't survive it
+  Future<void> clearIfReinstalled() async {
+    if (_prefs.getBool('has_run_before') ?? false) return;
+    await _storage.deleteAll();
+    await _prefs.setBool('has_run_before', true);
+  }
+
+  // ... accessToken, refreshToken, save, clear, onCleared
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="di/setup.dart">
+
+```dart
+Future<void> setupDependencies() async {
+  final prefs = await SharedPreferencesWithCache.create(
+    cacheOptions: const SharedPreferencesWithCacheOptions(),
+  );
+  final tokens = SecureTokenStore(const FlutterSecureStorage(), prefs);
+  await tokens.clearIfReinstalled(); // before anyone reads a token
+
+  getIt
+    ..registerSingleton<SharedPreferencesWithCache>(prefs)
+    ..registerSingleton<TokenStore>(tokens)
+    ..registerLazySingleton<AuthCubit>(() => AuthCubit(getIt())); // one for the whole app
+  // ... settings, library, catalog as before
+}
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await setupDependencies();
+  getIt<AuthCubit>().checkSession(); // no await: the splash shows meanwhile
+  runApp(const ReadlyApp());
+}
+```
+
+</CodeBlock>
+
+الـ prefs هي نفس الـ `SharedPreferencesWithCache` بتاعة درس الـ Settings، فالقراية sync. والـ TokenStore بيتسجّل `registerSingleton` مش lazy، لأن المسح لازم يخلص قبل ما الـ AuthCubit يعمل checkSession.
+
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>ليه مش shared_preferences للـ tokens؟</b> الـ shared_preferences ملف نص عادي جوه فولدر الـ app (XML في Android وplist في iOS). على موبايل rooted أو jailbroken أي حد يقراه، وممكن يدخل في الـ backups. والـ refresh token عايش شهور، فاللي يسرقه يبقى هو المستخدم لحد ما يتلغي. الـ secure storage بيشفّر بمفتاح محفوظ في النظام. بس هو مش سحر: الحماية الحقيقية إن الـ access عمره قصير، والسيرفر يقدر يلغي الـ refresh.
+- <b>الـ session بتخلص لما السيرفر يرفض الـ refresh token، مش لما النت يقع:</b> علشان كده الـ interceptor في درس dio بيعمل clear بس لما الـ refresh يرجع 401. الـ 401 معناها إن السيرفر قال «الـ token ده مش صالح» (انتهى، أو اتلغى، أو الباسورد اتغير)، فمفيش فايدة من الاحتفاظ بيه. لكن لو الـ refresh فشل عشان النت، الـ refresh token لسه سليم، ومسحه هيخرّج المستخدم وهو أوفلاين ويبوّظ فكرة الـ offline-first كلها. فالطلب بيفشل كـ NetworkFailure، والمستخدم بيفضل جوه، وأول ما النت يرجع الـ refresh بينجح.
+- <b>الـ UX بتاع انتهاء الـ session:</b> رسالة واضحة «الجلسة خلصت، ادخل تاني» مش error غامض، والإيميل مكتوب جاهز في الفورم. ولو حفظت المكان في `/login?from=...`، المستخدم يرجع للشاشة اللي كان فيها بعد الدخول، ونفس الفكرة بتحمي الـ deep link من إن الـ splash يبلعه. ومدة الـ refresh token قرار business: app قراية زي Readly ممكن شهور وبتتجدد مع كل استخدام، وapp بنك دقايق.
+- <b>كل قراية من الـ secure storage بتعدّي على الـ native:</b> والـ interceptor بيقرا مع كل طلب. لو ده بقى بطيء، خلي SecureTokenStore يمسك الـ access في متغير في الذاكرة، ويكتب في الـ storage بس في الـ save والـ clear. التمن إن المتغير ده لازم يتمسح مع الـ clear.
+- <b>الـ sync في الخلفية والموبايل مقفول:</b> الـ default في iOS إن الـ Keychain مايتقريش والجهاز مقفول. لو الـ SyncService بيشتغل في الخلفية، اكتب `IOSOptions(accessibility: KeychainAccessibility.first_unlock)` عشان يقدر يقرا الـ token بعد أول فتح للجهاز.
+- <b>لما الـ singletons تكتر، استخدم scope في get_it:</b> بدل قايمة resetLazySingleton لازم تفتكر تزوّد عليها، سجّل كل حاجة مرتبطة بالمستخدم بعد الـ login جوه `getIt.pushNewScope(...)`، واقفلها كلها مرة واحدة بـ `getIt.popScope()` في الـ logout.
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي تعمل logout نضيف وتتأكد إن مفيش بيانات من المستخدم القديم فضلت؟» عدّ كل مكان البيانات عايشة فيه، وامسحه من مكان واحد: الـ tokens من الـ secure storage، وكل جداول drift بـ `allTables` في transaction، والـ caches، والـ singletons اللي شايلة state (أو scope كامل بـ popScope). والـ refresh token يتلغي على السيرفر من غير ما تستنى الرد. حوّل للـ login بعد ما المسح يخلص مش قبله، والـ Cubits بتوع الشاشات factory فبيموتوا لوحدهم. وأي طلب لسه راجع من الـ session القديمة ممكن يكتب في الـ DB بعد المسح، فالـ data layer يلغي الطلبات المفتوحة. وعشان تتأكد: integration test بيدخل بمستخدم A ويضيف كتاب، ويعمل logout، ويدخل بـ B، ويتأكد إن مفيش أي أثر لـ A.
+
+</Note>
+
+
+</Level>
+
+<Quiz>
+
+<Question id="session-1">
+<Ask>ليه الـ AuthCubit بيبدأ بـ AuthUnknown مش Unauthenticated؟</Ask>
+<Answer>
+
+عشان قراية الـ token async. لو بدأ Unauthenticated، الـ redirect هيعرض الـ login لحظة وبعدين يحوّل للمكتبة. الـ AuthUnknown بيعرض splash لحد ما يعرف.
+
+</Answer>
+</Question>
+
+<Question id="session-2">
+<Ask>مستخدم مسح الـ app من الـ iPhone ونزّله تاني، فلقى نفسه داخل على حسابه. ليه، وتصلحها إزاي؟</Ask>
+<Answer>
+
+الـ Keychain بيفضل بعد مسح الـ app. اعمل علامة first-run في shared_preferences (بيتمسح مع الـ app)، ولو مش موجودة امسح الـ secure storage قبل أي قراية للـ token.
+
+</Answer>
+</Question>
+
+<Question id="session-3">
+<Ask>السيرفر رفض الـ refresh والمستخدم عنده كتاب اتضاف أوفلاين ولسه في الـ sync queue. تمسح الـ drift DB؟</Ask>
+<Answer>
+
+لأ. امسح الـ tokens بس وحوّله للـ login. احفظ id صاحب الداتا: لو نفس المستخدم رجع الـ queue تكمّل، ولو حد تاني امسح الـ DB قبل ما يدخل.
+
+</Answer>
+</Question>
+
+</Quiz>
