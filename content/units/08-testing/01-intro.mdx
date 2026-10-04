@@ -1,0 +1,554 @@
+---
+title: "ليه نختبر؟ وخريطة كل أنواع الاختبارات"
+description: "قبل أول expect: الاختبار بيشتري إيه، والفرق بين اليدوي والأوتوماتيك، وكل نوع اختبار بيمسك إيه وبيكلّف قد إيه، وإزاي تجهّز المشروع وتشغّل وتقرا النتيجة."
+minutes: 30
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="مصنع العربيات">
+
+في مصنع العربيات، كل مسمار وكل حساس بيتشيك عليه لوحده قبل ما يتركب: ده <b>unit test</b>. بعدين الموتور بيتجرب على «بنش» لوحده من غير عربية: ده <b>widget test</b>. وبعدين العربية كاملة بتلف في حلبة التجارب: ده <b>integration test</b>. ولو لفت في الشارع الحقيقي بزحمته وإشاراته: ده <b>end-to-end</b>.
+
+وفي فحوصات من نوع تاني خالص. صورة مرجعية للون والتشطيب، وأي عربية لونها مختلف عن الصورة تقف: ده <b>golden test</b>. ورقة صغيرة قبل ما العربية تخرج من البوابة: بتدور؟ الفرامل شغالة؟ ده <b>smoke test</b>. والزبون بيسوق ويقول «دي اللي طلبتها»: ده <b>acceptance test</b>. ولو عربية اترجعت بسبب عيب، بيتزوّد فحص في الخط عشان العيب ده مايرجعش تاني أبدًا: ده <b>regression test</b>. وفي الآخر، مفتش الجودة نفسه بيتختبر: حد بيحط مسمار بايظ عن قصد ويشوف الفحص هيمسكه ولا لأ. ده <b>mutation testing</b>.
+
+</Analogy>
+
+مفيش فحص واحد بيغني عن الباقي. فحص المسمار سريع ورخيص بس مايعرفش إن الموتور مش راكب صح. ولفة الحلبة بتكشف كل حاجة، بس بتاخد ساعة وبتقولك «في مشكلة» من غير ما تقول فين. الدرس ده هو خريطة المصنع: كل فحص بيمسك إيه، وبيكلّف قد إيه، وبتعمله بأنهي أداة في Flutter. وباقي الوحدة بيمشي على الخريطة دي نوع نوع.
+
+### ليه نختبر أصلًا؟
+
+السؤال مش «التستات حلوة ولا لأ». السؤال: «إيه اللي بيحصل في Readly لو مافيش تستات؟»
+
+- <b>الـ bug في الموبايل بيعيش أسابيع:</b> في الويب تصلّح وتعمل deploy في 10 دقايق. في الموبايل، الـ release بياخد يوم أو أكتر في review الـ stores، ونص المستخدمين مش هيعملوا update قبل أسبوعين. bug في `AddBookToLibrary` بيضيف الكتاب مرتين هيفضل على موبايلات الناس طول المدة دي.
+- <b>كل ما الـ bug يتمسك متأخر، يتكلّف أكتر:</b> وانت بتكتب: ثواني. في الـ CI: دقايق. عند الـ QA: يوم ورايح جاي. عند المستخدم: تقييم نجمة واحدة، وتحقيق في الـ logs، وhotfix، وrelease جديد.
+- <b>الثقة إنك تغيّر:</b> من غير تستات، كل refactor مقامرة. فالناس بتبطّل تحسّن الكود، والكود بيعفّن. التستات هي اللي بتخليك تعمل [الـ Refactor](/course/production/refactor/) وانت مطمّن.
+- <b>توثيق بيشتغل:</b> التست اللي اسمه «rejects a book that is already in the library» بيقول القاعدة أوضح من أي comment، ولو القاعدة اتغيرت من غير قصد، التست بيقع. الـ comment مابيقعش.
+- <b>مراية للتصميم:</b> لو مش عارف تختبر الـ Cubit من غير ما تشغّل Dio حقيقي، يبقى الـ Cubit عارف حاجات مالوش دعوة بيها. صعوبة التست غالبًا عَرَض لـ coupling، ودي نفس فكرة [SOLID](/course/quality/solid-basics/).
+
+### يدوي ولا أوتوماتيك؟
+
+الاختبار اليدوي إنك تفتح الـ app وتجرب بإيدك. الأوتوماتيك إن كود بيجرب كود. الاتنين ليهم مكان، والغلط إنك تستخدم واحد في مكان التاني:
+
+|  | يدوي (manual) | أوتوماتيك (automated) |
+| --- | --- | --- |
+| التكلفة أول مرة | رخيص: افتح وجرّب | أغلى: لازم تكتب التست |
+| التكلفة كل مرة بعد كده | نفس التكلفة كل مرة، وبتزيد مع كل feature | تقريبًا صفر: الـ CI بيشغّله |
+| بيمسك | الحاجات اللي محدش فكر فيها: «الزرار ده شكله غريب»، «الـ flow ده مُربك» | الحاجات اللي اتعرّفت قبل كده: «لو حصل كذا، النتيجة كذا» |
+| بيتعب ويسهى؟ | آه. التجربة رقم 40 النهارده مش زي الأولى | لأ. بيعمل نفس الحاجة بالظبط كل مرة |
+| في Readly | exploratory testing قبل كل release، وتجربة الـ UX على موبايل حقيقي | كل قاعدة في الـ domain، كل mapping، كل state في الـ Cubit |
+
+القاعدة: <b>أي حاجة جربتها بإيدك مرتين، اكتب لها تست</b>. والوقت اللي وفّرته، استخدمه في الاختبار اليدوي الاستكشافي (exploratory)، اللي مفيش كود بيعرف يعمله: إنك تلعب في الـ app زي مستخدم مستعجل، وتقطع النت في نص الـ sync، وتلف الموبايل وانت بتكتب ملاحظة.
+
+</Level>
+
+<Level n="2" title="الخريطة: كل نوع اختبار في كارت">
+
+أسماء الاختبارات كتير ومتلخبطة، والسبب إنها مش كلها بتوصف نفس الحاجة. في أسماء بتقول <b>التست كبير قد إيه</b>، وأسماء بتقول <b>بيتشيك على إيه</b>، وأسماء بتقول <b>بنشغّله امتى وليه</b>، وأسماء بتوصف <b>تقنيات لاختبار التستات نفسها</b>. ولما تفهم المحاور دي، هتعرف إن «regression test» ممكن يبقى unit test عادي جدًا، وإن «golden test» هو widget test بيقارن صورة.
+
+<Diagram name="d-test-map">
+
+أربع محاور مستقلة. أي تست بتكتبه ليه مكان في كل محور: مثلًا تست بيتأكد إن bug قديم في `BookDto` مارجعش هو unit (الحجم)، وregression (السبب)، وwhite box لو كاتبه وانت شايف الـ branches. والـ black box والـ white box مش نوع زيادة، دول درجة معرفة التست باللي جوه.
+
+</Diagram>
+
+كل كارت تحت بنفس الشكل: هو إيه، بيمسك إيه، تكلفته، أداته في Flutter، ومثال من Readly. والكود هنا لمحة بس عشان تشوف الشكل. كل نوع ليه درس بيشرحه بالتفصيل، والجدول في آخر الدرس بيقولك فين.
+
+### المحور الأول: حسب الحجم
+
+#### Unit test
+
+- <b>هو إيه:</b> بيختبر وحدة صغيرة لوحدها: function، أو class، أو use case، من غير UI ولا شبكة ولا DB حقيقية. والـ «وحدة» هنا سلوك واحد، مش لازم class واحدة.
+- <b>بيمسك:</b> أخطاء الـ logic: شرط مقلوب، حالة حدّية نسيتها، mapping غلط من JSON، Failure غلط راجعة من الـ guard.
+- <b>التكلفة:</b> الأرخص والأسرع. آلاف منهم بيخلصوا في ثواني، ولما يقع بيقولك المشكلة فين بالظبط.
+- <b>الأداة:</b> `package:test` لكود Dart صافي، أو `flutter_test` لو الـ package فيها Flutter. والاتنين نفس الـ API.
+- <b>في Readly:</b> `AddBookToLibrary` بيرفض كتاب موجود في المكتبة.
+
+<CodeBlock label="unit test">
+
+```dart
+test('rejects a book that is already in the library', () async {
+  final repository = FakeLibraryRepository();
+  await repository.addBook(dune); // already there
+  final addBook = AddBookToLibrary(repository);
+
+  final result = await addBook(dune);
+
+  expect(result, isA<Err<void>>());
+});
+```
+
+</CodeBlock>
+
+- <b>مفيش Flutter خالص:</b> الـ use case Dart صافي، والـ repository fake في الذاكرة، فالتست بياخد أجزاء من الثانية.
+- <b>بيختبر قاعدة واحدة:</b> لو وقع، انت عارف إن قاعدة «مفيش كتاب مرتين» هي اللي باظت، مش الشبكة ولا الشاشة.
+
+#### Widget test
+
+- <b>هو إيه:</b> بيبني widget أو شاشة كاملة في بيئة اختبار من غير جهاز، ويتفاعل معاها: يدوس، ويكتب، ويتأكد من اللي ظاهر. اسمه في أدبيات تانية <b>component test</b>.
+- <b>بيمسك:</b> الشاشة بتعرض الـ state الصح؟ زرار «حاول تاني» بيظهر مع `NetworkFailure`؟ الـ validation بتظهر تحت الحقل؟ الـ SnackBar بيظهر مرة واحدة؟
+- <b>التكلفة:</b> أبطأ من الـ unit شوية (مئات الـ milliseconds للتست)، بس لسه من غير emulator، فبيشتغل في الـ CI عادي.
+- <b>الأداة:</b> `flutter_test`: `testWidgets` و`WidgetTester` و`find`.
+- <b>في Readly:</b> شاشة المكتبة بتعرض «مفيش كتب لسه» لما المكتبة فاضية.
+
+<CodeBlock label="widget test">
+
+```dart
+testWidgets('shows the empty message when the library is empty', (tester) async {
+  await tester.pumpWidget(
+    const MaterialApp(home: LibraryList(books: [])),
+  );
+
+  expect(find.text('No books yet'), findsOneWidget);
+});
+```
+
+</CodeBlock>
+
+- <b>`pumpWidget`:</b> بيبني الـ widget ويرسم أول frame في ذاكرة الاختبار. مفيش شاشة حقيقية، بس الـ layout والـ gestures شغالين.
+- <b>`find` و`findsOneWidget`:</b> بيدوّر في الـ widget tree على اللي المستخدم بيشوفه، ويتأكد إنه موجود مرة واحدة.
+
+#### Integration test
+
+- <b>هو إيه:</b> في Flutter، الكلمة دي معناها الـ app كامل شغال على emulator أو موبايل حقيقي، والتست بيتحكم فيه زي مستخدم. (في الأدبيات العامة الكلمة معناها حاجة أوسع، وده في Level 3.)
+- <b>بيمسك:</b> الحاجات اللي مابتظهرش غير لما كل حاجة تتجمع: الـ DI متوصّل غلط، الـ plugins الـ native (secure storage، drift على الجهاز)، الـ navigation الحقيقي، والـ startup.
+- <b>التكلفة:</b> غالية: محتاج جهاز أو emulator، والتست بياخد ثواني لدقايق، وأهش بكتير (animations، توقيتات، الجهاز نفسه). ولما يقع، بيقولك «الـ flow باظ» من غير ما يقول فين.
+- <b>الأداة:</b> `integration_test` (من الـ Flutter SDK)، وpatrol لما تحتاج تتعامل مع الـ native: dialogs الـ permissions والـ notifications.
+- <b>في Readly:</b> المستخدم يعمل login، ويدوّر على «Dune»، ويضيفه، ويلاقيه في المكتبة.
+
+#### End-to-end (e2e)
+
+- <b>هو إيه:</b> زي الـ integration بس <b>من غير أي fake</b>: الـ app الحقيقي بيكلّم الـ backend الحقيقي (staging) وOpen Library الحقيقي.
+- <b>بيمسك:</b> مشاكل بين الـ app والسيرفر: الـ API اتغير، الـ token refresh مع سيرفر حقيقي، الإعدادات بتاعة الـ staging.
+- <b>التكلفة:</b> الأغلى والأهش: السيرفر ممكن يبقى واقع، والبيانات بتتغير، والتست ممكن يقع لأسباب ملهاش علاقة بالكود بتاعك خالص.
+- <b>الأداة:</b> نفس `integration_test` أو patrol، بس متوصّل بـ flavor بيكلّم staging.
+- <b>في Readly:</b> تسجيل حساب جديد على الـ staging، وإضافة كتاب، والتأكد إنه وصل للسيرفر بعد الـ sync.
+
+### المحور التاني: بيتشيك على إيه
+
+#### Golden test
+
+- <b>هو إيه:</b> widget test بيرسم الشاشة صورة ويقارنها pixel بـ pixel بصورة مرجعية (golden) محفوظة في الـ repo.
+- <b>بيمسك:</b> أي تغيير في الشكل محدش قصده: padding اتغير، أيقونة اتقلبت غلط في الـ RTL، الـ dark mode فيه نص أسود على خلفية سودا، الخط العربي اتقطع.
+- <b>التكلفة:</b> سريع زي الـ widget test، بس الصيانة غالية: أي تغيير مقصود في الـ design محتاج تحدّث الصور، والصور بتختلف بين الأنظمة (macOS عندك وLinux في الـ CI).
+- <b>الأداة:</b> `matchesGoldenFile` من `flutter_test`، وpackage alchemist لتنظيم الـ variants.
+- <b>في Readly:</b> كارت الكتاب بالعربي، light وdark، بخط كبير.
+
+<CodeBlock label="golden test">
+
+```dart
+testWidgets('book card, Arabic, dark', (tester) async {
+  await tester.pumpWidget(bookTileForGolden(dark: true));
+
+  await expectLater(
+    find.byType(BookTile),
+    matchesGoldenFile('goldens/book_tile_ar_dark.png'),
+  );
+});
+```
+
+</CodeBlock>
+
+- <b>أول مرة:</b> بتشغّل `flutter test --update-goldens` فالصورة بتتحفظ. بعد كده أي فرق في pixel واحد بيوقع التست وبيطلّع صورة بالفرق.
+
+#### Contract test
+
+- <b>هو إيه:</b> تست بيتأكد إن طرفين متفقين على «عقد». في الـ app ليه معنيين: (1) نفس مجموعة التستات بتشتغل على كل implementation لـ interface، زي `libraryRepositoryContract` اللي بيتشغّل على الـ fake والـ Impl في [درس SOLID](/course/quality/solid-basics/). (2) التأكد إن الـ app فاهم شكل رد السيرفر صح، بـ JSON حقيقي متسجّل من الـ API.
+- <b>بيمسك:</b> الـ fake اللي بقى بيكدب: بيرجّع حاجة الـ Impl الحقيقي عمره ما بيرجّعها، فالتستات اللي فوقه بتعدّي على سلوك مش موجود. أو الـ DTO اللي بيقع لما Open Library يرجّع `description` كـ object.
+- <b>التكلفة:</b> رخيص لو اتكتب كـ unit tests، وبيحمي كل التستات اللي بتعتمد على الـ fakes.
+- <b>الأداة:</b> `package:test` عادي، وfunction بتاخد factory للـ implementation.
+- <b>في Readly:</b> `FakeLibraryRepository` و`LibraryRepositoryImpl` الاتنين بيرفضوا نفس الحاجات وبيطلّعوا نفس الـ stream.
+
+#### Performance test
+
+- <b>هو إيه:</b> بيقيس السرعة مش الصح والغلط: الـ frames اتأخرت؟ الـ startup بياخد قد إيه؟ الـ function دي بطيئة؟
+- <b>بيمسك:</b> الـ jank في scroll ليستة 500 كتاب، والـ rebuild اللي بيتكرر من غير لازمة، وparsing بطيء لصفحة بحث كبيرة.
+- <b>التكلفة:</b> غالي: لازم يتشغّل في profile mode على جهاز حقيقي عشان الأرقام تبقى ليها معنى، والأرقام بتتهز من run للتاني.
+- <b>الأداة:</b> `traceAction` في `integration_test` بيطلّع timeline فيه أوقات الـ frames، وDevTools للتحقيق اليدوي.
+- <b>في Readly:</b> scroll سريع في المكتبة بـ 500 كتاب، والـ frames اللي اتأخرت عن 16ms أقل من حد معين.
+
+#### Acceptance test
+
+- <b>هو إيه:</b> بيتأكد إن الـ feature بتحقق المطلوب من ناحية الـ product، بلغة المستخدم: «Given مكتبتي فيها Dune، When أضيف Dune تاني، Then أشوف رسالة إنه موجود».
+- <b>بيمسك:</b> إن الكود شغال «صح» بس بيعمل حاجة غير اللي اتطلبت. كل التستات خضرا، والـ product يقول «مش ده اللي قصدته».
+- <b>التكلفة:</b> حسب مستواه: ممكن يبقى widget test أو integration test. الجديد فيه إن معياره جاي من الـ acceptance criteria بتاعة الـ ticket.
+- <b>الأداة:</b> مفيش أداة خاصة: `testWidgets` أو `integration_test` بأسماء وبنية Given/When/Then.
+- <b>في Readly:</b> الـ ticket بيقول «الكتاب مايتضافش مرتين، والمستخدم يشوف ليه». التست بيتكتب من الجملة دي بالظبط.
+
+### المحور التالت: امتى وليه
+
+#### Regression test
+
+- <b>هو إيه:</b> مش نوع بحجم معين، ده <b>سبب</b>. أي تست هدفه إن حاجة كانت شغالة تفضل شغالة. وأهم شكل ليه: كل bug اتصلّح بيتكتب له تست بيفشل الأول، وبعدين الإصلاح.
+- <b>بيمسك:</b> الـ bug اللي رجع. وده بيحصل كتير أكتر مما تتخيل، لأن الكود اللي فيه bug مرة غالبًا معقد ومعرّض يتكسر تاني.
+- <b>التكلفة:</b> تكلفة التست نفسه (غالبًا unit). والمكسب كبير: كل bug بيتصلّح مرة واحدة بس.
+- <b>الأداة:</b> أي أداة من اللي فوق. وفي الـ CI، كل التستات اللي عندك هي الـ regression suite.
+- <b>في Readly:</b> الـ `BookDto` وقع لما `description` جه كـ `{"value": "..."}`. التست ده بيفضل في الـ suite للأبد.
+
+#### Smoke test
+
+- <b>هو إيه:</b> مجموعة صغيرة جدًا وسريعة بتسأل «الحاجة دي شغالة أصلًا؟» قبل ما تصرف وقت على الباقي. الاسم جاي من الكهربا: شغّل الجهاز، لو طلع دخان ماتكملش.
+- <b>بيمسك:</b> الكوارث: الـ app مابيفتحش، الـ build الجديد بيقع في الـ startup، الـ login مش شغال خالص.
+- <b>التكلفة:</b> قليلة لأنها قليلة. الفكرة إنها تقولك في دقيقة إن الـ build ده ميتجربش.
+- <b>الأداة:</b> integration test أو اتنين بـ tag اسمه `smoke`، بيتشغّلوا الأول في الـ CI، أو على الـ build قبل ما يتبعت للـ testers.
+- <b>في Readly:</b> الـ app بيفتح، وصفحة الـ login بتظهر، والدخول بحساب تجريبي بيوصّل للمكتبة.
+
+### المحور الرابع: اختبار التستات نفسها
+
+#### Mutation testing
+
+- <b>هو إيه:</b> أداة بتغيّر الكود بتاعك تغييرات صغيرة عن قصد (تقلب `>=` لـ `>`، تشيل `!`، ترجّع `true` بدل الشرط)، وتشغّل التستات بعد كل تغيير. لو التستات فضلت خضرا، يبقى التغيير ده «عاش»، يعني التستات مش بتحرس السطر ده.
+- <b>بيمسك:</b> تستات بتلمس الكود بس مابتتأكدش من حاجة. الـ coverage بيقول «السطر ده اتنفّذ»، والـ mutation بيقول «لو السطر ده باظ، حد هياخد باله؟».
+- <b>التكلفة:</b> غالي جدًا في الوقت: الـ suite كلها بتتشغّل مرة لكل تغيير. فبيتشغّل على الـ domain بس، أو بالليل، مش على كل PR.
+- <b>الأداة:</b> package اسمها `mutation_test` بتتشغّل بـ `dart run mutation_test`.
+- <b>في Readly:</b> قلبت `length >= 8` في `Password.create` لـ `length > 8` والتستات فضلت خضرا؟ يبقى مفيش تست بباسورد 8 حروف بالظبط.
+
+#### Property-based testing
+
+- <b>هو إيه:</b> بدل ما تكتب أمثلة بإيدك، بتكتب <b>قاعدة</b> لازم تبقى صح لأي input، والأداة بتولّد مئات الـ inputs العشوائية وتدوّر على واحد يكسر القاعدة. ولما تلاقيه، بتصغّره لأبسط مثال بيكسرها (shrinking).
+- <b>بيمسك:</b> الحالات اللي ماخطرتش على بالك: نص فيه emoji، أو مسافات بس، أو رقم سالب، أو ليستة فاضية.
+- <b>التكلفة:</b> التست نفسه أصعب في التفكير (لازم تلاقي قاعدة عامة)، وأبطأ شوية لأنه بيجرب كتير.
+- <b>الأداة:</b> package glados.
+- <b>في Readly:</b> «لأي ليستة كتب، `WatchLibrary` بيطلّع ليستة مترتبة بالعنوان، وطولها أقل من أو يساوي الأصل».
+
+### على كل المحاور: black box وwhite box
+
+- <b>Black box:</b> التست مايعرفش حاجة عن اللي جوه. بيدّي input ويبص على الـ output، زي مستخدم. ميزته إنه مابيتكسرش لما تغيّر التفاصيل الداخلية، وإنه بيختبر اللي المستخدم بيهمه فعلًا.
+- <b>White box:</b> التست مكتوب وانت شايف الكود: بتتأكد إن كل `if` وكل فرع في الـ `switch` اتجرب. ميزته إنه بيلاقي الفروع اللي محدش جربها، وعيبه إنه ممكن يتربط بالتفاصيل لو مش واخد بالك.
+- <b>Grey box:</b> اللي بنعمله أغلب الوقت: بتختبر من الـ public API بس (black)، وبتختار الحالات وانت عارف إن جوه في فرع للـ `NetworkFailure` وفرع للـ 401 (white).
+
+في Readly: تست `guard` اللي بيبعت كل `DioExceptionType` ويتأكد من الـ Failure الراجعة هو white box في اختيار الحالات، بس black box في الطريقة: بيكلّم `guard` من بره زي أي حد.
+
+### الملخص في جدول
+
+| النوع | بيمسك | السرعة والتكلفة | الأداة |
+| --- | --- | --- | --- |
+| Unit | الـ logic والقواعد والـ mapping | ms، الأرخص | `test` / `flutter_test` |
+| Widget | الشاشة بتعرض وبتتفاعل صح | مئات الـ ms | `testWidgets` |
+| Golden | الشكل اتغير من غير قصد | زي الـ widget، وصيانة الصور | `matchesGoldenFile`، alchemist |
+| Integration | التجميع، الـ native، الـ DI | ثواني لدقايق، محتاج جهاز | `integration_test`، patrol |
+| E2E | الـ app مع السيرفر الحقيقي | الأغلى والأهش | `integration_test` على staging |
+| Contract | الـ fake بيكدب، أو شكل الـ API اتغير | رخيص | `test` |
+| Performance | الـ jank والبطء | جهاز حقيقي، profile mode | `traceAction`، DevTools |
+| Acceptance | مش ده اللي اتطلب | حسب المستوى | Given/When/Then |
+| Regression | bug قديم رجع | تكلفة التست نفسه | أي أداة |
+| Smoke | الـ build ده ميت؟ | دقيقة | integration بـ tag |
+| Mutation | التستات مش بتحرس حاجة | غالي جدًا | `mutation_test` |
+| Property-based | حالات ماخطرتش على بالك | أبطأ شوية | glados |
+
+</Level>
+
+<Level n="3" title="التجهيز والتشغيل والشكل الصح">
+
+### package:test ولا flutter_test؟
+
+الاتنين نفس الـ API تقريبًا: `test` و`group` و`setUp` و`expect` وكل الـ matchers. الفرق في البيئة اللي بيشتغلوا فيها:
+
+|  | `package:test` | `flutter_test` |
+| --- | --- | --- |
+| بيجي منين | package عادية من pub.dev | جزء من الـ Flutter SDK |
+| بيشغّله | `dart test` | `flutter test` |
+| يقدر يلمس Flutter؟ | لأ: أي import لـ `package:flutter` بيقع | آه: widgets، و`testWidgets`، والـ goldens |
+| مكانه في Readly | الـ packages الـ Dart الصافية: `core`، والـ domain لو في package لوحده، و`tools/architecture` | الـ app، وأي feature package فيها presentation |
+
+<CodeBlock label="pubspec.yaml: package Dart صافي (core)">
+
+```yaml
+name: core
+environment:
+  sdk: ^3.6.0
+dev_dependencies:
+  test: ^1.25.0
+```
+
+</CodeBlock>
+
+<CodeBlock label="pubspec.yaml: الـ app أو feature فيها Flutter">
+
+```yaml
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  mocktail: ^1.0.4
+  bloc_test: ^10.0.0
+```
+
+</CodeBlock>
+
+- <b>ماتزوّدش `test` جنب `flutter_test`:</b> الـ `flutter_test` مثبّت versions معينة من `test_api` و`matcher` جوه الـ SDK. لو زوّدت `package:test` كمان، ممكن الـ pub يفشل في الـ resolution أول ما الـ versions تختلف. وانت أصلًا مش محتاجه: `flutter_test` بيعمل export لكل اللي فيه.
+- <b>الـ import:</b> في package Dart: `import 'package:test/test.dart';`. في Flutter: `import 'package:flutter_test/flutter_test.dart';`. ماتعملش الاتنين في نفس الملف.
+- <b>`flutter test` بيشغّل تستات Dart صافية عادي:</b> لو الـ app فيه تستات للـ domain مابتلمسش Flutter، `flutter test` بيشغّلها. العكس لأ: `dart test` مابيعرفش يشغّل أي حاجة فيها `dart:ui`.
+
+### فولدر test/ بيعكس lib/
+
+الـ test runner بيدوّر على أي ملف اسمه بينتهي بـ `_test.dart` جوه `test/`. أي اسم تاني مش هيتشغّل، ومن غير أي تحذير. والقاعدة اللي بتخلي التستات تتلاقي: <b>نفس المسار، ونفس الاسم + `_test`</b>:
+
+<CodeBlock label="الهيكل">
+
+```text
+readly/
+├─ lib/
+│  ├─ core/
+│  │  └─ result.dart
+│  └─ features/library/
+│     ├─ domain/add_book_to_library.dart
+│     ├─ data/library_repository_impl.dart
+│     └─ presentation/library_cubit.dart
+└─ test/
+   ├─ core/
+   │  └─ result_test.dart
+   ├─ features/library/
+   │  ├─ domain/add_book_to_library_test.dart
+   │  ├─ data/library_repository_impl_test.dart
+   │  └─ presentation/library_cubit_test.dart
+   ├─ helpers/          # builders, pump_app, matchers: shared, never *_test.dart
+   └─ fixtures/         # real JSON from Open Library
+```
+
+</CodeBlock>
+
+- <b>ليه نفس المسار:</b> لما تفتح `library_cubit.dart` وعايز تستاته، عارف مكانها من غير ما تدوّر. ولو ملف في `lib/` مالوش نظير في `test/`، ده واضح من نظرة.
+- <b>الـ helpers مش `_test.dart`:</b> لو سمّيت ملف الـ builders `builders_test.dart`، الـ runner هيحاول يشغّله كتست ويشتكي إن مفيهوش `main`.
+- <b>الـ integration tests في فولدر لوحده:</b> `integration_test/` جنب `test/` مش جواه، لأنها محتاجة جهاز ومابتتشغّلش مع `flutter test` العادي. التفاصيل في [درس الـ integration](/course/testing/integration/).
+
+### التشغيل
+
+<CodeBlock label="الأوامر اللي هتستخدمها كل يوم">
+
+```bash
+flutter test                                    # everything under test/
+flutter test test/features/library              # one folder
+flutter test test/features/library/domain/add_book_to_library_test.dart
+flutter test --plain-name "already in the library"   # tests whose name contains this text
+flutter test --name "rejects|refuses"           # same, but a regular expression
+flutter test -r expanded                        # one line per test instead of one updating line
+flutter test --coverage                         # writes coverage/lcov.info
+
+dart test                                       # the same, in a pure Dart package
+```
+
+</CodeBlock>
+
+- <b>`--plain-name`:</b> بيدوّر في الاسم الكامل للتست (اسم الـ group + اسم التست). أسرع طريقة تشغّل التست اللي بتشتغل عليه دلوقتي.
+- <b>من الـ IDE:</b> في VS Code وAndroid Studio في زرار ▶ جنب كل `test` و`group`، وزرار debug بيوقف على الـ breakpoints جوه التست. ده أسرع من الـ terminal وانت بتكتب.
+- <b>الـ tags والـ randomize والـ sharding:</b> أوامر للـ CI والفرق الكبيرة، في [درس الاستراتيجية](/course/testing/strategy/).
+
+### قراية الـ output
+
+لما كله يعدّي:
+
+<CodeBlock label="كله أخضر">
+
+```text
+00:03 +42: All tests passed!
+```
+
+</CodeBlock>
+
+`00:03` الوقت من أول التشغيل، و`+42` عدد التستات اللي عدّت. ولو في تستات اتعملها skip بتشوف `~2`، واللي فشلت `-1`. والسطر ده بيتحدّث وهو شغال، فبتشوف العداد بيجري.
+
+ولما تست يفشل:
+
+<CodeBlock label="تست فشل">
+
+```text
+00:02 +17 -1: test/features/library/domain/add_book_to_library_test.dart: AddBookToLibrary rejects a book that is already in the library [E]
+  Expected: <Instance of 'Err<void>'>
+    Actual: <Instance of 'Success<void>'>
+     Which: is not an instance of 'Err<void>'
+
+  package:matcher                                          expect
+  test/features/library/domain/add_book_to_library_test.dart 31:7  main.<fn>.<fn>
+
+00:03 +41 -1: Some tests failed.
+```
+
+</CodeBlock>
+
+اقراه من فوق لتحت:
+
+- <b>السطر الأول:</b> الملف، وبعده الاسم الكامل للتست (الـ group + التست)، و`[E]` يعني فشل. ولو اسم التست واضح، انت عرفت القاعدة اللي باظت قبل ما تقرا أي حاجة تانية.
+- <b>`Expected` و`Actual`:</b> كنت مستني إيه، ولقيت إيه. `Which` بيشرح الفرق بالكلام، وفي الـ strings والـ lists بيقولك أول حرف أو أول عنصر مختلف.
+- <b>الـ stack trace:</b> ادور على أول سطر من ملفاتك انت، مش من `package:matcher`. هنا `31:7` يعني السطر 31 في ملف التست، وده الـ `expect` اللي وقع.
+- <b>لو مكتوب exception بدل Expected/Actual:</b> يبقى الكود رمى exception محدش مسكه، يعني التست مالحقش يوصل للـ `expect` أصلًا. ابدأ من أول سطر من ملفاتك في الـ stack trace.
+
+### الهرم ولا الكأس؟
+
+<Diagram name="d-test-shapes">
+
+الهرم بيقول «أغلب التستات unit لأنها الأرخص». الكأس بيقول «أغلب الثقة من تستات بتجمّع أجزاء حقيقية مع بعض». في Flutter، الجزء العريض من الكأس هو widget test بـ Cubit حقيقي وrepository fake، وتحته الـ analyzer اللي بيمسك نوع كامل من الأخطاء ببلاش.
+
+</Diagram>
+
+- <b>الهرم (Mike Cohn):</b> قاعدة عريضة من الـ unit tests، وفوقها أقل من الـ widget، وفي القمة شوية integration. المنطق: كل ما تطلع لفوق، التست أبطأ وأهش وأصعب في التشخيص، فاستخدمه بس للي مايتمسكش تحت. ده الشكل اللي في [درس الاختبارات في وحدة الجودة](/course/quality/testing/).
+- <b>الكأس (Kent C. Dodds):</b> قاعدة من الـ static analysis، وunit قليل نسبيًا، والجزء الأعرض «integration» بمعناها الواسع: أجزاء حقيقية متجمعة، والـ fake بس على الحدود (الشبكة، الـ DB). المنطق: الـ unit test اللي بيعمل mock لكل حاجة ممكن يعدّي والـ app بايظ، لأن المشكلة كانت في التوصيل بين الأجزاء.
+- <b>الحقيقة إن الاتنين بيقولوا نفس الحاجة بلغتين:</b> اكتب أرخص تست يمسك المشكلة. في Readly الـ domain مليان قواعد صافية (`AddBookToLibrary`، `Password`، `WatchLibrary`)، فالـ unit هناك هو الكتير. والـ presentation الثقة فيها جاية من widget tests: `MockCubit` عشان تحط الشاشة في أي state بسطر، وCubit حقيقي فوق fakes لما الشاشة والـ Cubit متشابكين (زي الفورم)، مش من mocks لكل حتة لوحدها والتوصيل بينهم محدش جربه.
+
+الشكل اللي بننصح بيه لـ Readly: domain وdata بـ unit كتير، والـ Cubits بـ blocTest، والشاشات بـ widget tests (بـ MockCubit، أو بـ Cubit حقيقي لما التفاعل هو المهم)، وgoldens للشاشات المهمة، وintegration للـ 3 أو 4 flows اللي لو باظت الـ app مالوش لازمة (الدخول، البحث والإضافة، الـ sync أوفلاين)، وanalyzer صارم تحت الكل.
+
+### صفات التست الكويس: FIRST
+
+| الحرف | معناه | شكل الكسر في Readly |
+| --- | --- | --- |
+| <b>F</b>ast | بيخلص في ms، فبتشغّله كل شوية | تست بيعمل `Future.delayed(Duration(seconds: 1))` عشان يستنى الـ debounce. 50 تست زيه = دقيقة كل مرة |
+| <b>I</b>ndependent | مالوش دعوة بتست تاني ولا بترتيبهم | repository متعرّف مرة واحدة بره `setUp`، فالكتاب اللي اتضاف في تست بيبوّظ التست اللي بعده |
+| <b>R</b>epeatable | نفس النتيجة كل مرة وعلى أي جهاز | تست بيستخدم `DateTime.now()` وبيقع آخر يوم في الشهر بس، أو بيكلّم Open Library الحقيقي |
+| <b>S</b>elf-validating | بيقول أخضر أو أحمر لوحده | تست بيعمل `print(state)` وانت بتبص على الـ console بعينك |
+| <b>T</b>imely | بيتكتب مع الكود مش بعده بشهر | الكود اتكتب من غير تفكير في التست، فطلع مربوط بـ `getIt` و`DateTime.now()` ومايتختبرش من غير refactor |
+
+كل كسر من دول ليه حل هتشوفه في الوحدة: الـ `setUp` الجديد لكل تست في [درس الـ unit tests](/course/testing/unit-tests/)، و`FixedClock` والـ fakes في [درس الـ test doubles](/course/testing/test-doubles/)، و`fake_async` بدل الانتظار الحقيقي في [درس الـ Cubit](/course/testing/cubit-tests/).
+
+### كلمة «integration» ليها معنيين
+
+ده مصدر لخبطة حقيقي في الـ interviews وفي الفرق:
+
+- <b>في توثيق Flutter:</b> integration test يعني الـ app كامل على جهاز، بـ package `integration_test`. ده اللي في الأدبيات العامة أقرب لـ e2e أو «UI test».
+- <b>في الأدبيات العامة والكأس:</b> integration test يعني أكتر من وحدة حقيقية شغالين مع بعض. مثلًا `LibraryRepositoryImpl` مع drift حقيقي في الذاكرة (`NativeDatabase.memory()`) وremote fake. ده بيتكتب بـ `flutter test` عادي، من غير جهاز، وده في [درس تستات الطبقات](/course/testing/layers/).
+
+لما حد يقولك «عندنا integration tests»، اسأل: «على جهاز ولا في الـ VM؟». الإجابة بتفرق جدًا في السرعة والتكلفة والـ CI.
+
+### الـ static analysis: الطبقة اللي محدش بيعدّها
+
+الـ analyzer مش تست، بس بيمسك نوع كامل من الأخطاء من غير ما تكتب سطر: `null` مش متشيك عليه، `switch` على `Failure` ناقص نوع، `Future` من غير `await` (`unawaited_futures`)، import غلط بين الطبقات. كل bug الـ analyzer يقدر يمسكه، ماتكتبش له تست. ودي قاعدة الكأس، واتشرحت في [درس حراسة المعمارية](/course/quality/architecture-guards/).
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>اختار نوع التست من المخاطرة مش من العادة:</b> اسأل «لو ده باظ، إيه اللي هيحصل؟ وإيه أرخص تست يمسكه؟». قاعدة في الـ domain: unit. الشاشة بتعرض الـ state غلط: widget. الـ RTL بايظ: golden. الـ DI متوصّل غلط أو plugin native: integration. والسؤال التاني: «إيه اللي هيوقعه من غير ما يكون في bug؟» التست اللي بيقع على الفاضي بيعلّم الفريق يتجاهل الأحمر.
+- <b>التكلفة الحقيقية هي الصيانة:</b> كتابة التست مرة واحدة. قرايته وتصليحه بيحصل كل ما الكود يتغير. التست اللي مربوط بالتفاصيل الداخلية (أسماء methods خاصة، ترتيب نداءات مالوش معنى) بيدفّعك كل refactor. اختبر السلوك اللي ليه معنى من بره.
+- <b>ماتختبرش اللي مش بتاعك:</b> الـ generated code (freezed، json_serializable)، والـ framework نفسه («`Text` بيعرض النص؟»)، والـ getters اللي مالهاش logic. اختبر الكود اللي انت كاتبه وفيه قرار.
+- <b>الـ integration tests قليلة عن قصد:</b> مش لأنها وحشة، لأنها غالية في الوقت وفي الهشاشة. لو flow ممكن يتمسك بـ widget test بـ fakes، اعمله widget test، وخلي الـ integration للحاجات اللي محتاجة جهاز فعلًا.
+- <b>الـ coverage بيقول إيه اللي ماتختبرش، مش إيه اللي اتختبر كويس:</b> 90% coverage ممكن تبقى تستات من غير `expect` تقريبًا. علشان كده الـ mutation testing موجود. التفاصيل في [درس الاستراتيجية](/course/testing/strategy/).
+- <b>الـ QA اليدوي مش عدو:</b> الأوتوماتيك بيحرس اللي انت عارفه، والـ exploratory testing بيلاقي اللي انت مش عارفه. فريق من غير تستات أوتوماتيك بيصرف وقت الـ QA على إعادة نفس الحاجات. وفريق من غير exploratory بيشحن app «كل تستاته خضرا» ومُربك في الاستخدام.
+- <b>صعوبة التست إشارة:</b> لو عشان تختبر use case محتاج تعمل mock لـ 6 حاجات، الـ use case بيعمل حاجات كتير. لو محتاج `TestWidgetsFlutterBinding` عشان تختبر قاعدة، القاعدة في الطبقة الغلط. اسمع للتست قبل ما تكسره عشان يعدّي.
+
+<Note kind="warn" title="أخضر مش معناه صح">
+
+تست ماعندوش `expect`، أو بيتأكد من حاجة دايمًا صح، أو بيلف على ليستة فاضية، هيفضل أخضر للأبد. قبل ما تثق في تست جديد، اكسر الكود عن قصد وشوفه بيقع. لو ماوقعش، التست ده مش بيحرس حاجة.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي بتقرر تكتب أنهي نوع تستات في app Flutter؟» بفكر في المخاطرة والتكلفة: أرخص تست يمسك المشكلة. القواعد في الـ domain والـ mapping في الـ data بـ unit tests لأنها أسرع وأدق في التشخيص. الـ Cubits بـ blocTest. الشاشات بـ widget tests: MockCubit عشان أحط الشاشة في أي state، وCubit حقيقي فوق fakes لما التفاعل بين الشاشة والـ Cubit هو اللي بختبره، زي الفورم. goldens للشاشات اللي شكلها مهم، خصوصًا الـ RTL والـ dark mode. وintegration على جهاز لعدد صغير من الـ flows الحرجة بس، لأنها بطيئة وهشة. وتحت الكل analyzer صارم. ومش بقيس النجاح بالـ coverage لوحده، لأن السطر اللي اتنفّذ مش معناه إنه اتختبر.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«الفرق بين الـ test pyramid والـ testing trophy؟» الهرم بيقول أغلب التستات unit لأنها الأرخص والأسرع. الكأس بيقول الجزء الأكبر integration بمعناها الواسع، أجزاء حقيقية متجمعة والـ fakes على الحدود بس، لأن الـ unit tests المليانة mocks ممكن تعدّي والتوصيل بايظ، وفوق كده الكأس بيحط الـ static analysis كقاعدة. الاتنين متفقين إن الـ e2e قليل. وفي Flutter بطبّق الاتنين: unit كتير في الـ domain، وwidget tests بأجزاء حقيقية للـ presentation.
+
+</Note>
+
+</Level>
+
+<LessonPart title="خريطة الوحدة: كل نوع في أنهي درس">
+
+الدرس ده كان الخريطة. الجدول ده بيقولك كل نوع بيتشرح فين بالتفصيل، وبالترتيب اللي ينفع تمشي بيه:
+
+| النوع أو الموضوع | الدرس | هتتعلم فيه |
+| --- | --- | --- |
+| Unit test والـ matchers والـ async والـ streams | [أول unit test بالتفصيل](/course/testing/unit-tests/) | `test` و`group` و`setUp`، وكل الـ matchers المهمة، وتست الـ Result والـ value objects، والـ boundary values (تقنية black box) |
+| Test doubles: dummy, stub, spy, mock, fake | [الـ test doubles](/course/testing/test-doubles/) | mocktail كامل، والـ fakes في الذاكرة، و`FixedClock`، و`aBook()` |
+| Unit وintegration بمعناها الواسع، وcontract tests | [تست كل طبقة](/course/testing/layers/) | الـ domain والـ DTOs بـ fixtures حقيقية، والـ repository، وdrift في الذاكرة، و`libraryRepositoryContract` |
+| تستات الـ Cubit | [تست الـ Cubit](/course/testing/cubit-tests/) | blocTest بكل الـ parameters، وfake_async للـ debounce |
+| Widget test والـ accessibility | [الـ widget tests](/course/testing/widget-tests/) | `WidgetTester` والـ finders والتفاعل، و`pumpApp`، وMockCubit، والـ navigation |
+| Golden test | [الـ golden tests](/course/testing/golden-tests/) | `matchesGoldenFile`، والخطوط العربي، والـ variants، وalchemist |
+| Integration وe2e وsmoke وperformance | [الـ integration tests](/course/testing/integration/) | `integration_test` وpatrol، والـ flavors، و`traceAction`، والـ flakiness |
+| Regression (bug-first) وacceptance (Given/When/Then) | [الـ TDD](/course/testing/tdd/) | Red-Green-Refactor، وكل bug يبدأ بتست فاشل، والـ characterization tests |
+| Mutation وproperty-based والـ coverage (قياس white box) | [استراتيجية الاختبار](/course/testing/strategy/) | `mutation_test`، وglados، والـ flaky tests، والـ tags والـ sharding، ووثيقة استراتيجية للفريق |
+
+ولو عايز ترجع للصورة الكبيرة بسرعة، [درس الاختبارات في وحدة الجودة](/course/quality/testing/) فيه لمحة من كل نوع في صفحة واحدة، والوحدة دي هي النسخة المفصّلة منه.
+
+### قبل وبعد: أول قرار
+
+<BeforeAfter>
+
+<Side label="قبل: كل حاجة integration" kind="before">
+
+```dart
+// integration_test/library_test.dart
+testWidgets('duplicate book shows an error', (tester) async {
+  app.main();
+  await tester.pumpAndSettle();
+  await login(tester);
+  await searchAndAdd(tester, 'Dune');
+  await searchAndAdd(tester, 'Dune');
+  expect(find.text('Already in your library'), findsOneWidget);
+});
+```
+
+</Side>
+
+<Side label="بعد: كل قاعدة في أرخص مستوى" kind="after">
+
+```dart
+// test/features/library/domain/add_book_to_library_test.dart
+test('rejects a book that is already in the library', () async {
+  final repository = FakeLibraryRepository();
+  await repository.addBook(dune);
+  expect(await AddBookToLibrary(repository)(dune), isA<Err<void>>());
+});
+
+// test/features/library/presentation/add_book_button_test.dart
+// widget test: a ValidationFailure shows "Already in your library"
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: قاعدة واحدة في الـ domain محتاجة emulator، وlogin، وشبكة، ودقيقة. ولو وقع، ممكن يكون الـ login، أو البحث، أو الـ animation، أو القاعدة نفسها. بعد: القاعدة بـ unit test في ms، وعرض الرسالة بـ widget test، والـ integration بيفضل للـ flow نفسه مرة واحدة، مش لكل قاعدة جواه.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="t-intro-1">
+<Ask>زميلك بيقول «إحنا عندنا regression tests وunit tests». ليه الجملة دي فيها لخبطة؟</Ask>
+<Answer>
+
+لأنهم مش على نفس المحور. unit بيوصف حجم التست، وregression بيوصف سببه: إن حاجة كانت شغالة تفضل شغالة. أغلب الـ regression tests في Readly هي unit tests عادية، زي تست الـ `BookDto` لما `description` يجي object. فالتست الواحد ممكن يبقى الاتنين.
+
+</Answer>
+</Question>
+
+<Question id="t-intro-2">
+<Ask>عندك تستات للـ domain في الـ app، وعايز تزوّد `package:test` في الـ dev_dependencies جنب `flutter_test`. تعمل كده؟</Ask>
+<Answer>
+
+لأ. الـ `flutter_test` بيعمل export لنفس الـ API (`test` و`group` و`expect` والـ matchers)، ومثبّت versions معينة من `test_api` و`matcher`، فزيادة `package:test` ممكن تعمل مشاكل في الـ version resolution من غير أي فايدة. `package:test` مكانه الـ packages الـ Dart الصافية اللي بتتشغّل بـ `dart test`.
+
+</Answer>
+</Question>
+
+<Question id="t-intro-3">
+<Ask>عملت ملف `test/helpers/builders.dart` وملف `test/features/library/library_cubit_tests.dart`. التستات التانية شغالة بس تستات الـ Cubit مش بتتشغّل خالص. ليه؟</Ask>
+<Answer>
+
+الـ runner بيشغّل بس الملفات اللي اسمها بينتهي بـ `_test.dart`. الملف اسمه `_tests.dart` فمتجاهَل من غير أي تحذير. الحل تسميه `library_cubit_test.dart`. والـ `builders.dart` صح إنه من غير `_test` لأنه helper مش تست.
+
+</Answer>
+</Question>
+
+<Question id="t-intro-4">
+<Ask>إيه الفرق بين الـ coverage والـ mutation testing؟ وليه 95% coverage مش كفاية تثق في التستات؟</Ask>
+<Answer>
+
+الـ coverage بيقول السطر اتنفّذ وقت التستات، مش إن حد اتأكد من نتيجته. تست من غير `expect` بيرفع الـ coverage. الـ mutation testing بيغيّر الكود عن قصد (يقلب `>=` لـ `>` مثلًا) ويشوف التستات هتقع ولا لأ. لو فضلت خضرا، يبقى السطر ده متغطي بس مش محروس.
+
+</Answer>
+</Question>
+
+<Question id="t-intro-5">
+<Ask>حد في الفريق بيقول «عندنا integration tests كتير» وتاني بيقول «إحنا مابنعملش integration tests خالص»، والاتنين بيتكلموا عن نفس المشروع. إزاي ده ممكن؟</Ask>
+<Answer>
+
+كلمة integration ليها معنيين. في توثيق Flutter معناها الـ app كامل على جهاز بـ `integration_test`. وفي الأدبيات العامة معناها أكتر من جزء حقيقي شغالين مع بعض، زي الـ repository مع drift في الذاكرة، وده بيتشغّل بـ `flutter test` من غير جهاز. غالبًا الأول بيقصد المعنى العام والتاني بيقصد بتاع Flutter. السؤال اللي يفك اللخبطة: «على جهاز ولا في الـ VM؟».
+
+</Answer>
+</Question>
+
+</Quiz>

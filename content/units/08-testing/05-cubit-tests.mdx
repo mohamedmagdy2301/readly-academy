@@ -1,0 +1,910 @@
+---
+title: "تست الـ Cubit: من test عادي لـ blocTest وfake_async"
+description: "الـ Cubit بياخد أوامر ويطلّع states بالترتيب. هنسجّل الترتيب ده ونقارنه، ونتحكم في الوقت بدل ما نستناه، ونمسك الـ race conditions والـ leaks قبل المستخدم."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="ماكينة القهوة وشاشتها">
+
+عايز تتأكد إن ماكينة قهوة جديدة شغالة. مش هتفكها وتبص على الموتور. هتدوس «إسبريسو» وتبص على الشاشة: «بيطحن»، بعدين «بيصب»، بعدين «اتفضل». لو الشاشة قالت «اتفضل» والكوباية فاضية، أو قالت «بيصب» قبل «بيطحن»، الماكينة فيها مشكلة. يعني انت بتختبر <b>الترتيب اللي بيظهر على الشاشة</b> لما تدوس على زرار معين.
+
+وفي ماكينات بتستنى 3 دقايق تسخن الأول. مش هتقف جنبها بساعة إيدك كل مرة تجرب. لو معاك ريموت بيقدّم ساعة الماكينة 3 دقايق في لحظة، هتجرب 100 مرة في دقيقة. ولو ضغطت «إسبريسو» مرتين ورا بعض، المفروض تطلع كوباية واحدة، مش اتنين فوق بعض.
+
+</Analogy>
+
+الـ Cubit هو الماكينة دي بالظبط. الـ <b>methods</b> هي الزراير (`load()`، `refresh()`، `queryChanged('flutter')`)، والـ <b>states</b> هي اللي بيظهر على الشاشة بالترتيب. وتست الـ Cubit سؤاله واحد: «لما أدوس الزرار ده، وفي الحالة دي، الشاشة هتعرض إيه وبأي ترتيب؟».
+
+والأسئلة اللي بتطلع في Readly الحقيقي:
+
+- <b>الترتيب:</b> `load()` بيطلّع `LibraryLoading` وبعدين `LibraryLoaded`؟ ولو النت فاصل، `LibraryError` فيه `NetworkFailure`؟
+- <b>التفاعل:</b> الـ Cubit نادى الـ use case مرة واحدة بس؟ ولا نادى `AddBookToLibrary` مرتين لأن المستخدم داس مرتين؟
+- <b>الوقت:</b> البحث بيستنى 350ms من آخر حرف؟ من غير ما التست نفسه يستنى 350ms حقيقية.
+- <b>السباق:</b> نتيجة «flu» البطيئة ماتغطيش على نتيجة «flutter» اللي رجعت قبلها؟
+- <b>الدورة:</b> لما الشاشة تتقفل، الـ Cubit بيقفل الـ stream subscription والـ timer؟ ولا بيفضلوا شغالين في الخلفية؟
+
+الكود اللي هنختبره كله من [درس الـ Cubit](/course/presentation/cubit/). والـ mocks والـ `aBook()` من [درس الـ test doubles](/course/testing/test-doubles/). ودرس [الاختبارات في وحدة الجودة](/course/quality/testing/) كان فيه blocTest واحد للـ debounce. هنا هنفهمه حتة حتة، ونشوف ليه هو نفسه ممكن يبقى بطيء ومتقلّب.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### التجهيز
+
+<CodeBlock label="pubspec.yaml">
+
+```yaml
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  bloc_test: ^10.0.0
+  mocktail: ^1.0.4
+  fake_async: ^1.3.0
+```
+
+</CodeBlock>
+
+- <b>الـ bloc_test:</b> فيه `blocTest` اللي هيختصر التست، و`MockCubit` و`whenListen` اللي هنستخدمهم في [درس الـ widget tests](/course/testing/widget-tests/).
+- <b>الـ fake_async:</b> ساعة وهمية. بتقدّم الوقت بإيدك بدل ما تستناه. هنحتاجها للـ debounce.
+- <b>مكان الملف:</b> فولدر `test/` بيعكس `lib/`. فتست `lib/features/library/presentation/library_cubit.dart` مكانه `test/features/library/presentation/library_cubit_test.dart`.
+
+الـ Cubit اللي هنبدأ بيه هو `LibraryCubit` من درس الـ Cubit، بالـ `load()` والـ `refresh()` والـ `watch()`. الـ constructor بياخد الـ use case والـ repository عشان `watch()` محتاجاه:
+
+<CodeBlock label="LibraryCubit (ملخص)">
+
+```dart
+class LibraryCubit extends Cubit<LibraryState> {
+  LibraryCubit(this._getLibrary, this._repository) : super(const LibraryLoading());
+
+  final GetLibrary _getLibrary;
+  final LibraryRepository _repository;
+  StreamSubscription<List<Book>>? _sub;
+
+  Future<void> load() async {
+    emit(const LibraryLoading());
+    final result = await _getLibrary();
+    if (isClosed) return;
+    emit(switch (result) {
+      Success(:final value) => LibraryLoaded(value),
+      Err(:final failure) => LibraryError(failure),
+    });
+  }
+
+  // refresh() and watch() as in the Cubit lesson
+}
+```
+
+</CodeBlock>
+
+### الخطوة 1: test عادي بيبص على آخر state
+
+أبسط تست ممكن: اعمل الـ Cubit، نادي الـ method، واتأكد من الـ `state` في الآخر.
+
+<CodeBlock label="test/features/library/presentation/library_cubit_test.dart">
+
+```dart
+class MockGetLibrary extends Mock implements GetLibrary {}
+class MockLibraryRepository extends Mock implements LibraryRepository {}
+
+void main() {
+  late MockGetLibrary getLibrary;
+  late MockLibraryRepository repository;
+  final book = aBook();
+
+  setUp(() {
+    getLibrary = MockGetLibrary();
+    repository = MockLibraryRepository();
+  });
+
+  test('starts in LibraryLoading', () {
+    final cubit = LibraryCubit(getLibrary, repository);
+    expect(cubit.state, const LibraryLoading());
+    cubit.close();
+  });
+
+  test('load ends in LibraryLoaded', () async {
+    // Arrange
+    when(() => getLibrary()).thenAnswer((_) async => Success([book]));
+    final cubit = LibraryCubit(getLibrary, repository);
+
+    // Act
+    await cubit.load();
+
+    // Assert
+    expect(cubit.state, LibraryLoaded([book]));
+    await cubit.close();
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>الـ mocks جديدة في كل تست:</b> الـ `setUp` بيعمل mock جديد قبل كل `test`. لو الـ mock مشترك، الـ `when` والعدّاد بتوع تست بيوصلوا للتست اللي بعده.
+- <b>الـ `thenAnswer` مش `thenReturn`:</b> الـ `GetLibrary` بيرجّع `Future`. والـ mocktail بيقولك استخدم `thenAnswer` لأي Future أو Stream، عشان كل نداء ياخد Future جديد.
+- <b>الـ `expect(cubit.state, LibraryLoaded([book]))`:</b> بيقارن بـ `==`. ده شغال لأن الـ `LibraryState` بتاعتنا `Equatable` (هنرجع للنقطة دي في Level 3). والليستتين فيهم نفس الـ object بتاع `book`.
+- <b>الـ `close()`:</b> الـ Cubit جواه `StreamController`. التست العادي لازم يقفله بنفسه.
+
+التست ده مفيد، بس أعمى عن نص الحكاية: لو `load()` نسيت تعمل emit لـ `LibraryLoading`، الشاشة مش هتعرض spinner، والتست هيفضل أخضر.
+
+### الخطوة 2: سجّل كل الـ states
+
+<CodeBlock label="تسجيل الترتيب بإيدك">
+
+```dart
+test('load emits Loading then Loaded', () async {
+  when(() => getLibrary()).thenAnswer((_) async => Success([book]));
+  final cubit = LibraryCubit(getLibrary, repository);
+  final states = <LibraryState>[];
+  final sub = cubit.stream.listen(states.add);
+
+  await cubit.load();
+  await Future<void>.delayed(Duration.zero); // let the stream deliver
+
+  expect(states, [const LibraryLoading(), LibraryLoaded([book])]);
+  await sub.cancel();
+  await cubit.close();
+});
+```
+
+</CodeBlock>
+
+- <b>الـ listen قبل الـ act:</b> الـ `stream` بتاع الـ Cubit broadcast. أي state اتعملها emit قبل ما تسمع ضاعت عليك. ولاحظ إن الـ state الابتدائية نفسها (`LibraryLoading` اللي في الـ constructor) مش بتعدّي على الـ stream خالص.
+- <b>الـ `Future.delayed(Duration.zero)`:</b> الـ stream بيوصّل الـ events في microtask، مش في نفس اللحظة. السطر ده بيدّي فرصة لكل اللي في الطابور يوصل قبل الـ `expect`.
+- <b>الـ `LibraryLoading` بتتسجل رغم إنها زي الـ state الابتدائية:</b> الـ Cubit بيتجاهل أي emit لـ state بتساوي الحالية، <b>إلا أول emit خالص</b>. ده من كود `emit` في bloc نفسه.
+
+ونفس الكلام بشكل أقصر بـ stream matcher من [درس الـ unit tests](/course/testing/unit-tests/):
+
+<CodeBlock label="emitsInOrder">
+
+```dart
+test('load emits Loading then Loaded', () async {
+  when(() => getLibrary()).thenAnswer((_) async => Success([book]));
+  final cubit = LibraryCubit(getLibrary, repository);
+
+  final expectation = expectLater(
+    cubit.stream,
+    emitsInOrder([const LibraryLoading(), LibraryLoaded([book])]),
+  );
+  await cubit.load();
+  await expectation;
+  await cubit.close();
+});
+```
+
+</CodeBlock>
+
+الـ `expectLater` لازم يبدأ يسمع <b>قبل</b> `load()`، عشان كده متخزن في variable ومستنيينه بعدين.
+
+### الخطوة 3: blocTest
+
+كل تست Cubit بيتكرر فيه نفس الهيكل: اعمل الـ Cubit، اسمع، نفّذ، استنى، اقفل، قارن. الـ `blocTest` بيعمل ده كله، وانت بتكتب الأجزاء اللي بتتغير بس:
+
+<CodeBlock label="نفس التست بـ blocTest">
+
+```dart
+blocTest<LibraryCubit, LibraryState>(
+  'emits [Loading, Loaded] when the library loads',
+  setUp: () => when(() => getLibrary()).thenAnswer((_) async => Success([book])),
+  build: () => LibraryCubit(getLibrary, repository),
+  act: (cubit) => cubit.load(),
+  expect: () => [const LibraryLoading(), LibraryLoaded([book])],
+  verify: (_) => verify(() => getLibrary()).called(1),
+);
+
+blocTest<LibraryCubit, LibraryState>(
+  'emits [Loading, Error] when the network is down',
+  setUp: () => when(() => getLibrary())
+      .thenAnswer((_) async => const Err(NetworkFailure())),
+  build: () => LibraryCubit(getLibrary, repository),
+  act: (cubit) => cubit.load(),
+  expect: () => [const LibraryLoading(), const LibraryError(NetworkFailure())],
+);
+```
+
+</CodeBlock>
+
+- <b>الـ `build`:</b> بيرجّع Cubit جديد لكل تست. الـ blocTest هو اللي بيقفله في الآخر، فمفيش `close()` تنساه.
+- <b>الـ `act`:</b> الزرار اللي بتدوسه. لو رجّع Future، الـ blocTest بيستناه.
+- <b>الـ `expect`:</b> function بترجّع الليست المتوقعة، أو أي matcher.
+- <b>الـ `verify`:</b> بيتنادى بعد الـ expect. مكان الـ `verify` بتاع mocktail.
+- <b>الاسم:</b> صيغة «emits [X, Y] when Z» بتخلي الـ output لوحده يشرح الـ Cubit بيعمل إيه.
+
+### كل parameters بتاعة blocTest
+
+| الـ parameter | بيعمل إيه | امتى تستخدمه |
+| --- | --- | --- |
+| `build` | بيعمل الـ Cubit (إجباري) | دايمًا |
+| `setUp` | بيتنادى قبل `build` | الـ `when` بتاعة التست ده بس |
+| `seed` | بيعمل emit لـ state قبل ما التسجيل يبدأ | تبدأ من نص الحكاية: «الكتب ظاهرة وبعدين عمل refresh» |
+| `act` | الأوامر | دايمًا تقريبًا |
+| `wait` | يستنى مدة <b>حقيقية</b> بعد الـ act | timer صغير ومش عايز fake_async (بحذر) |
+| `skip` | يتجاهل أول N states (الـ default صفر) | يهمك آخر state بس |
+| `expect` | الـ states المتوقعة بالترتيب | دايمًا تقريبًا |
+| `verify` | assertions زيادة بعد الـ expect | الـ mock اتنادى كام مرة وبإيه |
+| `errors` | الأخطاء اللي اتبلّغت بـ `addError` أو اترمت من الـ act | الـ Cubit بيبلّغ عن error من غير ما يقع |
+| `tearDown` | تنضيف بعد كل حاجة | تقفل `StreamController` أو تمسح ملف |
+| `tags` | tags للتست | تشغّل جزء من التستات (درس الاستراتيجية) |
+
+<Diagram name="d-test-bloctest-flow">
+
+الترتيب ده من كود `testBloc` نفسه. الـ seed بيحصل قبل ما التسجيل يبدأ، فعمره ما بيظهر في الـ expect. والـ skip بيتطبق على اللي بعده. والـ Cubit بيتقفل قبل الـ expect، فأي emit بعد ما الـ act والـ wait يخلصوا مش هيتسجل.
+
+</Diagram>
+
+### التشغيل والـ output
+
+```bash
+flutter test test/features/library/presentation/library_cubit_test.dart
+flutter test --plain-name "when the network is down"   # one test by name
+```
+
+ولو التست فشل، الـ output بيقولك الفرق عند أنهي state. ده شكله فعلًا لما `getLibrary` رجّع error والتست مستني Loaded:
+
+```text
+Expected: [
+            LibraryLoading:LibraryLoading(),
+            LibraryLoaded:LibraryLoaded([Book(id: OL45804W, title: Fantastic Mr Fox, status: BookStatus.wantToRead)], false, null)
+          ]
+  Actual: [
+            LibraryLoading:LibraryLoading(),
+            LibraryError:LibraryError(Instance of 'NetworkFailure')
+          ]
+   Which: at location [1] is LibraryError:<LibraryError(Instance of 'NetworkFailure')> instead of LibraryLoaded:<...>
+```
+
+الـ `LibraryLoaded([...], false, null)` ده جاي من Equatable: بيطبع الـ props بتاعة الـ state في التستات، فبتعرف الفرق من غير debugger.
+
+</Level>
+
+<Level n="3" title="التفاصيل والحالات الصعبة">
+
+### seed: ابدأ من نص الحكاية
+
+الـ `refresh()` بيشتغل بس لو الكتب ظاهرة أصلًا (`LibraryLoaded`). من غير `seed` هتحتاج تنادي `load()` الأول وتستحمل states زيادة في الـ expect. الـ `seed` بيحط الـ Cubit في الحالة دي مباشرة:
+
+<CodeBlock label="refresh فشل: الكتب تفضل والـ failure يتسجل">
+
+```dart
+blocTest<LibraryCubit, LibraryState>(
+  'a failed refresh keeps the books and reports the failure',
+  setUp: () => when(() => getLibrary())
+      .thenAnswer((_) async => const Err(NetworkFailure())),
+  build: () => LibraryCubit(getLibrary, repository),
+  seed: () => LibraryLoaded([book]),
+  act: (cubit) => cubit.refresh(),
+  expect: () => [
+    LibraryLoaded([book], isRefreshing: true),
+    LibraryLoaded([book], refreshFailure: const NetworkFailure()),
+  ],
+);
+```
+
+</CodeBlock>
+
+- <b>الـ seed مش في الليست:</b> التسجيل بيبدأ بعده. أول state في الـ expect هي اللي `refresh()` عملها.
+- <b>فخ:</b> لو الـ act عمل emit لـ state بتساوي الـ seed، مش هتظهر. الـ seed اتعمله emit فعلًا، فالـ Cubit بيشوف إن مفيش تغيير ويتجاهل.
+- <b>التست ده بيحرس قرار تصميم:</b> «الكتب ماتختفيش عشان refresh فشل» من درس الـ Cubit. لو حد غيّر `refresh()` يعمل `emit(LibraryError(...))`، التست هيقع ويقول ليه.
+
+### skip: لما يهمك آخر state بس
+
+<CodeBlock label="skip">
+
+```dart
+blocTest<LibraryCubit, LibraryState>(
+  'ends in LibraryError when the network is down',
+  setUp: () => when(() => getLibrary())
+      .thenAnswer((_) async => const Err(NetworkFailure())),
+  build: () => LibraryCubit(getLibrary, repository),
+  act: (cubit) => cubit.load(),
+  skip: 1, // the Loading state is covered by another test
+  expect: () => [const LibraryError(NetworkFailure())],
+);
+```
+
+</CodeBlock>
+
+استخدمه بحساب. كل state بتعملها skip هي state مابقتش متحرسة في التست ده. لو في تست تاني بيتأكد من الـ Loading، تمام. لو مفيش، يبقى ضيّعت حماية.
+
+### الضغط المتكرر: نداء واحد بس
+
+المستخدم داس «أضف للمكتبة» مرتين بسرعة. الـ `AddBookCubit` من درس الـ Cubit عنده flag اسمه `_saving` بيمنع ده. الـ states بتاعته:
+
+<CodeBlock label="AddBookState">
+
+```dart
+sealed class AddBookState {
+  const AddBookState();
+}
+final class AddBookIdle extends AddBookState {
+  const AddBookIdle();
+}
+final class AddBookSaving extends AddBookState {
+  const AddBookSaving();
+}
+final class AddBookSaved extends AddBookState {
+  const AddBookSaved();
+}
+final class AddBookError extends AddBookState {
+  const AddBookError(this.failure);
+  final Failure failure;
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="test/features/library/presentation/add_book_cubit_test.dart">
+
+```dart
+class MockAddBookToLibrary extends Mock implements AddBookToLibrary {}
+
+void main() {
+  late MockAddBookToLibrary addBook;
+
+  setUpAll(() => registerFallbackValue(aBook()));
+  setUp(() => addBook = MockAddBookToLibrary());
+
+  blocTest<AddBookCubit, AddBookState>(
+    'a double tap saves the book once',
+    setUp: () => when(() => addBook(any())).thenAnswer((_) async => const Success(null)),
+    build: () => AddBookCubit(addBook),
+    act: (cubit) => Future.wait([cubit.save(aBook()), cubit.save(aBook())]),
+    expect: () => [isA<AddBookSaving>(), isA<AddBookSaved>()],
+    verify: (_) => verify(() => addBook(any())).called(1),
+  );
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `registerFallbackValue(aBook())`:</b> الـ `any()` محتاج قيمة من نفس النوع يستخدمها جوه mocktail. الـ `Book` class بتاعنا، فلازم تسجّل واحد مرة في `setUpAll`.
+- <b>الـ `Future.wait`:</b> الضغطتين بيبدأوا ورا بعض في نفس اللحظة، والـ act بيستنى الاتنين. لو كتبت `cubit.save(...)` مرتين من غير `await` وماستنتش، الـ blocTest هيقفل الـ Cubit قبل ما الحفظ الأول يخلص، و`AddBookSaved` مش هتتسجل.
+- <b>الـ `isA` بدل instances:</b> الـ states دي مش Equatable. الـ `const AddBookSaving()` كان هينفع (هنشوف ليه تحت)، بس الـ matchers أوضح هنا.
+
+ولو عايز تشوف اللحظة اللي في النص بعينك، الـ test العادي مع `Completer` أوضح من blocTest. الـ Completer بيخليك تمسك الـ Future مفتوح وتقفله وقت ما تحب:
+
+<CodeBlock label="خطوة بخطوة بـ Completer">
+
+```dart
+test('the second tap is ignored while the first is still saving', () async {
+  final pending = Completer<Result<void>>();
+  when(() => addBook(any())).thenAnswer((_) => pending.future);
+  final cubit = AddBookCubit(addBook);
+
+  final first = cubit.save(aBook());
+  await cubit.save(aBook()); // returns right away
+  expect(cubit.state, isA<AddBookSaving>());
+  verify(() => addBook(any())).called(1);
+
+  pending.complete(const Success(null)); // the server answers now
+  await first;
+  expect(cubit.state, isA<AddBookSaved>());
+
+  await cubit.save(aBook()); // free again after the first one finished
+  verify(() => addBook(any())).called(1); // counts calls since the last verify
+  await cubit.close();
+});
+```
+
+</CodeBlock>
+
+- <b>الـ Completer:</b> الـ use case «لسه بيحفظ» طول ما انت مانادتش `complete`. فبتقدر تختبر اللحظة اللي في النص، اللي في الحقيقة بتاخد ثانية من النت.
+- <b>آخر سطرين:</b> بيتأكدوا إن الـ flag اترجع لـ false. ده بالظبط الـ bug اللي بيحصل لو حد نسي `_saving = false` في فرع الـ error: الزرار يفضل ميت لحد ما المستخدم يقفل الشاشة.
+- <b>الـ `verify(...).called(1)` مرتين:</b> الـ verify بيصفّر العدّاد بعد ما يتأكد، فالتاني بيعدّ النداءات اللي حصلت بعد الأول بس.
+
+### errors: الـ Cubit بيبلّغ من غير ما يقع
+
+الـ `watch()` بيسمع على `watchLibrary()`. لو الـ stream رمى error (الـ DB اتقفل مثلًا)، مش عايزين الـ app يقع، ومش عايزين نخفي المشكلة. الحل `addError`: بيبلّغ الـ `BlocObserver` (اللي بيبعت لـ Sentry في [درس الـ observability](/course/production/observability/))، والشاشة بتفضل على آخر state:
+
+<CodeBlock label="watch بعد التعديل">
+
+```dart
+void watch() {
+  _sub = _repository.watchLibrary().listen(
+        (books) => emit(LibraryLoaded(books)),
+        onError: addError, // reported, the screen keeps its last state
+      );
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="errors وtearDown">
+
+```dart
+group('watch', () {
+  late StreamController<List<Book>> controller;
+
+  setUp(() {
+    controller = StreamController<List<Book>>();
+    when(() => repository.watchLibrary()).thenAnswer((_) => controller.stream);
+  });
+
+  blocTest<LibraryCubit, LibraryState>(
+    'emits LibraryLoaded for every list from the repository',
+    build: () => LibraryCubit(getLibrary, repository),
+    act: (cubit) {
+      cubit.watch();
+      controller
+        ..add([book])
+        ..add([book, aBook(id: 'OL1W', title: 'Matilda')]);
+    },
+    expect: () => [
+      LibraryLoaded([book]),
+      isA<LibraryLoaded>().having((s) => s.books.length, 'books.length', 2),
+    ],
+  );
+
+  blocTest<LibraryCubit, LibraryState>(
+    'reports stream errors with addError and keeps the last state',
+    build: () => LibraryCubit(getLibrary, repository),
+    act: (cubit) {
+      cubit.watch();
+      controller
+        ..add([book])
+        ..addError(CacheException('database closed'));
+    },
+    expect: () => [LibraryLoaded([book])],
+    errors: () => [isA<CacheException>()],
+    tearDown: () => controller.close(),
+  );
+});
+```
+
+</CodeBlock>
+
+- <b>الـ StreamController بتاعك:</b> بدل stream جاهز، انت اللي بتقرر امتى ييجي كل event. ده نفس فكرة الـ Completer، بس للـ streams.
+- <b>الـ expect بيخلط instances وmatchers:</b> أول عنصر instance، والتاني matcher. الـ blocTest بيقبل الاتنين في نفس الليست.
+- <b>الـ `errors`:</b> الـ blocTest بيحط `BlocObserver` بتاعه وقت التست، وبيجمّع أي error اتبلّغ بـ `addError`. من غير `errors`، الـ error اللي اتبلّغ ده ماحدش بيسأل عنه، والتست مش هيعرف إن في error حصل أصلًا.
+- <b>الـ `tearDown`:</b> بيقفل الـ controller بعد ما التست يخلص.
+
+### إلغاء الـ subscription في close
+
+الـ bug ده مش بيبان في أي شاشة. المستخدم بيفتح المكتبة ويقفلها 20 مرة، وكل مرة subscription جديد بيفضل شغال على الـ DB. والأسوأ: أول ما الـ DB يتغير، الـ subscription القديم بيعمل emit على Cubit مقفول، فـ `Bad state: Cannot emit new states after calling close`.
+
+<CodeBlock label="hasListener">
+
+```dart
+test('close cancels the subscription', () async {
+  final cubit = LibraryCubit(getLibrary, repository)..watch();
+  expect(controller.hasListener, isTrue);
+
+  await cubit.close();
+
+  expect(controller.hasListener, isFalse);
+});
+```
+
+</CodeBlock>
+
+الـ `hasListener` بيقولك هل في حد لسه بيسمع على الـ controller. اتأكد إن التست بيمسك فعلًا: امسح `await _sub?.cancel()` من `close()`، والتست هيفشل في السطر الأخير.
+
+### الـ debounce: الوقت الحقيقي ولا الساعة الوهمية؟
+
+الـ `CatalogSearchCubit` بيستنى 350ms من آخر حرف. أول حل بييجي في بالك هو `wait`:
+
+<CodeBlock label="wait: بيستنى فعلًا">
+
+```dart
+class MockSearchBooks extends Mock implements SearchBooks {}
+
+void main() {
+  late MockSearchBooks search;
+  final book = aBook();
+
+  setUpAll(() => registerFallbackValue(const SearchParams(query: '')));
+  setUp(() => search = MockSearchBooks());
+
+  blocTest<CatalogSearchCubit, CatalogSearchState>(
+    'searches once after the user stops typing',
+    setUp: () => when(() => search(any())).thenAnswer((_) async => Success([book])),
+    build: () => CatalogSearchCubit(search),
+    act: (cubit) => cubit
+      ..queryChanged('fl')
+      ..queryChanged('flu')
+      ..queryChanged('flutter'),
+    wait: const Duration(milliseconds: 400),
+    expect: () => [isA<SearchLoading>(), isA<SearchLoaded>()],
+    verify: (_) => verify(() => search(any())).called(1),
+  );
+}
+```
+
+</CodeBlock>
+
+شغال، بس فيه 3 مشاكل:
+
+- <b>بطيء:</b> كل تست بيستنى 400ms حقيقية. 30 تست زي ده في المشروع يبقوا 12 ثانية، والـ CI بيدفعهم في كل PR.
+- <b>مابيختبرش الـ 350 بالظبط:</b> لو حد غيّر الـ debounce لـ 100ms أو شاله خالص، التست هيفضل أخضر. هو بيقول «بعد 400ms في نتيجة»، مش «مفيش بحث قبل 350».
+- <b>هش:</b> المسافة بين الـ 350 والـ 400 صغيرة. على CI مزحوم، أو لو الـ mock نفسه فيه delay، النتيجة بتوصل بعد ما الـ Cubit اتقفل، والتست يفشل مرة وينجح مرة.
+
+الحل: <b>fake_async</b>. جوه `fakeAsync` كل `Timer` و`Future.delayed` بيمشوا على ساعة وهمية، والوقت مابيتحركش غير لما تقول `elapse`:
+
+<CodeBlock label="test/features/catalog/presentation/catalog_search_cubit_test.dart">
+
+```dart
+test('searches once, 350ms after the last keystroke', () {
+  fakeAsync((async) {
+    when(() => search(any())).thenAnswer((_) async => Success([book]));
+    final cubit = CatalogSearchCubit(search);
+    final states = <CatalogSearchState>[];
+    cubit.stream.listen(states.add);
+
+    cubit.queryChanged('fl');
+    async.elapse(const Duration(milliseconds: 200));
+    cubit.queryChanged('flutter'); // resets the timer
+
+    async.elapse(const Duration(milliseconds: 349));
+    verifyNever(() => search(any())); // one millisecond early: nothing yet
+
+    async.elapse(const Duration(milliseconds: 1));
+    verify(() => search(any(that: isA<SearchParams>()
+        .having((p) => p.query, 'query', 'flutter')))).called(1);
+    expect(states, [isA<SearchLoading>(), isA<SearchLoaded>()]);
+
+    cubit.close();
+  });
+});
+```
+
+</CodeBlock>
+
+<Diagram name="d-test-fake-clock">
+
+الـ timer الأول اتلغى لما المستخدم كمّل كتابة عند 200ms. التاني بدأ من 200 وخلص عند 550. التست قدّم الساعة لـ 549 واتأكد إن مفيش بحث، وبعدين ملي ثانية كمان واتأكد إن في بحث واحد بكلمة «flutter». ده كله بياخد أقل من ملي ثانية حقيقية.
+
+</Diagram>
+
+- <b>الـ callback مش async:</b> الـ `fakeAsync((async) { ... })` لازم يبقى sync. لو كتبت `(async) async { await ... }`، الـ await هيستنى حاجة الساعة الوهمية بتاعتها مش بتتحرك، والتست هيعلق أو يعدّي على الفاضي.
+- <b>الـ `elapse` بيشغّل الـ microtasks:</b> قبل وبعد كل timer بيولع. فالـ `thenAnswer((_) async => ...)` بتاع الـ mock بيخلص، والـ stream بيوصّل الـ states، من غير `await` ولا `Future.delayed`.
+- <b>الـ 349 ثم 1:</b> ده اللي بيحرس الرقم نفسه. لو حد خلّى الـ debounce 100ms، الـ `verifyNever` هيفشل. ولو شاله خالص، نفس الكلام.
+- <b>الـ `any(that: ...)`:</b> بيتأكد إن البحث اتعمل بـ «flutter» بالذات، مش بـ «fl». من غير ما `SearchParams` يحتاج `==`.
+
+### تجاهل النتيجة القديمة
+
+ده أصعب bug في البحث، وأصعب واحد تشوفه بإيدك: لازم النت يكون بطيء بطريقة معينة في لحظة معينة. بالساعة الوهمية بتعمل اللحظة دي بالظبط كل مرة:
+
+<CodeBlock label="race condition">
+
+```dart
+test('a slow old result never replaces a newer one', () {
+  fakeAsync((async) {
+    when(() => search(any())).thenAnswer((invocation) {
+      final params = invocation.positionalArguments.single as SearchParams;
+      final slow = params.query == 'flu';
+      return Future.delayed(
+        Duration(milliseconds: slow ? 2000 : 100),
+        () => Success([aBook(title: params.query)]),
+      );
+    });
+    final cubit = CatalogSearchCubit(search);
+
+    cubit.queryChanged('flu');
+    async.elapse(const Duration(milliseconds: 400)); // 'flu' is in flight
+    cubit.queryChanged('flutter');
+    async.elapse(const Duration(milliseconds: 500)); // 'flutter' came back
+    async.elapse(const Duration(seconds: 2)); // 'flu' comes back late
+
+    expect(
+      cubit.state,
+      isA<SearchLoaded>().having((s) => s.books.single.title, 'title', 'flutter'),
+    );
+    cubit.close();
+  });
+});
+```
+
+</CodeBlock>
+
+- <b>الـ `invocation.positionalArguments`:</b> stub واحد بيرد بشكل مختلف حسب الـ query. «flu» بياخد ثانيتين، و«flutter» بياخد 100ms. ده نفس اللي بيحصل لما السيرفر يكون أبطأ في كلمة من التانية.
+- <b>عنوان الكتاب = الـ query:</b> حيلة صغيرة عشان تعرف النتيجة اللي على الشاشة جاية من أنهي طلب.
+- <b>اتأكد إن التست بيمسك:</b> امسح شرط `requestId != _latestRequest` من الـ Cubit. التست هيفشل ويقول إن العنوان «flu». ده الـ bug اللي الـ diagram في درس الـ Cubit كان بيشرحه.
+
+ونفس الفكرة لحالة تانية في نفس الـ Cubit: المستخدم مسح الـ search box والطلب لسه راجع. المفروض الشاشة تفضل `SearchIdle`:
+
+<CodeBlock label="مسح البحث">
+
+```dart
+test('clearing the query drops the in-flight result', () {
+  fakeAsync((async) {
+    when(() => search(any())).thenAnswer(
+      (_) => Future.delayed(const Duration(milliseconds: 300), () => Success([book])),
+    );
+    final cubit = CatalogSearchCubit(search);
+
+    cubit.queryChanged('flutter');
+    async.elapse(const Duration(milliseconds: 400)); // request in flight
+    cubit.queryChanged('');
+    async.flushTimers(); // run everything that is still scheduled
+
+    expect(cubit.state, isA<SearchIdle>());
+    cubit.close();
+  });
+});
+```
+
+</CodeBlock>
+
+الـ `flushTimers` بيقدّم الساعة لحد ما كل الـ timers تخلص، من غير ما تحسب انت المدة.
+
+### close بيلغي الـ timer
+
+<CodeBlock label="pendingTimers">
+
+```dart
+test('close cancels the pending debounce timer', () {
+  fakeAsync((async) {
+    final cubit = CatalogSearchCubit(search)..queryChanged('flutter');
+    expect(async.pendingTimers, hasLength(1));
+
+    cubit.close();
+
+    expect(async.pendingTimers, isEmpty);
+    async.elapse(const Duration(seconds: 1));
+    verifyNever(() => search(any()));
+  });
+});
+```
+
+</CodeBlock>
+
+الـ `pendingTimers` بيوريك الـ timers اللي لسه ماولعتش. من غير `_debounce?.cancel()` في `close()`، المستخدم بيكتب ويقفل الشاشة بسرعة، والـ timer بيولع بعد 350ms ويبعت طلب بحث لشاشة مش موجودة.
+
+### مساواة الـ states: ليه التست بيقول إن الاتنين شبه بعض وفاشل؟
+
+لو الـ states مش Equatable وكتبت instances في الـ expect، هتشوف الرسالة دي حرفيًا:
+
+```text
+Expected: [Instance of 'SearchLoading', Instance of 'SearchLoaded']
+  Actual: [Instance of 'SearchLoading', Instance of 'SearchLoaded']
+   Which: at location [1] is <Instance of 'SearchLoaded'> instead of <Instance of 'SearchLoaded'>
+
+WARNING: Please ensure state instances extend Equatable, override == and hashCode, or implement Comparable.
+Alternatively, consider using Matchers in the expect of the blocTest rather than concrete state instances.
+```
+
+الاتنين `SearchLoaded` وفيهم نفس الكتاب، بس `==` الافتراضي في Dart بيقارن الـ identity: object واحد ولا لأ. و`SearchLoaded([book])` اللي في التست object تاني غير اللي الـ Cubit عمله.
+
+ليه `SearchLoading` عدّت؟ لأن `const SearchLoading()` في أي حتة في البرنامج هو <b>نفس الـ object</b>. الـ Dart بيعمل canonicalization للـ const objects. فالـ states اللي من غير بيانات بتتقارن صح لو اتعملت بـ `const`، واللي فيها بيانات لأ.
+
+عندك 3 حلول:
+
+<CodeBlock label="1) Equatable">
+
+```dart
+sealed class LibraryState extends Equatable {
+  const LibraryState();
+}
+
+final class LibraryLoaded extends LibraryState {
+  const LibraryLoaded(this.books, {this.isRefreshing = false, this.refreshFailure});
+  final List<Book> books;
+  final bool isRefreshing;
+  final Failure? refreshFailure;
+
+  @override
+  List<Object?> get props => [books, isRefreshing, refreshFailure];
+}
+
+final class LibraryError extends LibraryState {
+  const LibraryError(this.failure);
+  final Failure failure;
+
+  @override
+  List<Object?> get props => [failure];
+}
+```
+
+</CodeBlock>
+
+- <b>الـ Equatable بيقارن الليستات عنصر عنصر:</b> فـ `LibraryLoaded([book]) == LibraryLoaded([book])`. والـ `toString` بيطبع الـ props، وده اللي خلّى رسالة الفشل في Level 2 مقروءة.
+- <b>الـ `==` بتاع Book بيتسأل:</b> المقارنة عنصر عنصر بتستخدم `==` بتاع Book. وفي [درس الـ Domain](/course/domain-errors/domain/) شفنا إن `==` بالـ id بس بيخلي الـ Cubit يتجاهل «علّمته خلصته». نفس الـ bug ده بيخلي تست زي `expect: () => [LibraryLoaded([finishedBook])]` يعدّي وهو غلط.
+- <b>الـ Failures:</b> `const NetworkFailure()` بيتقارن صح عشان const. بس `ServerFailure('Timeout', statusCode: 504)` لأ، إلا لو الـ Failure نفسه فيه `==`. لو مش عايز تلمس الـ domain عشان التست، استخدم matcher.
+
+<CodeBlock label="2) matchers بدل instances">
+
+```dart
+expect: () => [
+  isA<SearchLoading>(),
+  isA<SearchLoaded>().having((s) => s.books, 'books', [book]),
+],
+
+// a failure with data: check only what matters
+expect: () => [
+  isA<LibraryError>().having(
+    (s) => s.failure,
+    'failure',
+    isA<ServerFailure>().having((f) => f.statusCode, 'statusCode', 504),
+  ),
+],
+```
+
+</CodeBlock>
+
+الـ matchers بتختبر اللي يهمك بس. ولما تفشل، الـ `having` بيقولك أنهي حقل بالظبط اللي اختلف (`'statusCode'`).
+
+والحل التالت إنك تكتب `==` و`hashCode` بإيدك، أو تستخدم freezed اللي بيولّدهم. الـ freezed كويس لو بتستخدمه أصلًا في المشروع. مش هتضيفه عشان التستات بس.
+
+| | امتى |
+| --- | --- |
+| Equatable أو freezed على الـ states | الـ states فيها بيانات وبتتقارن في الـ UI كمان (الـ BlocBuilder والـ BlocSelector بيسألوا `==`) |
+| `isA` و`having` | عايز تختبر حقل واحد، أو الـ state فيها حاجة مالهاش `==` كويس |
+| `const` بس | الـ states اللي من غير بيانات، زي `SearchLoading` |
+
+### الـ sealed states في التستات
+
+الـ `sealed` بيخلي الـ compiler يجبر الـ UI على كل الحالات في الـ `switch`. ده بيحمي الـ UI، بس التست لسه محتاج يقول إيه اللي المفروض يظهر. والـ pattern matching من Dart 3 بيخلي تفكيك الـ state في التست واضح:
+
+<CodeBlock label="switch في التست">
+
+```dart
+test('a network failure ends in AddBookError(NetworkFailure)', () async {
+  when(() => addBook(any())).thenAnswer((_) async => const Err(NetworkFailure()));
+  final cubit = AddBookCubit(addBook);
+
+  await cubit.save(aBook());
+
+  final failure = switch (cubit.state) {
+    AddBookError(:final failure) => failure,
+    final other => fail('expected AddBookError, got $other'),
+  };
+  expect(failure, isA<NetworkFailure>());
+  await cubit.close();
+});
+```
+
+</CodeBlock>
+
+- <b>الـ `fail(...)`:</b> بيرجّع `Never`، فالـ switch expression بيقبله كفرع، والـ type بتاع `failure` بيفضل `Failure`.
+- <b>لما تضيف state جديدة:</b> الـ UI مش هيعمل compile لحد ما تتعامل معاها، بس التستات اللي بـ `isA` مش هتعرف. علشان كده أول تست تكتبه للـ state الجديدة هو «امتى بتظهر».
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>mock للـ use case ولا use case حقيقي بـ fake repository؟</b> الـ `MockGetLibrary` بيخلي تست الـ Cubit يختبر الـ Cubit بس: لو فشل، المشكلة فيه. بس لو الـ use case فيه قاعدة (`AddBookToLibrary` بيرفض التكرار)، تست بـ `AddBookToLibrary(FakeLibraryRepository())` حقيقي بيختبر الـ flow كله: «ضيف نفس الكتاب مرتين، الـ state التانية `AddBookError`». الاتنين صح. المهم ماتعملش mock لكل حاجة لحد ما التست يبقى بيختبر الـ mocks نفسها (شوف over-mocking في [درس الـ test doubles](/course/testing/test-doubles/)).
+- <b>اختبر السلوك مش الـ internals:</b> ماتعملش `@visibleForTesting int get latestRequest`. الـ request id تفصيلة تنفيذ. السلوك هو «النتيجة القديمة ماتظهرش». لو بكرة غيّرت الحل لـ `CancelToken`، التست يفضل زي ما هو.
+- <b>debounce بـ Duration من الـ constructor؟</b> ناس بتعمل `CatalogSearchCubit(search, debounce: Duration.zero)` في التستات عشان تهرب من الوقت. ده بيسرّع التست، بس بيشيل الحاجة اللي عايز تختبرها. الـ fake_async بيختبر الـ 350 نفسها من غير ما يدفع وقتها.
+- <b>blocTest ولا test عادي؟</b> الـ blocTest للـ «اعمل كذا، شوف الترتيب ده». الـ test العادي أوضح لما التست فيه خطوات في النص: fake_async، أو Completer بتقفله بإيدك، أو `expect` على الـ state بين ضغطتين. ماتحشرش كل حاجة في blocTest.
+- <b>تست لكل انتقال:</b> كل method × كل نتيجة ممكنة للـ use case (`Success`، وكل `Failure` ليه سلوك مختلف) = تست. ولو اتنين Failures ليهم نفس السلوك، تست واحد بـ loop عليهم أوضح (parameterized من [درس الـ unit tests](/course/testing/unit-tests/)).
+- <b>أكتر أسباب الـ flaky في تستات الـ Cubit:</b> `wait` بالوقت الحقيقي، وmock مشترك بين التستات بدل `setUp`، وact مابيرجّعش الـ Future فالـ Cubit بيتقفل قبل آخر emit. التلاتة ليهم حل في الدرس ده.
+- <b>اتأكد إن التست بيفشل:</b> لكل تست سباق أو cleanup، امسح السطر اللي بيحميه وشغّل. لو التست فضل أخضر، يبقى مش بيحرس حاجة. ده mutation testing بإيدك، وهنعمله أوتوماتيك في [درس الاستراتيجية](/course/testing/strategy/).
+
+<Note kind="interview" title="سؤال interview">
+
+«عندك Cubit بحث فيه debounce 350ms وبيتجاهل النتايج القديمة. هتختبره إزاي من غير ما التست يبقى بطيء أو flaky؟» مش هستخدم `wait` بوقت حقيقي، لأنه بطيء ومابيحرسش الرقم نفسه. هستخدم fake_async: أكتب حروف ورا بعض، أقدّم الساعة لـ 349ms وأتأكد بـ `verifyNever` إن مفيش بحث، وبعدين ملي ثانية وأتأكد إن في بحث واحد بالكلمة الأخيرة. وللنتايج القديمة، stub بيرد بتأخير مختلف حسب الكلمة، فطلب «flu» يرجع بعد «flutter»، وأتأكد إن الـ state الأخيرة فيها نتيجة «flutter». وتست تالت إن `close()` بيلغي الـ timer بـ `pendingTimers`. والـ states إما Equatable أو بقارنها بـ `isA` و`having`.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### تست الـ debounce
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+blocTest<CatalogSearchCubit, CatalogSearchState>(
+  'searches after typing',
+  setUp: () => when(() => search(any()))
+      .thenAnswer((_) async => Success([book])),
+  build: () => CatalogSearchCubit(search),
+  act: (cubit) => cubit.queryChanged('flutter'),
+  wait: const Duration(milliseconds: 400),
+  expect: () => [isA<SearchLoading>(), isA<SearchLoaded>()],
+);
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+test('searches 350ms after the last keystroke', () {
+  fakeAsync((async) {
+    when(() => search(any()))
+        .thenAnswer((_) async => Success([book]));
+    final cubit = CatalogSearchCubit(search);
+
+    cubit.queryChanged('flutter');
+    async.elapse(const Duration(milliseconds: 349));
+    verifyNever(() => search(any()));
+
+    async.elapse(const Duration(milliseconds: 1));
+    verify(() => search(any())).called(1);
+    cubit.close();
+  });
+});
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: 400ms حقيقية في كل تشغيل، ولو الـ debounce اتشال خالص التست يفضل أخضر. بعد: أقل من ملي ثانية، والتست بيقع لو الرقم اتغير في أي اتجاه.
+
+### مقارنة الـ states
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+final class SearchLoaded extends CatalogSearchState {
+  const SearchLoaded(this.books);
+  final List<Book> books;
+}
+
+// in the test
+expect: () => [const SearchLoading(), SearchLoaded([book])],
+// fails: "instead of <Instance of 'SearchLoaded'>"
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+final class SearchLoaded extends CatalogSearchState {
+  const SearchLoaded(this.books);
+  final List<Book> books;
+}
+
+// in the test: check what matters
+expect: () => [
+  isA<SearchLoading>(),
+  isA<SearchLoaded>().having((s) => s.books, 'books', [book]),
+],
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: الـ state مالهاش `==`، فالـ instance اللي في التست عمره ما هيساوي اللي الـ Cubit عمله، والرسالة بتقول نفس الاسم في الناحيتين. بعد: الـ matcher بيقارن الحقل نفسه. ولو الـ state محتاجة `==` في الـ UI كمان، خليها Equatable وارجع للـ instances.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="t-cubit-tests-1">
+<Ask>blocTest فيه `seed: () => LibraryLoaded([book])`، والـ act عمل emit لـ `LibraryLoaded([book])` تاني. الـ expect فيه state واحدة بس، `LibraryLoaded([book])`. التست فشل وقال إن الليست فاضية. ليه؟</Ask>
+<Answer>
+
+الـ seed بيتعمله emit قبل ما التسجيل يبدأ، فمش بيظهر في الليست. والـ state اللي الـ act عملها بتساوي الـ seed (الـ states Equatable)، والـ Cubit بيتجاهل أي emit لـ state بتساوي الحالية. فمفيش ولا state اتسجلت.
+
+</Answer>
+</Question>
+
+<Question id="t-cubit-tests-2">
+<Ask>تست debounce بـ `wait: const Duration(milliseconds: 400)` أخضر. زميلك شال الـ debounce خالص بالغلط. التست هيعمل إيه، وإيه البديل؟</Ask>
+<Answer>
+
+هيفضل أخضر، لأنه بيتأكد إن في نتيجة بعد 400ms، مش إن مفيش بحث قبل 350ms. البديل fake_async: قدّم الساعة لـ 349ms واتأكد بـ `verifyNever` إن مفيش بحث، وبعدين 1ms واتأكد إن في نداء واحد. كده التست بيحرس الرقم، وبيخلص في أقل من ملي ثانية.
+
+</Answer>
+</Question>
+
+<Question id="t-cubit-tests-3">
+<Ask>التست بيقول `at location [1] is Instance of 'SearchLoaded' instead of Instance of 'SearchLoaded'`. إيه المشكلة، وليه `SearchLoading` في نفس الليست عدّت؟</Ask>
+<Answer>
+
+الـ `SearchLoaded` مالهاش `==`، فالمقارنة بالـ identity، والـ instance اللي في التست object تاني. الـ `const SearchLoading()` عدّت لأن الـ const objects في Dart بتبقى نفس الـ object في كل حتة. الحل Equatable على الـ states، أو `isA<SearchLoaded>().having(...)` في الـ expect.
+
+</Answer>
+</Question>
+
+<Question id="t-cubit-tests-4">
+<Ask>إزاي تختبر إن الـ LibraryCubit بيلغي الـ subscription بتاع `watchLibrary()` لما يتقفل؟</Ask>
+<Answer>
+
+خلي الـ mock repository يرجّع `controller.stream` من `StreamController` بتاعك. نادي `watch()` واتأكد إن `controller.hasListener` بـ true، وبعدين `await cubit.close()` واتأكد إنه بقى false. ولو عايز تتأكد إن التست بيمسك، امسح الـ cancel من `close()` وشوفه بيفشل.
+
+</Answer>
+</Question>
+
+</Quiz>

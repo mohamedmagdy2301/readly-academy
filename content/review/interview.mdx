@@ -256,6 +256,60 @@ entry points منفصلة (main_dev وmain_prod)، وproductFlavors في Android
 </Answer>
 </Question>
 
+<Question id="interview-31">
+<Ask>إيه الفرق بين الـ unit test والـ widget test والـ integration test؟ وإمتى تستخدم كل واحد؟</Ask>
+<Answer>
+
+الـ unit test بيختبر حتة logic لوحدها (use case، mapper، Cubit) في milliseconds ومن غير Flutter، وده أغلب التستات. الـ widget test بيرسم widget واحدة في بيئة test من غير جهاز، ويتأكد من اللي ظاهر والتفاعل، زي إن زرار «حاول تاني» بيظهر مع NetworkFailure. الـ integration test بيشغّل الـ app كامل على جهاز أو emulator، فهو الأبطأ والأهش، فبستخدمه للـ flows الحرجة بس زي الـ login والـ sync. القاعدة: اختبر كل حاجة في أرخص مستوى يقدر يمسكها.
+
+</Answer>
+</Question>
+
+<Question id="interview-32">
+<Ask>إيه الفرق بين `pump` و`pumpAndSettle`؟ وإمتى `pumpAndSettle` تبقى مشكلة؟</Ask>
+<Answer>
+
+`pump` بيرسم frame واحدة (أو بيقدّم الوقت مدة معينة لو اديته duration). `pumpAndSettle` بيفضل يرسم frames لحد ما مايبقاش في frames متجدولة، يعني كل الـ animations خلصت. المشكلة إن أي animation مابتخلصش، زي `CircularProgressIndicator` في حالة loading، بتخلي `pumpAndSettle` يفضل لحد ما يعمل timeout ويفشل. ساعتها بستخدم `pump` أو `pump(duration)` بوقت محدد.
+
+</Answer>
+</Question>
+
+<Question id="interview-33">
+<Ask>عندك تست بيفشل مرة من كل 20 في الـ CI. هتعمل إيه؟</Ask>
+<Answer>
+
+مش هحط retry وأنسى، لأن الـ flaky test بيعلّم الفريق يتجاهل الأحمر. أول حاجة أكرّر المشكلة: أشغّله في لوب، وبـ `--test-randomize-ordering-seed` عشان أعرف لو التستات بتعتمد على ترتيبها. الأسباب المعتادة: وقت حقيقي (`DateTime.now` أو `Future.delayed`) والحل Clock أو fake_async، أو state مشتركة بين التستات والحل setUp جديد لكل تست، أو شبكة حقيقية والحل fake. لو مش هقدر أصلّحه النهارده، بعزله بـ tag وبفتح ticket، مش بسيبه يوقّع الـ CI عشوائي.
+
+</Answer>
+</Question>
+
+<Question id="interview-34">
+<Ask>الـ coverage عندكم 95%. ده معناه إن التستات كويسة؟</Ask>
+<Answer>
+
+لأ. الـ coverage بتقول السطر ده اتنفّذ وقت التست، مش إن في `expect` اتأكد إن نتيجته صح. ممكن تست ينادي الكود كله ومايتأكدش من حاجة. الـ coverage مفيدة كإنذار (الجزء ده محدش اختبره خالص)، وكحد أدنى في الـ CI للـ domain والـ data، بس مش هدف. اللي بيقيس جودة التستات فعلًا هو: لو غيّرت الكود غلط، التست هيفشل؟ وده اللي الـ mutation testing بيقيسه.
+
+</Answer>
+</Question>
+
+<Question id="interview-35">
+<Ask>اشرح TDD. وبتستخدمه دايمًا؟</Ask>
+<Answer>
+
+Red: أكتب تست صغير بيفشل وبيوصف السلوك اللي عايزه. Green: أكتب أقل كود يخليه يعدّي. Refactor: أنضّف الكود والتستات خضرا. ميزته إن التصميم بيطلع من الاستخدام، وكل سطر عليه تست. بستخدمه في الـ business rules والـ bugs: أي bug بيبدأ بتست فاشل بيوصفه. ومابستخدموش في الحاجات الاستكشافية زي تجربة شكل UI، لأن التست هيتكتب ويتمسح كل شوية.
+
+</Answer>
+</Question>
+
+<Question id="interview-36">
+<Ask>إيه الـ golden test؟ وإيه مشاكله في الـ CI؟</Ask>
+<Answer>
+
+تست بيرسم الـ widget ويقارنها pixel بـ pixel بصورة محفوظة في الـ repo. بيمسك أي تغيير في الشكل محدش قصده، زي حاجة اتقلبت غلط في الـ RTL. مشاكله: الرسم بيختلف شوية بين macOS وLinux، فبولّد الصور على نفس المنصة اللي الـ CI بيشتغل عليها، والخطوط في التست بتبقى مربعات لو ماحمّلتش خط حقيقي. وأي تغيير مقصود في الشكل محتاج `--update-goldens` و review للصور في الـ PR.
+
+</Answer>
+</Question>
+
 ### الأسبوع 8: الـ Production
 
 <Question id="interview-23">

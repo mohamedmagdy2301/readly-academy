@@ -1,0 +1,1053 @@
+---
+title: "Integration tests: الـ app كامل على جهاز حقيقي"
+description: "integration_test الرسمي من الـ setup لحد الـ CI: fake backend، وoverride الـ DI بـ get_it، والـ flavors، وpatrol للـ dialogs الـ native، والأداء، والـ screenshots، وFirebase Test Lab، والتستات المتقلبة."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="البروفة الجنرال">
+
+قبل افتتاح أي مسرحية بيوم، الفرقة بتعمل <b>بروفة جنرال</b>: على المسرح الحقيقي، بالملابس والإضاءة والستارة والميكروفونات، من أول مشهد لآخر مشهد من غير وقفة. كل ممثل حافظ دوره لوحده من أسابيع (ده الـ unit test)، وكل مشهد اتعمل له بروفة لوحده (ده الـ widget test). بس البروفة الجنرال بتمسك حاجات ماحدش يقدر يشوفها قبل كده: الستارة بتعلق في النص، وبطارية الميكروفون بتخلص في الفصل التالت، والممثل محتاج 40 ثانية يغيّر هدومه والموسيقى بتخلص في 20.
+
+والبروفة دي غالية: محتاجة كل الناس والمسرح يوم كامل. فمحدش بيعملها عشان يصلّح جملة في الحوار. وكمان الجمهور فيها مش جمهور حقيقي: صحاب الفرقة قاعدين في الصالة، فلو حد كح في لحظة غلط، الممثلين عارفين إنها بروفة.
+
+</Analogy>
+
+الـ <b>integration test</b> هو البروفة الجنرال بتاعة Readly: الـ app كله بيشتغل على موبايل أو emulator حقيقي، بالـ router الحقيقي والـ DI الحقيقي وdrift وsecure storage والكيبورد بتاع الموبايل، ومن أول شاشة الـ login لحد ما الكتاب يوصل للسيرفر. والسيرفر نفسه غالبًا «جمهور من الصحاب»: fake backend انت متحكم فيه، عشان التست يبقى ثابت.
+
+إيه اللي بيمسكه وكل اللي قبله مايمسكوش؟
+
+- <b>التوصيل:</b> كل class متختبر لوحده، بس `setupDependencies` نسي يسجّل `SyncService`، أو سجّل `LibraryRepository` بالـ fake بتاع dev في كل الـ flavors.
+- <b>الـ plugins الحقيقية:</b> الـ widget test مابيشغّلش `flutter_secure_storage` ولا `path_provider`، لأن مفيش موبايل. الـ integration بيشغّلهم بجد.
+- <b>الـ flows الطويلة:</b> login، وبعدين بحث، وبعدين إضافة، والنت يقطع، والـ sync. كل خطوة شغالة لوحدها، بس الـ state اللي بيعدّي بينهم هو اللي بيبوظ.
+- <b>بدء الـ app:</b> الـ splash، وقراية الـ session، والـ redirect. حاجات الـ widget test بيتخطاها لأنه بيعمل pump لشاشة واحدة.
+
+وكلمة «integration» بتتقال على حاجتين مختلفتين، وخلي بالك منهم:
+
+|  | integration بين الطبقات | integration test للـ app |
+| --- | --- | --- |
+| يعني | Cubit + repository + drift حقيقيين مع بعض، والشبكة بس fake | الـ app كامل من `ReadlyApp` |
+| بيشتغل فين | `flutter test` على جهازك، من غير موبايل | موبايل أو emulator |
+| الـ package | `flutter_test` بس | `integration_test` (وpatrol أحيانًا) |
+| السرعة | ثواني | دقايق (build وتسطيب) |
+| بيمسك | الطبقات مش راكبة على بعض صح | الـ plugins، والـ DI، والـ flows الكاملة، والمنصة |
+
+الدرس ده عن التاني أساسًا، وهنعدّي على الأول في Level 3. وفي هرم [درس الاختبارات](/course/quality/testing/)، الـ integration فوق خالص: <b>عدد قليل</b> للـ flows اللي لو باظت الـ app ملوش لازمة. في Readly دول 4: الـ login، والإضافة أوفلاين والـ sync، والبحث لحد التفاصيل، والـ logout اللي بيمسح كل حاجة.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### الـ setup
+
+الـ `integration_test` جاي مع Flutter SDK، مش من pub.dev:
+
+<CodeBlock label="pubspec.yaml">
+
+```yaml
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  integration_test:
+    sdk: flutter
+```
+
+</CodeBlock>
+
+والتستات في فولدر لوحده جنب `test/`، مش جواه:
+
+```text
+readly/
+├─ integration_test/
+│  ├─ harness/
+│  │  ├─ test_app.dart          # starts Readly with fakes
+│  │  ├─ fake_backend.dart      # your API, in memory
+│  │  ├─ fake_open_library.dart # Open Library, from embedded fixtures
+│  │  ├─ robots.dart            # LoginRobot, CatalogRobot
+│  │  └─ waits.dart             # pumpUntil, waitFor
+│  ├─ login_test.dart
+│  ├─ offline_sync_test.dart
+│  └─ app_test.dart             # runs every flow in one build
+├─ test_driver/
+│  └─ perf_driver.dart          # only for performance and screenshots
+└─ test/
+```
+
+- <b>ليه مش جوه test/:</b> `flutter test` من غير arguments بيشغّل `test/` على جهازك في ثواني. لو الـ integration جواه، كل `flutter test` هيحاول يشغّلها من غير موبايل.
+- <b>الـ harness:</b> كود مساعد مشترك بين كل الـ flows. ده أهم جزء، وهو اللي بيفرق بين integration tests ثابتة ومتقلبة.
+
+### الـ app لازم يقبل fakes
+
+أول غلطة بيعملها أي حد: التست بيبدأ بـ `app.main()`. ده بيشغّل الـ `bootstrap` كله: الـ `AppConfig.fromEnvironment()` اللي بيرمي error من غير defines، وSentry، والـ error handlers اللي بتتخانق مع الـ test binding، والـ backend الحقيقي. ومفيش أي مكان تحط فيه fake.
+
+الحل إنك تطلّع كل اللي `main` بيعمله قبل `runApp` في function واحدة بتقبل overrides، والـ `bootstrap` والتست الاتنين يستخدموها:
+
+<CodeBlock label="lib/app/start.dart">
+
+```dart
+typedef Overrides = void Function(GetIt getIt);
+
+/// Everything the app needs before runApp, shared by bootstrap and the tests.
+Future<void> startReadly(AppConfig config, {Overrides? overrides}) async {
+  await setupDependencies(config);
+  if (overrides != null) {
+    // registrations in this scope shadow the real ones
+    getIt.pushNewScope(scopeName: 'overrides', init: overrides);
+  }
+  getIt<SyncService>().start();
+  getIt<AuthCubit>().checkSession();
+}
+
+// lib/app/bootstrap.dart
+Future<void> bootstrap(AppConfig config) async {
+  if (appFlavor != null && appFlavor != config.name) {
+    throw StateError('Built as "$appFlavor" with config "${config.name}"');
+  }
+  WidgetsFlutterBinding.ensureInitialized();
+  await startReadly(config);
+  // Bloc.observer, FlutterError.onError, SentryFlutter.init(appRunner: ...)
+}
+```
+
+</CodeBlock>
+
+- <b>مصدر واحد للبداية:</b> لو بكرة حد زوّد خطوة جديدة قبل `runApp` (زي `start()` لـ service جديدة)، بيزوّدها في `startReadly`، فالتستات بتاخدها لوحدها. لو التست كان عنده نسخة منقولة من `main`، كانت هتفضل قديمة والتست أخضر على app مش موجود.
+- <b>الـ pushNewScope:</b> scope جديد في get_it فوق التسجيلات الحقيقية. أي حاجة بتتسجل فيه بتغطي على اللي تحته بنفس النوع، من غير ما تمسح الحقيقي ومن غير `allowReassignment`. والـ lazy singletons اللي لسه محدش طلبها، زي الـ repositories، هتاخد الـ fake لما تتعمل.
+- <b>الـ Sentry والـ handlers برا:</b> فضلوا في الـ `bootstrap`. التست مش محتاجهم، والـ `integration_test` binding ليه طريقته في الإمساك بالأخطاء.
+- <b>الـ appFlavor check برا كمان:</b> من [درس الـ release](/course/production/release/). لو كان جوه `startReadly`، تست شغال بـ `--flavor dev` وconfig اسمه `test` هيقع في أول سطر.
+
+### الـ fake backend
+
+الشبكة هي الحاجة الوحيدة اللي هنعمل لها fake، وعلى أبعد مستوى ممكن: الـ `HttpClientAdapter`، زي ما عملنا مع الـ AuthInterceptor في [درس الاختبارات](/course/quality/testing/). Dio الحقيقي والـ interceptors الحقيقية بيشتغلوا، والرد بييجي منّا:
+
+<CodeBlock label="integration_test/harness/fake_backend.dart">
+
+```dart
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:dio/dio.dart';
+
+/// The Readly API in memory. Tests read and change its state directly.
+final class FakeBackend implements HttpClientAdapter {
+  final library = <Map<String, Object?>>[];
+  final requests = <String>[];
+  bool offline = false;
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    requests.add('${options.method} ${options.path}');
+    if (offline) {
+      throw DioException.connectionError(requestOptions: options, reason: 'offline');
+    }
+    return switch ((options.method, options.path)) {
+      ('POST', '/auth/login') => _json({'accessToken': 'access', 'refreshToken': 'refresh'}),
+      ('GET', '/library') => _json({'items': library, 'next': null}),
+      ('POST', '/library') => _add(options.data as Map<String, Object?>),
+      _ => _json({'error': 'not faked: ${options.method} ${options.path}'}, 404),
+    };
+  }
+
+  ResponseBody _add(Map<String, Object?> book) {
+    library.add(book);
+    return _json(book, 201);
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
+ResponseBody _json(Object body, [int status = 200]) => ResponseBody.fromString(
+      jsonEncode(body),
+      status,
+      headers: {Headers.contentTypeHeader: [Headers.jsonContentType]},
+    );
+```
+
+</CodeBlock>
+
+- <b>الـ state ظاهر للتست:</b> التست يقدر يحط كتب في `library` قبل ما يبدأ، ويتأكد إن الكتاب وصل بعد الـ sync، ويقطع النت بـ `offline = true`.
+- <b>الـ connectionError:</b> بالظبط اللي dio بيرميه لما النت مقطوع، فالـ guard بيحوّله لـ `NetworkFailure` والـ SyncService بيسيب العملية في الـ queue، زي الموبايل في الأسانسير.
+- <b>الـ 404 بيقول اسم الطلب:</b> لو الـ app بعت طلب انت مانسيتش تعمله fake، الرسالة في الـ log بتقولك هو إيه، بدل ما التست يقع بسبب مش مفهوم.
+- <b>الـ requests:</b> سجل بكل اللي اتبعت. مفيد جدًا وانت بتدوّر على سبب فشل: «الـ app بعت POST /library مرتين؟».
+
+والـ `FakeOpenLibrary` نفس الفكرة: adapter بيرجّع search وwork وauthor ثابتين لـ «Fantastic Mr Fox».
+
+### الـ harness
+
+<CodeBlock label="integration_test/harness/test_app.dart">
+
+```dart
+import 'dart:async';
+
+import 'package:dio/dio.dart';
+import 'package:drift/native.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'fake_backend.dart';
+import 'fake_open_library.dart';
+// + the app's own imports: startReadly, getIt, AppConfig, AppDatabase, NetworkStatus, ReadlyApp
+
+const testConfig = AppConfig(name: 'test', baseUrl: 'https://api.test', enableLogs: false);
+
+final class FakeNetworkStatus implements NetworkStatus {
+  final _online = StreamController<void>.broadcast();
+  void goOnline() => _online.add(null);
+
+  @override
+  Stream<void> get onOnline => _online.stream;
+}
+
+final class TestApp {
+  TestApp._();
+
+  final backend = FakeBackend();
+  final openLibrary = FakeOpenLibrary();
+  final network = FakeNetworkStatus();
+
+  static Future<TestApp> start() async {
+    // a clean device: an earlier run (or you, by hand) may have left a session
+    await const FlutterSecureStorage().deleteAll();
+    await SharedPreferencesAsync().clear();
+
+    final app = TestApp._();
+    await startReadly(testConfig, overrides: (getIt) {
+      getIt
+        ..registerSingleton<AppDatabase>(
+          AppDatabase(NativeDatabase.memory()),
+          dispose: (db) => db.close(),
+        )
+        ..registerSingleton<NetworkStatus>(app.network);
+      getIt<Dio>(instanceName: 'api').httpClientAdapter = app.backend;
+      getIt<Dio>(instanceName: 'openLibrary').httpClientAdapter = app.openLibrary;
+    });
+    return app;
+  }
+
+  Future<void> pump(WidgetTester tester) async {
+    await tester.pumpWidget(const ReadlyApp());
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> dispose() => getIt.reset(); // runs every dispose: closes the database
+}
+```
+
+</CodeBlock>
+
+- <b>الحقيقي:</b> الـ router، والـ Cubits، والـ use cases، والـ repositories، وDio بالـ AuthInterceptor، وdrift، وsecure storage، وshared_preferences. يعني كل الكود اللي انت كاتبه وكل الـ plugins.
+- <b>الـ fake:</b> الشبكة (الـ adapters)، وحالة النت (`NetworkStatus`)، والـ DB في الذاكرة عشان كل تست يبدأ فاضي. تلات حاجات بس، وكلهم على حدود الـ app.
+- <b>الـ deleteAll وclear:</b> الـ integration test بيشتغل على app متسطّب فعلًا، فالـ secure storage فاكر الـ tokens من التشغيل اللي فات. من غيرهم، أول تست هيفتح على المكتبة مش على الـ login، وبس لو حد كان عامل login قبله.
+- <b>الـ adapter بيتبدّل على Dio الحقيقي:</b> مش بنسجّل Dio جديد. كده الـ `AuthInterceptor` والـ baseUrl والـ timeouts بتوع الـ app بيشتغلوا في التست.
+
+<Diagram name="d-test-integration-fakes">
+
+اللي حقيقي واللي fake في الـ integration test. كل كود Readly وكل الـ plugins بيشتغلوا زي ما هم، والـ fakes بس على الحدود: الشبكة عند الـ HttpClientAdapter، وحالة النت، والـ DB في الذاكرة. كل ما الـ fake يبعد عن قلب الـ app، التست بيغطي كود حقيقي أكتر.
+
+</Diagram>
+
+### أول flow: الـ login
+
+الـ <b>robot</b> class صغيرة بتعرف تعمل خطوة في الـ UI. التست بيقرا زي سيناريو، والـ keys والـ finders في مكان واحد:
+
+<CodeBlock label="integration_test/harness/robots.dart">
+
+```dart
+final class LoginRobot {
+  const LoginRobot(this.tester);
+  final WidgetTester tester;
+
+  Future<void> logIn({String email = 'reader@readly.app', String password = 'secret123'}) async {
+    await tester.enterText(find.byKey(const Key('login.email')), email);
+    await tester.enterText(find.byKey(const Key('login.password')), password);
+    await tester.tap(find.byKey(const Key('login.submit')));
+    await tester.pumpAndSettle();
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="integration_test/login_test.dart">
+
+```dart
+import 'package:flutter_test/flutter_test.dart';
+import 'package:integration_test/integration_test.dart';
+
+import 'harness/robots.dart';
+import 'harness/test_app.dart';
+
+void main() {
+  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+
+  late TestApp app;
+  setUp(() async => app = await TestApp.start());
+  tearDown(() => app.dispose());
+
+  testWidgets('logs in and shows the books from the server', (tester) async {
+    app.backend.library.add({
+      'key': 'OL45804W',
+      'title': 'Fantastic Mr Fox',
+      'status': 'reading',
+      'updatedAt': '2026-03-01T10:00:00Z',
+    });
+    await app.pump(tester);
+
+    await LoginRobot(tester).logIn();
+
+    expect(find.byType(LibraryView), findsOneWidget);
+    expect(find.text('Fantastic Mr Fox'), findsOneWidget);
+    expect(app.backend.requests, containsAllInOrder(['POST /auth/login', 'GET /library']));
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>الـ IntegrationTestWidgetsFlutterBinding:</b> السطر ده هو الفرق كله. بيخلّي `testWidgets` يشتغل جوه الـ app الحقيقي على الموبايل، بفريمات حقيقية ووقت حقيقي، ويبعت النتيجة لـ `flutter test` على جهازك.
+- <b>نفس الـ API:</b> `testWidgets` و`find` و`tester.tap` و`expect`، كل اللي اتعلمته في [درس الـ widget tests](/course/testing/widget-tests/) شغال هنا.
+- <b>الـ setUp والـ tearDown:</b> كل تست بيبدأ بـ app جديد وget_it نضيف وDB فاضية. التستات مش بتعتمد على ترتيب بعض.
+
+### التشغيل
+
+```bash
+flutter devices                                    # pick an emulator or a phone
+flutter test integration_test/login_test.dart -d emulator-5554
+flutter test integration_test -d emulator-5554     # every file in the folder
+```
+
+```text
+Running Gradle task 'assembleDebug'...                          41.8s
+✓ Built build/app/outputs/flutter-apk/app-debug.apk
+Installing build/app/outputs/flutter-apk/app-debug.apk...        2.9s
+00:09 +1: All tests passed!
+```
+
+- <b>الـ build هو الوقت كله:</b> 40 ثانية build وتسطيب، و5 ثواني تست. وكل ملف في `integration_test/` بيتعمل له build لوحده، فـ 6 ملفات يعني 6 builds. عشان كده في `app_test.dart` بيجمّعهم (Level 4).
+- <b>بتشوف الـ app بيتحرك:</b> على الـ emulator هتشوف الكتابة والضغط بيحصلوا قدامك. ده أحسن debugger لما تست يفشل.
+- <b>لو فشل:</b> نفس شكل فشل الـ widget test، وفوقه الـ log بتاع الموبايل.
+
+</Level>
+
+<Level n="3" title="التفاصيل والحالات الصعبة">
+
+### الـ flow الحرج: أوفلاين وبعدين sync
+
+ده التست اللي بيبرر وجود الـ integration tests في Readly. كل جزء فيه متختبر لوحده: الـ SyncQueue في الـ unit tests، والـ repository مع drift في [تستات الطبقات](/course/testing/layers/)، والـ Cubit بـ blocTest. بس محدش اتأكد إن الكتاب اللي اتضاف من شاشة التفاصيل والنت مقطوع بيوصل للسيرفر لما النت يرجع:
+
+<CodeBlock label="integration_test/offline_sync_test.dart">
+
+```dart
+testWidgets('a book added offline reaches the server when the network is back', (tester) async {
+  await app.pump(tester);
+  await LoginRobot(tester).logIn();
+
+  // find the book while online
+  final catalog = CatalogRobot(tester);
+  await catalog.search('fantastic mr fox');
+  await catalog.openBook('Fantastic Mr Fox');
+
+  // the signal drops on the details page
+  app.backend.offline = true;
+  await tester.tap(find.byKey(const Key('book.addToLibrary')));
+  await tester.pumpAndSettle();
+
+  // saved locally, waiting in the queue
+  await tester.tap(find.byKey(const Key('tabs.library')));
+  await tester.waitFor(find.text('Fantastic Mr Fox'));
+  expect(find.byKey(const Key('library.syncPending')), findsOneWidget);
+  expect(app.backend.library, isEmpty);
+
+  // the network comes back
+  app.backend.offline = false;
+  app.network.goOnline();
+
+  await tester.pumpUntil(
+    () => app.backend.library.any((b) => b['key'] == 'OL45804W'),
+    reason: 'the book never reached the server',
+  );
+  await tester.pumpUntil(() => find.byKey(const Key('library.syncPending')).evaluate().isEmpty);
+});
+```
+
+</CodeBlock>
+
+- <b>الـ offline على الاتنين:</b> الـ `backend.offline` بيخلّي الطلبات تفشل زي النت المقطوع. والـ `network.goOnline()` بيبعت الإشارة اللي `connectivity_plus` كان هيبعتها. محتاجين الاتنين، لأن الـ SyncService بيجرّب لما الإشارة تيجي، والطلب نفسه هو اللي بيقول إذا كان في نت (درس الـ offline).
+- <b>بيتأكد من الحالتين:</b> قبل رجوع النت، الكتاب في الشاشة ومش في السيرفر. بعده، في السيرفر والعلامة اختفت. لو اكتفيت بالآخر، تست بيبعت الكتاب على طول (من غير queue) كان هيعدّي.
+- <b>الـ `library.syncPending`:</b> key على الـ badge اللي `SyncStatusCubit` بيعرضه. بنختبر اللي المستخدم بيشوفه، مش الـ table جوه drift.
+
+<CodeBlock label="CatalogRobot">
+
+```dart
+final class CatalogRobot {
+  const CatalogRobot(this.tester);
+  final WidgetTester tester;
+
+  Future<void> search(String query) async {
+    await tester.tap(find.byKey(const Key('tabs.catalog')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('catalog.search')), query);
+    await tester.waitFor(find.text('Fantastic Mr Fox')); // debounce + HTTP: not frames
+  }
+
+  Future<void> openBook(String title) async {
+    await tester.tap(find.text(title).first);
+    await tester.waitFor(find.byKey(const Key('book.addToLibrary')));
+  }
+}
+```
+
+</CodeBlock>
+
+### الـ pumpAndSettle مش بيستنى الشبكة
+
+ليه `waitFor` مش `pumpAndSettle`؟ لأن الـ `pumpAndSettle` بيستنى لحد ما مايبقاش في <b>frames</b> مستنية. الـ debounce بتاع البحث (350ms) ده Timer مش frame، والـ HTTP والـ DB كذلك. فبعد ما تكتب في البحث، الـ `pumpAndSettle` ممكن يرجع في نفس اللحظة لأن الشاشة ساكنة، والنتايج لسه ماجتش. والـ `expect` اللي بعده بيفشل مرة ويعدّي مرة حسب سرعة الموبايل.
+
+والحل الغلط اللي بيعمله الكل: `await Future.delayed(const Duration(seconds: 3))`. على موبايلك سريع، فالـ 3 ثواني كتير وكل تست بيضيّع وقت. وعلى الـ emulator في الـ CI بطيء، فالـ 3 ثواني ساعات مش كفاية. الحل إنك تستنى <b>الحاجة نفسها</b> بحد أقصى:
+
+<CodeBlock label="integration_test/harness/waits.dart">
+
+```dart
+import 'package:flutter_test/flutter_test.dart';
+
+extension Waits on WidgetTester {
+  /// Pumps until [condition] holds. pumpAndSettle only waits for frames,
+  /// not for timers, HTTP or the database.
+  Future<void> pumpUntil(
+    bool Function() condition, {
+    Duration timeout = const Duration(seconds: 10),
+    String? reason,
+  }) async {
+    final end = DateTime.now().add(timeout);
+    while (!condition()) {
+      if (DateTime.now().isAfter(end)) {
+        throw TestFailure('Timed out after $timeout${reason == null ? '' : ': $reason'}');
+      }
+      await pump(const Duration(milliseconds: 100));
+    }
+  }
+
+  Future<void> waitFor(Finder finder, {Duration timeout = const Duration(seconds: 10)}) =>
+      pumpUntil(() => finder.evaluate().isNotEmpty, timeout: timeout, reason: '$finder');
+}
+```
+
+</CodeBlock>
+
+- <b>بيخلص أول ما الحاجة تحصل:</b> على موبايل سريع 300ms، وعلى emulator بطيء 4 ثواني. نفس التست، ومن غير وقت ضايع.
+- <b>الـ timeout برسالة:</b> لما يفشل بيقول بيستنى إيه: `Timed out after 0:00:10.000000: the book never reached the server`. أحسن بكتير من `Expected: exactly one matching candidate, Actual: _TextWidgetFinder:<Found 0 widgets>` من غير سياق.
+- <b>للـ integration بس:</b> هنا الوقت حقيقي. في الـ widget tests الوقت fake، والصح هناك `pump(const Duration(milliseconds: 350))` أو fake_async زي [درس الـ Cubit](/course/testing/cubit-tests/).
+
+### fake backend ولا staging؟
+
+التست يكلّم سيرفر حقيقي ولا fake؟ السؤال ده بيتسأل في كل فريق، والإجابة إن الاتنين ليهم مكان مختلف:
+
+|  | fake backend (adapter) | backend محلي (docker) | staging |
+| --- | --- | --- | --- |
+| الثبات | كامل: نفس الرد كل مرة | عالي، لو الـ DB بتتعمل من seed | قليل: بيانات وناس تانية ونت |
+| السرعة | مفيش شبكة | شبكة محلية | شبكة حقيقية |
+| حالات صعبة (401، 409، timeout) | سطر واحد | محتاج endpoints للتحكم | شبه مستحيل |
+| بيمسك إن الـ API اتغير | لأ | أيوه، لو بنفس نسخة السيرفر | أيوه |
+| البيانات بعد التست | بتختفي | بتتمسح مع الـ container | بتتراكم: كتب تجربة في حسابات التست |
+| مكانه | كل PR، أو كل يوم | كل يوم | smoke test واحد بعد كل deploy |
+
+في Readly: الـ flows كلها على الـ fake، لأن هدفها إن الـ app يتصرف صح، مش إن السيرفر شغال. وإن الـ fake «صادق» (بيرجّع نفس شكل السيرفر الحقيقي) ده شغل الـ contract tests في [درس الطبقات](/course/testing/layers/)، مش الـ integration. وتست smoke واحد على staging (login وقراية المكتبة) بيشتغل بعد كل deploy للسيرفر، عشان يمسك إن الاتنين لسه فاهمين بعض.
+
+ولو حبيت backend محلي حقيقي، الـ app بيكلّمه بالـ config بتاع [درس الـ release](/course/production/release/). من الـ Android emulator، الـ localhost بتاع جهازك اسمه `10.0.2.2`:
+
+```bash
+flutter test integration_test --dart-define-from-file=config/local.json -d emulator-5554
+# config/local.json: { "APP_ENV": "local", "BASE_URL": "http://10.0.2.2:3000", ... }
+```
+
+### الـ DI في التست: المشاكل اللي هتقابلها
+
+- <b>الـ router global:</b> لو `final router = GoRouter(...)` في أول ملف، هو object واحد طول عمر الـ process. أول تست عمل login وراح `/library`، والتاني بيفتح على `/library` على طول ومن غير session. الحل إن الـ router يتسجّل في get_it (`registerLazySingleton<GoRouter>`) والـ `ReadlyApp` ياخده من هناك، فـ `getIt.reset()` بيرميه ويتعمل من جديد.
+- <b>الـ allowReassignment:</b> بديل الـ scope اللي بتلاقيه في كل حتة: `getIt.allowReassignment = true` وتسجّل فوق الحقيقي. بيشتغل، بس بيقفل الحماية اللي بتقولك «سجّلت نفس الحاجة مرتين» في الكود كله، فلو `setupDependencies` نفسه فيه تسجيل مكرر بالغلط، التست مش هيقولك. الـ scope بيعمل نفس الحاجة من غير ما يقفل حاجة.
+- <b>الـ fixtures على الموبايل:</b> في [درس الطبقات](/course/testing/layers/) الـ `fixture('search_page.json')` بيقرا `File('test/fixtures/...')`. على الموبايل مفيش repo، والـ `File` ده مش موجود. فالـ fixtures بتاعة الـ integration بتتحط كـ Dart strings في `integration_test/harness/fixtures.dart` (`const searchFoxJson = r'''...'''`). ممكن script صغير يولّدها من نفس ملفات الـ JSON عشان ماتتنسخش بالإيد.
+- <b>اللي باقي حقيقي بيتسرّب:</b> صور الأغلفة من `covers.openlibrary.org` بتتحمّل من النت الحقيقي على الموبايل، فالتست بطيء ومحتاج نت. خلّي رابط الغلاف ييجي من class في الـ DI (`CoverUrls`) وبدّله في الـ overrides بواحد بيرجّع asset.
+
+### integration من غير موبايل
+
+مش كل «الطبقات راكبة على بعض صح» محتاج emulator. تقدر تختبر الـ Cubit والـ use case والـ repository وdrift حقيقيين مع بعض بـ `flutter test` العادي في ثواني، والشبكة بس fake:
+
+<CodeBlock label="test/features/library/library_flow_test.dart">
+
+```dart
+testWidgets('shows books from the local database when the server is down', (tester) async {
+  // closeStreamsSynchronously: drift streams inside a widget test (see the layers lesson)
+  final db = AppDatabase(
+    DatabaseConnection(NativeDatabase.memory(), closeStreamsSynchronously: true),
+  );
+  addTearDown(db.close);
+  final local = LibraryLocalSource(db.booksDao);
+  await local.upsertBooks([aBook().toRow(updatedAt: DateTime.utc(2026, 10, 4))]); // cached earlier
+  final backend = FakeBackend()..offline = true;
+  final dio = Dio(BaseOptions(baseUrl: 'https://api.test'))..httpClientAdapter = backend;
+  final repository = LibraryRepositoryImpl(
+    LibraryRemoteSource(dio),
+    local,
+    FixedClock(DateTime.utc(2026, 10, 4, 10)),
+  );
+
+  await tester.pumpApp(BlocProvider(
+    create: (_) => LibraryCubit(GetLibrary(repository), repository)..watch(),
+    child: const LibraryView(),
+  ));
+  await tester.pumpAndSettle();
+
+  expect(find.text('Fantastic Mr Fox'), findsOneWidget);
+  expect(find.byType(ErrorView), findsNothing); // offline-first: no error screen
+});
+```
+
+</CodeBlock>
+
+- <b>نفس الـ FakeBackend:</b> الـ adapter ملف Dart عادي، فـ `test/` يقدر يستخدمه برضه. خلّيه في مكان الاتنين يشوفوه.
+- <b>الـ pumpApp:</b> نفس الـ helper بتاع الـ widget tests، لأن هنا مش بنشغّل الـ app كله، بنشغّل feature واحدة بطبقاتها. والـ `BlocProvider` بيتحط في التست نفسه، لأن `pumpApp` مابيحطش providers.
+- <b>الـ repository والـ Cubit بالـ constructors بتوعهم:</b> `LibraryRepositoryImpl(remote, local, clock)` من [درس الطبقات](/course/testing/layers/)، و`LibraryCubit(getLibrary, repository)` من [درس الـ Cubit](/course/testing/cubit-tests/). والشاشة بتعرض اللي `watch()` بيقراه من الـ DB، والسيرفر الواقع مابيأثرش عليها.
+- <b>بيمسك:</b> الـ watch مش بيقرا من الـ local، أو الـ mapper بين drift والـ entity بايظ، أو الـ Cubit بيعرض error مع إن في بيانات. ومابيمسكش الـ DI ولا الـ plugins ولا الـ router: دول شغل الـ integration على الموبايل.
+
+النوع ده أرخص بكتير، فخلّي أغلب «التوصيل» يتختبر بيه، والموبايل للـ flows الكاملة بس.
+
+### الـ flavors
+
+Readly فيه dev وstaging وprod، وكل واحد app منفصل بـ application id وأيقونة، وممكن `google-services.json` مختلف. الـ integration test بيبني الـ app فعلًا، فلازم تقوله أنهي flavor:
+
+```bash
+flutter test integration_test --flavor dev -d emulator-5554
+```
+
+- <b>من غير `--flavor`:</b> الـ Gradle مش هيعرف يختار، والـ build هيفشل أو هيبني flavor مش اللي انت عايزه.
+- <b>اختار dev:</b> الـ flavor اللي فيه الـ logs، وعمره ما بيكلّم prod. والـ config اللي بيوصل للـ app هو `testConfig` من الـ harness، مش الـ JSON، لأن التست بيبعته لـ `startReadly` مباشرة.
+- <b>الـ appFlavor:</b> هيبقى `dev` في التست، وده تمام لأن الـ check في الـ `bootstrap` اللي التست مابيناديهوش.
+
+### patrol: لما Flutter مش شايف
+
+الـ `integration_test` بيشوف الـ widgets بس. أي حاجة <b>native</b> برا Flutter مش موجودة بالنسبة له: dialog الـ permissions، والـ notifications، وزرار الـ Home، والـ WebView، وإعدادات الموبايل. لو Readly زوّد تذكير قراية يومي، أول ما المستخدم يفعّله Android 13 هيطلّع dialog «Allow Readly to send notifications?»، والتست هيقف قدامه لحد الـ timeout، لأن `find` مش شايفه.
+
+الـ <b>patrol</b> (من LeanCode) بيحل ده: `testWidgets` بقدرات native. بيتسطب كـ dev dependency، ومعاه CLI بيشغّله:
+
+```bash
+flutter pub add dev:patrol
+flutter pub global activate patrol_cli
+```
+
+<CodeBlock label="pubspec.yaml">
+
+```yaml
+patrol:
+  app_name: Readly
+  android:
+    package_name: app.readly.dev # the dev flavor's application id
+  ios:
+    bundle_id: app.readly.dev
+```
+
+</CodeBlock>
+
+ومعاه setup native صغير (test runner في Android وtarget في iOS) موجود خطوة بخطوة في docs بتاعته. والتستات بتتحط في `patrol_test/` by default:
+
+<CodeBlock label="patrol_test/reminders_test.dart">
+
+```dart
+import 'package:flutter_test/flutter_test.dart';
+import 'package:patrol/patrol.dart';
+
+import '../integration_test/harness/robots.dart';
+import '../integration_test/harness/test_app.dart';
+import '../integration_test/harness/waits.dart';
+
+void main() {
+  patrolTest('the daily reminder asks for permission, then shows the time picker', ($) async {
+    final app = await TestApp.start();
+    addTearDown(app.dispose);
+    await app.pump($.tester);
+    await LoginRobot($.tester).logIn();
+
+    await $(const Key('tabs.settings')).tap();
+    await $(const Key('settings.dailyReminder')).tap();
+
+    // a native Android/iOS dialog: invisible to find()
+    if (await $.platform.mobile.isPermissionDialogVisible(timeout: const Duration(seconds: 5))) {
+      await $.platform.mobile.grantPermissionWhenInUse();
+    }
+    await $.pumpAndSettle();
+
+    expect($(const Key('settings.reminderTime')), findsOneWidget);
+  });
+
+  patrolTest('pending books sync when the app comes back from the background', ($) async {
+    final app = await TestApp.start();
+    addTearDown(app.dispose);
+    await app.pump($.tester);
+    await LoginRobot($.tester).logIn();
+    app.backend.offline = true;
+    // ... add a book, as in offline_sync_test
+
+    app.backend.offline = false;
+    await $.platform.mobile.pressHome();
+    await $.platform.mobile.openApp(); // AppLifecycleListener.onResume -> requestSync
+
+    await $.tester.pumpUntil(() => app.backend.library.isNotEmpty);
+  });
+}
+```
+
+</CodeBlock>
+
+```bash
+patrol test -t patrol_test/reminders_test.dart --flavor dev
+patrol develop -t patrol_test/reminders_test.dart --flavor dev   # hot restart while writing
+```
+
+- <b>الـ $:</b> الـ `PatrolIntegrationTester`. الـ `$(const Key('settings.dailyReminder'))` بيدوّر بالـ key (نفس أسماء الـ keys بتاعة [الـ widget tests](/course/testing/widget-tests/)، و`$(#name)` اختصار لـ `Key('name')` لما الاسم كلمة واحدة)، و`$('Settings')` على نص، و`$(BookTile)` على نوع. والـ `tap()` بتاعه بيستنى الـ widget يبان قبل ما يدوس، فبتحتاج `waitFor` أقل.
+- <b>الـ $.platform.mobile:</b> الأوامر الـ native اللي بتشتغل على Android وiOS: الـ permissions، و`pressHome`، و`openApp`، و`openNotifications`، و`enableAirplaneMode`، و`disableWifi`.
+- <b>الـ if قبل الـ grant:</b> الـ dialog بيظهر أول مرة بس. لو الـ permission متاخدة من تشغيل قبله، مفيش dialog، والتست لازم يعدّي في الحالتين.
+- <b>الـ resume بجد:</b> في التست التاني، الـ app بيروح الخلفية ويرجع فعلًا، فالـ `AppLifecycleListener` اللي بيشغّل الـ sync في [درس الـ offline](/course/offline/offline/) بيتنادى من النظام نفسه.
+- <b>نفس الـ harness:</b> الـ patrol tests بتستخدم `TestApp` والـ robots بتوع الـ integration. الـ `$.tester` هو الـ `WidgetTester` العادي.
+
+امتى patrol؟ لما يبقى عندك flow مهم بيعدّي على حاجة native. لو كل الـ flows جوه Flutter، الـ `integration_test` لوحده أبسط ومن غير CLI ولا setup native.
+
+### الأداء: الـ scroll بيقطّع؟
+
+الـ integration binding يقدر يسجّل <b>timeline</b> لأي جزء من التست: كل frame اتبنى في كام millisecond. ده بيقيس حاجة مفيش تست تاني يقيسها: الليستة بتاعة الكتالوج بتقطّع وهي بتنزل 200 كتاب؟
+
+<CodeBlock label="integration_test/catalog_scroll_perf_test.dart">
+
+```dart
+void main() {
+  final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+
+  testWidgets('catalog scrolls 200 results', (tester) async {
+    final app = await TestApp.start();
+    addTearDown(app.dispose);
+    app.openLibrary.resultCount = 200;
+    await app.pump(tester);
+    await LoginRobot(tester).logIn();
+    await CatalogRobot(tester).search('dahl');
+
+    await binding.traceAction(
+      () async {
+        await tester.scrollUntilVisible(
+          find.byKey(const ValueKey('catalog.result.199')),
+          500,
+          scrollable: find.byType(Scrollable).first,
+        );
+      },
+      reportKey: 'catalog_scroll',
+    );
+  });
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="test_driver/perf_driver.dart">
+
+```dart
+import 'package:flutter_driver/flutter_driver.dart' as driver;
+import 'package:integration_test/integration_test_driver.dart';
+
+Future<void> main() => integrationDriver(
+      responseDataCallback: (data) async {
+        if (data == null) return;
+        final timeline = driver.Timeline.fromJson(
+          data['catalog_scroll'] as Map<String, dynamic>,
+        );
+        final summary = driver.TimelineSummary.summarize(timeline);
+        await summary.writeTimelineToFile('catalog_scroll', pretty: true, includeSummary: true);
+      },
+    );
+```
+
+</CodeBlock>
+
+```bash
+flutter drive --driver=test_driver/perf_driver.dart \
+  --target=integration_test/catalog_scroll_perf_test.dart \
+  --flavor dev --profile --no-dds
+```
+
+```json
+{
+  "average_frame_build_time_millis": 3.9,
+  "worst_frame_build_time_millis": 18.2,
+  "missed_frame_build_budget_count": 2,
+  "average_frame_rasterizer_time_millis": 5.1,
+  "worst_frame_rasterizer_time_millis": 41.0,
+  "missed_frame_rasterizer_budget_count": 7,
+  "frame_count": 312
+}
+```
+
+- <b>الـ flutter drive مش flutter test:</b> الـ `flutter test` مش بيحفظ الـ data اللي التست بيرجّعها. الـ `flutter drive` بيشغّل الـ driver على جهازك، وهو اللي بيكتب الملفات في `build/`.
+- <b>الـ --profile:</b> الـ debug mode أبطأ بكتير وأرقامه مالهاش معنى. والـ `--no-dds` مطلوب على الموبايل والـ emulator.
+- <b>اقرا الملخص:</b> الـ frame عنده حوالي 16ms على شاشة 60Hz. الـ `missed_frame_..._budget_count` هو عدد الفريمات اللي اتأخرت، يعني اللي المستخدم حس بيها تقطيع. والـ `catalog_scroll.timeline.json` الكامل بيتفتح في Perfetto أو `chrome://tracing` لو عايز تعرف أنهي frame بالظبط.
+- <b>على موبايل حقيقي:</b> الـ emulator بيستخدم GPU جهازك، فأرقامه مش أرقام موبايل المستخدم. وأرخص موبايل Android في الفريق أحسن مقياس.
+
+وفيه كمان `binding.watchPerformance(() async { ... }, reportKey: 'frames')` اللي بيسجّل ملخص الفريمات من غير الـ timeline كله، لو محتاج رقم بس.
+
+### الـ screenshots
+
+نفس الفكرة: التست بيصوّر الموبايل نفسه، والـ driver بيحفظ الصور على جهازك. مفيد لصور الـ store بكل لغة، أو كسجل للـ QA يشوف كل شاشة في كل release:
+
+<CodeBlock label="screenshot في التست + driver بيحفظها">
+
+```dart
+// in the test
+if (Platform.isAndroid) {
+  await binding.convertFlutterSurfaceToImage(); // once, before the first screenshot
+}
+await tester.pumpAndSettle();
+await binding.takeScreenshot('library_ar');
+
+// test_driver/screenshot_driver.dart
+import 'dart:io';
+
+import 'package:integration_test/integration_test_driver_extended.dart';
+
+Future<void> main() => integrationDriver(
+      onScreenshot: (name, bytes, [args]) async {
+        final file = await File('screenshots/$name.png').create(recursive: true);
+        await file.writeAsBytes(bytes);
+        return true;
+      },
+    );
+```
+
+</CodeBlock>
+
+- <b>الـ convertFlutterSurfaceToImage:</b> على Android الـ Flutter بيرسم على surface الـ test مايقدرش يصوّره، فبيتحوّل لصورة الأول.
+- <b>ده مش golden:</b> صورة موبايل حقيقي فيها الـ status bar والساعة والبطارية، فبتتغير كل مرة. للمقارنة pixel بـ pixel استخدم [الـ golden tests](/course/testing/golden-tests/). الـ screenshots هنا للعين بس.
+
+### Firebase Test Lab: على موبايلات مش عندك
+
+المستخدمين عندهم Samsung بـ Android 10، وPixel بـ Android 15، وموبايلات بشاشة صغيرة. مش هتشتري كل ده. الـ Firebase Test Lab بيشغّل نفس الـ integration tests على موبايلات حقيقية في data center. الـ `integration_test` بيشتغل هناك كـ instrumentation test عادي لـ Android، فمحتاج class Java صغيرة:
+
+<CodeBlock label="android/app/src/androidTest/java/app/readly/MainActivityTest.java">
+
+```java
+package app.readly;
+
+import androidx.test.rule.ActivityTestRule;
+import dev.flutter.plugins.integration_test.FlutterTestRunner;
+import org.junit.Rule;
+import org.junit.runner.RunWith;
+
+@RunWith(FlutterTestRunner.class)
+public class MainActivityTest {
+  @Rule
+  public ActivityTestRule<MainActivity> rule = new ActivityTestRule<>(MainActivity.class, true, false);
+}
+```
+
+</CodeBlock>
+
+وفي `android/app/build.gradle.kts` جوه `defaultConfig`: `testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"`. وبعدين بتبني APKين (الـ app، والتست) وتبعتهم:
+
+```bash
+cd android
+./gradlew app:assembleDevDebugAndroidTest
+./gradlew app:assembleDevDebug -Ptarget=`pwd`/../integration_test/app_test.dart
+cd ..
+
+gcloud firebase test android run --type instrumentation \
+  --app build/app/outputs/apk/dev/debug/app-dev-debug.apk \
+  --test build/app/outputs/apk/androidTest/dev/debug/app-dev-debug-androidTest.apk \
+  --device model=oriole,version=33,locale=ar,orientation=portrait \
+  --device model=a10,version=29,locale=en \
+  --timeout 10m
+```
+
+- <b>الـ -Ptarget:</b> بيقول للـ build أنهي ملف Dart يبقى الـ entry point بدل `main.dart`. وعشان كده `app_test.dart` اللي بيجمّع كل الـ flows مهم هنا: APK واحد فيه كل حاجة.
+- <b>كل `--device` موبايل:</b> الـ model والـ Android version والـ locale. الـ `locale=ar` بيشغّل الموبايل بالعربي، فالتست بيشوف Readly زي المستخدم المصري بالظبط.
+- <b>الـ flavor في أسامي الـ tasks:</b> `assembleDevDebug` مش `assembleDebug`، ومسار الـ APK فيه `dev/`. من غير flavors بيبقوا `assembleDebug` و`app-debug.apk`.
+- <b>بفلوس:</b> فيه حصة مجانية صغيرة في اليوم، والباقي بالدقيقة. شغّله مرة في اليوم أو قبل الـ release، مش على كل PR. وفي iOS نفس الفكرة بـ target اسمه `RunnerTests` و`xcodebuild build-for-testing`، والخطوات في README بتاع `integration_test`.
+
+ولو بتستخدم patrol، `patrol build android --target patrol_test/reminders_test.dart --flavor dev` بيطلّعلك نفس الـ APKين، وتبعتهم بنفس أمر `gcloud`.
+
+### في الـ CI
+
+الـ emulator في GitHub Actions بيشتغل على Linux runners بـ KVM. التستات دي أبطأ وأغلى من الباقي، فبتشتغل كل ليلة وبالطلب، مش على كل PR:
+
+<CodeBlock label=".github/workflows/integration.yml">
+
+```yaml
+name: integration
+on:
+  schedule:
+    - cron: "0 3 * * *" # every night
+  workflow_dispatch:
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version-file: pubspec.yaml
+          cache: true
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - run: flutter pub get
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          disable-animations: true
+          working-directory: apps/readly # the app package in the workspace, like ci.yml
+          script: flutter test integration_test/app_test.dart --flavor dev
+```
+
+</CodeBlock>
+- <b>الـ disable-animations:</b> بيقفل animations النظام في الـ emulator. أقل حاجة بتتحرك، أقل فرص للـ flakiness.
+- <b>ملف واحد:</b> `app_test.dart` بيعمل build واحد بدل build لكل ملف، فالـ job بياخد 10 دقايق مش 40.
+- <b>الـ `working-directory`:</b> Readly workspace، والـ app في `apps/readly`، زي الـ loop اللي في `ci.yml` بتاع [درس حراسة المعمارية](/course/quality/architecture-guards/).
+- <b>ملف لوحده مش جوه `nightly.yml`:</b> الـ random order والـ mutation والـ property tests بتوع [درس الاستراتيجية](/course/testing/strategy/) في `nightly.yml`. الـ emulator محتاج KVM و45 دقيقة، فليه workflow لوحده بـ schedule بعده، ولو فشل مابيأخرش الباقي.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+### الـ flakiness: العدو الأول للـ integration
+
+الـ integration test اللي بيفشل مرة من كل 10 من غير سبب أسوأ من إنه مايبقاش موجود: الفريق بيتعلم يدوس «re-run»، وأول فشل حقيقي بيتعدّى. ودي أشهر الأسباب، وكلها ليها حل:
+
+| السبب | العَرَض | الحل |
+| --- | --- | --- |
+| انتظار بالوقت | `Future.delayed(3s)` بيكفي على موبايلك ومش بيكفي على الـ CI | `waitFor` و`pumpUntil` بيستنوا الحاجة نفسها |
+| `pumpAndSettle` مع animation لا نهائية | `pumpAndSettle timed out` على شاشة فيها spinner | `waitFor` للنتيجة، أو `pump` بعدد محدد |
+| سيرفر حقيقي | 503 من staging، أو بيانات حد تاني | fake backend، وstaging لـ smoke واحد بس |
+| state من التست اللي فات | التست بيعدّي لوحده وبيفشل مع الباقي | `TestApp.start()` نضيف: storage ممسوح، وDB في الذاكرة، و`getIt.reset()`، ومفيش globals |
+| شبكة حقيقية لحاجات منسية | صور الأغلفة، أو analytics | كل حاجة بتطلع برا تيجي من الـ DI وتتبدّل |
+| animations النظام والكيبورد | الكيبورد غطّى الزرار، فالـ tap جه على حاجة تانية | `disable-animations`، و`scrollUntilVisible` أو `ensureVisible` قبل الـ tap |
+| dialogs native مش متوقعة | «App isn't responding» أو permission | patrol، أو اطلب الـ permissions مسبقًا في الـ setup |
+
+وقاعدة الفريق: التست المتقلب يا إما يتصلّح النهارده، يا إما يتشال من الـ suite بـ issue فيه السبب لحد ما يتصلّح. الـ retry التلقائي بيخبّي المشكلة، ومكانه حل مؤقت بس (التفاصيل في [درس الاستراتيجية](/course/testing/strategy/)).
+
+### كام integration test
+
+<b>قليل وعن قصد.</b> كل integration test بيكلّف دقايق في الـ CI وصيانة كل ما الـ UI يتغير. فالسؤال قبل أي واحد جديد: «في تست أرخص يمسك نفس الـ bug؟». الـ validation بتاعة الإيميل؟ widget test. الـ mapper؟ unit test. الـ repository مع drift؟ integration من غير موبايل. اللي فاضل للموبايل هو الـ flows اللي بتعدّي على الـ DI والـ plugins والـ router مع بعض، واللي لو باظت المستخدم مايقدرش يستخدم الـ app.
+
+في Readly ده 4 لـ 8 تستات، في ملف تجميع واحد:
+
+<CodeBlock label="integration_test/app_test.dart">
+
+```dart
+import 'package:integration_test/integration_test.dart';
+
+import 'login_test.dart' as login;
+import 'logout_test.dart' as logout;
+import 'offline_sync_test.dart' as offline_sync;
+import 'search_to_details_test.dart' as search;
+
+void main() {
+  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  login.main();
+  offline_sync.main();
+  search.main();
+  logout.main();
+}
+```
+
+</CodeBlock>
+
+build واحد وتسطيب واحد، وكل ملف لسه يتشغّل لوحده وانت بتكتبه. والـ `ensureInitialized` آمن يتنادى أكتر من مرة.
+
+### الـ robots مش رفاهية
+
+لما الـ login screen تتغير (زرار «Continue» بدل «Login»، أو خطوة OTP جديدة)، من غير robots هتعدّل كل integration test، لأن كلهم بيعملوا login. مع الـ `LoginRobot`، بتعدّل مكان واحد. ونفس الكلام للـ keys: الـ `Key('book.addToLibrary')` في الـ widget مكتوب كـ string، وفي التست string. لو حد غيّره في واحد بس، التست هيفشل بـ timeout مش برسالة واضحة. ناس كتير بتحط الـ keys في class واحدة (`abstract final class ReadlyKeys { static const addToLibrary = Key('book.addToLibrary'); }`) يستخدمها الـ widget والتست الاتنين. وفي Readly الأسماء كلها بشكل واحد، `<الشاشة>.<العنصر>`: `login.email` و`login.submit` من [درس الـ widget tests](/course/testing/widget-tests/)، و`book.addToLibrary` و`tabs.catalog` هنا.
+
+### إمتى integration على PR
+
+التستات دي بطيئة، فالقاعدة إنها كل ليلة. بس لو الفريق بيعمل release كل يوم، bug في الـ login هيعيش لحد بالليل، وممكن يكون اتدمج وراه 10 PRs. حل وسط شائع: <b>smoke test</b> واحد (الـ app بيفتح والـ login شغال) على كل PR، والباقي بالليل وقبل كل release. وأي فشل بالليل بيتحول لـ issue الصبح، مش لإيميل محدش بيقراه.
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي تكتب integration tests لـ app بيعتمد على backend، من غير ما تبقى متقلبة؟» مابشغّلش `app.main()` على السيرفر الحقيقي. بطلّع كل اللي قبل `runApp` في function واحدة بتقبل overrides، والتست بيبدّل الحدود بس في scope جديد في get_it: الشبكة على مستوى الـ `HttpClientAdapter` (فـ Dio والـ interceptors حقيقيين)، وحالة النت، والـ DB في الذاكرة. كل تست بيبدأ من جهاز نضيف: الـ storage ممسوح وget_it متعمله reset ومفيش globals زي router ثابت. والانتظار بشروط (`pumpUntil`) مش بـ `Future.delayed`، لأن `pumpAndSettle` بيستنى الـ frames بس مش الـ timers والـ HTTP. والـ robots بتخلّي تغيير الـ UI يتعدّل في مكان واحد. والـ native dialogs بـ patrol. والعدد قليل: الـ flows الحرجة بس، وأي حاجة ينفع تتختبر أرخص بتتختبر أرخص. وstaging لـ smoke test واحد بعد الـ deploy، مش للـ suite كلها.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### من تست متقلب لتست ثابت
+
+<BeforeAfter>
+
+<Side label="قبل: بيعدّي على موبايلك بس" kind="before">
+
+```dart
+testWidgets('add a book', (tester) async {
+  app.main(); // real backend, Sentry, env defines
+  await tester.pumpAndSettle();
+
+  await tester.enterText(find.byKey(const Key('login.email')), 'me@readly.app');
+  await tester.enterText(find.byKey(const Key('login.password')), 'secret123');
+  await tester.tap(find.byKey(const Key('login.submit')));
+  await Future<void>.delayed(const Duration(seconds: 3));
+  await tester.pumpAndSettle();
+
+  await tester.tap(find.byKey(const Key('tabs.catalog')));
+  await tester.enterText(find.byKey(const Key('catalog.search')), 'fox');
+  await tester.pumpAndSettle(); // returns before the debounce
+  await tester.tap(find.text('Fantastic Mr Fox'));
+  // ...
+});
+```
+
+</Side>
+
+<Side label="بعد: نفس النتيجة كل مرة" kind="after">
+
+```dart
+late TestApp app;
+setUp(() async => app = await TestApp.start());
+tearDown(() => app.dispose());
+
+testWidgets('add a book', (tester) async {
+  await app.pump(tester); // fakes at the edges only
+  await LoginRobot(tester).logIn();
+
+  final catalog = CatalogRobot(tester);
+  await catalog.search('fox'); // waits for results
+  await catalog.openBook('Fantastic Mr Fox');
+
+  await tester.tap(find.byKey(const Key('book.addToLibrary')));
+  await tester.pumpUntil(
+    () => app.backend.library.isNotEmpty,
+    reason: 'the book never reached the server',
+  );
+});
+```
+
+</Side>
+
+</BeforeAfter>
+
+- <b>قبل:</b> بيكلّم السيرفر الحقيقي فبيكتب في حساب حقيقي، وبيقع لو الـ defines مش موجودة، و3 ثواني ساعات كتير وساعات قليلة، والـ `pumpAndSettle` بعد البحث بيرجع قبل النتايج. ولو الـ login screen اتغيرت، كل تست زي ده محتاج يتعدّل.
+- <b>بعد:</b> الـ fakes على الحدود، والانتظار بشروط برسالة واضحة، والخطوات في robots، وكل تست بيبدأ من جهاز نضيف.
+
+### الـ FakeOpenLibrary والـ fixtures
+
+```dart
+// integration_test/harness/fake_open_library.dart
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:dio/dio.dart';
+
+import 'fixtures.dart';
+
+final class FakeOpenLibrary implements HttpClientAdapter {
+  int resultCount = 1; // the performance test asks for 200
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    final body = switch (options.path) {
+      '/search.json' => searchJson(resultCount),
+      '/works/OL45804W.json' => workFoxJson,
+      '/authors/OL34184A.json' => authorDahlJson,
+      _ => null,
+    };
+    return ResponseBody.fromString(
+      body ?? jsonEncode({'error': 'not faked: ${options.path}'}),
+      body == null ? 404 : 200,
+      headers: {Headers.contentTypeHeader: [Headers.jsonContentType]},
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
+// integration_test/harness/fixtures.dart
+// copied from test/fixtures: the device can't read files from your repo
+String searchJson(int count) => jsonEncode({
+      'numFound': count,
+      'start': 0,
+      'docs': [
+        {'key': '/works/OL45804W', 'title': 'Fantastic Mr Fox', 'author_name': ['Roald Dahl']},
+        for (var i = 1; i < count; i++)
+          {'key': '/works/OL${i}W', 'title': 'Book $i', 'author_name': ['Roald Dahl']},
+      ],
+    });
+
+const workFoxJson = r'''
+{"key": "/works/OL45804W", "title": "Fantastic Mr Fox",
+ "description": {"type": "/type/text", "value": "Three farmers try to catch a clever fox."},
+ "authors": [{"author": {"key": "/authors/OL34184A"}}], "covers": [6498519]}
+''';
+
+const authorDahlJson = r'''{"key": "/authors/OL34184A", "name": "Roald Dahl"}''';
+```
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="t-integration-1">
+<Ask>ليه الـ integration test مايبدأش بـ `app.main()`؟ وإيه البديل؟</Ask>
+<Answer>
+
+الـ `main` بيشغّل الـ bootstrap كله: config من الـ defines (بيرمي error من غيرها)، وSentry، والـ error handlers، والسيرفر الحقيقي، ومفيش مكان تحط فيه fake. البديل function واحدة (`startReadly`) فيها كل اللي قبل `runApp` وبتقبل overrides، الـ bootstrap والتست الاتنين بيستخدموها. والتست بيبدّل الحدود بس (الشبكة، وحالة النت، والـ DB) في scope جديد في get_it.
+
+</Answer>
+</Question>
+
+<Question id="t-integration-2">
+<Ask>بعد ما كتبت في خانة البحث عملت `pumpAndSettle()` وبعدين `expect(find.text('Fantastic Mr Fox'), findsOneWidget)`. التست بيعدّي على موبايلك وبيفشل نص المرات في الـ CI. ليه؟</Ask>
+<Answer>
+
+الـ `pumpAndSettle` بيستنى لحد ما مايبقاش في frames مستنية بس. الـ debounce (Timer) والـ HTTP مش frames، فهو بيرجع والنتايج لسه ماجتش، والنتيجة بتعتمد على سرعة الجهاز. الحل انتظار بشرط بحد أقصى (`waitFor(find.text(...))`)، مش `Future.delayed` بوقت ثابت.
+
+</Answer>
+</Question>
+
+<Question id="t-integration-3">
+<Ask>أول integration test بيعدّي لوحده، بس لما يتشغّل بعد تست الـ login بيفتح على شاشة المكتبة على طول ويفشل. إيه الأسباب المحتملة؟</Ask>
+<Answer>
+
+state بيعيش بين التستات: الـ tokens في الـ secure storage على الموبايل (الـ app متسطّب فعلًا)، أو `GoRouter` متعرّف كـ global فاكر آخر مكان، أو get_it ماتعملوش reset. الحل إن كل تست يبدأ من `TestApp.start()` نضيف: يمسح الـ storage، ويستخدم DB في الذاكرة، والـ router يتسجّل في get_it فيتعمل من جديد بعد `getIt.reset()`.
+
+</Answer>
+</Question>
+
+<Question id="t-integration-4">
+<Ask>Readly زوّد تذكير يومي محتاج permission الـ notifications. الـ integration test بيقف عند الخطوة دي لحد الـ timeout. ليه، وتعمل إيه؟</Ask>
+<Answer>
+
+الـ dialog بتاع الـ permission native مش widget، فـ `find` في `integration_test` مش شايفه ومايقدرش يدوس عليه. الحل patrol: `$.platform.mobile.isPermissionDialogVisible()` وبعدين `grantPermissionWhenInUse()`، جوه `if` لأن الـ dialog بيظهر أول مرة بس. وpatrol بيستخدم نفس الـ harness والـ robots.
+
+</Answer>
+</Question>
+
+<Question id="t-integration-5">
+<Ask>زميلك عايز integration test على staging لكل حالة: إيميل غلط، وباسورد قصير، وكتاب مكرر، و409 من السيرفر. إيه رأيك؟</Ask>
+<Answer>
+
+معظمها مكانها مش هنا: الـ validation في widget tests، والكتاب المكرر في unit test للـ use case، والـ 409 في تست الـ repository أو بـ fake backend بسطر واحد. staging مايقدرش يطلّع 409 وقت ما انت عايز، وبياناته بتتغير، والتستات هتبقى بطيئة ومتقلبة. الـ integration للـ flows الحرجة بس على fake backend، وstaging لـ smoke test واحد بعد الـ deploy يتأكد إن الـ app والسيرفر لسه فاهمين بعض.
+
+</Answer>
+</Question>
+
+</Quiz>

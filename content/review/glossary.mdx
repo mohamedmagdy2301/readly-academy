@@ -51,6 +51,25 @@ description: "كل مصطلح بمعناه ومثال من Readly."
 | StatefulShellRoute | تابات كل واحد فيها ليه Navigator، وبيفضل عايش لما تروح تاب تاني | المكتبة والكتالوج والإعدادات |
 | HttpClientAdapter | الجزء في dio اللي بيبعت الطلب فعلًا، وبيتبدل بـ fake في التست | `FakeApi` في تست الـ AuthInterceptor |
 | BlocSelector | بيعيد الرسم بس لما قيمة واحدة من الـ state تتغير | زرار الـ refresh في الـ AppBar بيسمع على `isRefreshing` |
+| Unit test | تست لحتة logic واحدة لوحدها، من غير UI ولا شبكة، وبيخلص في milliseconds | `AddBookToLibrary` بيرفض الكتاب المتكرر |
+| Widget test | تست بيرسم widget واحدة في بيئة test من غير جهاز، ويتأكد من اللي ظاهر والتفاعل | زرار «حاول تاني» بيظهر مع `NetworkFailure` |
+| Integration test | تست بيشغّل الـ app كامل على جهاز أو emulator من أول شاشة | login وبعدين إضافة كتاب أوفلاين وبعدين sync |
+| AAA | تقسيم التست لـ Arrange (تجهيز) وAct (تنفيذ) وAssert (تأكيد) | تجهّز `FakeLibraryRepository`، تنادي الـ use case، تعمل `expect` على الـ Result |
+| Matcher | الحاجة اللي `expect` بيقارن بيها النتيجة | `isA<Err<void>>().having(...)` و`throwsA` و`emitsInOrder` |
+| Test double | أي object بيقف مكان dependency حقيقية في التست: dummy أو stub أو spy أو mock أو fake | `MockSearchBooks` و`FakeLibraryRepository` |
+| Stub | test double بيرجّع ردود جاهزة ومابيتأكدش من حاجة | `when(() => search(any())).thenAnswer(...)` |
+| Spy | test double بيسجّل اللي اتعمل فيه عشان تتأكد منه بعدين | `FakeTokenStore.clears` بيعدّ مرات المسح |
+| Test data builder | function بتعمل object للتست بقيم افتراضية، وانت بتغيّر اللي يهمك بس | `aBook(status: BookStatus.finished)` |
+| Fixture | ملف بيانات ثابت بيستخدمه التست، غالبًا رد API حقيقي | `test/fixtures/search_page.json` من Open Library |
+| blocTest | function من bloc_test بتختبر تسلسل الـ states اللي الـ Cubit بيطلّعها | `CatalogSearchCubit`: loading وبعدين loaded بعد الـ debounce |
+| fake_async | بيخليك تقدّم الوقت في التست بإيدك بدل ما تستنى فعلًا | `async.elapse(Duration(milliseconds: 350))` للـ debounce |
+| pumpAndSettle | بيرسم frames لحد ما كل الـ animations تخلص، وبيعمل timeout مع أي animation مابتخلصش | بعد الـ tap على «ضيف لمكتبتي» |
+| Flaky test | تست بينجح ويفشل من غير ما الكود يتغير | تست بيعتمد على `DateTime.now` أو على ترتيب التستات |
+| Regression test | تست بيتأكد إن bug اتصلّح قبل كده مارجعش | تست للـ 401 اللي كان بيعمل 3 طلبات refresh |
+| TDD | تكتب التست الفاشل الأول، وبعدين أقل كود يعدّيه، وبعدين تنضّف | قاعدة الـ reading streak اتكتبت تست تست |
+| Code coverage | نسبة السطور اللي اتنفّذت وقت التستات، مش نسبة اللي اتأكدنا إنه صح | 90% للـ domain والـ data كحد أدنى في الـ CI |
+| Mutation testing | أداة بتغيّر الكود غلط عن قصد، وبتشوف التستات مسكت التغيير ولا لأ | تقلب `>` لـ `>=` في قاعدة، ولو التستات عدّت يبقى في حالة مش متغطية |
+| Property-based testing | بدل أمثلة بإيدك، بتكتب قاعدة لازم تبقى صح لأي input، والأداة بتولّد inputs كتير | `BookDto` بعد `toJson` و`fromJson` بيرجع زي ما هو |
 | Endpoint | شباك واحد في الـ API: method وpath مع بعض | `GET /library` و`POST /library` اتنين endpoints مختلفين |
 | Percent-encoding | تحويل أي حرف مش مسموح في الـ URL لـ `%` ورقمين لكل byte، وبيعمله `Uri` لوحده | البحث عن «رواية» بيتبعت `q=%D8%B1%D9%88...` |
 | Stack unwinding | الـ exception بتطلع من الـ function للي نادتها، وكل function في الطريق بتقف، لحد ما try يمسكها أو توصل للـ handler العام | الـ DioException بتطلع من dio للـ NotesRemoteSource للـ guard |

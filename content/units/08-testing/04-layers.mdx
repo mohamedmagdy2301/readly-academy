@@ -1,0 +1,1104 @@
+---
+title: "تست كل طبقة: الـ domain والـ data وdrift والـ contracts"
+description: "كل طبقة في Readly ليها نوع تست وdoubles مناسبة: الـ use cases بـ fakes، والـ DTOs بـ fixtures JSON حقيقية، والـ repository والـ guard، وdrift في الذاكرة، والـ contract tests اللي بتخلي الـ fakes صادقة."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="مصنع العربيات">
+
+في مصنع العربيات، محدش بيستنى العربية تخلص عشان يعرف إن الفرامل بايظة. الموتور بيتجرب لوحده على <b>bench</b>: متوصّل بخراطيم وقود وكهربا مش حقيقية، بس هو نفسه حقيقي 100%. والفرامل بتتجرب على جهاز بيضغط عليها ألف مرة. وكل قطعة جاية من مورد بتتقاس على <b>مواصفات مكتوبة</b>: أي مورد، قديم أو جديد، لازم قطعته تعدّي نفس المقاسات. وفي الآخر عربية كاملة بتلف في المضمار، بس دي واحدة من كل ألف.
+
+</Analogy>
+
+ده بالظبط اللي هنعمله في Readly. كل طبقة ليها «bench» بتاعها: الحتة اللي بتختبرها حقيقية، واللي حواليها fakes انت متحكم فيها. والـ «مواصفات المكتوبة» هي الـ <b>contract tests</b>: نفس التستات بتتشغّل على الـ fake وعلى الحقيقي، فتضمن إن الـ fake اللي بتستخدمه في 40 تست مابيكدبش.
+
+في [درس الـ test doubles](/course/testing/test-doubles/) اتعلمت الأدوات: الـ fake والـ mock والـ builder. الدرس ده بيقولك تستخدم أنهي أداة فين، طبقة طبقة:
+
+| الطبقة | بتختبر إيه | إيه الحقيقي | إيه الـ fake | السرعة |
+| --- | --- | --- | --- | --- |
+| Domain: entities وvalue objects | القواعد جوه الـ object | كله | مفيش | ميلي ثانية |
+| Domain: use cases | القاعدة بتاعة العملية | الـ use case | الـ repository | ميلي ثانية |
+| Data: DTO والـ mapper | قراية JSON حقيقي وتحويله | الـ fromJson والـ mapper | مفيش، الـ input ملف JSON | ميلي ثانية |
+| Data: الـ guard | تحويل كل exception لـ Failure | الـ guard | مفيش | ميلي ثانية |
+| Data: الـ repository | الاستراتيجية: يجيب منين ويحفظ فين | الـ repository والـ mapper والـ guard | الـ remote (والـ local أحيانًا) | ميلي ثانية |
+| Data: الـ local source | الـ queries والـ streams | drift وSQLite | مفيش، DB في الذاكرة | عشرات الميلي ثانية |
+| Data: الـ remote source | شكل الطلب وقراية الرد | Dio والـ source | الشبكة بس | ميلي ثانية |
+
+<Diagram name="d-test-layers">
+
+كل صف تست، وكل عمود حتة من Readly. الأزرق بيتشغّل حقيقي، والبرتقالي fake. لاحظ إن كل تست بيركّز على حتة واحدة، ومفيش تست بيكلّم Open Library الحقيقي.
+
+</Diagram>
+
+الـ presentation (الـ Cubits والـ widgets) ليها دروس لوحدها: [تستات الـ Cubit](/course/testing/cubit-tests/) و[الـ widget tests](/course/testing/widget-tests/).
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### فولدر test بيعكس lib
+
+<CodeBlock label="شكل الفولدر">
+
+```text
+test/
+├─ helpers/
+│  ├─ builders.dart                     # aBook()
+│  ├─ fakes.dart                        # FakeLibraryRepository, FixedClock, FakeLibraryRemote, ...
+│  ├─ mocks.dart
+│  ├─ fixture.dart                      # fixture('search_page.json')
+│  └─ library_repository_contract.dart  # shared tests, no _test suffix
+├─ fixtures/
+│  ├─ search_page.json
+│  ├─ work_fantastic_mr_fox.json
+│  └─ work_typed_description.json
+└─ features/
+   ├─ library/
+   │  ├─ domain/   book_test.dart, add_book_to_library_test.dart, watch_library_test.dart
+   │  └─ data/     book_mapper_test.dart, guard_test.dart, books_dao_test.dart,
+   │               library_repository_impl_test.dart, library_repository_contract_test.dart
+   └─ catalog/
+      └─ data/     work_dto_test.dart, search_page_dto_test.dart, catalog_remote_source_test.dart
+```
+
+</CodeBlock>
+
+- <b>كل ملف في lib ليه ملف تست في نفس المسار:</b> `lib/features/library/data/book_mapper.dart` تسته `test/features/library/data/book_mapper_test.dart`. لو حد عايز يعرف الـ mapper متغطي ولا لأ، يعرف يدوّر فين.
+- <b>`helpers` و`fixtures` مابينتهوش بـ `_test.dart`:</b> `flutter test` بيشغّل الملفات اللي بتنتهي بـ `_test.dart` بس، فالحاجات المشتركة مابتتشغّلش لوحدها.
+- <b>تشغّل طبقة واحدة:</b> `flutter test test/features/library/domain` بيشغّل الـ domain بس، في ثانية.
+
+### الـ Domain: الـ entity
+
+الـ domain أسهل طبقة تتختبر: Dart صافي، مفيش I/O، مفيش async في أغلبه. ابدأ بالقواعد اللي جوه الـ entity نفسها:
+
+<CodeBlock label="test/features/library/domain/book_test.dart">
+
+```dart
+void main() {
+  group('Book', () {
+    test('markAsFinished changes the status only', () {
+      final book = aBook(status: BookStatus.reading).markAsFinished();
+
+      expect(book, aBook(status: BookStatus.finished));
+    });
+
+    for (final status in BookStatus.values) {
+      final expected = status == BookStatus.finished;
+      test('canBeReviewed is $expected when $status', () {
+        expect(aBook(status: status).canBeReviewed, expected);
+      });
+    }
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>`markAsFinished` بيتقارن بـ builder:</b> `aBook(status: BookStatus.finished)` بيقول «نفس الكتاب، بس خلصته». لو الـ method بالغلط غيّرت العنوان أو الـ id، الـ `==` بتاع freezed هيمسكها.
+- <b>اللوب على `BookStatus.values`:</b> تست لكل حالة، بإسم واضح في الـ output. ولو حد زوّد حالة `abandoned` للـ enum، هتتختبر لوحدها من غير ما حد يفتكر.
+
+### الـ Domain: الـ use case بـ fake
+
+<CodeBlock label="test/features/library/domain/add_book_to_library_test.dart">
+
+```dart
+void main() {
+  late FakeLibraryRepository repo;
+  late AddBookToLibrary addBook;
+
+  setUp(() {
+    repo = FakeLibraryRepository();
+    addBook = AddBookToLibrary(repo);
+  });
+  tearDown(() => repo.dispose());
+
+  test('a new book ends up in the library', () async {
+    final result = await addBook(aBook());
+
+    expect(result, isA<Success<void>>());
+    expect(await repo.contains(aBook().id), isTrue);
+  });
+
+  test('a duplicate is rejected with ValidationFailure', () async {
+    await addBook(aBook());
+
+    final result = await addBook(aBook(title: 'Same id, other title'));
+
+    expect(
+      result,
+      isA<Err<void>>().having((e) => e.failure, 'failure', isA<ValidationFailure>()),
+    );
+  });
+
+  test('a repository failure comes back unchanged', () async {
+    repo.failNextWith = const NetworkFailure();
+
+    final result = await addBook(aBook());
+
+    expect(
+      result,
+      isA<Err<void>>().having((e) => e.failure, 'failure', isA<NetworkFailure>()),
+    );
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>الـ fake من الدرس اللي فات:</b> `FakeLibraryRepository` في `test/helpers/fakes.dart`. التست بيتأكد من الحالة النهائية (`contains`)، مش من النداءات.
+- <b>نفس الـ id بعنوان تاني:</b> القاعدة «مفيش تكرار» معناها نفس الـ id، مش نفس الـ object. التست ده بيمسك لو حد غيّر الفحص لـ `==` على الكتاب كله.
+- <b>الـ use case مابيبلعش الأخطاء:</b> التست التالت بيضمن إن الـ use case بيعدّي الـ Failure زي ما هو، مش بيحوّل كل حاجة لـ `ValidationFailure`.
+
+### الـ Domain: stream use case
+
+الـ `WatchLibrary` من [درس الـ Domain](/course/domain-errors/domain/) بيفلتر ويرتّب، ولازم يعمل ده مع كل تغيير، مش أول مرة بس:
+
+<CodeBlock label="test/features/library/domain/watch_library_test.dart">
+
+```dart
+import 'package:async/async.dart';
+
+void main() {
+  test('emits reading books sorted by title, again after every change', () async {
+    final repo = FakeLibraryRepository([
+      aBook(id: 'OL1W', title: 'Matilda', status: BookStatus.reading),
+      aBook(id: 'OL2W', title: 'Boy', status: BookStatus.finished),
+    ]);
+    addTearDown(repo.dispose);
+
+    final titles = WatchLibrary(repo)(const WatchLibraryParams(status: BookStatus.reading))
+        .map((books) => [for (final b in books) b.title]);
+    final queue = StreamQueue(titles);
+
+    expect(await queue.next, ['Matilda']); // 'Boy' is finished: filtered out
+
+    await repo.addBook(aBook(id: 'OL3W', title: 'Danny', status: BookStatus.reading));
+    expect(await queue.next, ['Danny', 'Matilda']); // sorted, not appended
+
+    await queue.cancel();
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `StreamQueue`:</b> من `package:async` (زوّده في `dev_dependencies`). بيخليك تاخد قيم الـ stream واحدة واحدة بـ `await queue.next`، وتعمل حاجة بين كل قيمة والتانية. ليه ده أحسن من `emitsInOrder` هنا، في المستوى 3.
+- <b>`map` للعناوين:</b> بدل ما تقارن ليستة `Book` كاملة، بتقارن العناوين. رسالة الفشل بتبقى `['Matilda', 'Danny']` مش `[Instance of Book, ...]`.
+- <b>`addTearDown`:</b> بيسجّل cleanup للتست ده بس، من جوه التست نفسه. مفيد لما الـ object بيتعمل جوه التست مش في `setUp`.
+
+### الـ Data: ليه fixtures حقيقية
+
+التست اللي في [درس أول feature](/course/foundations/first-feature/) بيعمل `WorkDto.fromJson` على map مكتوب باليد. ده كويس كبداية، بس فيه مشكلة: الـ map ده شكل الـ JSON <b>زي ما انت فاكره</b>، مش زي ما Open Library بيبعته.
+
+حصلت كده في Readly: الـ `BookDto` كان بيقرا `json['status'] as String`، وتست البحث كان بـ map مكتوب فيه `'status': 'want_to_read'`، فعدّى. لكن الـ `docs` الحقيقية في `search.json` مافيهاش `status` خالص، ده حقل بتاع الـ backend بتاعنا. فأول بحث حقيقي وقع بـ TypeError. التست كان بيختبر فهمنا الغلط بكل ثقة.
+
+الحل إن الـ input يبقى <b>رد حقيقي</b> متسجّل من الـ API، ومحفوظ في ملف:
+
+```bash
+mkdir -p test/fixtures
+curl -s 'https://openlibrary.org/search.json?q=fantastic+mr+fox&limit=3' | jq . > test/fixtures/search_page.json
+curl -s 'https://openlibrary.org/works/OL45804W.json' | jq . > test/fixtures/work_fantastic_mr_fox.json
+```
+
+- <b>الـ `jq .`:</b> بيعمل format للـ JSON، فالـ diff في الـ PR يبقى مقروء لو الـ fixture اتحدّث.
+- <b>`limit=3`:</b> رد حقيقي بس صغير. مش محتاج 100 كتاب عشان تختبر الـ parsing.
+
+<CodeBlock label="test/fixtures/search_page.json (مختصر)">
+
+```json
+{
+  "numFound": 41,
+  "start": 0,
+  "numFoundExact": true,
+  "docs": [
+    {
+      "key": "/works/OL45804W",
+      "title": "Fantastic Mr Fox",
+      "author_name": ["Roald Dahl"],
+      "first_publish_year": 1970,
+      "cover_i": 6498519
+    }
+  ]
+}
+```
+
+</CodeBlock>
+
+والـ helper اللي بيقرا الملفات دي سطر واحد:
+
+<CodeBlock label="test/helpers/fixture.dart">
+
+```dart
+import 'dart:io';
+
+/// Reads test/fixtures/<name>. flutter test runs from the package root.
+String fixture(String name) => File('test/fixtures/$name').readAsStringSync();
+```
+
+</CodeBlock>
+
+- <b>بيرجّع String مش Map:</b> فنفس الـ helper ينفع للـ `jsonDecode` في تستات الـ DTO، وللـ fake adapter اللي بيرجّع body خام في تستات الـ remote source.
+- <b>المسار relative:</b> `flutter test` و`dart test` بيشتغلوا من root الـ package، فـ `test/fixtures/...` بيتلاقي. ولو بتشغّل من الـ IDE والملف مااتلاقاش، اتأكد إن الـ working directory هو الـ package مش الـ workspace.
+
+### الـ Data: الـ DTO على fixture
+
+<CodeBlock label="test/features/catalog/data/search_page_dto_test.dart">
+
+```dart
+import 'dart:convert';
+
+void main() {
+  test('parses a real Open Library search page', () {
+    final json = jsonDecode(fixture('search_page.json')) as Map<String, dynamic>;
+
+    final page = SearchPageDto.fromJson(json);
+
+    expect(page.numFound, 41); // whatever the recorded file says: it never changes
+    expect(page.start, 0);
+    expect(page.docs.first.title, 'Fantastic Mr Fox');
+    expect(page.docs.first.status, 'want_to_read'); // missing in the API: the default
+  });
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="test/features/catalog/data/work_dto_test.dart">
+
+```dart
+void main() {
+  Map<String, dynamic> load(String name) =>
+      jsonDecode(fixture(name)) as Map<String, dynamic>;
+
+  test('reads a work whose description is a plain string', () {
+    final dto = WorkDto.fromJson(load('work_fantastic_mr_fox.json'));
+
+    expect(dto.key, '/works/OL45804W');
+    expect(dto.description, startsWith('The main character'));
+  });
+
+  test('reads a work whose description is {"type", "value"}', () {
+    final dto = WorkDto.fromJson(load('work_typed_description.json'));
+
+    expect(dto.description, isNotEmpty);
+  });
+
+  test('the mapper turns the key into a bare id and builds the cover url', () {
+    final details = WorkDto.fromJson(load('work_fantastic_mr_fox.json')).toEntity();
+
+    expect(details.id, BookId.fromTrusted('OL45804W'));
+    expect(details.coverUrl?.host, 'covers.openlibrary.org');
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>fixture لكل شكل:</b> الـ description مرة String ومرة object، فكل شكل ليه ملف من رد حقيقي. الـ `work_typed_description.json` متسجّل من work تاني بيرجّع الشكل التاني.
+- <b>الـ expects مش بتعيد الملف:</b> مش محتاج تتأكد من كل حقل. اتأكد من الحاجات اللي الكود بتاعك بيعمل فيها حاجة: الـ key، والـ description بشكليه، والـ cover.
+- <b>الـ mapper في نفس الملف:</b> `fromJson` وبعده `toEntity()` على نفس الـ fixture. ده بيختبر الرحلة من الـ JSON الحقيقي لحد الـ entity.
+
+### الـ Data: الـ mapper
+
+الـ mapper أرخص حاجة تتختبر في الـ data، ومن أكتر الأماكن اللي فيها bugs. ده الـ mapper اللي بنختبره (من [درس الـ Data](/course/data-network/data/)، بالاتجاهين):
+
+<CodeBlock label="data/book_mapper.dart">
+
+```dart
+extension BookDtoMapper on BookDto {
+  // null: nothing worth showing
+  Book? toEntityOrNull() {
+    final t = title?.trim();
+    if (t == null || t.isEmpty) return null;
+    return Book(
+      id: BookId.fromTrusted(key),
+      title: t,
+      status: switch (status) {
+        'reading' => BookStatus.reading,
+        'finished' => BookStatus.finished,
+        _ => BookStatus.wantToRead,
+      },
+    );
+  }
+}
+
+extension BookToDto on Book {
+  BookDto toDto() => BookDto(
+        key: id.value,
+        title: title,
+        status: switch (status) {
+          BookStatus.wantToRead => 'want_to_read',
+          BookStatus.reading => 'reading',
+          BookStatus.finished => 'finished',
+        },
+      );
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="test/features/library/data/book_mapper_test.dart">
+
+```dart
+void main() {
+  for (final status in BookStatus.values) {
+    test('$status survives a round trip through the DTO', () {
+      final book = aBook(status: status);
+
+      expect(book.toDto().toEntityOrNull(), book);
+    });
+  }
+
+  test('an unknown status from a newer server falls back to wantToRead', () {
+    const dto = BookDto(key: 'OL45804W', title: 'Fantastic Mr Fox', status: 'abandoned');
+
+    expect(dto.toEntityOrNull()?.status, BookStatus.wantToRead);
+  });
+
+  test('a book without a usable title is dropped', () {
+    for (final title in [null, '', '   ']) {
+      expect(BookDto(key: 'OL1W', title: title).toEntityOrNull(), isNull, reason: '$title');
+    }
+  });
+
+  test('the title is trimmed', () {
+    const dto = BookDto(key: 'OL1W', title: '  Matilda ');
+
+    expect(dto.toEntityOrNull()?.title, 'Matilda');
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>الـ round trip:</b> `Book` → DTO → `Book` لازم يرجع زي ما هو، لكل حالة. ده بيمسك أشهر bug في الـ mappers: الاتجاهين مش متفقين (`'want_to_read'` في واحد و`'wantToRead'` في التاني).
+- <b>الـ `reason`:</b> في اللوب، لو حالة وقعت، الرسالة بتقول أنهي title. من غيره هتعرف إن «حاجة» في اللوب وقعت.
+- <b>الحالة المجهولة:</b> قرار «الحالة اللي ماعرفهاش تبقى wantToRead» قرار business، والتست بيوثّقه. لو حد غيّره، لازم يغيّر التست، يعني لازم يقصد.
+
+</Level>
+
+<Level n="3" title="الـ repository وdrift والـ contracts">
+
+### الـ repository اللي هنختبره
+
+ده `LibraryRepositoryImpl` بالشكل اللي بيوصل له في [درس التخزين المحلي](/course/data-network/local-storage/): remote للسيرفر، وlocal على drift، وClock للـ `updatedAt`:
+
+<CodeBlock label="data/library_repository_impl.dart">
+
+```dart
+class LibraryRepositoryImpl implements LibraryRepository {
+  LibraryRepositoryImpl(this._remote, this._local, this._clock);
+
+  final LibraryRemoteSource _remote;
+  final LibraryLocalSource _local;
+  final Clock _clock;
+
+  @override
+  Future<Result<List<Book>>> getLibrary() => guard(() async {
+        final dtos = await _remote.fetchLibrary();
+        final books = dtos.map((d) => d.toEntityOrNull()).nonNulls.toList();
+        final now = _clock.now().toUtc();
+        await _local.upsertBooks([for (final b in books) b.toRow(updatedAt: now)]);
+        return books;
+      });
+
+  @override
+  Stream<List<Book>> watchLibrary() =>
+      _local.watchBooks().map((rows) => [for (final r in rows) r.toEntity()]);
+
+  @override
+  Future<Result<void>> addBook(Book book) async {
+    if (await contains(book.id)) {
+      return const Err(ValidationFailure('Book already in library'));
+    }
+    return guard(() async {
+      await _remote.addBook(book.toDto());
+      await _local.upsertBooks([book.toRow(updatedAt: _clock.now().toUtc())]);
+    });
+  }
+
+  @override
+  Future<bool> contains(BookId id) async => await _local.bookById(id.value) != null;
+}
+```
+
+</CodeBlock>
+
+فيه 4 وعود لازم تتختبر: بيرجّع كتب السيرفر وبيحفظها، والـ watch بيشوف اللي اتحفظ، والفشل بيبقى Failure صح والكاش مايتلمسش، والكتب البايظة بتتشال من غير ما تضيّع الباقي.
+
+### الـ remote والـ local كـ fakes
+
+<CodeBlock label="test/helpers/fakes.dart (الجزء بتاع الـ data)">
+
+```dart
+class FakeLibraryRemote implements LibraryRemoteSource {
+  List<BookDto> books = []; // what the server has
+  Exception? failWith;       // thrown by the next call, then cleared
+
+  @override
+  Future<List<BookDto>> fetchLibrary() async {
+    _maybeFail();
+    return [...books];
+  }
+
+  @override
+  Future<void> addBook(BookDto book) async {
+    _maybeFail();
+    books = [...books, book];
+  }
+
+  void _maybeFail() {
+    if (failWith case final e?) {
+      failWith = null;
+      throw e;
+    }
+  }
+}
+
+class InMemoryLibraryLocal implements LibraryLocalSource {
+  final _rows = <String, BookRow>{};
+  final _changes = StreamController<void>.broadcast();
+
+  @override
+  Stream<List<BookRow>> watchBooks() => Stream.multi((controller) {
+        void emit() => controller.add(
+              _rows.values.toList()..sort((a, b) => a.title.compareTo(b.title)),
+            );
+        emit();
+        final sub = _changes.stream.listen((_) => emit());
+        controller.onCancel = sub.cancel;
+      });
+
+  @override
+  Future<BookRow?> bookById(String id) async => _rows[id];
+
+  @override
+  Future<void> upsertBooks(Iterable<BookRow> rows) async {
+    for (final row in rows) {
+      _rows[row.id] = row;
+    }
+    _changes.add(null);
+  }
+}
+
+DioException offline() => DioException.connectionError(
+      requestOptions: RequestOptions(path: '/library'),
+      reason: 'offline',
+    );
+
+DioException httpError(int status) {
+  final options = RequestOptions(path: '/library');
+  return DioException.badResponse(
+    statusCode: status,
+    requestOptions: options,
+    response: Response(requestOptions: options, statusCode: status),
+  );
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `FakeLibraryRemote` بيرمي DioException حقيقي:</b> نفس الـ exception اللي dio بيرميه، فالـ guard الحقيقي هو اللي بيحوّله. الـ fake مش بيرجّع Failure بنفسه، لأن ده مش شغل الـ data source.
+- <b>نسخة أبسط من اللي في درس الـ conflicts:</b> هناك كان فيه idempotency key وردود بتضيع. هنا الوعود أبسط، فالـ fake أبسط.
+- <b>الـ local بيرتّب بالعنوان:</b> زي الـ `orderBy` في الـ DAO الحقيقي. لو الـ fake مارتّبش، تستات الـ repository هتعدّي على ترتيب الإضافة، والحقيقي هيرجّع ترتيب تاني.
+- <b>`offline()` و`httpError()`:</b> helpers للـ exceptions اللي بتتكرر في كل تستات الـ data.
+
+<CodeBlock label="test/features/library/data/library_repository_impl_test.dart">
+
+```dart
+void main() {
+  late FakeLibraryRemote remote;
+  late InMemoryLibraryLocal local;
+  late FixedClock clock;
+  late LibraryRepositoryImpl repo;
+
+  setUp(() {
+    remote = FakeLibraryRemote();
+    local = InMemoryLibraryLocal();
+    clock = FixedClock(DateTime.utc(2026, 10, 4, 10));
+    repo = LibraryRepositoryImpl(remote, local, clock);
+  });
+
+  test('getLibrary returns the server books and caches them', () async {
+    remote.books = [aBook().toDto()];
+
+    final result = await repo.getLibrary();
+
+    expect(result, isA<Success<List<Book>>>().having((s) => s.value, 'books', [aBook()]));
+    expect(await repo.contains(aBook().id), isTrue);
+  });
+
+  test('watchLibrary sees what getLibrary cached', () async {
+    remote.books = [aBook(title: 'Matilda').toDto()];
+    final queue = StreamQueue(repo.watchLibrary());
+
+    expect(await queue.next, isEmpty);
+    await repo.getLibrary();
+    expect(await queue.next, [aBook(title: 'Matilda')]);
+
+    await queue.cancel();
+  });
+
+  test('offline: NetworkFailure, and the cache stays as it was', () async {
+    await local.upsertBooks([aBook().toRow(updatedAt: clock.now())]);
+    remote.failWith = offline();
+
+    final result = await repo.getLibrary();
+
+    expect(
+      result,
+      isA<Err<List<Book>>>().having((e) => e.failure, 'failure', isA<NetworkFailure>()),
+    );
+    expect(await repo.contains(aBook().id), isTrue);
+  });
+
+  test('a 401 while adding: UnauthorizedFailure, nothing cached', () async {
+    remote.failWith = httpError(401);
+
+    final result = await repo.addBook(aBook());
+
+    expect(
+      result,
+      isA<Err<void>>().having((e) => e.failure, 'failure', isA<UnauthorizedFailure>()),
+    );
+    expect(await repo.contains(aBook().id), isFalse);
+  });
+
+  test('one book without a title does not cost the other books', () async {
+    remote.books = [const BookDto(key: 'OL1W', title: null), aBook().toDto()];
+
+    final result = await repo.getLibrary();
+
+    expect(result, isA<Success<List<Book>>>().having((s) => s.value, 'books', [aBook()]));
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>كل تست وعد واحد:</b> أسماء التستات لوحدها بتوصف الـ repository بيعمل إيه. لو تست وقع، الاسم بيقول أنهي وعد اتكسر.
+- <b>الكاش مااتلمسش:</b> التست التالت مش بس بيقول «رجع Failure». بيقول كمان إن الكتاب اللي كان محفوظ لسه موجود، لأن «النت فصل فالمكتبة اتمسحت» bug حقيقي بيحصل لو حد عمل clear قبل الـ fetch.
+- <b>ترتيب الـ 401:</b> الـ remote فشل قبل الـ upsert، فمفيش صف اتكتب. لو حد بدّل الترتيب وكتب في الـ DB الأول، التست ده هيمسكه. وده سلوك مش تفصيلة: كتاب ظاهر في المكتبة وهو مش على السيرفر.
+
+### الـ guard: الجدول كتست
+
+الـ guard هو الحد بين عالم الـ exceptions وعالم الـ Failures، وجدول التحويل بتاعه من [درس الأخطاء](/course/domain-errors/errors/) قرار مهم. اكتبه كتست بالجدول نفسه:
+
+<CodeBlock label="test/core/guard_test.dart">
+
+```dart
+void main() {
+  final cases = <(String, Exception, Matcher)>[
+    ('no connection', offline(), isA<NetworkFailure>()),
+    (
+      'connect timeout',
+      DioException.connectionTimeout(
+        timeout: const Duration(seconds: 10),
+        requestOptions: RequestOptions(),
+      ),
+      isA<NetworkFailure>(),
+    ),
+    ('401', httpError(401), isA<UnauthorizedFailure>()),
+    ('500', httpError(500), isA<ServerFailure>().having((f) => f.statusCode, 'statusCode', 500)),
+    ('disk full', CacheException('disk full'), isA<CacheFailure>()),
+  ];
+
+  for (final (name, exception, failure) in cases) {
+    test('$name becomes the right Failure', () async {
+      final result = await guard<int>(() async => throw exception);
+
+      expect(result, isA<Err<int>>().having((e) => e.failure, 'failure', failure));
+    });
+  }
+
+  test('a value comes back as Success', () async {
+    final result = await guard(() async => 42);
+
+    expect(result, isA<Success<int>>().having((s) => s.value, 'value', 42));
+  });
+
+  test('a bug is not hidden behind a Failure', () async {
+    await expectLater(guard<int>(() async => throw StateError('bug')), throwsStateError);
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>الـ records:</b> كل صف `(اسم، exception، الـ Failure المتوقع)`، والـ destructuring في الـ `for` بيفكّه. زوّد صف لما تزوّد حالة في الـ `_mapDio`.
+- <b>آخر تست أهم واحد:</b> الـ guard بيمسك DioException وCacheException بس. لو حد «حسّنه» وكتب `catch (e)`، الـ bugs هتختفي ورا «حصلت مشكلة في السيرفر». التست ده بيقع ساعتها، ويقول ليه.
+- <b>`throwsStateError`:</b> matcher جاهز. والـ `expectLater` بيتعمله `await` عشان أي سطر بعده مايشتغلش قبل ما الـ matching يخلص، زي ما اتشرح في [درس الـ unit tests](/course/testing/unit-tests/).
+
+### drift في الذاكرة
+
+الـ `InMemoryLibraryLocal` كويس لتستات الـ repository، بس مش بيختبر الـ queries نفسها: الـ `orderBy` صح؟ الـ upsert بيحدّث ولا بيضيف صف تاني؟ دي محتاجة SQLite حقيقي. drift بيديك ده من غير ملف ولا جهاز: `NativeDatabase.memory()`.
+
+<CodeBlock label="test/features/library/data/books_dao_test.dart">
+
+```dart
+import 'package:async/async.dart';
+import 'package:drift/native.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+void main() {
+  late AppDatabase db;
+  late BooksDao dao;
+
+  setUp(() {
+    db = AppDatabase(NativeDatabase.memory());
+    dao = db.booksDao;
+  });
+  tearDown(() => db.close());
+
+  BookRow row(String id, String title, {BookStatus status = BookStatus.wantToRead}) =>
+      BookRow(id: id, title: title, status: status, updatedAt: DateTime.utc(2026, 10, 4));
+
+  test('upsert inserts, then updates the same id', () async {
+    await dao.upsert(row('OL1W', 'Matilda'));
+    await dao.upsert(row('OL1W', 'Matilda', status: BookStatus.finished));
+
+    expect((await dao.byId('OL1W'))?.status, BookStatus.finished);
+    expect(await db.select(db.books).get(), hasLength(1));
+  });
+
+  test('remove deletes one book and reports it', () async {
+    await dao.upsertAll([row('OL1W', 'Matilda'), row('OL2W', 'Boy')]);
+
+    expect(await dao.remove('OL1W'), 1);
+    expect(await dao.byId('OL1W'), isNull);
+    expect(await dao.byId('OL2W'), isNotNull);
+  });
+
+  test('watchAll emits sorted by title, and again after every write', () async {
+    final queue = StreamQueue(dao.watchAll().map((rows) => [for (final r in rows) r.title]));
+
+    expect(await queue.next, isEmpty);
+
+    await dao.upsert(row('OL1W', 'Matilda'));
+    expect(await queue.next, ['Matilda']);
+
+    await dao.upsertAll([row('OL2W', 'Boy'), row('OL3W', 'Danny')]);
+    expect(await queue.next, ['Boy', 'Danny', 'Matilda']);
+
+    await queue.cancel();
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>`NativeDatabase.memory()`:</b> SQLite حقيقي بنفس الـ SQL اللي في الـ app، بس في الذاكرة. كل تست بياخد DB جديدة فاضية، فمفيش تست بيأثر على التاني.
+- <b>`AppDatabase(super.e)`:</b> ده سبب إن الـ constructor بياخد executor في [درس التخزين المحلي](/course/data-network/local-storage/): الـ app بيبعت ملف، والتست بيبعت memory.
+- <b>`db.booksDao`:</b> drift بيولّد getter لكل DAO مكتوب في `daos: [...]`.
+- <b>`db.close()` في الـ tearDown:</b> لو نسيته، الـ DBs بتتراكم، وdrift بيطبع warning إنك فاتح نفس الـ database class أكتر من مرة. لو شفت الـ warning ده في التستات، دوّر على `close` ناقص.
+- <b>`upsertAll` بيعمل emit واحد:</b> الـ batch بيكتب الاتنين في transaction واحدة، فالـ stream بيطلّع ليستة فيها الاتنين، مش ليستتين. التست بيثبّت ده.
+
+<Note kind="info" title="الـ sqlite على جهازك وعلى الـ CI">
+
+الـ `NativeDatabase` محتاج مكتبة SQLite على الجهاز اللي بيشغّل التست. الإصدارات الحديثة من package `sqlite3` (من 3.0) بتجيبها لوحدها بالـ build hooks، فـ `flutter test` بيشتغل على أي جهاز من غير حاجة. في المشاريع الأقدم، لو التست وقع بـ «Failed to load dynamic library»، يا إما تحدّث، يا إما تنزّل SQLite على الـ CI (`sudo apt-get install libsqlite3-dev` على Linux).
+
+</Note>
+
+### الـ repository على drift حقيقي
+
+دلوقتي عندك اختيار: تستات الـ repository تشتغل على `InMemoryLibraryLocal`، ولا على `LibraryLocalSource` الحقيقي فوق DB في الذاكرة؟ الاتنين سريعين. الفرق إن التاني بيختبر الـ repository والـ mapper بتاع الصفوف والـ DAO مع بعض، ومن غير fake محتاج يتظبط على سلوك drift:
+
+<CodeBlock label="نفس التستات، local حقيقي">
+
+```dart
+setUp(() {
+  db = AppDatabase(NativeDatabase.memory());
+  remote = FakeLibraryRemote();
+  clock = FixedClock(DateTime.utc(2026, 10, 4, 10));
+  repo = LibraryRepositoryImpl(remote, LibraryLocalSource(db.booksDao), clock);
+});
+tearDown(() => db.close());
+```
+
+</CodeBlock>
+
+الـ remote بس اللي fake، لأنه الحاجة الوحيدة اللي بره الـ process. ده اسمه <b>sociable unit test</b>: الـ unit بيتختبر مع جيرانه الحقيقيين، والـ doubles على الحدود بس. أنا بفضّله في الـ data layer، والـ `InMemoryLibraryLocal` بيفضل مفيد لو الـ data package مش عايز يعتمد على sqlite في التستات، أو لو محتاج تجيب حالة صعبة زي إن الـ DB نفسها ترمي.
+
+### الـ stream test بيعدّي ساعات وبيقع ساعات
+
+أول طريقة هتيجي في بالك لتست الـ stream:
+
+<CodeBlock label="race">
+
+```dart
+test('emits after an insert', () async {
+  final expectation = expectLater(
+    dao.watchAll().map((rows) => rows.length),
+    emitsInOrder([0, 1]),
+  );
+  await dao.upsert(row('OL1W', 'Matilda'));
+  await expectation;
+});
+```
+
+</CodeBlock>
+
+على جهازك بيعدّي، وعلى الـ CI مرة من كل عشرين بيقف لحد الـ timeout. السبب إن الـ stream بيعمل الـ query الأولى بشكل async بعد الـ listen. لو الـ insert سبق الـ query الأولى، أول قيمة هتطلع `1` على طول، والـ `0` عمره ما هيجي، والـ `emitsInOrder` يفضل مستني.
+
+الـ `StreamQueue` بيحل ده لأنه بيخليك <b>تستنى</b> القيمة الأولى قبل ما تكتب:
+
+```dart
+final queue = StreamQueue(dao.watchAll().map((rows) => rows.length));
+expect(await queue.next, 0); // the initial query is done
+await dao.upsert(row('OL1W', 'Matilda'));
+expect(await queue.next, 1);
+await queue.cancel();
+```
+
+القاعدة: لو التست بيعمل حاجة بين القيم (يكتب، يضيف، يدوس)، استخدم `StreamQueue`. لو الـ stream بيطلّع قيمه لوحده من غير ما تتدخل، `emitsInOrder` كفاية ومقروء أكتر. والـ matchers دي كلها في [درس الـ unit tests](/course/testing/unit-tests/).
+
+ولو بتستخدم drift في widget test أو جوه `fake_async`، الـ stream بيأجّل قفل نفسه لحد الـ event loop الجاي، والتست بيقع بـ «A Timer is still pending». الحل إنك تفتح الـ DB كده:
+
+```dart
+AppDatabase(DatabaseConnection(NativeDatabase.memory(), closeStreamsSynchronously: true));
+```
+
+### الـ updatedAt راجع مختلف
+
+كتبت صف بـ `updatedAt: DateTime.utc(2026, 10, 4, 10, 0, 0, 500)`، وقريته، وقارنت بـ `expect(saved.updatedAt, written)`، ووقع:
+
+```text
+Expected: DateTime:<2026-10-04 10:00:00.500Z>
+  Actual: DateTime:<2026-10-04 13:00:00.000>
+```
+
+حاجتين حصلوا. drift by default بيخزّن الـ DateTime كـ unix timestamp <b>بالثواني</b>، فالـ milliseconds ضاعت. وبيرجّعه بتوقيت الجهاز مش UTC، و`==` بتاع DateTime بيقارن اللحظة والـ timezone مع بعض، فـ `10:00Z` مابيساويش `13:00` بتوقيت القاهرة حتى لو هما نفس اللحظة.
+
+- <b>في التست:</b> قارن اللحظة مش الشكل: `expect(saved.updatedAt.isAtSameMomentAs(written), isTrue)`، أو حوّل الاتنين `.toUtc()`. واستخدم أوقات من غير milliseconds في الـ fixtures.
+- <b>في الـ app:</b> لو الـ milliseconds مهمة (زي الـ last-write-wins في درس الـ conflicts)، drift عنده option في `build.yaml` يخزّن الـ DateTime كنص ISO-8601 (`store_date_time_values_as_text: true`). ده تغيير في شكل التخزين، فمحتاج migration لو الـ app منشور.
+
+التست هنا مسك bug حقيقي: الـ app كان هيقارن `updatedAt` من الـ DB بواحد من السيرفر، والمقارنة كانت هتطلع غلط ساكتة.
+
+### contract tests: الـ fake لازم يبقى صادق
+
+في [درس SOLID](/course/quality/solid-basics/) كتبنا `libraryRepositoryContract` بتست واحد. هنا هنكمّله: كل وعد في `LibraryRepository` يبقى تست، والتستات دي تتشغّل على أي implementation:
+
+<CodeBlock label="test/helpers/library_repository_contract.dart">
+
+```dart
+import 'package:async/async.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+/// What every LibraryRepository promises, fake or real.
+void libraryRepositoryContract(LibraryRepository Function() create) {
+  late LibraryRepository repo;
+
+  setUp(() => repo = create());
+
+  test('starts empty', () async {
+    expect(await repo.contains(aBook().id), isFalse);
+  });
+
+  test('an added book is contained and listed', () async {
+    expect(await repo.addBook(aBook()), isA<Success<void>>());
+
+    expect(await repo.contains(aBook().id), isTrue);
+    expect(
+      await repo.getLibrary(),
+      isA<Success<List<Book>>>().having((s) => s.value, 'books', [aBook()]),
+    );
+  });
+
+  test('adding the same book twice fails with ValidationFailure', () async {
+    await repo.addBook(aBook());
+
+    expect(
+      await repo.addBook(aBook()),
+      isA<Err<void>>().having((e) => e.failure, 'failure', isA<ValidationFailure>()),
+    );
+  });
+
+  test('watchLibrary emits the current library, then every change', () async {
+    final queue = StreamQueue(repo.watchLibrary());
+    expect(await queue.next, isEmpty);
+
+    await repo.addBook(aBook(id: 'OL2W', title: 'Matilda'));
+    expect(await queue.next, [aBook(id: 'OL2W', title: 'Matilda')]);
+
+    await queue.cancel();
+  });
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="test/features/library/data/library_repository_contract_test.dart">
+
+```dart
+void main() {
+  group('FakeLibraryRepository', () {
+    libraryRepositoryContract(() {
+      final repo = FakeLibraryRepository();
+      addTearDown(repo.dispose);
+      return repo;
+    });
+  });
+
+  group('LibraryRepositoryImpl', () {
+    libraryRepositoryContract(() {
+      final db = AppDatabase(NativeDatabase.memory());
+      addTearDown(db.close);
+      return LibraryRepositoryImpl(
+        FakeLibraryRemote(),
+        LibraryLocalSource(db.booksDao),
+        FixedClock(DateTime.utc(2026, 10, 4, 10)),
+      );
+    });
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>الـ factory مش object:</b> كل تست بياخد repository جديد من `create()`. لو بعت object واحد، التستات هتأثر في بعض.
+- <b>الـ `addTearDown` جوه الـ factory:</b> الـ `create()` بيتنادى من `setUp`، فالـ cleanup بيتسجّل للتست ده بالظبط. كده كل implementation بيقفل حاجته من غير ما الـ contract يعرف إن في DB.
+- <b>الـ output بيقولك مين كدب:</b> التستات بتظهر `FakeLibraryRepository adding the same book twice fails...` و`LibraryRepositoryImpl adding the same book twice fails...`. لو واحد بس وقع، عرفت مين اللي مختلف.
+- <b>اتأكد إنه بيمسك:</b> امسح فحص التكرار من الـ fake مؤقتًا، وشغّل. لازم تست الـ fake يقع. تست ماشفتوش بيفشل ماتعرفش إنه شغال.
+- <b>لاحظ إن `watchLibrary` بيرتّب في الحقيقي:</b> الـ contract مش بيقول حاجة عن الترتيب، فالتست بكتاب واحد. لو الترتيب جزء من الوعد، اكتبه في الـ contract، وساعتها الـ fake لازم يرتّب هو كمان.
+
+### الـ remote source: Dio حقيقي والشبكة fake
+
+في [درس الاختبارات](/course/quality/testing/) اختبرنا الـ AuthInterceptor بـ Dio حقيقي، والشبكة بس fake عن طريق الـ `HttpClientAdapter`. نفس الفكرة بتختبر الـ remote sources، ومعاها الـ fixtures:
+
+<CodeBlock label="test/features/catalog/data/catalog_remote_source_test.dart">
+
+```dart
+import 'dart:typed_data';
+
+class FixtureAdapter implements HttpClientAdapter {
+  FixtureAdapter(this.body, {this.status = 200});
+  final String body;
+  final int status;
+  RequestOptions? lastRequest;
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    lastRequest = options;
+    return ResponseBody.fromString(
+      body,
+      status,
+      headers: {Headers.contentTypeHeader: [Headers.jsonContentType]},
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
+void main() {
+  test('sends q, page and limit, and parses the real response', () async {
+    final adapter = FixtureAdapter(fixture('search_page.json'));
+    final dio = Dio(BaseOptions(baseUrl: 'https://openlibrary.org'))
+      ..httpClientAdapter = adapter;
+
+    final page = await CatalogRemoteSource(dio).search('fantastic mr fox', page: 2);
+
+    expect(adapter.lastRequest!.path, '/search.json');
+    expect(adapter.lastRequest!.queryParameters, {'q': 'fantastic mr fox', 'page': 2, 'limit': 20});
+    expect(page.docs.first.title, 'Fantastic Mr Fox');
+  });
+
+  test('a 503 reaches the repository as a DioException', () async {
+    final dio = Dio()..httpClientAdapter = FixtureAdapter('{}', status: 503);
+
+    await expectLater(
+      CatalogRemoteSource(dio).search('fox', page: 1),
+      throwsA(isA<DioException>().having((e) => e.response?.statusCode, 'status', 503)),
+    );
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>Dio هو اللي بيعمل الـ query string:</b> التست بيتأكد إن الـ parameters صح، مش إن الـ source «نادى `get`». لو حد غيّر `limit` لـ `pageSize` بالغلط، Open Library هيتجاهله ويرجّع 100 نتيجة، والتست ده بس اللي هيمسكه.
+- <b>نفس الـ fixture في الطبقتين:</b> تست الـ DTO بيقراها كـ Map، والتست ده بيرجّعها كـ body. لو الـ fixture اتحدّث، الاتنين بيشوفوا الشكل الجديد.
+- <b>الـ 503:</b> الـ source مابيحوّلش الأخطاء. بيسيبها تعدّي، والـ guard في الـ repository هو اللي بيحوّلها، وتسته فوق.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+### كل طبقة بتستاهل قد إيه
+
+مش كل الطبقات ليها نفس العائد من التستات:
+
+- <b>الـ DTOs والـ mappers:</b> أعلى عائد في المشروع. رخيصة جدًا، وأغلب الـ crashes في الـ production من JSON مش زي ما كنت فاكر. كل fixture ببضع سطور تستات.
+- <b>الـ guard:</b> تست واحد بجدول، وبيحمي كل الـ repositories مرة واحدة.
+- <b>الـ use cases:</b> اختبر اللي فيه قاعدة. use case بينادي الـ repository وبس (`GetLibrary`) مش محتاج تست لوحده، الـ contract tests والـ Cubit tests بيغطّوه.
+- <b>الـ repository:</b> اختبر الاستراتيجية: بيجيب منين، بيحفظ امتى، بيعمل إيه في الفشل. ماتختبرش إنه «نادى» الـ remote.
+- <b>الـ DAO:</b> اختبر الـ queries اللي انت كتبتها (الترتيب، الفلترة، الـ upsert). ماتختبرش إن drift بيعرف يعمل insert.
+
+### ماتختبرش كود مش بتاعك
+
+- <b>الـ generated code:</b> الـ `==` والـ `copyWith` اللي freezed ولّدهم، والـ `fromJson` العادي اللي json_serializable كتبه. اختبر الـ converters والـ defaults اللي انت حطيتها، والـ fixture الحقيقية بتختبر الباقي من غير ما تقصد.
+- <b>الـ packages:</b> مش محتاج تتأكد إن dio بيبعت headers، ولا إن SQLite بيرتّب. اختبر إن <b>استخدامك</b> ليهم صح.
+
+### الـ fixtures كأصل في المشروع
+
+- <b>متسجّلة مش متكتبة:</b> الـ fixture الأساسية رد حقيقي. ممكن تقصّرها (3 كتب بدل 100)، بس ماتعدّلش القيم جواها بإيدك.
+- <b>حالات الحافة ليها أسماء:</b> لو محتاج كتاب من غير عنوان ومش لاقيه في رد حقيقي، اعمل ملف اسمه `search_page_missing_title.json`. الاسم بيقول إنه متعدّل عن قصد، ومحدش هيفتكره الشكل الطبيعي.
+- <b>بتقدم:</b> الـ API بيتغير، والـ fixture اللي متسجّلة من سنة ممكن تكون بتختبر شكل مابقاش موجود. خلي الـ `curl` اللي سجّلها في script (`tool/refresh_fixtures.sh`)، وشغّله كل فترة أو لما حاجة تقع في الـ production، والـ diff في الـ PR هيوريك إيه اللي اتغير.
+- <b>من الـ backend بتاعك:</b> شيل أي token أو إيميل أو بيانات مستخدم حقيقية قبل ما الملف يدخل الـ repo.
+
+### الـ contract tests للحدود اللي بره
+
+الـ contract بتاع `LibraryRepository` سهل لأن الاتنين عندك. بس `FakeLibraryRemote` كمان بيعمل افتراضات عن السيرفر (إن الإضافة بتظهر في الـ fetch اللي بعدها مثلًا)، ومش هتقدر تشغّل السيرفر الحقيقي في كل PR. الحلول، من الأرخص للأغلى: fixtures متسجّلة من السيرفر الحقيقي في تستات الـ DTOs. وتشغيل نفس الـ contract على staging في job بالليل. أو contract testing بين الفريقين بأداة زي Pact لو الـ backend فريق تاني. الفكرة في الكل واحدة: الـ fake اللي محدش بيقارنه بالحقيقة بيكدب مع الوقت.
+
+### الـ domain في package لوحده
+
+لو الـ domain package Dart صافي (زي ما بنعمل في [درس التوسّع](/course/di-scale/scale/))، تستاته بتتشغّل بـ `dart test` مش `flutter test`، ومن غير ما Flutter يحمّل. الـ suite كلها بتخلص في ثانيتين. وده سبب تاني إن الـ domain مايعملش import لـ Flutter، غير النقاوة: الـ architecture test في [درس حراسة المعمارية](/course/quality/architecture-guards/) بيحمي ده.
+
+### الـ migrations تستاهل تستات لوحدها
+
+الـ DAO tests بتختبر الـ schema الحالية بس. الترقية من version قديمة لجديدة (بيانات مستخدمين حقيقيين) ليها أدوات drift بتاعتها: `drift_dev schema dump` و`SchemaVerifier`، في [درس التخزين المحلي](/course/data-network/local-storage/). أي تغيير في الجداول من غير تست migration هو رهان على بيانات المستخدمين.
+
+### أخطاء شائعة
+
+- <b>تست بيكلّم Open Library الحقيقي:</b> بيقع لما الـ API بطيء، ولما الـ CI مالوش نت، وبيبعت طلبات لـ API مجاني محدش بيدفع له. الشبكة الحقيقية مكانها integration tests قليلة، في [درس الـ integration](/course/testing/integration/).
+- <b>DB واحدة لكل التستات:</b> `setUpAll` بـ DB واحدة بيخلي التستات معتمدة على الترتيب. DB جديدة في `setUp`، الـ memory رخيصة.
+- <b>الـ fake بيرجّع Failure بدل exception:</b> لو `FakeLibraryRemote` رجّع `NetworkFailure` بنفسه، الـ guard عمره ما اتختبر في تستات الـ repository.
+- <b>`expectLater` من غير `await`:</b> السطور اللي بعده بتشتغل قبل ما الـ matcher يخلص، فالكتابة أو الـ cleanup اللي بعده ممكن يسبق التأكيد، والتست يبقى معتمد على التوقيت.
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي بتختبر طبقة الـ data في Clean Architecture؟» كل حتة على قدها. الـ DTOs والـ mappers بـ fixtures JSON حقيقية متسجّلة من الـ API بـ curl ومقروءة بـ helper صغير، لأن الـ map اللي بكتبه بإيدي بيختبر فهمي مش الـ API، وبعمل round trip للـ mapper في الاتجاهين. الـ guard بتست واحد بجدول: كل DioException وCacheException للـ Failure بتاعه، وتست إن أي Error تاني بيعدّي ومايتخباش. الـ repository بختبر وعوده: بيرجّع ويحفظ، والفشل بيبقى Failure صح والكاش مايتلمسش، بـ remote fake بيرمي DioException حقيقي، والـ local غالبًا drift حقيقي على `NativeDatabase.memory()`. الـ DAO queries على نفس الـ DB في الذاكرة، والـ streams بـ StreamQueue عشان ماحصلش race. والـ remote source بـ Dio حقيقي والـ HttpClientAdapter بس fake. وفوق ده كله contract tests: نفس التستات بتتشغّل على الـ FakeLibraryRepository وعلى الـ Impl، عشان الـ fake اللي تستات الـ Cubits معتمدة عليه مايكدبش.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### الـ JSON في التست
+
+<BeforeAfter>
+
+<Side label="قبل: map مكتوب باليد" kind="before">
+
+```dart
+test('parses a search page', () {
+  final page = SearchPageDto.fromJson({
+    'numFound': 1,
+    'start': 0,
+    'docs': [
+      {'key': '/works/OL1W', 'title': 'A', 'status': 'want_to_read'},
+    ],
+  });
+
+  expect(page.docs, hasLength(1));
+});
+```
+
+</Side>
+
+<Side label="بعد: رد حقيقي" kind="after">
+
+```dart
+test('parses a real Open Library search page', () {
+  final json = jsonDecode(fixture('search_page.json')) as Map<String, dynamic>;
+
+  final page = SearchPageDto.fromJson(json);
+
+  expect(page.numFound, 41);
+  expect(page.docs.first.title, 'Fantastic Mr Fox');
+  expect(page.docs.first.status, 'want_to_read'); // the default: the API has none
+});
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: الـ map فيه `status` لأن اللي كتبه كان فاكر إنه موجود، فالتست عدّى والـ app وقع مع أول بحث حقيقي. وفيه `'A'` و`OL1W` مش شبه أي داتا حقيقية. بعد: الـ input رد Open Library نفسه، فأي حقل ناقص أو بنوع مختلف بيبان في التست مش عند المستخدم. والـ expects بتقول حاجات حقيقية: الكتاب ده اسمه كده، والـ status الافتراضي اشتغل.
+
+### الـ helpers الجديدة
+
+<CodeBlock label="test/helpers/fixture.dart">
+
+```dart
+import 'dart:io';
+
+/// Reads test/fixtures/<name>. flutter test runs from the package root.
+String fixture(String name) => File('test/fixtures/$name').readAsStringSync();
+```
+
+</CodeBlock>
+
+<CodeBlock label="pubspec.yaml (dev_dependencies)">
+
+```yaml
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  async: ^2.11.0 # StreamQueue
+  mocktail: ^1.0.4
+```
+
+</CodeBlock>
+
+- <b>الـ `async` لازم يتكتب:</b> هو موجود transitively من flutter_test، بس `depend_on_referenced_packages` هيعلّم على الـ import لو مش في الـ pubspec بتاعك.
+- <b>الـ `drift` في `dependencies` أصلًا:</b> لأن الـ app بيستخدمه، و`package:drift/native.dart` جزء منه. مش محتاج حاجة زيادة للتستات.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="t-layers-1">
+<Ask>تست الـ `SearchPageDto` كان بـ map مكتوب باليد وعدّى، والـ app وقع مع أول بحث حقيقي. ليه، وإيه الحل؟</Ask>
+<Answer>
+
+الـ map كان شكل الـ JSON زي ما المطوّر فاكره (فيه `status`)، مش زي ما Open Library بيبعته، فالتست اختبر الفهم الغلط. الحل fixture حقيقية متسجّلة بـ curl في `test/fixtures/` ومقروءة بـ `fixture('search_page.json')`، وحالات الحافة اللي مش في الرد الحقيقي بتبقى ملفات بأسماء واضحة إنها متعدّلة.
+
+</Answer>
+</Question>
+
+<Question id="t-layers-2">
+<Ask>في تست الـ guard، ليه في تست بيتأكد إن `StateError` بيترمي ومابيتحولش لـ Failure؟</Ask>
+<Answer>
+
+لأن الـ guard المفروض يمسك DioException وCacheException بس. أي حاجة تانية bug لازم يضرب ويتسجّل. لو حد غيّره لـ `catch (e)`، الـ bugs هتختفي ورا رسالة «خطأ في السيرفر»، والتست ده هو اللي هيقع ويوقفه.
+
+</Answer>
+</Question>
+
+<Question id="t-layers-3">
+<Ask>إيه فايدة إنك تشغّل `libraryRepositoryContract` على `FakeLibraryRepository` وعلى `LibraryRepositoryImpl`؟</Ask>
+<Answer>
+
+إن الـ fake اللي تستات الـ use cases والـ Cubits معتمدة عليه يتصرف زي الحقيقي (LSP). لو الـ fake بيقبل الكتاب المكرر والحقيقي بيرفضه، الـ contract هيقع على واحد بس، وتعرف مين اللي مختلف قبل ما التستات التانية تعدّي على سلوك غلط.
+
+</Answer>
+</Question>
+
+<Question id="t-layers-4">
+<Ask>تست `watchAll` بـ `expectLater(..., emitsInOrder([0, 1]))` وبعده insert بيقع مرة كل فترة على الـ CI. ليه، وتصلحه إزاي؟</Ask>
+<Answer>
+
+الـ stream بيعمل الـ query الأولى بشكل async بعد الـ listen، فلو الـ insert سبقها، أول قيمة بتطلع 1 والـ 0 مابيجيش، والـ matcher يفضل مستني. الحل `StreamQueue`: `await queue.next` للقيمة الأولى، وبعدين الـ insert، وبعدين `await queue.next` تاني.
+
+</Answer>
+</Question>
+
+<Question id="t-layers-5">
+<Ask>في تستات الـ repository، تستخدم `InMemoryLibraryLocal` ولا `LibraryLocalSource` الحقيقي على `NativeDatabase.memory()`؟</Ask>
+<Answer>
+
+الاتنين سريعين، بس الحقيقي على DB في الذاكرة غالبًا أحسن: بيختبر الـ repository مع الـ DAO والـ mapper الحقيقيين (sociable)، ومفيش fake محتاج يتظبط على سلوك drift زي الترتيب. الـ remote بس يفضل fake لأنه الوحيد اللي بره الـ process. والـ in-memory fake مفيد لو مش عايز sqlite في تستات الـ package، أو محتاج تجيب حالة صعبة زي إن الـ DB نفسها ترمي.
+
+</Answer>
+</Question>
+
+</Quiz>

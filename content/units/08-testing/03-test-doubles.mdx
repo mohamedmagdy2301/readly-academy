@@ -1,0 +1,909 @@
+---
+title: "الـ Test Doubles: الـ mocks والـ fakes والـ stubs"
+description: "إزاي تختبر كود معتمد على سيرفر وDB ووقت من غير ما تلمسهم: الأنواع الخمسة، وmocktail كامل، والـ fakes، والـ FixedClock، والـ builders، وامتى الـ mock بيضرك."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="الدوبلير في موقع التصوير">
+
+في فيلم أكشن، البطل مش هو اللي بينط من العربية. بينط مكانه <b>دوبلير</b> (stunt double): لابس نفس اللبس، ومن بعيد شبهه، والكاميرا مش فارق معاها. والمخرج عنده أنواع: <b>كومبارس</b> واقف في الخلفية عشان المشهد يكمل ومحدش بيكلمه. و<b>ممثل بجملة واحدة</b> بيقولها كل ما حد يسأله. و<b>ممثل بيكتب في نوتة</b> كل اللي اتقاله عشان المخرج يراجع بعدين. و<b>ممثل متحفّظ النص بالحرف</b> والمخرج بيوقف التصوير لو حد قاله كلمة مش في السيناريو. و<b>ديكور مطبخ</b> فيه بوتاجاز شغال فعلًا، بس صغير ومش متوصّل بغاز المدينة.
+
+</Analogy>
+
+الاسم «test double» جاي من هنا بالظبط: حاجة بتقف مكان الحاجة الحقيقية في التست. والأنواع الخمسة دي هي تصنيف Gerard Meszaros في كتاب «xUnit Test Patterns»، وهي اللي هتسمعها في أي فريق: <b>Dummy</b> و<b>Stub</b> و<b>Spy</b> و<b>Mock</b> و<b>Fake</b>.
+
+طب ليه محتاج دوبلير أصلًا؟ في [درس الـ unit tests](/course/testing/unit-tests/) اختبرنا حاجات واقفة لوحدها: `BookId.create` و`Result`. بس أغلب الكود المهم في Readly معتمد على حاجة تانية:
+
+- الـ `AddBookToLibrary` محتاج `LibraryRepository`، اللي وراه سيرفر وDB.
+- الـ `CatalogSearchCubit` محتاج `SearchBooks`، اللي وراه Open Library.
+- قاعدة «الملاحظة تتعدّل أول 15 دقيقة بس» محتاجة الساعة.
+
+لو استخدمت الحاجات الحقيقية، التست هيبقى بطيء (شبكة)، ومتقلب (النت فصل؟ Open Library واقع؟)، ومش هتقدر تجيب الحالات الصعبة (إزاي تخلي السيرفر يرجّع 500 دلوقتي بالظبط؟)، وممكن يبقى خطير (تست بيضيف كتب لحساب حقيقي). الـ test double بيحل الأربعة: انت اللي بتقرر هو هيرد بإيه.
+
+<Diagram name="d-test-doubles">
+
+كل ما تروح شمال، الـ double بيعمل أكتر. الـ Stub بيغذّي الكود بـ input، والـ Spy والـ Mock بيتشيكوا على الـ output اللي طالع منه (التفاعل)، والـ Fake بيشتغل فعلًا فبتتشيك على النتيجة النهائية.
+
+</Diagram>
+
+وده ممكن لسبب واحد: الـ use case بيعتمد على <b>interface</b> مش على class حقيقية. ده الـ Dependency Inversion اللي اتكلمنا عنه في [درس SOLID](/course/quality/solid-basics/). الـ `AddBookToLibrary` مايعرفش ولا يهمه مين اللي بينفّذ `LibraryRepository`، فالتست يقدر يحط مكانه أي حاجة.
+
+</Level>
+
+<Level n="2" title="الأنواع الخمسة بالكود">
+
+### قبل أي حاجة: builder للبيانات
+
+كل التستات اللي جاية محتاجة `Book`. لو كل تست كتب `Book(id: BookId.fromTrusted('OL45804W'), title: 'Fantastic Mr Fox', status: BookStatus.wantToRead)`، هتلاقي نفس السطر 200 مرة. ولو `Book` زاد حقل `author` بكرة، الـ 200 تست هيقعوا compile error، مع إن ولا واحد فيهم يهمه المؤلف.
+
+الحل <b>test data builder</b>: function واحدة بقيم افتراضية معقولة لكل حاجة، والتست بيغيّر بس اللي يهمه:
+
+<CodeBlock label="test/helpers/builders.dart">
+
+```dart
+import 'package:readly/features/library/domain/book.dart';
+
+/// A valid book with sensible defaults. Override only what the test is about.
+Book aBook({
+  String id = 'OL45804W',
+  String title = 'Fantastic Mr Fox',
+  BookStatus status = BookStatus.wantToRead,
+}) =>
+    Book(id: BookId.fromTrusted(id), title: title, status: status);
+```
+
+</CodeBlock>
+
+- <b>الاسم بيتقري كجملة:</b> `aBook()` يعني «أي كتاب، مش فارق». و`aBook(status: BookStatus.finished)` يعني «كتاب خلّصته»، فاللي بيقرا التست بيفهم من غير ما يدوّر إيه المهم.
+- <b>الـ id نص عادي:</b> الـ builder هو اللي بيحوّله لـ `BookId`، فالتستات مش محتاجة تعرف `fromTrusted`. ولو طريقة إنشاء الـ BookId اتغيرت، بتعدّل سطر واحد هنا.
+- <b>القيم الافتراضية صح:</b> الـ default كتاب سليم يعدّي أي validation. لو التست عايز كتاب غلط، يقول ده صراحة: `aBook(title: '')`.
+- <b>حقل جديد في Book:</b> بتزوّده في الـ builder بقيمة افتراضية، والـ 200 تست مايحسّوش.
+- <b>فولدر `test/helpers/`:</b> مش بينتهي بـ `_test.dart`، فـ `flutter test` مش بيشغّله كتست. ده مكان أي حاجة مشتركة بين التستات.
+
+وعشان المقارنة تشتغل (`expect(books, [aBook()])`)، الـ `Book` لازم يكون ليه `==` بيقارن الحقول. ده اللي عملناه بـ freezed في [درس الـ Domain](/course/domain-errors/domain/). هنرجع للنقطة دي في المستوى 3.
+
+### الكود اللي هنختبره
+
+<CodeBlock label="domain/add_book_to_library.dart">
+
+```dart
+class AddBookToLibrary {
+  AddBookToLibrary(this._repository);
+
+  final LibraryRepository _repository;
+
+  Future<Result<void>> call(Book book) async {
+    if (await _repository.contains(book.id)) {
+      return const Err(ValidationFailure('Book already in library'));
+    }
+    return _repository.addBook(book);
+  }
+}
+```
+
+</CodeBlock>
+
+فيه حالتين: الكتاب موجود (لازم يرجّع `ValidationFailure` ومايكتبش حاجة)، والكتاب جديد (لازم يكتبه). هنختبرهم بكل نوع double عشان تشوف الفرق.
+
+### Dummy: بيملا مكان وبس
+
+الـ `LibraryCubit` بياخد `GetLibrary` و`LibraryRepository` (الـ repository عشان `watch()`، زي ما هتشوف في [درس تستات الـ Cubit](/course/testing/cubit-tests/)). لو بتختبر `load()` بس، الـ repository مش هيتلمس خالص، بس لازم تبعت حاجة للـ constructor:
+
+<CodeBlock label="Dummy بـ Fake من package:test">
+
+```dart
+class DummyLibraryRepository extends Fake implements LibraryRepository {}
+
+final cubit = LibraryCubit(stubGetLibrary, DummyLibraryRepository()); // only load() is tested
+```
+
+</CodeBlock>
+
+- <b>الـ `Fake` class:</b> جاية من `package:test` (و`flutter_test` وmocktail بيعملولها export). أي method مش متنفّذة فيها بترمي `UnimplementedError`. يعني الـ class دي بتعمل compile من غير ما تكتب ولا method.
+- <b>ده حماية مجانية:</b> لو `load()` لمست الـ repository بالغلط، التست هيقع بـ `UnimplementedError` ويقولك. الـ dummy بيقول «أنا متأكد إن ده مش هيتلمس».
+
+متلخبطش بين `Fake` الـ class اللي في package:test، والـ Fake كنوع double. الـ class أداة بتسهّل كتابة أي double يدوي، والاسم متشابه بالصدفة.
+
+### Stub: بيرجّع رد محفوظ
+
+<CodeBlock label="Stub يدوي">
+
+```dart
+class StubLibraryRepository extends Fake implements LibraryRepository {
+  StubLibraryRepository({required this.alreadyThere});
+  final bool alreadyThere;
+
+  @override
+  Future<bool> contains(BookId id) async => alreadyThere;
+}
+
+test('rejects a book that is already in the library', () async {
+  final addBook = AddBookToLibrary(StubLibraryRepository(alreadyThere: true));
+
+  final result = await addBook(aBook());
+
+  expect(
+    result,
+    isA<Err<void>>().having((e) => e.failure, 'failure', isA<ValidationFailure>()),
+  );
+});
+```
+
+</CodeBlock>
+
+- <b>الـ stub بيتحكم في الـ input غير المباشر:</b> الـ use case بيسأل «الكتاب موجود؟» والـ stub بيجاوب `true`. انت بتختار الإجابة اللي توصّلك للحالة اللي عايز تختبرها.
+- <b>مفيش `addBook` في الـ stub:</b> لو الـ use case نادى `addBook` في حالة الكتاب الموجود، الـ `Fake` هيرمي `UnimplementedError` والتست يقع. فالتست ده بيتأكد بشكل غير مباشر إن مفيش كتابة حصلت.
+
+### Spy: stub بيسجّل اللي جاله
+
+الـ stub مابيقولكش هو اتنادى بإيه. لو عايز تتأكد إن الكتاب اللي اتكتب هو نفس اللي اتبعت، محتاج spy:
+
+<CodeBlock label="Spy يدوي">
+
+```dart
+class SpyLibraryRepository extends Fake implements LibraryRepository {
+  final added = <Book>[];
+
+  @override
+  Future<bool> contains(BookId id) async => false;
+
+  @override
+  Future<Result<void>> addBook(Book book) async {
+    added.add(book); // record the call
+    return const Success(null);
+  }
+}
+
+test('writes a new book exactly once', () async {
+  final repo = SpyLibraryRepository();
+
+  await AddBookToLibrary(repo)(aBook(title: 'Matilda'));
+
+  expect(repo.added, [aBook(title: 'Matilda')]);
+});
+```
+
+</CodeBlock>
+
+- <b>الـ spy بيتشيك على الـ output غير المباشر:</b> الحاجة اللي الكود «بعتها» لبره. والليستة بتقولك العدد والترتيب والقيم في `expect` واحد.
+- <b>`AddBookToLibrary(repo)(aBook())`:</b> القوس الأول بيعمل الـ use case، والتاني بينادي `call`.
+
+### Mock: double متبرمج وبتعمله verify
+
+كتابة stub وspy يدوي لكل حالة متعبة. الـ <b>mock</b> بيعمل الاتنين من غير كود: بتقوله «لو اتنادى كذا رجّع كذا»، وبعدين تسأله «اتنادى إزاي؟». في Dart بنستخدم <b>mocktail</b>: من غير code generation، ومن غير build_runner.
+
+<CodeBlock label="pubspec.yaml">
+
+```yaml
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  mocktail: ^1.0.4
+```
+
+</CodeBlock>
+
+<CodeBlock label="test/features/library/domain/add_book_to_library_test.dart">
+
+```dart
+import 'package:flutter_test/flutter_test.dart';
+import 'package:mocktail/mocktail.dart';
+
+import '../../../helpers/builders.dart';
+
+class MockLibraryRepository extends Mock implements LibraryRepository {}
+
+void main() {
+  late MockLibraryRepository repo;
+  late AddBookToLibrary addBook;
+
+  setUpAll(() => registerFallbackValue(aBook()));
+
+  setUp(() {
+    repo = MockLibraryRepository();
+    addBook = AddBookToLibrary(repo);
+  });
+
+  test('adds a new book', () async {
+    when(() => repo.contains(any())).thenAnswer((_) async => false);
+    when(() => repo.addBook(any())).thenAnswer((_) async => const Success(null));
+
+    final result = await addBook(aBook());
+
+    expect(result, isA<Success<void>>());
+    verify(() => repo.addBook(aBook())).called(1);
+  });
+
+  test('never writes a duplicate', () async {
+    when(() => repo.contains(any())).thenAnswer((_) async => true);
+
+    await addBook(aBook());
+
+    verifyNever(() => repo.addBook(any()));
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>`extends Mock implements LibraryRepository`:</b> سطر واحد بيعمل class بتنفّذ كل الـ methods. أي نداء بيتسجّل، وبيرجّع اللي انت برمجته.
+- <b>`when(() => ...)`:</b> الـ closure مهمة. mocktail بينادي الـ method جواها في «وضع التسجيل» عشان يعرف انت بتبرمج أنهي نداء.
+- <b>`any()`:</b> «أي قيمة». من غيره، الـ stub هيشتغل بس لو الـ argument بيساوي القيمة اللي كتبتها بالظبط.
+- <b>`registerFallbackValue(aBook())`:</b> عشان `any()` يشتغل مع نوع انت عامله زي `Book`، mocktail محتاج قيمة من النوع ده. التفاصيل في المستوى 3.
+- <b>`verify(...).called(1)`:</b> «اتنادى مرة واحدة بالظبط بالكتاب ده». والمقارنة بـ `==`، فالـ `aBook()` الجديدة بتساوي اللي اتبعت.
+- <b>`verifyNever`:</b> «مااتنادتش خالص». ودي أوضح من stub يرمي `UnimplementedError`.
+
+والتشغيل:
+
+```bash
+flutter test test/features/library/domain/add_book_to_library_test.dart
+```
+
+ولو حد شال الـ `if` من الـ use case، الفشل بيبان كده:
+
+```text
+00:01 +1 -1: never writes a duplicate [E]
+  Unexpected calls: MockLibraryRepository.addBook(Book(id: OL45804W, title: Fantastic Mr Fox, status: BookStatus.wantToRead))
+```
+
+### Fake: تنفيذ حقيقي في الذاكرة
+
+الـ mock بيجاوب اللي انت قلتله بس. لو قلتله `contains` يرجّع `false` وبعدين ضفت الكتاب، هيفضل يرجّع `false`، لأنه مش «فاهم» إن الكتاب اتضاف. الـ <b>fake</b> عكسه: implementation حقيقي ومبسّط، بيشيل الكتب في List بدل السيرفر والـ DB:
+
+<CodeBlock label="test/helpers/fakes.dart">
+
+```dart
+import 'dart:async';
+
+class FakeLibraryRepository implements LibraryRepository {
+  FakeLibraryRepository([Iterable<Book> initial = const []]) : _books = [...initial];
+
+  final List<Book> _books;
+  final _changes = StreamController<List<Book>>.broadcast();
+
+  /// Set it to make the next call fail, then it resets itself.
+  Failure? failNextWith;
+
+  List<Book> get _snapshot => List.unmodifiable(_books);
+
+  @override
+  Future<Result<List<Book>>> getLibrary() async {
+    if (_takeFailure() case final failure?) return Err(failure);
+    return Success(_snapshot);
+  }
+
+  @override
+  Stream<List<Book>> watchLibrary() => Stream.multi((controller) {
+        controller.add(_snapshot); // the current library first, like the DB
+        final sub = _changes.stream.listen(controller.add);
+        controller.onCancel = sub.cancel;
+      });
+
+  @override
+  Future<Result<void>> addBook(Book book) async {
+    if (_takeFailure() case final failure?) return Err(failure);
+    if (_books.any((b) => b.id == book.id)) {
+      return const Err(ValidationFailure('Book already in library'));
+    }
+    _books.add(book);
+    _changes.add(_snapshot);
+    return const Success(null);
+  }
+
+  @override
+  Future<bool> contains(BookId id) async => _books.any((b) => b.id == id);
+
+  Failure? _takeFailure() {
+    final failure = failNextWith;
+    failNextWith = null;
+    return failure;
+  }
+
+  Future<void> dispose() => _changes.close();
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="التست بالـ fake">
+
+```dart
+test('the second add of the same book fails', () async {
+  final addBook = AddBookToLibrary(FakeLibraryRepository());
+
+  final first = await addBook(aBook());
+  final second = await addBook(aBook());
+
+  expect(first, isA<Success<void>>());
+  expect(second, isA<Err<void>>());
+});
+
+test('a failing repository passes its failure up as is', () async {
+  final repo = FakeLibraryRepository()..failNextWith = const NetworkFailure();
+
+  final result = await AddBookToLibrary(repo)(aBook());
+
+  expect(
+    result,
+    isA<Err<void>>().having((e) => e.failure, 'failure', isA<NetworkFailure>()),
+  );
+});
+```
+
+</CodeBlock>
+
+- <b>مفيش `when` ولا `verify`:</b> التست بيقول «ضيف مرتين، التانية تفشل». ده سلوك، مش «نادى `contains` وبعدين `addBook`». لو الـ use case اتكتب بطريقة تانية بكرة وسلوكه زي ما هو، التست مش هيتكسر.
+- <b>`failNextWith`:</b> زرار صغير عشان تجيب حالات الفشل من غير mock. وبيرجع لوحده بعد نداء واحد، فالمحاولة التانية تنجح، ودي بالظبط حالة «حاول تاني».
+- <b>الـ `Stream.multi`:</b> كل listener بياخد المكتبة الحالية أول ما يسمع، وبعدين كل تغيير. ده نفس سلوك `watch()` بتاع drift، والـ fake لازم يقلّده.
+- <b>`dispose`:</b> بتقفل الـ controller في `tearDown`. مش هتفرق في تست واحد، بس الـ controllers المفتوحة بتتراكم في suite فيه 500 تست.
+
+<Note kind="warn" title="الـ fake كود، والكود بيغلط">
+
+لو الـ `FakeLibraryRepository` بيقبل الكتاب المكرر والـ `LibraryRepositoryImpl` الحقيقي بيرفضه، كل تستات الـ Cubit هتعدّي والـ app هيغلط. الحل اسمه <b>contract tests</b>: نفس التستات بتتشغّل على الـ fake وعلى الحقيقي. ده في [درس تستات الطبقات](/course/testing/layers/).
+
+</Note>
+
+### الخمسة جنب بعض
+
+| النوع | بيعمل إيه | بتتأكد من إيه | مثال في Readly |
+| --- | --- | --- | --- |
+| Dummy | ولا حاجة، بيتبعت عشان الـ signature | مفيش | `DummyLibraryRepository` في تست `load()` |
+| Stub | بيرجّع رد ثابت | الـ output بتاع الكود اللي بتختبره | `contains` بيرجّع `true` |
+| Spy | stub + بيسجّل النداءات | النداءات بعد ما الكود يخلص | ليستة `added` |
+| Mock | متبرمج بـ `when`، وبتسأله بـ `verify` | التفاعل: مين اتنادى وبإيه وكام مرة | `MockLibraryRepository` |
+| Fake | implementation حقيقي مبسّط | النتيجة والحالة النهائية | `FakeLibraryRepository` في الذاكرة |
+
+في الكلام اليومي الناس بتقول «mock» على أي double. ده مش مشكلة في الكلام، بس لما تيجي تختار، الفرق مهم: الـ mock بيختبر <b>إزاي</b> الكود اشتغل، والـ fake بيختبر <b>وصل لإيه</b>.
+
+</Level>
+
+<Level n="3" title="mocktail بالتفصيل والحالات الصعبة">
+
+### thenReturn وthenAnswer وthenThrow
+
+<CodeBlock label="التلات طرق للرد">
+
+```dart
+// a plain value: thenReturn
+when(() => clock.now()).thenReturn(DateTime.utc(2026, 10, 4));
+
+// a Future or a Stream: always thenAnswer
+when(() => repo.contains(any())).thenAnswer((_) async => true);
+when(() => repo.watchLibrary()).thenAnswer((_) => Stream.value([aBook()]));
+
+// the answer depends on the arguments
+when(() => repo.contains(any())).thenAnswer(
+  (invocation) async => invocation.positionalArguments.first == BookId.fromTrusted('OL1W'),
+);
+
+// throw
+when(() => remote.fetchLibrary()).thenThrow(
+  DioException.connectionError(requestOptions: RequestOptions(), reason: 'offline'),
+);
+```
+
+</CodeBlock>
+
+- <b>`thenReturn` مع Future بيرمي:</b> لو كتبت `thenReturn(Future.value(true))`، mocktail بيوقفك بـ `ArgumentError`: «`thenReturn` should not be used to return a Future. Instead, use `thenAnswer((_) => future)`». السبب إن الـ Future اللي اتعمل مرة واحدة هيترجع لكل النداءات، وده بيعمل مشاكل مع الـ zones والـ errors. القاعدة سهلة: أي method بترجّع Future أو Stream، `thenAnswer`.
+- <b>`invocation`:</b> فيه `positionalArguments` و`namedArguments`. استخدمه لما الرد بيتغير مع الـ input، بس لو لقيت نفسك بتكتب logic كبير هنا، يبقى انت محتاج fake مش mock.
+
+### thenThrow بيرمي بدري
+
+ده فخ صغير بس حقيقي. `thenThrow` بيخلي النداء نفسه يرمي <b>على طول</b>، قبل ما يرجّع Future. لكن الـ data source الحقيقي `async`، فبيرجّع Future وبعدين الـ Future ده بيفشل. الفرق بيبان لو الكود بيستخدم `.then` أو `.catchError` بدل `await`:
+
+<CodeBlock label="الفرق بين الاتنين">
+
+```dart
+// production code
+Future<List<BookDto>> safeFetch() =>
+    _remote.fetchLibrary().catchError((Object _) => <BookDto>[]);
+
+// thenThrow: fetchLibrary() throws before catchError is attached -> the test crashes
+when(() => remote.fetchLibrary()).thenThrow(CacheException('disk full'));
+
+// like the real async method: a Future that fails -> catchError runs
+when(() => remote.fetchLibrary()).thenAnswer((_) async => throw CacheException('disk full'));
+```
+
+</CodeBlock>
+
+جوه `guard(() async { ... })` الاتنين بيتصرفوا زي بعض، لأن الـ closure نفسها `async`. بس لو عايز الـ mock يتصرف زي الحقيقي بالظبط، `thenAnswer((_) async => throw ...)` أصدق.
+
+### ردود ورا بعض: فشل وبعدين نجاح
+
+«النت فاصل، المستخدم داس حاول تاني، المرة دي اشتغل». mocktail مافيهوش `thenReturnInOrder`، بس الحل سطر واحد:
+
+<CodeBlock label="ردود متتالية">
+
+```dart
+final answers = <Result<List<Book>>>[
+  const Err(NetworkFailure()),
+  Success([aBook()]),
+];
+when(() => getLibrary()).thenAnswer((_) async => answers.removeAt(0));
+```
+
+</CodeBlock>
+
+كل نداء بياخد أول رد ويشيله. ولو الكود نادى مرة تالتة، `removeAt` هيرمي `RangeError`، وده كويس: معناه إن في نداء زيادة ماكنتش متوقعه.
+
+وفي حاجة لازم تعرفها: لو برمجت نفس النداء مرتين، <b>آخر `when` هو اللي بيكسب</b>. فممكن تحط رد عام في `setUp`، وتغيّره في تست معين.
+
+### الـ matchers: any وany(named:) وany(that:)
+
+<CodeBlock label="مطابقة الـ arguments">
+
+```dart
+class MockCatalogRemote extends Mock implements CatalogRemoteSource {}
+
+// named parameter: say its name
+when(() => remote.search(any(), page: any(named: 'page')))
+    .thenAnswer((_) async => emptyPage);
+
+// a specific value for one argument, any for the other
+when(() => remote.search('flutter', page: any(named: 'page')))
+    .thenAnswer((_) async => flutterPage);
+
+// any value that passes a matcher
+when(() => remote.search(any(that: startsWith('fl')), page: 1))
+    .thenAnswer((_) async => flutterPage);
+```
+
+</CodeBlock>
+
+- <b>`any(named: 'page')`:</b> للـ named parameters لازم تقول الاسم، لأن mocktail مايقدرش يعرف `any()` دي رايحة لأنهي parameter.
+- <b>خلط القيم والـ matchers:</b> مسموح تكتب `'flutter'` لـ argument و`any(named: ...)` لتاني. الـ argument اللي فيه قيمة بيتقارن بـ `==`.
+- <b>`any(that: ...)`:</b> أي matcher من `package:matcher`: `startsWith` و`contains` و`isA<...>().having(...)`.
+
+### registerFallbackValue: الـ error اللي كله بيقابله
+
+أول مرة تكتب `any()` لـ parameter نوعه `Book`، هتشوف ده:
+
+```text
+Bad state: A test tried to use `any` or `captureAny` on a parameter of type `Book`, but
+registerFallbackValue was not previously called to register a fallback value for `Book`.
+```
+
+السبب إن `any()` لازم يرجّع قيمة من نوع `Book` عشان الكود يعمل compile (الـ parameter مش nullable). mocktail عنده قيم جاهزة للأنواع الأساسية بس (`'42'` و`42` و`false` وليستات وmaps فاضية)، وأي نوع انت عامله لازم تديله واحدة:
+
+<CodeBlock label="مرة واحدة لكل نوع">
+
+```dart
+class FakeSearchParams extends Fake implements SearchParams {}
+
+void main() {
+  setUpAll(() {
+    registerFallbackValue(aBook());           // easy to build: use the builder
+    registerFallbackValue(FakeSearchParams()); // hard to build: a Fake is enough
+  });
+  // ...
+}
+```
+
+</CodeBlock>
+
+- <b>القيمة دي عمرها ما بتتلمس:</b> mocktail بيستخدمها كـ placeholder وقت التسجيل بس، فأي object من النوع كفاية. لو بناؤه صعب، `Fake` فاضي يكفي.
+- <b>`setUpAll` مش `setUp`:</b> التسجيل global ومرة واحدة كفاية للملف كله.
+- <b>الـ BookId مش محتاج تسجيل:</b> الـ `BookId` extension type على String، ووقت التشغيل هو String عادي. فقيمة mocktail الجاهزة `'42'` بتعدّي كـ BookId، و`repo.contains(any())` شغال من غير `registerFallbackValue`.
+
+### verify بكل أشكاله
+
+<CodeBlock label="أدوات الـ verify">
+
+```dart
+// exactly / at least / at most
+verify(() => repo.addBook(any())).called(1);
+verify(() => search(any())).called(greaterThan(1));
+
+// never (called(0) does NOT work in mocktail, use this)
+verifyNever(() => repo.addBook(any()));
+
+// order across one or several mocks
+verifyInOrder([
+  () => repo.contains(BookId.fromTrusted('OL45804W')),
+  () => repo.addBook(aBook()),
+]);
+
+// nothing else happened on this mock
+verifyNoMoreInteractions(repo);
+
+// not touched at all
+verifyZeroInteractions(logger);
+```
+
+</CodeBlock>
+
+- <b>`called(0)` مابيشتغلش:</b> ده limitation مكتوب في docs mocktail نفسها. «مااتناداش» = `verifyNever`.
+- <b>الـ verify بيستهلك النداء:</b> النداء اللي اتعمله verify بيتشال من الحساب. فلو عملت `verify(() => repo.addBook(any())).called(1)` مرتين ورا بعض، التانية هتفشل. ده كمان اللي بيخلي `verifyNoMoreInteractions` يشتغل: بيتأكد إن مفيش نداء «ماحدش عمله verify».
+- <b>`verifyInOrder`:</b> بيتأكد من الترتيب، مش إن دول النداءات الوحيدة. ممكن يكون في نداءات تانية بينهم والتست يعدّي.
+- <b>`reset(mock)`:</b> بيمسح الـ stubs والنداءات. نادرًا ما تحتاجه لو بتعمل mock جديد في كل `setUp`، وده الأحسن.
+
+### captureAny: شوف إيه اللي اتبعت فعلًا
+
+ساعات الـ verify بـ `==` مش كفاية: عايز تشوف الـ object اللي اتبعت وتسأل عن حقل واحد فيه. مثال: الـ `addBook` في `LibraryRepositoryImpl` بيبعت DTO للسيرفر، وبيكتب صف في الـ DB فيه `updatedAt` من الـ Clock:
+
+<CodeBlock label="data/library_repository_impl.dart (الـ addBook بس)">
+
+```dart
+@override
+Future<Result<void>> addBook(Book book) async {
+  if (await contains(book.id)) {
+    return const Err(ValidationFailure('Book already in library'));
+  }
+  return guard(() async {
+    await _remote.addBook(book.toDto());
+    await _local.upsertBooks([book.toRow(updatedAt: _clock.now().toUtc())]);
+  });
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="captureAny">
+
+```dart
+test('sends the status in API format and stamps the row with the clock', () async {
+  final clock = FixedClock(DateTime.utc(2026, 10, 4, 10));
+  when(() => local.bookById(any())).thenAnswer((_) async => null); // not there yet
+  when(() => remote.addBook(any())).thenAnswer((_) async {});
+  when(() => local.upsertBooks(any())).thenAnswer((_) async {});
+  final repo = LibraryRepositoryImpl(remote, local, clock);
+
+  await repo.addBook(aBook(status: BookStatus.wantToRead));
+
+  final dto = verify(() => remote.addBook(captureAny())).captured.single as BookDto;
+  expect(dto.key, 'OL45804W');
+  expect(dto.status, 'want_to_read'); // the API's spelling, not the enum name
+
+  final rows = verify(() => local.upsertBooks(captureAny())).captured.single as List<BookRow>;
+  expect(rows.single.updatedAt, DateTime.utc(2026, 10, 4, 10));
+});
+```
+
+</CodeBlock>
+
+- <b>`captured`:</b> ليستة فيها كل القيم اللي اتمسكت، من كل النداءات اللي طابقت. نداء واحد بـ argument واحد يبقى `.single`.
+- <b>الـ `as`:</b> `captured` نوعها `List<dynamic>`، فلازم cast. ولو النوع غلط التست هيقع بـ TypeError واضح.
+- <b>للـ named:</b> `captureAny(named: 'page')`.
+- <b>الـ fallback للـ DTO:</b> `remote.addBook(any())` بياخد `BookDto`، فالملف ده محتاج `registerFallbackValue(aBook().toDto())` في `setUpAll`. أما `upsertBooks` فبياخد `Iterable`، والليستة الفاضية الجاهزة في mocktail بتعدّي، و`bookById` بياخد String.
+- <b>ده تفاعل يستاهل الـ verify:</b> الـ request اللي طالع للسيرفر هو الـ output الحقيقي للـ method دي. مش تفصيلة داخلية.
+
+### method مش متبرمجة
+
+نسيت تكتب `when` لـ `repo.contains`، والتست وقع بـ:
+
+```text
+type 'Null' is not a subtype of type 'Future<bool>'
+```
+
+الـ mock بيرجّع `null` لأي نداء مش متبرمج، والـ method بترجّع `Future<bool>` مش nullable، فـ Dart بيرمي TypeError. أول ما تشوف «Null is not a subtype of Future»، دوّر على `when` ناقصة. والـ methods اللي بترجّع `Future<void>` محتاجة stub برضه: `thenAnswer((_) async {})`.
+
+### الـ use case كـ function: MockSearchBooks
+
+الـ `CatalogSearchCubit` بياخد `SearchBooks`، وده class فيها `call`. الـ mock بتاعها شغال عادي، والـ `when` بيتكتب كأنه function:
+
+<CodeBlock label="mock لـ callable class">
+
+```dart
+class MockSearchBooks extends Mock implements SearchBooks {}
+
+setUpAll(() => registerFallbackValue(const SearchParams(query: '')));
+
+// a List<Book>, as in the Cubit lesson (after pagination it's a PagedResult)
+when(() => search(any())).thenAnswer((_) async => Success([aBook()]));
+
+// later: which query actually reached the use case?
+final params = verify(() => search(captureAny())).captured.single as SearchParams;
+expect(params.query, 'flutter'); // trimmed by the cubit
+```
+
+</CodeBlock>
+
+`search(any())` هي نفسها `search.call(any())`. تستات الـ Cubit نفسها بـ blocTest والـ debounce في [درس تستات الـ Cubit](/course/testing/cubit-tests/).
+
+### FixedClock: الوقت كـ double
+
+قاعدة في الـ notes: «الملاحظة تتعدّل أول 15 دقيقة بس من كتابتها». لو الكود بينادي `DateTime.now()`، التست يا إما يستنى 15 دقيقة، يا إما يبقى متقلب حسب سرعة الجهاز. الحل الـ `Clock` من [درس SOLID](/course/quality/solid-basics/)، ومعاه fake بتتحكم فيه:
+
+<CodeBlock label="test/helpers/fakes.dart">
+
+```dart
+class FixedClock implements Clock {
+  FixedClock(this._now);
+  DateTime _now;
+
+  @override
+  DateTime now() => _now;
+
+  void advance(Duration by) => _now = _now.add(by);
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ rule والتست بتاعها">
+
+```dart
+// domain/edit_window.dart
+class EditWindow {
+  const EditWindow(this._clock);
+  final Clock _clock;
+
+  static const length = Duration(minutes: 15);
+
+  bool canEdit(Note note) => _clock.now().difference(note.createdAt) < length;
+}
+
+// test
+test('a note is editable for exactly 15 minutes', () {
+  final clock = FixedClock(DateTime.utc(2026, 10, 4, 10));
+  final note = Note(
+    bookId: BookId.fromTrusted('OL45804W'),
+    text: 'Chapter 3 is the best',
+    createdAt: clock.now(),
+  );
+  final window = EditWindow(clock);
+
+  expect(window.canEdit(note), isTrue);
+
+  clock.advance(const Duration(minutes: 14, seconds: 59));
+  expect(window.canEdit(note), isTrue);
+
+  clock.advance(const Duration(seconds: 1)); // exactly 15:00
+  expect(window.canEdit(note), isFalse);
+});
+```
+
+</CodeBlock>
+
+- <b>الـ boundary بالثانية:</b> 14:59 مسموح و15:00 لأ. ده بالظبط الـ boundary value testing من [درس الـ unit tests](/course/testing/unit-tests/)، ومستحيل تعمله بالساعة الحقيقية.
+- <b>fake مش mock:</b> `when(() => clock.now()).thenReturn(...)` كان هيشتغل، بس `advance` أوضح بكتير من إنك تعيد برمجة الـ mock كل خطوة.
+- <b>UTC:</b> `DateTime.utc` في التستات بيمنع مفاجآت التوقيت الصيفي والـ timezone بتاع الـ CI.
+
+والـ `FixedClock` بيحل مشكلة «الساعة كام». لكن الـ `Timer` والـ `Future.delayed` (زي الـ debounce) مابيسألوش الـ Clock، دول محتاجين `fake_async`، وده في [درس تستات الـ Cubit](/course/testing/cubit-tests/).
+
+### Object Mother ولا Builder؟
+
+قبل الـ builders، الطريقة القديمة كانت <b>Object Mother</b>: class فيها objects جاهزة بأسماء:
+
+<CodeBlock label="Object Mother">
+
+```dart
+abstract final class TestBooks {
+  static final fantasticMrFox = aBook();
+  static final finishedMatilda =
+      aBook(id: 'OL2W', title: 'Matilda', status: BookStatus.finished);
+  static final emptyTitle = aBook(title: '');
+}
+```
+
+</CodeBlock>
+
+الـ mother مريح لحالات بتتكرر كتير وليها اسم في الـ business. المشكلة إنه بيتضخم: `finishedMatilda`، و`finishedMatildaWithLongTitle`، و`readingMatilda`... وكل تست بيحتاج نسخة مختلفة شوية بيزوّد واحدة. وأسوأ: التست بيقول `TestBooks.finishedMatilda` واللي بيقرا مش عارف إيه اللي مهم فيه، العنوان ولا الحالة.
+
+| | Builder (`aBook(...)`) | Object Mother |
+| --- | --- | --- |
+| المرونة | أي تركيبة في سطر | النسخ اللي حد كتبها بس |
+| الوضوح | التست بيقول اللي يهمه بس | الاسم بيخبّي التفاصيل |
+| مع الوقت | ثابت | بيتضخم |
+| امتى | الـ default | حالات قليلة متكررة ليها معنى في الـ business |
+
+في Dart، الـ named parameters بالـ defaults بتخلي الـ builder function عادية من غير pattern معقد. ولو احتجت mother، ابنيه فوق الـ builder زي فوق، فالاتنين بيتغيروا من مكان واحد.
+
+### الـ Book مالوش ==
+
+لو الـ `Book` class عادي من غير freezed ولا `==`، التستات دي هتفشل وانت مستغرب:
+
+```text
+Expected: [Instance of 'Book']
+  Actual: [Instance of 'Book']
+```
+
+الاتنين شكلهم واحد في الرسالة، بس `==` الافتراضي بيقارن الـ reference: هل ده نفس الـ object في الذاكرة؟ و`aBook()` بيعمل object جديد كل مرة. نفس المشكلة في `verify(() => repo.addBook(aBook()))`. الحل الصح إن الـ entity يبقى ليه value equality (freezed أو equatable)، لأن الـ Cubit والـ `BlocBuilder` محتاجينها كمان، زي ما شفنا في [درس الـ Domain](/course/domain-errors/domain/). ولو مش عايز تغيّر الـ class، قارن بالحقول: `isA<Book>().having((b) => b.title, 'title', 'Matilda')`.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+### الـ over-mocking: لما التست بيحفظ الكود بدل ما يختبره
+
+أكتر مشكلة بتشوفها في فرق بتكتب تستات كتير: كل dependency عليه mock، وكل تست بيعمل `verify` على كل نداء. شكله دقيق، بس هو في الحقيقة بيعيد كتابة الـ implementation بلغة تانية. النتيجة:
+
+- <b>بيتكسر مع كل refactor:</b> غيّرت ترتيب سطرين أو بقيت تنادي `watchLibrary` بدل `getLibrary`، والسلوك زي ما هو، و15 تست بقوا أحمر. الفريق بيتعلم إن التستات «بتعطّل»، ويبطّل يعمل refactor.
+- <b>بيعدّي والكود غلط:</b> الـ mock بيقول اللي انت قلتهوله. لو فهمك للـ API غلط (فاكر `contains` بيرجّع `true` لما الـ id فاضي)، الـ mock هيأكّد فهمك الغلط.
+- <b>مفيش `expect` على نتيجة:</b> كله `verify`. التست بيقول «الكود نادى الحاجات دي» ومابيقولش «والنتيجة كانت صح».
+
+القاعدة: <b>الـ verify للتفاعل اللي هو نفسه السلوك</b>. «الطلب اتبعت للسيرفر بالشكل ده» سلوك. «الـ analytics اتبعت event» سلوك. «الـ repository نادى الـ clock قبل الـ local source» تفصيلة.
+
+### لا تعمل mock لحاجة مش بتاعتك
+
+«Don't mock what you don't own». لو عملت mock لـ `Dio` نفسه أو لـ drift، انت بتخمّن هما بيتصرفوا إزاي. والـ mock بيعدّي، والـ interceptor الحقيقي مااشتغلش أصلًا. الأحسن:
+
+- <b>الـ dio:</b> Dio حقيقي، والشبكة بس fake عن طريق الـ `HttpClientAdapter`، زي ما عملنا في [درس الاختبارات](/course/quality/testing/).
+- <b>الـ drift:</b> DB حقيقية في الذاكرة بـ `NativeDatabase.memory()`، في [درس تستات الطبقات](/course/testing/layers/).
+- <b>أي package تانية:</b> لفّها في interface صغير بتاعك (زي `Clock` و`TokenStore` و`NetworkStatus`)، واعمل fake للـ interface.
+
+### Fake ولا Mock؟
+
+| الموقف | الأنسب | ليه |
+| --- | --- | --- |
+| dependency بيستخدمه 30 تست (`LibraryRepository`) | Fake مشترك | بتكتبه مرة، ومابيتكسرش مع الـ refactor |
+| حالة غريبة مرة واحدة (exception معين، رد بطيء) | Mock | أسرع من إنك تزوّد زرار للـ fake |
+| التفاعل نفسه هو السلوك (request اتبعت، event اتسجّل) | Mock أو Spy | محتاج تشوف اللي طلع |
+| حاجة ليها state (اضافة وبعدين قراية) | Fake | الـ mock مش فاهم إن حاجة اتغيرت |
+| الوقت | `FixedClock` | `advance` أوضح من إعادة برمجة mock |
+| value objects وentities | الحقيقي | مفيش سبب تعمل double لـ `Book` |
+
+وفي الأدبيات ده اسمه مدرستين: الـ <b>classical</b> (Detroit) بتستخدم الحاجات الحقيقية لحد ما تبقى بطيئة أو خارجية، وتحط fakes على الحدود. والـ <b>mockist</b> (London) بتعمل mock لأي collaborator وبتختبر التفاعلات. أغلب فرق Flutter الكويسة بتمشي classical في الـ domain والـ data، وبتستخدم mocks في الـ presentation (MockCubit في الـ widget tests) وللحالات الغريبة.
+
+### قواعد الـ fakes المشتركة
+
+- <b>غبي على قد ما تقدر:</b> الـ fake مايبقاش فيه logic أكتر من الـ contract. لو بقى فيه pagination وcaching وsorting، بقى محتاج تستات هو كمان.
+- <b>مكانه `test/helpers/`:</b> مش كل ملف تست بيعمل `FakeLibraryRepository` بتاعه. واحد مشترك، ولما الـ interface يتغير بتصلّحه مرة.
+- <b>contract tests:</b> أي fake بيستخدمه أكتر من تست لازم يعدّي نفس التستات اللي الحقيقي بيعدّيها. من غيرها، الـ fake بيكدب بهدوء.
+- <b>أزرار الفشل صريحة:</b> `failNextWith` أوضح من fake بيفشل «لو الـ id بيبدأ بـ fail».
+
+### الـ builders في المشروع الحقيقي
+
+- <b>builder لكل entity بيتكرر:</b> `aBook()`، وبعدين `aNote()` و`aUser()` لما تحتاجهم. مش لكل class.
+- <b>الـ defaults تبقى ممّلة:</b> عنوان عادي وحالة عادية. لو الـ default `BookStatus.finished`، تستات كتير هتعدّي بالصدفة لأنها بتعتمد على حالة محدش كتبها.
+- <b>ماتحطش logic في الـ builder:</b> مفيش `if`. لو حالة محتاجة تجهيز معقد، اعمل function باسم واضح فوق الـ builder.
+
+<Note kind="interview" title="سؤال interview">
+
+«إيه الفرق بين mock وstub وfake، وبتستخدم إيه امتى؟» الـ stub بيرجّع رد محفوظ عشان يوصّل الكود لحالة معينة، والـ mock بيتبرمج وبعدين بتعمله verify على التفاعل، والـ fake implementation حقيقي مبسّط زي repository في الذاكرة. في Readly بستخدم fake للـ `LibraryRepository` لأن تستات كتير بتعتمد عليه وعايزها تختبر السلوك ومتتكسرش مع الـ refactor، ومعاه contract tests بتشغّل نفس التستات على الـ fake وعلى الـ implementation الحقيقي عشان الـ fake مايكدبش. وبستخدم mocktail للحالات الغريبة زي exception معين، ولما التفاعل نفسه هو السلوك، زي شكل الـ request اللي طالع، وبمسكه بـ `captureAny`. ومابعملش mock لحاجة مش بتاعتي زي Dio أو drift: Dio حقيقي بـ fake adapter، وdrift في الذاكرة. والوقت ورا `Clock` وفي التست `FixedClock`.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### تست بيحفظ الـ implementation
+
+<BeforeAfter>
+
+<Side label="قبل: mocks في كل حتة" kind="before">
+
+```dart
+test('getLibrary', () async {
+  when(() => remote.fetchLibrary()).thenAnswer((_) async => [dto]);
+  when(() => clock.now()).thenReturn(DateTime(2026));
+  when(() => local.upsertBooks(any())).thenAnswer((_) async {});
+
+  await repo.getLibrary();
+
+  verifyInOrder([
+    () => remote.fetchLibrary(),
+    () => clock.now(),
+    () => local.upsertBooks(any()),
+  ]);
+  verifyNoMoreInteractions(remote);
+  verifyNoMoreInteractions(local);
+});
+```
+
+</Side>
+
+<Side label="بعد: fakes ونتيجة" kind="after">
+
+```dart
+test('getLibrary returns the server books and caches them', () async {
+  final remote = FakeLibraryRemote()..books = [aBook().toDto()];
+  final local = InMemoryLibraryLocal();
+  final repo = LibraryRepositoryImpl(remote, local, FixedClock(DateTime.utc(2026)));
+
+  final result = await repo.getLibrary();
+
+  expect(result, isA<Success<List<Book>>>()
+      .having((s) => s.value, 'books', [aBook()]));
+  expect(await repo.contains(aBook().id), isTrue); // it's in the cache now
+});
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: التست مافيهوش ولا `expect`، ولو بدّلت ترتيب الـ clock والـ fetch، أو خليت الـ upsert ينادي method تانية، هيقع والسلوك زي ما هو. وفي نفس الوقت، لو الـ mapper رجّع عنوان غلط، هيعدّي. بعد: التست بيقول الوعد نفسه: «بيرجّع كتب السيرفر وبيحفظها». أي refactor مايغيّرش الوعد ده التست مش هيحس بيه. الـ `FakeLibraryRemote` والـ `InMemoryLibraryLocal` في [الدرس الجاي](/course/testing/layers/).
+
+### الـ helpers كاملة
+
+<CodeBlock label="test/helpers/builders.dart">
+
+```dart
+import 'package:readly/features/library/domain/book.dart';
+
+Book aBook({
+  String id = 'OL45804W',
+  String title = 'Fantastic Mr Fox',
+  BookStatus status = BookStatus.wantToRead,
+}) =>
+    Book(id: BookId.fromTrusted(id), title: title, status: status);
+```
+
+</CodeBlock>
+
+<CodeBlock label="test/helpers/mocks.dart">
+
+```dart
+import 'package:bloc_test/bloc_test.dart';
+import 'package:mocktail/mocktail.dart';
+
+class MockLibraryRepository extends Mock implements LibraryRepository {}
+
+class MockSearchBooks extends Mock implements SearchBooks {}
+
+class MockLibraryRemote extends Mock implements LibraryRemoteSource {}
+
+class MockLibraryLocal extends Mock implements LibraryLocalSource {}
+
+// for widget tests and goldens (widget tests lesson)
+class MockLibraryCubit extends MockCubit<LibraryState> implements LibraryCubit {}
+
+/// Call once per test file, in setUpAll.
+void registerFallbacks() {
+  registerFallbackValue(aBook());
+  registerFallbackValue(aBook().toDto());
+  registerFallbackValue(const SearchParams(query: ''));
+}
+```
+
+</CodeBlock>
+
+- <b>الـ mocks في ملف واحد:</b> سطر لكل mock، فمفيش سبب كل ملف تست يعرّفهم من الأول. والـ `MockLibraryCubit` (من `bloc_test`) بتاع [الـ widget tests](/course/testing/widget-tests/) والـ goldens هنا برضه.
+- <b>`registerFallbacks()`:</b> كل الـ fallbacks في مكان واحد، وكل ملف بيعمل `setUpAll(registerFallbacks)`. لما حد يزوّد نوع جديد، بيزوّده هنا مرة.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="t-test-doubles-1">
+<Ask>كتبت `when(() => repo.contains(any())).thenReturn(Future.value(true))` والتست وقع قبل ما يبدأ. ليه، والصح إيه؟</Ask>
+<Answer>
+
+mocktail بيرمي `ArgumentError` لأن `thenReturn` ممنوع يرجّع Future أو Stream: الـ object الواحد هيترجع لكل النداءات وده بيعمل مشاكل مع الـ zones. أي method بترجّع Future أو Stream تستخدم `thenAnswer((_) async => true)`.
+
+</Answer>
+</Question>
+
+<Question id="t-test-doubles-2">
+<Ask>أول ما كتبت `verify(() => repo.addBook(any()))` ظهر error بيقول `registerFallbackValue was not previously called` لنوع `Book`. ليه مش بيظهر مع `contains(any())` اللي بياخد BookId؟</Ask>
+<Answer>
+
+`any()` لازم يرجّع قيمة من نوع الـ parameter عشان الكود يعمل compile، وmocktail عنده قيم جاهزة للأنواع الأساسية بس. فلازم `registerFallbackValue(aBook())` في `setUpAll`. الـ BookId extension type على String، ووقت التشغيل هو String، فالقيمة الجاهزة `'42'` بتعدّي كـ BookId.
+
+</Answer>
+</Question>
+
+<Question id="t-test-doubles-3">
+<Ask>الـ `LibraryRepository` بيستخدمه 40 تست في الـ Cubits والـ use cases. تعمل له mock في كل تست ولا fake مشترك؟ وإيه الخطر في الاختيار ده؟</Ask>
+<Answer>
+
+fake مشترك في `test/helpers/`: بيتكتب مرة، وفاهم الـ state (ضفت كتاب فبقى موجود)، والتستات بتختبر السلوك فمابتتكسرش مع الـ refactor. الخطر إن الـ fake يتصرف مختلف عن الحقيقي (يقبل كتاب مكرر مثلًا) فالتستات تعدّي والـ app يغلط. والحل contract tests بتشغّل نفس التستات على الاتنين.
+
+</Answer>
+</Question>
+
+<Question id="t-test-doubles-4">
+<Ask>زميلك غيّر `LibraryRepositoryImpl` يقرا من الـ cache قبل السيرفر بدل بعده، والسلوك اللي المستخدم شايفه زي ما هو، بس 12 تست وقعوا. إيه المشكلة في التستات؟</Ask>
+<Answer>
+
+over-mocking: التستات بتعمل `verifyInOrder` و`verifyNoMoreInteractions` على كل نداء، فهي بتحفظ الـ implementation بدل ما تختبر السلوك. الصح إن التست يتأكد من النتيجة (الكتب اللي رجعت، اللي اتحفظ) بـ fakes، والـ verify يتساب للتفاعل اللي هو نفسه السلوك، زي الـ request اللي طالع للسيرفر.
+
+</Answer>
+</Question>
+
+<Question id="t-test-doubles-5">
+<Ask>ليه `aBook()` بقيم افتراضية أحسن من إن كل تست يكتب `Book(...)` كامل؟ وإيه اللي لازم يكون صح في `Book` عشان `expect(books, [aBook()])` يشتغل؟</Ask>
+<Answer>
+
+التست بيقول اللي يهمه بس (`aBook(status: BookStatus.finished)`)، ولو `Book` زاد حقل بتعدّل الـ builder بس مش 200 تست. والـ `Book` لازم يكون ليه value equality (freezed أو equatable)، وإلا `==` هيقارن الـ reference و`aBook()` الجديد عمره ما هيساوي القديم.
+
+</Answer>
+</Question>
+
+</Quiz>

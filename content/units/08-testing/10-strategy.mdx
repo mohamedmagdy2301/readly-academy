@@ -1,0 +1,930 @@
+---
+title: "الاختبارات في فريق حقيقي: coverage وflaky واستراتيجية"
+description: "الـ coverage من غير ما يبقى فخ، والـ mutation والـ property-based testing، والـ flaky tests، والـ tags والـ sharding في الـ CI، وورقة استراتيجية بتقول الفريق بيختبر إيه بإيه."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="أمن العمارة">
+
+العمارة فيها حارس، وكل ساعة بيمضي في دفتر عند كل دور إنه عدّى. الدفتر مليان إمضاءات: 100% من الأدوار. بس الدفتر بيقول إنه <b>عدّى</b>، مش إنه <b>بص</b>. ممكن يكون طلع السلم وهو بيكلم في التليفون ومابصش على باب واحد.
+
+فاتحاد الملاك عمل حاجتين. الأولى: كل فترة يبعتوا حد يمثّل إنه حرامي ويشوفوا الحارس هيمسكه ولا لأ. لو عدّى، يبقى الدفتر كان بيكذب. والتانية: بدل ما يجربوا على الحارس 3 مفاتيح معروفة، يجربوا مفاتيح عشوائية كتير، عشان يلاقوا الباب اللي بيفتح بمفتاح غلط.
+
+وفي جرس إنذار بيضرب لوحده من غير سبب مرة كل أسبوع. أول مرة الكل نزل جري. تالت مرة محدش اتحرك. ويوم ما حصل حريق بجد، محدش صدّق الجرس.
+
+وعشان كل ده مايبقاش مزاج، كتبوا ورقة: مين بيحرس إيه، وبيتعمل امتى، وبيكلّف كام.
+
+</Analogy>
+
+كل حاجة في القصة دي ليها اسم في الاختبارات:
+
+| في العمارة | في Readly |
+| --- | --- |
+| دفتر الإمضاءات | الـ <b>coverage</b>: السطر اتنفّذ وقت التست، مش لازم اتأكدنا منه |
+| الحرامي التجريبي | الـ <b>mutation testing</b>: نغيّر الكود عمدًا ونشوف التستات هتمسك التغيير ولا لأ |
+| المفاتيح العشوائية | الـ <b>property-based testing</b>: الأداة بتولّد مئات المدخلات بدل الـ 3 اللي انت اخترتهم |
+| الجرس اللي بيضرب لوحده | الـ <b>flaky test</b>: بيفشل مرة وينجح مرة من غير ما الكود يتغير |
+| الورقة | الـ <b>test strategy</b>: الفريق بيختبر إيه بإيه، وليه |
+
+الدروس اللي فاتت في الوحدة علمتك تكتب كل نوع تست. الدرس ده عن <b>إدارة</b> التستات دي في فريق: تقيس، وتلاقي التستات الضعيفة، وتخلي الـ suite سريعة وتستاهل الثقة، وتكتب القرارات.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي: coverage وtags وflaky">
+
+### الـ coverage من الأول
+
+```bash
+flutter test --coverage
+```
+
+الأمر ده بيشغّل التستات عادي، وبيكتب فايل `coverage/lcov.info` فيه كل سطر في `lib/` اتنفّذ كام مرة. الفايل نص بسيط:
+
+<CodeBlock label="coverage/lcov.info (جزء)">
+
+```text
+SF:lib/features/library/domain/reading_streak.dart
+DA:3,8
+DA:9,8
+DA:10,3
+DA:13,6
+DA:14,5
+DA:15,1
+DA:21,24
+LF:7
+LH:7
+end_of_record
+```
+
+</CodeBlock>
+
+- <b>`SF`:</b> اسم الفايل، relative للـ package اللي اتشغّل فيها التست. هنرجع للتفصيلة دي في الـ CI.
+- <b>`DA:line,hits`:</b> رقم السطر، واتنفّذ كام مرة. `DA:15,1` يعني السطر ده اتنفّذ مرة واحدة بس، و`0` يعني محدش وصله.
+- <b>`LF` و`LH`:</b> lines found وlines hit. النسبة `LH / LF` هي الرقم اللي الناس بتتكلم عنه.
+
+قراية الأرقام دي بالعين صعبة. حوّلها لـ HTML بـ `genhtml` من حزمة lcov:
+
+```bash
+# macOS: brew install lcov    Linux: sudo apt-get install lcov
+genhtml coverage/lcov.info -o coverage/html
+open coverage/html/index.html   # xdg-open on Linux
+```
+
+بتفتح شجرة الفولدرات بنسبة كل واحد، وجوه كل فايل السطور اللي ماتنفّذتش حمرا. وعلى Windows، أسهل طريق extension زي Coverage Gutters في VS Code: بيقرا `lcov.info` ويلوّن السطور جوه الـ editor نفسه.
+
+ولو عايز تعرف كمان كل `if` اتجرب في الاتجاهين ولا لأ، فيه `--branch-coverage`. الـ line coverage بيقول «السطر ده اتنفّذ»، والـ branch coverage بيقول «الـ `if` ده اتجرب true وfalse».
+
+<b>إزاي تقرا التقرير صح:</b> ماتبصش على الرقم الكبير. دوّر على السطور الحمرا في الأماكن المهمة: `catch` في repository محدش جربه، أو حالة `Err` في Cubit ماتختبرتش، أو `if (total == 0)`. السطر الأحمر سؤال: «ده مش مهم، ولا نسينا نختبره؟». والسطر الأخضر مش إجابة: معناه إن التست <b>عدّى</b> عليه، مش إنه اتأكد من نتيجته. هنرجع لده في الـ mutation testing.
+
+### استبعاد اللي مش بتاعك
+
+الـ freezed والـ json_serializable والـ drift بيولّدوا آلاف السطور. لو دخلوا في الرقم، الـ coverage هيقيس الـ code generator مش كودك. وفي طريقين:
+
+<CodeBlock label="من الـ lcov.info نفسه">
+
+```bash
+lcov --remove coverage/lcov.info \
+  '*.g.dart' '*.freezed.dart' '*/l10n/*' \
+  --ignore-errors unused \
+  -o coverage/lcov.info
+```
+
+</CodeBlock>
+
+- <b>`--remove`:</b> بيشيل أي فايل اسمه بيطابق الـ patterns. والـ `*` في lcov بتطابق أي حاجة حتى الـ `/`.
+- <b>`--ignore-errors unused`:</b> lcov 2 (اللي على Ubuntu الجديد) بيفشل لو pattern مالقاش حاجة. ده بيخليه يكمّل.
+
+<CodeBlock label="من جوه الكود: comments بيفهمها flutter test">
+
+```dart
+// coverage:ignore-file        <- at the top: the whole file
+
+// coverage:ignore-start
+@override
+String toString() => 'Book($id, $title)';
+// coverage:ignore-end
+
+throw StateError('unreachable'); // coverage:ignore-line
+```
+
+</CodeBlock>
+
+- <b>استخدمها بالقطارة:</b> للحاجات اللي فعلًا مالهاش تست منطقي، زي `toString` للـ debug أو `throw` في حالة مستحيلة. لو بقت طريقة ترفع بيها الرقم، الرقم بقى بيكذب، وبقى أسوأ من إنه مايبقاش موجود.
+
+### الفايل اللي ماحدش اختبره مش موجود في التقرير
+
+ده أكتر فخ بيلبس فيه الناس. الـ coverage بيتجمع من الـ libraries اللي اتعملها load وقت التستات. فايل `lib/features/notes/data/notes_sync.dart` محدش عمله import في أي تست؟ <b>مش هيظهر في `lcov.info` خالص</b>. يعني مش 0%، ده مش موجود. والنسبة الكلية بتطلع أعلى من الحقيقة، وأكتر فايلات محتاجة تستات هي اللي مستخبية.
+
+الحل: تست بيعمل import لكل فايلات `lib/`، فكل فايل يظهر في التقرير، حتى لو بـ 0%:
+
+<CodeBlock label="tool/coverage_imports.sh">
+
+```bash
+#!/bin/sh
+# writes test/coverage_imports_test.dart: every lib file gets loaded,
+# so an untested file shows up as 0% instead of vanishing
+pkg=$(grep -m1 '^name:' pubspec.yaml | awk '{print $2}')
+# Flutter packages test with flutter_test, pure Dart ones with package:test
+if grep -q 'flutter_test:' pubspec.yaml; then runner=flutter_test/flutter_test.dart
+else runner=test/test.dart; fi
+out=test/coverage_imports_test.dart
+{
+  echo "// GENERATED by tool/coverage_imports.sh. Do not edit or commit."
+  echo "// ignore_for_file: unused_import, directives_ordering"
+  grep -rL --include='*.dart' '^part of' lib \
+    | grep -v -e '\.g\.dart$' -e '\.freezed\.dart$' \
+    | sort \
+    | sed "s|^lib/\(.*\)|import 'package:$pkg/\1';|"
+  echo "import 'package:$runner';"
+  echo "void main() => test('loads every library', () {});"
+} > "$out"
+```
+
+</CodeBlock>
+
+- <b>`grep -L '^part of'`:</b> الـ part files ماينفعش يتعملها import لوحدها، فبتتشال.
+- <b>تست فاضي واحد:</b> عشان الفايل يبقى test suite عادي ويتشغّل، والـ libraries تتعمل load.
+- <b>مايتعملوش commit:</b> الـ CI بيولّده قبل التستات، وبتحطه في `.gitignore`. كده عمره ما يبقى قديم.
+
+### Tags: شغّل جزء من التستات
+
+مش كل التستات لازم تشتغل كل مرة. وانت بتكتب Cubit، مش محتاج تستنى الـ goldens. الـ tags بتعلّم التستات بأنواعها:
+
+<CodeBlock label="test/features/library/presentation/library_page_golden_test.dart">
+
+```dart
+@Tags(['golden'])
+library;
+
+import 'package:flutter_test/flutter_test.dart';
+
+void main() {
+  testWidgets('library page, dark, RTL', (tester) async {
+    // ...
+  });
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="tag على تست واحد">
+
+```dart
+testWidgets('restores the scroll after a rebuild', (tester) async {
+  // ...
+}, tags: ['slow']);
+```
+
+</CodeBlock>
+
+والـ tags نفسها بتتعرّف في `dart_test.yaml` في root الـ package، وتقدر تدي كل tag إعدادات:
+
+<CodeBlock label="dart_test_base.yaml (root الـ repo)">
+
+```yaml
+tags:
+  golden: # pixel comparisons; baselines are generated on Linux
+    timeout: 2x
+  property: # glados: hundreds of inputs per test
+    timeout: 2x
+  slow:
+    timeout: 2x
+  flaky: # quarantine only: every use has an issue link next to it
+    retry: 2
+```
+
+</CodeBlock>
+
+<CodeBlock label="packages/feature_library/dart_test.yaml">
+
+```yaml
+include: ../../dart_test_base.yaml
+```
+
+</CodeBlock>
+
+- <b>ليه تعرّفها:</b> الـ runner بيطبع warning لأي tag مش معروف. والتعريف هو المكان اللي فيه الـ config: `timeout: 2x` يعني ضعف الـ timeout العادي (30 ثانية).
+- <b>الـ `include`:</b> في الـ workspace كل package بتقرا `dart_test.yaml` بتاعها. الـ `include` بيخلي الـ tags متعرّفة في مكان واحد، فمحدش يعرّف `golden` في package و`goldens` في التانية.
+
+والتشغيل:
+
+```bash
+flutter test -x golden                   # fast local loop: skip pixel tests
+flutter test -t golden                   # only the goldens
+flutter test -x golden -x slow           # skip several tags
+flutter test --name "readingStreak"      # tests whose name matches a regexp
+flutter test test/features/library       # a folder
+dart test -x property                    # pure Dart packages: same flags
+```
+
+- <b>`-t` و`-x`:</b> اختصار `--tags` و`--exclude-tags`.
+- <b>الـ CI بيشغّل كله:</b> الـ tags للسرعة على جهازك، أو لتقسيم الشغل بين jobs. لو الـ CI بقى بيعمل `-x` لنوع، يبقى النوع ده مابقاش بيتشغّل غير لو حد افتكر.
+
+### أول خطوة في الـ flaky: ترتيب عشوائي
+
+التستات بتتشغّل بالترتيب اللي اتكتبت بيه في الفايل. ولو تست بيعتمد من غير قصد على حاجة عملها التست اللي قبله، هيفضل ناجح طول ما الترتيب ثابت. الأمر ده بيلخبط الترتيب:
+
+```bash
+flutter test --test-randomize-ordering-seed random
+```
+
+```text
+Shuffling test order with --test-randomize-ordering-seed=2049177151
+00:02 +41 -1: adds a new book [E]
+  Expected: <Instance of 'Success<void>'>
+    Actual: <Instance of 'Err<void>'>
+```
+
+- <b>الـ seed اتطبع:</b> ده اللي بيخلي الفشل العشوائي يتعاد. شغّل نفس الأمر بالرقم ده بدل `random`، وهيفشل كل مرة بنفس الترتيب.
+- <b>الترتيب جوه الفايل:</b> الـ shuffle بيلخبط التستات جوه كل فايل. وكل فايل test بيتشغّل لوحده أصلًا (في isolate أو process منفصل)، فالـ state المشتركة الخطيرة هي اللي جوه نفس الفايل.
+
+إيه اللي حصل في التست ده؟ في Level 3.
+
+</Level>
+
+<Level n="3" title="الحالات الصعبة: الـ CI، والـ flaky، وproperty وmutation">
+
+### الـ CI: نفس الـ workflow، أسرع وبيقيس صح
+
+في [درس حراسة المعمارية](/course/quality/architecture-guards/) بنينا `ci.yml` فيه job واحد اسمه `check`: format وanalyze وarchitecture test، وبعدين التستات في loop على الـ packages، وبعدين الـ coverage. ده كويس لحد ما التستات تكبر. ومع الوقت بتظهر 3 مشاكل:
+
+1. التستات بقت بتاخد 12 دقيقة، والـ format والـ analyze مستنيين في نفس الـ job.
+2. الـ coverage بيتدمج بـ `cat`، بس الـ `SF:` في كل `lcov.info` relative للـ package بتاعته. فـ `lib/src/domain/book.dart` بتاعة library و`lib/src/domain/note.dart` بتاعة notes شكلهم جايين من نفس المكان، والـ `exclude: "**/presentation/**"` شغال بالصدفة.
+3. الـ 90% رقم واحد لكل حاجة. الـ domain عنده 97% والـ data 70%، والمتوسط بيعدّي.
+
+<CodeBlock label=".github/workflows/ci.yml">
+
+```yaml
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version-file: pubspec.yaml # pinned, not channel: stable (goldens lesson)
+          cache: true
+      - run: flutter pub get
+      # cheap checks first: fail in seconds, not after the tests
+      - name: Format
+        run: dart format --output=none --set-exit-if-changed .
+      - name: Analyze
+        run: flutter analyze
+      - name: Architecture
+        working-directory: tools/architecture
+        run: dart test
+      # + the "generated code is up to date" step from the architecture lesson
+
+  test:
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false # one red shard shouldn't hide the others
+      matrix:
+        shard: [0, 1, 2]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version-file: pubspec.yaml
+          cache: true
+      - run: flutter pub get
+      - name: Tests (shard ${{ matrix.shard }} of 3)
+        run: |
+          mkdir -p coverage
+          for pkg in apps/readly packages/*; do
+            [ -d "$pkg/test" ] || continue
+            (cd "$pkg" && sh ../../tool/coverage_imports.sh \
+              && flutter test --coverage \
+                 --total-shards 3 --shard-index ${{ matrix.shard }}) || exit 1
+            # lcov paths are relative to the package: make them repo-relative
+            if [ -f "$pkg/coverage/lcov.info" ]; then
+              sed "s|^SF:|SF:$pkg/|" "$pkg/coverage/lcov.info" >> coverage/lcov.info
+            fi
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lcov-${{ matrix.shard }}
+          path: coverage/lcov.info
+      - uses: actions/upload-artifact@v4
+        if: failure() # golden diffs for the reviewer (goldens lesson)
+        with:
+          name: golden-failures-${{ matrix.shard }}
+          path: "**/test/**/failures/"
+
+  coverage:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: lcov-*
+          path: shards # one folder per artifact: shards/lcov-0/lcov.info ...
+      - run: sudo apt-get install -y lcov
+      - name: Merge, clean, split by layer
+        run: |
+          mkdir -p coverage
+          args=""
+          for f in shards/*/lcov.info; do args="$args -a $f"; done
+          lcov $args -o coverage/all.info
+          lcov --remove coverage/all.info '*.g.dart' '*.freezed.dart' '*/l10n/*' \
+            --ignore-errors unused -o coverage/lcov.info
+          lcov --extract coverage/lcov.info '*/domain/*' -o coverage/domain.info
+          lcov --extract coverage/lcov.info '*/data/*' -o coverage/data.info
+      - name: Domain >= 95%
+        uses: VeryGoodOpenSource/very_good_coverage@v3
+        with:
+          path: coverage/domain.info
+          min_coverage: 95
+      - name: Data >= 85%
+        uses: VeryGoodOpenSource/very_good_coverage@v3
+        with:
+          path: coverage/data.info
+          min_coverage: 85
+```
+
+</CodeBlock>
+
+- <b>`flutter-version-file` بدل `channel: stable`:</b> نسخة Flutter متثبّتة في الـ pubspec اللي في root الـ workspace، ونفس السطر في `update-goldens.yml` من [درس الـ goldens](/course/testing/golden-tests/) و`integration.yml` من [درس الـ integration](/course/testing/integration/). من غيره، أول ما نسخة stable جديدة تنزل، الـ goldens كلها هتفشل في PR ملوش علاقة. وخطوة `golden-failures` من نفس الدرس، بس بمسار بيلم الـ packages كلها.
+- <b>3 jobs بدل واحد:</b> الـ `check` بيفشل في دقيقة لو في import غلط، والتستات ماتبدأش أصلًا. والـ `needs` بيرتّب: check، بعدين test، بعدين coverage.
+- <b>الـ sharding:</b> `--total-shards 3 --shard-index N` بيقسم التستات على 3 machines شغالين في نفس الوقت. خلي بالك إن كل shard لسه بيعمل compile وload لكل فايلات التست، وبيقسم التستات نفسها بس، فالـ 12 دقيقة مش هتبقى 4 بالظبط. قيس قبل ما تزوّد shards.
+- <b>`fail-fast: false`:</b> من غيره، أول shard يفشل بيلغي الباقيين، فتشوف فشل واحد بدل كل اللي باظ.
+- <b>الـ `sed` على `SF:`:</b> بيحوّل `lib/src/domain/book.dart` لـ `packages/feature_library/lib/src/domain/book.dart`. دلوقتي كل فايل ليه اسم مميز، والـ patterns زي `*/domain/*` بتطابق صح.
+- <b>`lcov -a`:</b> بيدمج الـ shards ويجمع الـ hits. فايل اتختبر نصه في shard 0 ونصه في shard 2 بيطلع متغطي كامل، مش مكرر.
+- <b>threshold لكل طبقة:</b> الـ domain فيه القواعد وتستاته رخيصة، فرقمه عالي. والـ presentation مالهاش رقم خالص: الـ widget tests والـ goldens بيقيسوا حاجات الـ line coverage مش بيشوفها.
+- <b>الـ parallel جوه الـ job:</b> `flutter test` أصلًا بيشغّل كذا فايل في نفس الوقت، على حسب عدد الـ cores (وتقدر تغيّره بـ `-j`). فقبل ما تعمل shards، اتأكد إن مفيش تستات بتمنع ده، زي تستين بيكتبوا نفس الفايل في `/tmp`.
+
+<Diagram name="d-test-ci-lanes">
+
+اللي بيوقف الـ PR لازم يبقى سريع وثابت: checks رخيصة، وبعدين shards بالتوازي، وبعدين الـ coverage. واللي بطيء أو عشوائي بطبيعته (ترتيب عشوائي كذا مرة، والـ mutation testing، والـ property tests بـ seed جديد) بيشتغل بالليل، وبيفتح issue لو لقى حاجة، من غير ما يوقف حد.
+
+</Diagram>
+
+### الـ flaky test: التشخيص
+
+نرجع للتست اللي وقع لما الترتيب اتلخبط:
+
+<CodeBlock label="test/features/library/domain/add_book_to_library_test.dart">
+
+```dart
+// one instance for the whole file
+final repository = FakeLibraryRepository();
+
+void main() {
+  test('adds a new book', () async {
+    final result = await AddBookToLibrary(repository)(aBook());
+    expect(result, isA<Success<void>>());
+  });
+
+  test('rejects a duplicate', () async {
+    final addBook = AddBookToLibrary(repository);
+    await addBook(aBook());
+    expect(await addBook(aBook()), isA<Err<void>>());
+  });
+}
+```
+
+</CodeBlock>
+
+بالترتيب العادي الاتنين ناجحين. بس التاني ناجح <b>للسبب الغلط</b>: الكتاب كان موجود من التست الأول، فالإضافتين الاتنين رجعوا `Err`. ولما الترتيب اتعكس، «rejects» حط الكتاب الأول، فـ «adds» لقاه موجود ووقع.
+
+```dart
+late FakeLibraryRepository repository;
+
+void main() {
+  setUp(() => repository = FakeLibraryRepository()); // fresh for every test
+  // ... same tests
+}
+```
+
+ده نوع واحد. والأسباب المعروفة كلها ليها حل معروف:
+
+| السبب | شكله في Readly | الحل |
+| --- | --- | --- |
+| state مشتركة | fake معمول مرة واحدة للفايل، أو get_it مااتعملوش reset، أو static cache | `setUp` بيعمل كل حاجة من جديد، و`getIt.reset()` في `tearDown` |
+| الوقت الحقيقي | `DateTime.now()` في قاعدة السلسلة، والتست بيفشل لو اشتغل قبل نص الليل بدقيقة | `Clock` و`FixedClock` ([درس الـ test doubles](/course/testing/test-doubles/)) |
+| انتظار حقيقي | `await Future.delayed(400ms)` عشان الـ debounce، وعلى CI بطيء مابيكفيش | `fake_async` ([درس الـ Cubit](/course/testing/cubit-tests/)) |
+| future مااتستناش | `cubit.load()` من غير `await`، والـ `expect` ساعات بيسبقه | `await`، أو `expectLater` مع `emitsInOrder` |
+| animation مابتخلصش | `pumpAndSettle` وفي الشاشة `CircularProgressIndicator` | `pump(duration)` محدد ([درس الـ widget tests](/course/testing/widget-tests/)) |
+| شبكة أو فايلات حقيقية | تست بيكلّم Open Library، أو فايلين بيكتبوا نفس المسار | fakes وfixtures، و`Directory.systemTemp.createTempSync()` لكل تست |
+| المنصة | golden اتعمل على Mac وبيتقارن على Linux | الـ goldens بتتولد وتتقارن على Linux بس ([درس الـ goldens](/course/testing/golden-tests/)) |
+
+ولو التست بيفشل مرة من 30 ومش عارف ليه، خليه يفشل قدامك:
+
+```bash
+# run one file 50 times, random order each time, stop at the first failure
+for i in $(seq 50); do
+  flutter test test/features/library/domain/add_book_to_library_test.dart \
+    --test-randomize-ordering-seed random --reporter failures-only || break
+done
+```
+
+أول ما يقع، الـ seed مطبوع فوق. وبيه بقى الـ flaky test تست عادي بيفشل كل مرة، وده أسهل نوع bug.
+
+### الـ retry: مسكّن مش علاج
+
+`test(..., retry: 2)` أو `retry: 2` على tag في `dart_test.yaml` بيعيد التست لو فشل. ده بيخلي الـ CI أخضر، وبيخبّي المشكلة. والتست المتقلب أحيانًا بيكون بيقولك حاجة حقيقية: race condition في الـ Cubit نفسه، مش في التست. فالـ retry بيتحط بقواعد:
+
+- <b>بالـ tag بس:</b> `tags: ['flaky']`، مش `retry:` متفرق في الفايلات. كده `grep -r "'flaky'" test/` بيقولك عندك كام واحد.
+- <b>جنبه issue وowner وتاريخ:</b> `// flaky: #318, @mona, fix or delete by 2026-10-20`. التست اللي فات معاده بيتصلّح أو بيتمسح، بس مايفضلش.
+- <b>الـ quarantine رقم بيتعرض:</b> زي الـ allowlist في درس حراسة المعمارية. لو العدد بيزيد كل sprint، الفريق بيتعلم يعيش مع الأحمر.
+
+والقاعدة الأهم: التست اللي بيفشل عشوائيًا ومحدش هيصلّحه، <b>امسحه</b>. تست محدش بيصدّقه أسوأ من مفيش تست، لأنه بيعلّم الفريق يتجاهل الأحمر، زي الجرس في العمارة.
+
+### Property-based testing بـ glados
+
+في [درس الـ TDD](/course/testing/tdd/)، الـ bug اللي في سلسلة القراءة عدّى من 7 تستات، لأن كل الأمثلة كانت الساعة 20:00. انت اخترت الأمثلة، فاخترت اللي في دماغك. الـ <b>property-based testing</b> بيقلب السؤال: بدل «لما الجلسات كذا، النتيجة كذا»، بتكتب <b>خاصية</b> لازم تبقى صح لأي مدخلات، والأداة بتولّد مئات المدخلات وتحاول تكسرها.
+
+في Dart الأداة المعروفة [glados](https://pub.dev/packages/glados). صريح: آخر إصدار ليها 1.1.7 من ديسمبر 2023، يعني مش بتتطور، بس الـ API صغير وثابت وشغال على Dart 3. وبتعتمد على `package:test`، فبتشتغل مع `flutter test` لكود Dart عادي، بس مش جوه `testWidgets`.
+
+```bash
+dart pub add --dev glados
+```
+
+والتست هنا في `feature_library`، لأن بعد التقسيم لـ packages في درس التوسّع، `readingStreak` بقت في الـ domain بتاعها:
+
+<CodeBlock label="packages/feature_library/test/src/domain/reading_streak_property_test.dart">
+
+```dart
+import 'dart:io';
+
+import 'package:feature_library/src/domain/reading_streak.dart';
+import 'package:glados/glados.dart'; // also exports package:test and Random
+
+extension AnyReading on Any {
+  /// How long before "now" a session happened: up to 10 days, any minute.
+  Generator<Duration> get sessionAge =>
+      any.intInRange(0, 10 * 24 * 60).map((m) => Duration(minutes: m));
+}
+
+bool sameDay(DateTime a, DateTime b) =>
+    a.year == b.year && a.month == b.month && a.day == b.day;
+
+// fixed seed by default (same inputs every run); nightly sets GLADOS_SEED
+final explore = ExploreConfig(
+  numRuns: 300,
+  random: Random(int.tryParse(Platform.environment['GLADOS_SEED'] ?? '') ?? 42),
+);
+
+void main() {
+  Glados2(any.intInRange(0, 24 * 60), any.list(any.sessionAge), explore).test(
+    'a positive streak means a session today or yesterday',
+    (nowMinute, ages) {
+      final now = DateTime(2026, 10, 4, 0, nowMinute); // any time on Sunday
+      final sessions = [for (final age in ages) now.subtract(age)];
+
+      final streak = readingStreak(sessions, now: now);
+
+      if (streak == 0) return;
+      final yesterday = DateTime(2026, 10, 3);
+      expect(
+        sessions.any((s) => sameDay(s, now) || sameDay(s, yesterday)),
+        isTrue,
+        reason: 'streak $streak with nothing today or yesterday',
+      );
+    },
+    tags: ['property'],
+  );
+
+  Glados(any.list(any.sessionAge), explore).test(
+    'order and duplicates never change the streak',
+    (ages) {
+      final now = DateTime(2026, 10, 4, 21);
+      final sessions = [for (final age in ages) now.subtract(age)];
+      final messy = [...sessions.reversed, ...sessions];
+
+      expect(readingStreak(messy, now: now), readingStreak(sessions, now: now));
+    },
+    tags: ['property'],
+  );
+}
+```
+
+</CodeBlock>
+
+- <b>الـ generator:</b> `any` هو الـ namespace اللي فيه كل الـ generators، وأي generator جديد بيتعمل extension عليه. `intInRange(0, max)` بيولّد من 0 لـ max من غير max، و`.map` بيحوّل الرقم لـ `Duration`. والجلسات كلها `now - age`، فمفيش جلسات في المستقبل تلخبط الخاصية.
+- <b>`Glados2`:</b> لمدخلين: وقت `now` في اليوم، وليستة أعمار جلسات. وفي `Glados3` لتلاتة. والـ `explore` آخر parameter.
+- <b>الخاصية الأولى هي القاعدة نفسها بالكلام:</b> «سلسلة أكبر من صفر معناها إنك قريت النهارده أو امبارح». مش بتحسب الرقم المتوقع، بتتأكد من حاجة لازم تبقى صح دايمًا.
+- <b>الخاصية التانية invariant:</b> الترتيب والتكرار مالهمش دعوة بالنتيجة. خواص زي دي سهلة تتكتب لأي function بتاخد collection.
+
+لو شغّلت الخاصية الأولى على النسخة القديمة من `readingStreak` (اللي فيها `now.difference(last).inDays > 1`)، glados هيلاقي مدخلات بتكسرها، وبعدين يعمل <b>shrinking</b>: يصغّر المدخلات خطوة خطوة طول ما الفشل مستمر، لحد ما يوصل لأبسط حالة. شكل الـ output حاجة زي كده (الأرقام وأول مدخلات ممكن تختلف عندك):
+
+```text
+Tested 9 inputs, shrunk 1312 times.
+Failing for input: [0, [24:01:00.000000]]
+  Expected: true
+    Actual: <false>
+  streak 1 with nothing today or yesterday
+```
+
+`now` نص ليل الأحد بالظبط، وجلسة واحدة قبلها بـ 24 ساعة ودقيقة، يعني الجمعة 23:59. السبت كله فاضي والسلسلة 1. ده نفس bug الـ issue #212، بأبسط شكل ممكن، ومن غير ما حد يفكر في الساعات.
+
+<b>الـ seed:</b> الـ default في glados هو `Random(42)`، يعني نفس المدخلات كل مرة. ده مقصود: تست الـ PR لازم يبقى deterministic، ومينفعش يفشل النهارده وينجح بكرة على نفس الكود. وعشان تستكشف مدخلات جديدة، الـ nightly بيشغّل بـ seed مختلف ويطبعه:
+
+```bash
+export GLADOS_SEED=$RANDOM
+echo "GLADOS_SEED=$GLADOS_SEED"   # put it in the issue if something fails
+flutter test -t property
+```
+
+ولو لقى فشل، الـ seed في الـ log، وبتحوّل المدخلات اللي اتطبعت لتست مثال عادي (bug-first)، فيفضل يحرس على كل PR.
+
+<b>Generator لـ entity:</b> لما الخاصية محتاجة `Book`، بتجمّع generators بـ `combine3` و`choose`، وبتستخدم نفس الـ builder `aBook()` من [درس الـ test doubles](/course/testing/test-doubles/):
+
+```dart
+extension AnyBook on Any {
+  Generator<Book> get book => combine3(
+        any.nonEmptyLetterOrDigits,
+        any.letters,
+        any.choose(BookStatus.values),
+        (String id, String title, BookStatus status) =>
+            aBook(id: id, title: title, status: status),
+      );
+}
+
+Glados(any.letterOrDigits).test('BookId.create trims and accepts any non-blank id', (raw) {
+  final result = BookId.create('  $raw ');
+  if (raw.isEmpty) {
+    expect(result, isA<Err<BookId>>());
+  } else {
+    expect(result, isA<Success<BookId>>().having((s) => s.value.value, 'value', raw));
+  }
+});
+```
+
+- <b>امتى property-based يستاهل:</b> قواعد فيها تواريخ أو أرقام أو حدود، و parsing وserialization (`fromJson(toJson(x)) == x`)، وأي function ليها invariant واضح. مش بديل للتستات بالأمثلة: الأمثلة بتوثّق القواعد للبني آدمين، والخواص بتدوّر على اللي ماخطرش على بالك.
+- <b>خلي الـ property صافية:</b> glados بيشغّل الـ body مئات المرات وبعدين مئات تاني وهو بيعمل shrinking. Function صافية من غير I/O بتخلص في ثواني. ولو الـ body async وبيكلّم DB، هيبقى بطيء وصعب تفهم فشله.
+
+### Mutation testing: مين بيختبر التستات؟
+
+الـ coverage بيقول السطر اتنفّذ. طب لو التست نفّذ السطر ومااتأكدش من نتيجته؟ الـ <b>mutation testing</b> بيجاوب بالتجربة: أداة بتعمل نسخة من الكود فيها تغيير صغير واحد (اسمها <b>mutant</b>)، زي `!=` بقت `==`، وتشغّل التستات:
+
+- التستات فشلت؟ الـ mutant <b>اتقتل</b> (killed). التستات بتحرس السطر ده.
+- التستات عدّت؟ الـ mutant <b>عاش</b> (survived). في تغيير في السلوك محدش لاحظه، يعني يا تست ناقص، يا تست مابيعملش assert كفاية.
+- الـ <b>mutation score</b> = نسبة اللي اتقتلوا.
+
+انت عملت ده بإيدك قبل كده: «امسح الـ sort وشوف التست بيفشل» في [درس الـ Refactor](/course/production/refactor/)، و«اكسر الكود بإيدك» في درس الـ TDD. الأداة بتعمله على كل سطر.
+
+في Dart الأداة الموجودة [mutation_test](https://pub.dev/packages/mutation_test). وقبل الكود، تقييم صريح: <b>الـ mutation testing في Dart لسه مش ناضج</b> زي Stryker في JavaScript أو PIT في Java. الأداة شغالة ومتحدّثة، بس:
+
+- <b>بتغيّر النص بـ regex، مش بتفهم Dart:</b> ماعندهاش AST. فبتعمل mutants مابتعملش compile أصلًا (زي `>` في `List<Book>`)، والـ command بيفشل، فبتتحسب «اتقتلت» وترفع الـ score من غير ما التستات تعمل حاجة.
+- <b>الـ rules معتمدة على شكل الكود:</b> الـ rule بتاعة `if` في الـ built-in محتاجة `{` بعد الشرط، فـ `if (days.isEmpty) return 0;` مش هيتغير خالص. والـ built-in مافيهوش `>` لوحدها.
+- <b>بطيئة:</b> كل mutant بيشغّل الـ test command كامل، و`flutter test` بياخد ثواني عشان يبدأ. 300 mutant = ساعة بسهولة.
+- <b>بتعدّل ملفاتك في مكانها:</b> بتكتب الـ mutant في الفايل الحقيقي وبترجّعه بعدها. ماتشتغلش في الـ repo وهي شغالة، ولو اتقفلت فجأة اعمل `git diff`.
+
+يعني: أداة تشخيص بتشغّلها على حتة صغيرة ومهمة، مش gate على كل PR.
+
+<CodeBlock label="packages/feature_library/mutation.xml">
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<mutations version="1.2">
+  <files>
+    <file>lib/src/domain/**.dart</file>
+  </files>
+  <commands>
+    <!-- mutants caught here didn't compile: they say nothing about the tests -->
+    <command group="compile" expected-return="0" timeout="60">dart analyze --no-fatal-warnings lib</command>
+    <command group="test" expected-return="0" timeout="180">flutter test test/src/domain</command>
+  </commands>
+  <rules>
+    <!-- the built-in set has no rule for a bare ">" -->
+    <regex pattern="([^=&gt;])&gt;([^=&gt;])" id="readly.gt">
+      <mutation text="$1&gt;=$2"/>
+    </regex>
+  </rules>
+  <threshold failure="70">
+    <rating over="90" name="A"/>
+    <rating over="70" name="B"/>
+    <rating over="0" name="C"/>
+  </threshold>
+</mutations>
+```
+
+</CodeBlock>
+
+- <b>`files`:</b> الـ domain بس. هنا القواعد، والتستات سريعة، وده المكان اللي الـ score فيه معناه حاجة.
+- <b>الـ commands بالترتيب:</b> الـ mutant بيتحسب «اتقتل» لو أي command فشل. الـ `compile` group قبل التستات بيخلي التقرير يقولك كام mutant اتقتل بالـ analyzer وكام بالتستات، فتعرف الرقم الحقيقي.
+- <b>الـ rules:</b> بتتضاف فوق الـ built-in (اللي بيغيّر `==` و`!=` و`&&` و`||` و`+` و`-` وغيرهم). والـ regex ده بيتجنب `=>` و`>=` و`>>`.
+- <b>`threshold`:</b> لو الـ score تحت 70%، الأمر بيرجع exit code غير صفر. مفيد في الـ nightly عشان يفتح issue.
+
+```bash
+cd packages/feature_library
+dart pub add --dev mutation_test
+flutter test --coverage test/src/domain   # mutants on uncovered lines get skipped
+dart run mutation_test mutation.xml --coverage coverage/lcov.info -o mutation-report
+```
+
+التقرير HTML: كل فايل بسطوره، والسطور اللي فيها mutant عاش حمرا، وتدوس عليها تشوف التغيير. مثلًا في `readingStreak`:
+
+```text
+- if (_dayOf(now).difference(days.first).inDays > 1) return 0;
++ if (_dayOf(now).difference(days.first).inDays >= 1) return 0;
+```
+
+الـ mutant ده بيكسر حالة واحدة بس: «قريت امبارح ولسه ماقريتش النهارده». وفي درس الـ TDD، التست بتاع الحالة دي عدّى من أول مرة، وكان سهل تمسحه وتقول «مالوش لازمة». لو كان اتمسح، الـ mutant ده كان هيعيش، والتقرير كان هيقولك بالظبط أنهي قاعدة مالهاش حارس.
+
+ولو عايزه على الـ PR، شغّله على الفايلات اللي اتغيرت بس، زي ما الـ README بتاع الأداة بيقترح، ومن غير ما يوقف الـ merge:
+
+```bash
+changed=$(git diff --name-only origin/main...HEAD -- 'lib/src/domain/*.dart')
+[ -n "$changed" ] && dart run mutation_test $changed -o mutation-report
+```
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior: استراتيجية الفريق">
+
+### ليه 100% coverage فخ
+
+- <b>Goodhart:</b> لما الرقم يبقى هدف، بيبطّل يبقى مقياس. فريق مطلوب منه 100% هيكتب تستات من غير assertions، ويختبر getters، ويحط `coverage:ignore` على الصعب. الرقم هيطلع، والجودة لأ.
+- <b>آخر 10% هما الأغلى والأقل فايدة:</b> `toString`، وفروع defensive مستحيلة، وكود Flutter بيتغير كل sprint. الوقت ده أحسن في golden للشاشة المهمة أو integration test للـ flow الحرج.
+- <b>الـ coverage بيقيس اللي اتنفّذ، مش اللي اتأكد:</b> الـ bug بتاع السلسلة كان في سطر عليه 100%. الرقم بيقولك فين <b>مافيش</b> تستات بثقة عالية، بس مابيقولكش فين في تستات كويسة.
+- <b>استخدمه كأرضية مش سقف:</b> «الـ domain مايقلّش عن 95%» بيمنع حد يضيف قاعدة من غير تست. ده استخدام صح. «لازم نوصل 100%» استخدام غلط.
+- <b>ratchet:</b> زي ما في درس حراسة المعمارية، الرقم بيبدأ من الحالي وبيطلع بس. وأدوات زي Codecov بتقدر تقيس الـ <b>patch coverage</b>: نسبة السطور الجديدة في الـ PR اللي عليها تستات. ده أعدل من الرقم الكلي في مشروع قديم: مش مطلوب منك تصلح تاريخ المشروع، مطلوب إن الجديد مايبقاش من غير تستات.
+
+### تكلفة كل نوع
+
+كل نوع تست ليه تمن، والـ strategy هي إنك تدفع التمن في المكان اللي يستاهل:
+
+| النوع | الكتابة | التشغيل | الصيانة | بيمسك |
+| --- | --- | --- | --- | --- |
+| unit (domain) | دقايق | ملي ثواني | قليلة | أخطاء القواعد |
+| contract test | ساعة مرة واحدة | ملي ثواني | قليلة | fake مابقاش زي الحقيقي |
+| blocTest | دقايق | ملي ثواني | قليلة | تسلسل الـ states، والـ races |
+| widget test | 15 لـ 30 دقيقة | أقل من ثانية | متوسطة | سلوك الشاشة |
+| golden | قليل | ثواني | عالية: أي تغيير design | الشكل والـ RTL والـ dark mode |
+| integration | ساعات | دقايق، ومحتاج جهاز | عالية، وأكتر حاجة flaky | الـ wiring بين كل الطبقات |
+| property (glados) | نص ساعة | ثواني | قليلة | الحالات اللي ماخطرتش على بالك |
+| mutation | config مرة واحدة | ساعات | قليلة | التستات الضعيفة نفسها |
+
+### ورقة الـ test strategy
+
+الورقة دي مش document رسمي محدش بيقراه. صفحة واحدة في الـ repo، بتتعمل لها review زي الكود، وبترد على الأسئلة اللي بتتكرر في الـ PRs: «ده محتاج تست؟ أنهي نوع؟ أعمل mock ولا fake؟».
+
+<CodeBlock label="docs/testing-strategy.md">
+
+```markdown
+# Readly testing strategy
+
+## What we test, with what
+| Code                                 | Test                                  | Doubles                    |
+| ------------------------------------ | ------------------------------------- | -------------------------- |
+| domain rules (readingStreak, AddBook)| unit, TDD; glados for date/time rules | fakes, FixedClock          |
+| DTOs and mappers                     | unit on real Open Library fixtures    | none                       |
+| repositories                         | unit + contract tests shared w/ fakes | fake sources, HttpClientAdapter |
+| drift DAOs                           | NativeDatabase.memory()               | none                       |
+| Cubits                               | blocTest + fake_async                 | mocktail for use cases     |
+| screens                              | widget tests for behavior             | MockCubit                  |
+| 6 key screens                        | goldens: light/dark x ar/en           | MockCubit                  |
+| login -> search -> add -> offline sync | integration_test, fake backend      | DI overrides               |
+
+## Rules
+- Every behavior change comes with a test. Every bug starts with a failing test.
+- No real network, no DateTime.now(), no real delays under test/.
+- Coverage floors: domain 95%, data 85%. Floors only go up.
+- Flaky: tag `flaky` + issue + owner. Fixed or deleted within 2 weeks.
+- PR CI stays under 10 minutes. Slow or random checks go to nightly.
+
+## Not tested on purpose
+- get_it registrations and routes: the integration test covers the wiring.
+- Generated code (*.g.dart, *.freezed.dart).
+- Layout details outside the 6 golden screens.
+```
+
+</CodeBlock>
+
+- <b>جدول «إيه بإيه»:</b> أهم جزء. حد جديد في الفريق بيكتب repository، بيبص في سطر واحد ويعرف: contract test وfake sources. مافيش نقاش في الـ PR عن mocktail ولا fakes.
+- <b>«مش بنختبره عن قصد»:</b> بيقفل نقاشات كتير. «ليه مافيش تست للـ DI؟» إجابته مكتوبة، ومعاها السبب.
+- <b>الأرقام فيها سبب:</b> 10 دقايق للـ CI، لأن أبطأ من كده الناس بتجمّع تغييرات في PR كبير عشان ماتستناش. وأسبوعين للـ flaky، لأن أطول من كده بيبقى «عادي».
+- <b>بتتغير:</b> لما الفريق يقرر يضيف patrol أو يشيل نوع، الورقة بتتعدّل في PR، زي أي ADR.
+
+### قرارات تانية
+
+- <b>سرعة الـ suite جزء من الجودة:</b> لو `flutter test` بياخد 6 دقايق على جهازك، محدش هيشغّله قبل الـ push، والـ TDD بيبقى مستحيل. راقب أبطأ التستات (الـ reporter `expanded` بيوري الوقت)، وانقل البطيء لـ tag أو لـ nightly.
+- <b>امسح التستات اللي مابتدفعش تمنها:</b> تست بيتكسر مع كل refactor ومامسكش bug واحد في سنة، أو golden لشاشة بتتغير كل أسبوع، تكلفته أكبر من فايدته. المسح قرار هندسي عادي، بيتعمل في PR وفيه سبب.
+- <b>الـ pyramid ولا الـ trophy:</b> الـ trophy (أغلب الشغل في الـ integration) منطقي لـ app أغلبه UI بيكلّم API. Readly فيها domain حقيقي (الـ sync، والـ conflicts، والسلسلة)، فالقاعدة العريضة من unit tests منطقية أكتر، وفوقها widget tests كتير، وintegration قليل للـ flows الحرجة.
+- <b>الـ mutation testing مش gate:</b> بطيء، والـ score فيه noise من الـ mutants اللي مابتعملش compile. شغّله بالليل على الـ domain، وبص على الـ mutants اللي عاشت في الـ review الأسبوعي، مش على الرقم.
+- <b>الـ random order:</b> ابدأ بيه في الـ nightly لحد ما الـ suite تنضف من الـ order dependencies، وبعدين انقله للـ PR. لو حطيته في الـ PR من أول يوم، كل واحد هيقابل فشل في تست مش بتاعه، والفريق هيكره الأداة قبل ما تفيد.
+
+<Note kind="interview" title="سؤال interview">
+
+«عندكم 92% coverage وbugs لسه بتعدّي. تعمل إيه؟» الـ coverage بيقيس السطور اللي اتنفّذت، مش اللي اتأكدنا منها، فالرقم العالي ممكن ييجي من تستات من غير assertions كفاية، والـ bug ممكن يبقى في سطر عليه 100% بس الحالة نفسها ماتختبرتش. أول حاجة كل bug بيتصلّح bug-first، فيتحول لتست. بعدين أشوف جودة التستات مش كميتها: mutation testing على الـ domain بالليل (وأقول بصراحة إن mutation_test في Dart regex-based فبقرا الـ mutants اللي عاشت مش الـ score)، وproperty-based بـ glados للقواعد اللي فيها تواريخ وأرقام. وأتأكد إن التقرير نفسه صادق: الفايلات اللي محدش عملها import بتختفي من lcov، فبحط تست بيعمل import لكل `lib/`، وبشيل الـ generated. والـ thresholds لكل طبقة مش رقم واحد، وبتطلع بس. وفي الآخر ورقة strategy بتقول بنختبر إيه بإيه، عشان الـ coverage يبقى نتيجة strategy مش هدف.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### تست بيرفع الـ coverage ومابيختبرش حاجة
+
+<BeforeAfter>
+
+<Side label="قبل: 100% سطور، 0 حماية" kind="before">
+
+```dart
+test('readingStreak works', () {
+  readingStreak([daysAgo(0), daysAgo(1), daysAgo(3)], now: now);
+  readingStreak([], now: now);
+  readingStreak([daysAgo(2)], now: now);
+  // every line ran: coverage is happy
+});
+```
+
+</Side>
+
+<Side label="بعد: كل حالة ليها assertion" kind="after">
+
+```dart
+test('a gap breaks the streak', () {
+  expect(readingStreak([daysAgo(0), daysAgo(1), daysAgo(3)], now: now), 2);
+});
+
+test('no sessions means no streak', () {
+  expect(readingStreak([], now: now), 0);
+});
+
+test('a session two days ago is a broken streak', () {
+  expect(readingStreak([daysAgo(2)], now: now), 0);
+});
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: الـ coverage 100%، وأي mutant في الـ function هيعيش، لأن مفيش ولا `expect`. ده بالظبط الفرق اللي الـ mutation testing بيكشفه والـ coverage مش شايفه. بعد: نفس الـ coverage، بس كل سطر عليه حارس، والـ mutants بتموت.
+
+### الـ flaky: state مشتركة
+
+<BeforeAfter>
+
+<Side label="قبل: fake واحد للفايل" kind="before">
+
+```dart
+final repository = FakeLibraryRepository();
+
+void main() {
+  test('adds a new book', () async { /* ... */ });
+  test('rejects a duplicate', () async { /* ... */ });
+}
+```
+
+</Side>
+
+<Side label="بعد: fake جديد لكل تست" kind="after">
+
+```dart
+late FakeLibraryRepository repository;
+
+void main() {
+  setUp(() => repository = FakeLibraryRepository());
+
+  test('adds a new book', () async { /* ... */ });
+  test('rejects a duplicate', () async { /* ... */ });
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: الاتنين ناجحين بالترتيب العادي، والتاني ناجح للسبب الغلط، ومع `--test-randomize-ordering-seed random` واحد منهم بيقع مرة من اتنين. بعد: كل تست بيبدأ من الصفر، والترتيب مابقاش فارق.
+
+### الـ nightly
+
+ده الـ workflow اللي بيشغّل كل الحاجات البطيئة أو العشوائية بالليل. والـ integration tests على الـ emulator مش هنا: ليها `integration.yml` لوحدها في [درس الـ integration](/course/testing/integration/)، لأنها محتاجة KVM ووقت أطول.
+
+<CodeBlock label=".github/workflows/nightly.yml">
+
+```yaml
+name: nightly
+on:
+  schedule:
+    - cron: "0 1 * * *" # 01:00 UTC
+  workflow_dispatch: # run it by hand when needed
+
+jobs:
+  random-order:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version-file: pubspec.yaml
+          cache: true
+      - run: flutter pub get
+      - name: All tests, random order, 5 times
+        run: |
+          for run in 1 2 3 4 5; do
+            for pkg in apps/readly packages/*; do
+              [ -d "$pkg/test" ] || continue
+              (cd "$pkg" && flutter test --test-randomize-ordering-seed random \
+                --reporter failures-only) || exit 1
+            done
+          done
+
+  property:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version-file: pubspec.yaml
+          cache: true
+      - run: flutter pub get
+      - name: Property tests with a fresh seed
+        working-directory: packages/feature_library
+        run: |
+          export GLADOS_SEED=$RANDOM
+          echo "GLADOS_SEED=$GLADOS_SEED"
+          flutter test -t property
+
+  mutation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version-file: pubspec.yaml
+          cache: true
+      - run: flutter pub get
+      - name: Mutation test, library domain
+        working-directory: packages/feature_library
+        run: |
+          flutter test --coverage test/src/domain
+          dart run mutation_test mutation.xml --coverage coverage/lcov.info -o mutation-report
+      - uses: actions/upload-artifact@v4
+        if: always() # the report matters most when the threshold fails
+        with:
+          name: mutation-report
+          path: packages/feature_library/mutation-report
+```
+
+</CodeBlock>
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="t-strategy-1">
+<Ask>الـ domain عنده 97% coverage، ومع ذلك bug في قاعدة السلسلة وصل للمستخدمين. إزاي ده ممكن، وإيه الأداة اللي بتقيس اللي الـ coverage مش شايفه؟</Ask>
+<Answer>
+
+الـ coverage بيقيس إن السطر اتنفّذ وقت التست، مش إن التست اتأكد من نتيجته في كل الحالات. السطر الغلط كان عليه coverage، بس الحالة اللي بتكسره (ساعات مختلفة) ماكانتش في الأمثلة. الـ mutation testing بيقيس جودة التستات (التستات بتمسك تغيير في الكود؟)، والـ property-based testing بيدوّر على الحالات اللي ماخطرتش على بالك.
+
+</Answer>
+</Question>
+
+<Question id="t-strategy-2">
+<Ask>فايل `notes_sync.dart` مفيش عليه ولا تست. هيظهر في `lcov.info` بـ 0%؟ وإيه تأثير ده على الرقم الكلي، وتصلحه إزاي؟</Ask>
+<Answer>
+
+لأ، مش هيظهر خالص، لأن الـ coverage بيتجمع من الـ libraries اللي اتعملها load وقت التستات بس. فالنسبة الكلية بتطلع أعلى من الحقيقة، والفايلات اللي محتاجة تستات أكتر بتستخبى. الحل تست متولّد بيعمل import لكل فايلات `lib/` (من غير الـ part files والـ generated)، فكل فايل يظهر حتى لو بـ 0%.
+
+</Answer>
+</Question>
+
+<Question id="t-strategy-3">
+<Ask>تست بيفشل في الـ CI مرة كل 20 run تقريبًا. إيه الخطوات؟ وتحط `retry: 3` وخلاص؟</Ask>
+<Answer>
+
+تخليه يفشل قدامك: loop بيشغّله كتير بـ `--test-randomize-ordering-seed random` لحد ما يقع، وتاخد الـ seed المطبوع فيبقى بيفشل كل مرة. بعدين تدوّر على الأسباب المعروفة: state مشتركة، أو `DateTime.now()`، أو انتظار حقيقي، أو future مااتستناش، أو `pumpAndSettle` مع animation. الـ retry مسكّن مؤقت بس: بـ tag `flaky` وissue وowner وموعد، وممكن يكون مخبّي race حقيقي في الكود. ولو محدش هيصلّحه، يتمسح.
+
+</Answer>
+</Question>
+
+<Question id="t-strategy-4">
+<Ask>ليه مش منطقي تخلي mutation_test يوقف الـ merge على كل PR؟</Ask>
+<Answer>
+
+بطيء جدًا (كل mutant بيشغّل الـ test command كامل)، والأداة في Dart بتغيّر النص بـ regex من غير ما تفهم Dart، فبتطلّع mutants مابتعملش compile وبتتحسب «اتقتلت»، فالـ score فيه noise. وبتعدّل الملفات في مكانها. الأنسب تشغّلها بالليل على الـ domain أو على الفايلات اللي اتغيرت من غير ما توقف حد، وتقرا الـ mutants اللي عاشت مش الرقم.
+
+</Answer>
+</Question>
+
+<Question id="t-strategy-5">
+<Ask>اكتب خاصية (property) واحدة لـ `readingStreak`. وليه glados بيستخدم seed ثابت by default، وإزاي تستكشف مدخلات جديدة؟</Ask>
+<Answer>
+
+مثلًا: «لو السلسلة أكبر من صفر، يبقى في جلسة النهارده أو امبارح»، أو «الترتيب والتكرار مابيغيروش النتيجة». الـ seed الثابت (`Random(42)`) بيخلي تست الـ PR deterministic: نفس المدخلات كل مرة، فمايفشلش على نفس الكود يوم وينجح يوم. ولاستكشاف مدخلات جديدة، الـ nightly بيمرر seed مختلف في `ExploreConfig(random: Random(seed))` ويطبعه، وأي فشل بيتحول لتست بمثال ثابت.
+
+</Answer>
+</Question>
+
+</Quiz>

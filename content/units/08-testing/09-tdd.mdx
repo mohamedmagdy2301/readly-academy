@@ -1,0 +1,883 @@
+---
+title: "TDD: التست الأول، والكود بعده"
+description: "جلسة TDD كاملة على قاعدة حقيقية في Readly خطوة خطوة، وإزاي كل bug يبدأ بتست فاشل، وتستات الكود القديم، وامتى TDD مايفيدش."
+minutes: 30
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="الترزي والمقاسات">
+
+الترزي الشاطر مابيقصّش القماش الأول ويشوف بعدين هيلبس ولا لأ. بياخد المقاسات الأول: الكتف، والكم، والوسط. ويكتبهم في ورقة. وبعدين بيقص حتة، ويقيس على الورقة، ويكمّل. ولو حاجة مش مظبوطة، بيعرف فورًا أنهي مقاس اللي باظ، لأنه بيقيس بعد كل قصة، مش بعد ما البدلة تخلص.
+
+ولو الزبون رجع بعد أسبوع وقال «الكم قصير»، الترزي الشاطر مابيفكش الخياطة على طول. بيقيس الكم الأول ويكتب الرقم الصح في الورقة، عشان المرة الجاية اللي يفصّل فيها نفس البدلة، الغلطة دي ماترجعش.
+
+</Analogy>
+
+الـ <b>TDD</b> (Test-Driven Development) هو نفس الفكرة: <b>التست هو المقاس</b>. قبل ما تكتب سطر كود، بتكتب تست صغير بيقول الكود المفروض يعمل إيه في حالة واحدة. التست يفشل (طبيعي، الكود لسه مش موجود). بعدين تكتب أقل كود يخليه يعدّي. بعدين تنضّف. وتعيد مع الحالة اللي بعدها.
+
+الدورة دي اسمها <b>Red → Green → Refactor</b>:
+
+- <b>Red:</b> تست واحد بيفشل. ده المقاس اللي لسه ماوصلتلوش.
+- <b>Green:</b> أقل كود يخلي التست يعدّي. مش الكود الحلو، الكود اللي بيعدّي.
+- <b>Refactor:</b> دلوقتي وانت متأمّن بالتستات، نضّف الكود والتستات من غير ما تغيّر السلوك.
+
+<Diagram name="d-test-tdd-cycle">
+
+كل لفة في الدورة بتاخد دقايق. التست الأحمر هو الـ spec، والأخضر هو إن الكود شغال، والـ refactor هو إن الكود يبقى مقروء. ولو الأحمر طوّل معاك، يبقى الخطوة كانت كبيرة: ارجع وخد خطوة أصغر.
+
+</Diagram>
+
+والجزء التاني من التشبيه، الزبون اللي رجع بالكم القصير، هو <b>bug-first</b>: أي bug بيتصلّح بيبدأ بتست بيفشل بسببه. التست ده بيثبت إنك فهمت الـ bug، وبيضمن إنه مايرجعش تاني أبدًا.
+
+في الدرس ده هنعمل جلسة TDD كاملة على قاعدة حقيقية في Readly، ونشوف الكود في كل خطوة. وبعدين هيطلع فيها bug، وهنصلّحه بالطريقة الصح.
+
+</Level>
+
+<Level n="2" title="جلسة TDD كاملة على سلسلة القراءة">
+
+### الـ feature
+
+الـ PM عايز في صفحة المكتبة رقم صغير جنبه نار: «سلسلة القراءة»، يعني بقالك كام يوم ورا بعض بتقرا. كل مرة المستخدم يسجّل إنه قرا (يحدّث الصفحة اللي وصلها مثلًا)، الـ app بيحفظ وقت الجلسة. والمطلوب function في الـ domain تاخد أوقات الجلسات والوقت الحالي، وترجّع طول السلسلة.
+
+ده مثال مثالي لـ TDD: قاعدة business فيها حالات كتير، ومفيهاش UI ولا شبكة، وسهل تغلط فيها. وقبل أي كود، بتقعد مع الـ PM وتكتب الحالات:
+
+<CodeBlock label="test/features/library/domain/reading_streak_test.dart: الـ test list">
+
+```dart
+// Test list (cross out as you go):
+// [ ] no sessions -> 0
+// [ ] one session today -> 1
+// [ ] today + yesterday -> 2
+// [ ] two sessions on the same day count once
+// [ ] yesterday only -> still 1 (today isn't over yet)
+// [ ] last session two days ago -> 0
+// [ ] a gap breaks it: today, yesterday, 3 days ago -> 2
+```
+
+</CodeBlock>
+
+- <b>الـ test list:</b> فكرة Kent Beck، صاحب الـ TDD. ورقة بكل الحالات اللي جت في بالك، من الأسهل للأصعب. مش لازم تبقى كاملة، وهتزوّد عليها وانت شغال. بس هي اللي بتخليك ماتتوهش.
+- <b>«امبارح بس» = 1:</b> دي قاعدة business مش تفصيلة تقنية. لو قريت امبارح ولسه ماقريتش النهارده، السلسلة لسه عايشة لحد آخر اليوم. الحاجات دي بتتقرر مع الـ PM <b>قبل</b> الكود، والـ test list هي المكان اللي بتظهر فيه.
+
+قبل ما نبدأ، فايل فاضي للكود وفايل للتست:
+
+```bash
+mkdir -p lib/features/library/domain test/features/library/domain
+touch lib/features/library/domain/reading_streak.dart
+```
+
+### اللفة 1: مفيش جلسات
+
+<b>Red.</b> أسهل حالة في الليستة:
+
+<CodeBlock label="reading_streak_test.dart">
+
+```dart
+import 'package:flutter_test/flutter_test.dart'; // the app's tests use flutter_test, not package:test
+import 'package:readly/features/library/domain/reading_streak.dart';
+
+void main() {
+  test('no sessions means no streak', () {
+    expect(readingStreak([], now: DateTime(2026, 10, 4, 21)), 0);
+  });
+}
+```
+
+</CodeBlock>
+
+```bash
+flutter test test/features/library/domain/reading_streak_test.dart
+```
+
+```text
+test/features/library/domain/reading_streak_test.dart:6:12: Error: Method not found: 'readingStreak'.
+    expect(readingStreak([], now: DateTime(2026, 10, 4, 21)), 0);
+           ^^^^^^^^^^^^^
+```
+
+- <b>الـ compile error = red:</b> التست مش لازم يوصل لـ `expect` عشان يبقى أحمر. وفي اللحظة دي انت قررت شكل الـ API: اسمها `readingStreak`، وبتاخد `Iterable<DateTime>`، والوقت الحالي parameter اسمه `now`. التست هو أول مستخدم للكود، فبيجبرك تفكر في الكود من بره قبل جوه.
+- <b>الـ now parameter مش `DateTime.now()`:</b> لو الـ function بتسأل الجهاز عن الوقت، التست هيعدّي النهارده ويفشل بكرة. ده قرار تصميم طلع من التست نفسه.
+
+<b>Green.</b> أقل كود يخلي التست يعدّي:
+
+<CodeBlock label="lib/features/library/domain/reading_streak.dart">
+
+```dart
+int readingStreak(Iterable<DateTime> sessions, {required DateTime now}) => 0;
+```
+
+</CodeBlock>
+
+```text
+00:01 +1: All tests passed!
+```
+
+أيوه، `=> 0`. ده اسمه <b>Fake it</b>: ترجّع القيمة اللي التست مستنيها بالظبط. شكله هزار، بس ليه سببين: بتتأكد إن التست نفسه بيشتغل ومتوصّل صح، وبتسيب الحالات الجاية هي اللي تجبرك تكتب الـ logic الحقيقي. <b>Refactor:</b> مفيش حاجة تتنضف.
+
+### اللفة 2: جلسة النهارده
+
+<b>Red.</b>
+
+<CodeBlock label="reading_streak_test.dart">
+
+```dart
+test('one session today is a streak of 1', () {
+  final now = DateTime(2026, 10, 4, 21);
+  expect(readingStreak([DateTime(2026, 10, 4, 20)], now: now), 1);
+});
+```
+
+</CodeBlock>
+
+```text
+00:01 +1 -1: one session today is a streak of 1 [E]
+  Expected: <1>
+    Actual: <0>
+```
+
+- <b>اقرا سبب الفشل:</b> `Expected: <1> Actual: <0>` هو بالظبط الفشل اللي توقعته. لو فشل بسبب تاني (exception مثلًا، أو import غلط)، يبقى التست مش بيختبر اللي انت فاكره. «فشل للسبب الصح» نص الشغل في الـ Red.
+
+<b>Green.</b>
+
+```dart
+int readingStreak(Iterable<DateTime> sessions, {required DateTime now}) =>
+    sessions.isEmpty ? 0 : 1;
+```
+
+لسه fake، بس fake أذكى شوية. التستين خضر.
+
+### اللفة 3: النهارده وامبارح
+
+<b>Red.</b>
+
+<CodeBlock label="reading_streak_test.dart">
+
+```dart
+test('today and yesterday make a streak of 2', () {
+  final now = DateTime(2026, 10, 4, 21);
+  final sessions = [DateTime(2026, 10, 4, 20), DateTime(2026, 10, 3, 20)];
+  expect(readingStreak(sessions, now: now), 2);
+});
+```
+
+</CodeBlock>
+
+```text
+  Expected: <2>
+    Actual: <1>
+```
+
+<b>Green.</b>
+
+```dart
+int readingStreak(Iterable<DateTime> sessions, {required DateTime now}) =>
+    sessions.length;
+```
+
+- <b>Triangulation:</b> 3 أمثلة (0 و1 و2) أجبروك تسيب الأرقام الثابتة وتكتب حاجة عامة. ده اسمه triangulation: كل مثال جديد بيقفل fake، لحد ما الحل الحقيقي يبقى أسهل من أي fake.
+- <b>`sessions.length` غلط، وانت عارف:</b> بس مفيش تست بيقول إنه غلط لسه. في TDD ماتكتبش كود لحالة مفيش ليها تست. الحالة الجاية في الليستة هي اللي هتكسره.
+
+<b>Refactor.</b> التستات بقت فيها `DateTime(2026, 10, 4, ...)` متكررة، والقارئ لازم يحسب «ده امبارح ولا أول امبارح؟». نضّف التستات نفسها:
+
+<CodeBlock label="reading_streak_test.dart بعد الـ refactor">
+
+```dart
+void main() {
+  // Sunday 4 Oct 2026, 21:00
+  final now = DateTime(2026, 10, 4, 21);
+  DateTime daysAgo(int days, {int hour = 20}) =>
+      DateTime(2026, 10, 4 - days, hour); // DateTime rolls over month ends
+
+  group('readingStreak', () {
+    test('no sessions means no streak', () {
+      expect(readingStreak([], now: now), 0);
+    });
+
+    test('one session today is a streak of 1', () {
+      expect(readingStreak([daysAgo(0)], now: now), 1);
+    });
+
+    test('today and yesterday make a streak of 2', () {
+      expect(readingStreak([daysAgo(0), daysAgo(1)], now: now), 2);
+    });
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>الـ refactor بيشمل التستات:</b> التستات كود بيتقرا أكتر ما بيتكتب. `daysAgo(1)` بتقول «امبارح» من غير حسابات.
+- <b>الـ `4 - days`:</b> `DateTime(2026, 10, 0)` بتبقى 30 سبتمبر لوحدها، فالـ helper شغال حتى لو عدّى أول الشهر.
+- <b>شغّل التستات بعد الـ refactor:</b> لسه خضرا؟ يبقى الـ refactor ماغيّرش سلوك. ده التعريف كله.
+
+### اللفة 4: جلستين في نفس اليوم
+
+<b>Red.</b>
+
+```dart
+test('two sessions on the same day count once', () {
+  expect(readingStreak([daysAgo(0, hour: 8), daysAgo(0, hour: 22)], now: now), 1);
+});
+```
+
+```text
+  Expected: <1>
+    Actual: <2>
+```
+
+<b>Green.</b> محتاج تعدّ <b>أيام</b> مش جلسات:
+
+```dart
+int readingStreak(Iterable<DateTime> sessions, {required DateTime now}) =>
+    {for (final s in sessions) DateTime(s.year, s.month, s.day)}.length;
+```
+
+<b>Refactor.</b> الـ `DateTime(s.year, s.month, s.day)` فكرة ليها اسم: «اليوم بتاع اللحظة دي». طلّعها في function:
+
+<CodeBlock label="reading_streak.dart">
+
+```dart
+int readingStreak(Iterable<DateTime> sessions, {required DateTime now}) =>
+    sessions.map(_dayOf).toSet().length;
+
+// a calendar day as a UTC midnight: no DST, so days are exactly 24h apart
+DateTime _dayOf(DateTime t) => DateTime.utc(t.year, t.month, t.day);
+```
+
+</CodeBlock>
+
+- <b>ليه `DateTime.utc`؟</b> الـ year والـ month والـ day جايين من الوقت المحلي بتاع المستخدم، بس منتصف الليل نفسه بنحطه في UTC. السبب في Level 3: في يوم تغيير الساعة الصيفي، اليوم المحلي بيبقى 23 ساعة. هنا مش فارقة، بس هتفرق في اللفة 7.
+- <b>`_dayOf` private ومالهاش تست لوحدها:</b> هي تفصيلة. التستات بتكلّم `readingStreak` بس، فتقدر تغيّر `_dayOf` أو تمسحها من غير ما تستة واحدة تتكسر.
+
+### اللفة 5: امبارح بس
+
+<b>Red؟</b>
+
+```dart
+test('a session yesterday keeps the streak alive today', () {
+  expect(readingStreak([daysAgo(1)], now: now), 1);
+});
+```
+
+```text
+00:01 +5: All tests passed!
+```
+
+التست <b>عدّى من أول مرة</b>. ده بيحصل، وليه معنيين: يا إما الكود فعلًا بيعمل السلوك ده (هنا أيوه: يوم واحد = 1)، يا إما التست غلط ومش بيختبر حاجة. عشان تفرّق، <b>اكسر الكود بإيدك</b>: خلّي الـ function ترجّع `0` وشغّل. لو التست وقع، يبقى بيحرس فعلًا. رجّع الكود وسيب التست: هو توثيق لقاعدة business مهمة، والـ refactor الجاي ممكن يكسرها.
+
+### اللفة 6: آخر جلسة من يومين
+
+<b>Red.</b>
+
+```dart
+test('a session two days ago is a broken streak', () {
+  expect(readingStreak([daysAgo(2)], now: now), 0);
+});
+```
+
+```text
+  Expected: <0>
+    Actual: <1>
+```
+
+<b>Green.</b> لو آخر جلسة بعيدة، السلسلة انتهت:
+
+<CodeBlock label="reading_streak.dart">
+
+```dart
+int readingStreak(Iterable<DateTime> sessions, {required DateTime now}) {
+  if (sessions.isEmpty) return 0;
+  final last = sessions.reduce((a, b) => a.isAfter(b) ? a : b);
+  if (now.difference(last).inDays > 1) return 0; // missed a day
+  return sessions.map(_dayOf).toSet().length;
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `isEmpty` الأول:</b> `reduce` على list فاضية بيرمي `StateError`. التست بتاع اللفة 1 هو اللي مسك ده لما جربت من غير السطر ده. التستات القديمة بتحرسك وانت بتكتب الجديدة.
+- <b>خلي بالك من السطر بتاع `difference`.</b> شكله منطقي، والتستات كلها خضرا. هنرجعله.
+
+### اللفة 7: فجوة في النص
+
+<b>Red.</b>
+
+```dart
+test('a gap breaks the streak', () {
+  final sessions = [daysAgo(0), daysAgo(1), daysAgo(3)];
+  expect(readingStreak(sessions, now: now), 2);
+});
+```
+
+```text
+  Expected: <2>
+    Actual: <3>
+```
+
+الـ `toSet().length` بيعدّ كل الأيام، حتى اللي قبل الفجوة. الـ fake خلص، ومحتاج الـ logic الحقيقي: رتّب الأيام من الأحدث، وعدّ طول ما كل يوم بعد اللي قبله بيوم بالظبط.
+
+<b>Green.</b>
+
+<CodeBlock label="reading_streak.dart">
+
+```dart
+int readingStreak(Iterable<DateTime> sessions, {required DateTime now}) {
+  if (sessions.isEmpty) return 0;
+  final last = sessions.reduce((a, b) => a.isAfter(b) ? a : b);
+  if (now.difference(last).inDays > 1) return 0; // missed a day
+
+  final days = sessions.map(_dayOf).toSet().toList()
+    ..sort((a, b) => b.compareTo(a)); // newest first
+  var streak = 1;
+  for (var i = 1; i < days.length; i++) {
+    if (days[i - 1].difference(days[i]).inDays != 1) break;
+    streak++;
+  }
+  return streak;
+}
+```
+
+</CodeBlock>
+
+```text
+00:01 +7: All tests passed!
+```
+
+- <b>هنا الـ UTC فرق:</b> `days[i - 1].difference(days[i])` بين يومين في UTC دايمًا 24 ساعة بالظبط. لو كانوا منتصف ليل محلي، في يوم تغيير الساعة الفرق هيبقى 23 ساعة، و`inDays` هيطلع 0، والسلسلة هتتقطع من غير سبب.
+- <b>كل التستات القديمة خضرا:</b> ده الأمان اللي بتبنيه في كل لفة. كتبت loop جديدة بالكامل، وفي ثانية عرفت إن الـ 6 حالات اللي قبلها لسه شغالة.
+
+<b>Refactor.</b> الكود مقروء، والـ test list خلصت. آخر حاجة: doc comment على الـ function العامة بيقول القاعدة بالكلام:
+
+```dart
+/// Consecutive calendar days with at least one reading session, ending
+/// today or yesterday (today isn't over, so the streak is still alive).
+int readingStreak(Iterable<DateTime> sessions, {required DateTime now}) {
+```
+
+### Given/When/Then: التست كـ spec
+
+الـ AAA (Arrange, Act, Assert) اللي في [درس الـ unit tests](/course/testing/unit-tests/) ليها اسم تاني بلغة الـ business: <b>Given/When/Then</b>. نفس الخطوات التلاتة، بس بتتكتب بحيث الـ PM يقدر يقراها:
+
+<CodeBlock label="Given/When/Then في الأسماء والـ body">
+
+```dart
+group('given a session yesterday and none today', () {
+  test('then the streak is still alive', () {
+    // Given
+    final sessions = [daysAgo(1)];
+    // When
+    final streak = readingStreak(sessions, now: now);
+    // Then
+    expect(streak, 1);
+  });
+});
+```
+
+</CodeBlock>
+
+```bash
+flutter test test/features/library/domain --reporter expanded
+```
+
+```text
+00:00 +0: readingStreak given a session yesterday and none today then the streak is still alive
+00:00 +1: readingStreak a session two days ago is a broken streak
+...
+```
+
+- <b>الـ output بقى spec:</b> الـ reporter `expanded` بيطبع اسم كل تست في سطر. لو الأسماء بالشكل ده، الـ output نفسه قايمة بقواعد الـ feature، وتقدر تبعتها للـ PM يراجعها.
+- <b>مش لازم كل تست:</b> للحالات البسيطة، اسم واحد واضح زي `'two sessions on the same day count once'` كفاية. استخدم Given/When/Then لما الـ setup نفسه جزء من القاعدة («given a session yesterday»).
+
+### الـ bug: bug-first
+
+الـ feature نزلت. بعد أسبوع جه issue من مستخدم:
+
+> «قريت الاتنين بالليل والتلات قبل ما أنام، ونسيت الأربع خالص. الخميس الصبح فتحت الـ app لقيت السلسلة 2. المفروض تبقى اتقطعت.»
+
+الإغراء إنك تفتح `reading_streak.dart` وتصلّح على طول. ماتعملش كده. <b>أول خطوة تست بيفشل بنفس اللي المستخدم شافه</b>:
+
+<CodeBlock label="reading_streak_test.dart: التست اللي بيعيد الـ bug">
+
+```dart
+// issue #212: streak survived a whole missed day
+test('a missed calendar day breaks the streak, even under 48 hours', () {
+  // Given: Monday 22:00 and Tuesday 23:30, nothing on Wednesday
+  final sessions = [DateTime(2026, 9, 28, 22), DateTime(2026, 9, 29, 23, 30)];
+  // When: it's Thursday 08:00
+  final streak = readingStreak(sessions, now: DateTime(2026, 10, 1, 8));
+  // Then
+  expect(streak, 0);
+});
+```
+
+</CodeBlock>
+
+```text
+00:01 +7 -1: a missed calendar day breaks the streak, even under 48 hours [E]
+  Expected: <0>
+    Actual: <2>
+```
+
+التست فشل بنفس الرقم اللي المستخدم شافه. دلوقتي انت <b>فاهم</b> الـ bug، مش بتخمّن: من التلات 23:30 للخميس 08:00 هما 32.5 ساعة، و`inDays` بيطلع 1، فالسطر `now.difference(last).inDays > 1` شايف إن السلسلة لسه عايشة. المشكلة إنه بيقيس <b>مدة</b> بالساعات، والقاعدة بتتكلم عن <b>أيام في النتيجة</b>.
+
+<b>التصليح:</b> قارن أيام بأيام، زي باقي الـ function:
+
+<CodeBlock label="reading_streak.dart بعد التصليح">
+
+```dart
+/// Consecutive calendar days with at least one reading session, ending
+/// today or yesterday (today isn't over, so the streak is still alive).
+int readingStreak(Iterable<DateTime> sessions, {required DateTime now}) {
+  final days = sessions.map(_dayOf).toSet().toList()
+    ..sort((a, b) => b.compareTo(a)); // newest first
+  if (days.isEmpty) return 0;
+  // calendar days, not hours: Tuesday 23:30 -> Thursday 08:00 missed Wednesday
+  if (_dayOf(now).difference(days.first).inDays > 1) return 0;
+
+  var streak = 1;
+  for (var i = 1; i < days.length; i++) {
+    if (days[i - 1].difference(days[i]).inDays != 1) break;
+    streak++;
+  }
+  return streak;
+}
+
+// a calendar day as a UTC midnight: no DST, so days are exactly 24h apart
+DateTime _dayOf(DateTime t) => DateTime.utc(t.year, t.month, t.day);
+```
+
+</CodeBlock>
+
+```text
+00:01 +8: All tests passed!
+```
+
+- <b>الـ 8 خضرا:</b> التست الجديد عدّى، والـ 7 القدام بيقولوا إن التصليح ماكسرش حاجة. ومن غير التستات دي، كنت هتصلّح الـ bug ده وتقلق «يا ترى كسرت حالة امبارح بس؟».
+- <b>الكود اتبسّط:</b> `last` و`reduce` اتشالوا، والـ `isEmpty` بقى على `days`. كتير الـ bug بيبقى علامة إن في فكرتين بيعملوا نفس الحاجة بطريقتين، والتصليح الصح بيوحّدهم.
+- <b>اتأكد إن التست بيحرس:</b> رجّع السطر القديم مؤقتًا، والتست الجديد لازم يقع. ده نفس «اكسر الكود بإيدك» من اللفة 5.
+
+ليه الـ TDD مامسكش ده من الأول؟ لأن كل الـ fixtures كانت الساعة 20:00 والـ `now` الساعة 21:00، فالمدة بالساعات والأيام في النتيجة كانوا دايمًا متفقين. <b>الـ TDD بيحمي الحالات اللي فكرت فيها بس.</b> ده مش عيب في الطريقة، ده حدودها. وفي [درس الاستراتيجية](/course/testing/strategy/) هنشوف property-based testing: بدل ما تختار الساعات بنفسك، أداة بتجرب مئات الساعات العشوائية وكانت هتلاقي الحالة دي لوحدها.
+
+</Level>
+
+<Level n="3" title="الحالات الصعبة: الوقت، والكود القديم، والـ use cases">
+
+### TDD لـ use case: الوقت ييجي منين؟
+
+الـ `readingStreak` بتاخد `now` كـ parameter. طب مين بيديها الوقت الحقيقي؟ الـ use case، من `Clock`، زي ما اتعلمنا في [درس SOLID](/course/quality/solid-basics/). ونفس الدورة بتشتغل هنا، بس التست بيكلّم الـ use case بـ fake للـ log و`FixedClock` من [درس الـ test doubles](/course/testing/test-doubles/):
+
+<CodeBlock label="test/features/library/domain/get_reading_streak_test.dart (Red)">
+
+```dart
+class FakeReadingLog implements ReadingLog {
+  FakeReadingLog(this.result);
+  Result<List<DateTime>> result;
+
+  @override
+  Future<Result<List<DateTime>>> sessions() async => result;
+}
+
+void main() {
+  late FixedClock clock;
+  late FakeReadingLog log;
+  late GetReadingStreak getStreak;
+
+  setUp(() {
+    clock = FixedClock(DateTime(2026, 10, 4, 21)); // Sunday 21:00
+    log = FakeReadingLog(Success([DateTime(2026, 10, 3, 20)])); // Saturday
+    getStreak = GetReadingStreak(log, clock);
+  });
+
+  test("uses the clock's today, not the device's", () async {
+    expect(await getStreak(), isA<Success<int>>().having((s) => s.value, 'value', 1));
+
+    clock.advance(const Duration(days: 1)); // Monday: Sunday was missed
+    expect(await getStreak(), isA<Success<int>>().having((s) => s.value, 'value', 0));
+  });
+
+  test('passes a storage failure through', () async {
+    log.result = const Err(CacheFailure('db locked'));
+    expect(await getStreak(), isA<Err<int>>());
+  });
+}
+```
+
+</CodeBlock>
+
+التست مش هيعمل compile: `ReadingLog` و`GetReadingStreak` مش موجودين. والتست قرر شكلهم: الـ log بيرجّع `Result`، والـ use case بيتنادى بـ `call()` ويرجّع `Result<int>`.
+
+<CodeBlock label="lib/features/library/domain/get_reading_streak.dart (Green)">
+
+```dart
+abstract interface class ReadingLog {
+  Future<Result<List<DateTime>>> sessions();
+}
+
+class GetReadingStreak {
+  GetReadingStreak(this._log, this._clock);
+  final ReadingLog _log;
+  final Clock _clock;
+
+  Future<Result<int>> call() async => switch (await _log.sessions()) {
+        Success(:final value) => Success(readingStreak(value, now: _clock.now())),
+        Err(:final failure) => Err(failure),
+      };
+}
+```
+
+</CodeBlock>
+
+- <b>الـ use case مابيعيدش تستات القاعدة:</b> الـ 8 حالات متغطية في `readingStreak`. هنا بتختبر بس اللي الـ use case بيضيفه: الوقت جاي من الـ Clock، والـ failure بتعدّي. ولو كررت الـ 8 حالات هنا، أي تغيير في القاعدة هيكسر 16 تست بدل 8.
+- <b>`clock.advance` بيحكي قصة:</b> نفس الـ log، يوم كمان، السلسلة اتقطعت. ده تست كان مستحيل لو الـ use case بينادي `DateTime.now()`.
+- <b>التست بيتأكد من `Err` بس:</b> مش من نص رسالة الـ `CacheFailure`. الـ use case مش هو اللي بيصنع الـ failure، هو بيعدّيها، فده كل اللي يستاهل يتختبر هنا.
+
+### Outside-in ولا inside-out؟
+
+اللي عملناه في Level 2 اسمه <b>inside-out</b>: بدأنا بالقاعدة في القلب (`readingStreak`)، وبعدين بنينا حواليها (الـ use case). في مدرستين معروفين في الـ TDD:
+
+| | Inside-out (Chicago / classicist) | Outside-in (London / mockist) |
+| --- | --- | --- |
+| بتبدأ من | القاعدة الصغيرة في الـ domain | الشاشة أو الـ Cubit، ونازل لتحت |
+| الـ test doubles | fakes حقيقية، وأقل mocks | mocks للطبقة اللي تحت لسه مااتكتبتش |
+| بيتأكد من | النتيجة والـ state | التفاعل: مين نادى مين |
+| ميزته | التستات مابتتكسرش لما التفاصيل تتغير | التصميم بيطلع من احتياج المستخدم |
+| عيبه | ممكن تبني حاجة محدش هيستخدمها بالشكل ده | الـ mocks بتربط التست بالتفاصيل (over-mocking) |
+
+في Readly الـ domain فيه القواعد، والـ fakes رخيصة، فالـ inside-out بيمشي كويس. ولو بتبني شاشة جديدة والـ API بتاع الـ Cubit مش واضح، ابدأ بـ blocTest للـ Cubit وmock للـ use case، وبعدين انزل TDD للـ use case نفسه. الاتنين أدوات، مش أديان. والـ blocTest نفسه شكله مناسب جدًا لـ TDD: بتكتب الـ `expect` بالـ states اللي عايزها الأول، وبعدين تكتب الـ Cubit. التفاصيل في [درس تستات الـ Cubit](/course/testing/cubit-tests/).
+
+### الوقت أصعب مما تتخيل
+
+الـ bug اللي فات كان أول درس في الوقت. والحالات دي كلها تستاهل سطر في الـ test list لأي قاعدة فيها تواريخ:
+
+- <b>تغيير الساعة (DST):</b> مصر رجّعت التوقيت الصيفي من 2023. في يوم التغيير، اليوم المحلي بيبقى 23 أو 25 ساعة. لو بتحسب `DateTime(y, m, d)` المحلي وبعدين `difference().inDays`، هتلاقي فرق يومين متتاليين 0 أو 1 حسب الاتجاه. علشان كده `_dayOf` بتاخد الـ year والـ month والـ day المحليين، وبتحط منتصف الليل في UTC.
+- <b>الـ CI مش في مصر:</b> الـ runner بتاع GitHub شغال UTC، ومفيهوش DST. فـ bug الـ DST مش هيظهر في الـ CI أبدًا، هيظهر عند المستخدم بس. لو عندك قاعدة حساسة للمنطقة الزمنية، شغّل التستات بتاعتها مرة كمان بمنطقة فيها DST: `TZ=Africa/Cairo flutter test test/features/library/domain` على Linux أو macOS.
+- <b>جلسة في المستقبل:</b> الجلسات بتتزامن من أكتر من جهاز، وساعة جهاز ممكن تبقى متقدمة. جلسة «بكرة» دلوقتي هتبقى `days.first` و`difference` سالب، فهتتحسب في السلسلة. دي حالة جديدة في الـ test list: `'a session in the future is ignored'`، وRed، وGreen بـ `where((s) => !s.isAfter(now))`.
+- <b>حدود الشهر والسنة:</b> 31 ديسمبر و1 يناير. الـ `daysAgo` بيعدّي ده لوحده، بس حط تست صريح لو القاعدة فيها «الشهر ده».
+
+### Characterization tests: الكود القديم اللي محدش عارف بيعمل إيه
+
+الـ TDD سهل على كود جديد. بس أغلب يومك في كود موجود، ومفيش عليه تستات، ومحدش عارف كل اللي بيعمله. هنا مفيش «اكتب التست الأول»، لأن الكود موجود من سنة. اللي بتعمله <b>characterization test</b>: تست بيوصف اللي الكود <b>بيعمله النهارده</b>، مش اللي المفروض يعمله. ده نفس الأسلوب اللي في [درس الـ Refactor](/course/production/refactor/) على شاشة الـ notes، بس هنا على function صغيرة عشان نشوف التكنيك نفسه.
+
+في صفحة الكتاب القديمة function بتكتب نسبة القراءة:
+
+<CodeBlock label="lib/book/progress_label.dart (قديم، من غير تستات)">
+
+```dart
+String progressLabel(int page, int total) {
+  if (total == 0) return '';
+  final p = (page / total * 100).round();
+  return p >= 100 ? 'خلصته' : '$p%';
+}
+```
+
+</CodeBlock>
+
+عايز تنقلها للـ domain وتغيّر شكلها. قبل ما تلمسها، اقفل سلوكها. والتكنيك: <b>خلّي الكود يقولك</b>. حط قيمة غلط عن قصد، والتست هيطبع القيمة الحقيقية:
+
+```dart
+test('characterize', () => expect(progressLabel(199, 200), '???'));
+```
+
+```text
+  Expected: '???'
+    Actual: 'خلصته'
+```
+
+199 صفحة من 200 بتقول «خلصته»؟ 99.5 بتتقرّب لـ 100. ده غالبًا bug، بس <b>ده السلوك النهارده</b>، ومستخدمين شايفينه. فبتقفله زي ما هو، وتكتب جنبه comment وissue:
+
+<CodeBlock label="test/book/progress_label_test.dart">
+
+```dart
+void main() {
+  // characterization: what the code does today, odd cases included
+  final observed = {
+    (0, 200): '0%',
+    (1, 3): '33%',
+    (2, 3): '67%',
+    (199, 200): 'خلصته', // odd: "finished" one page early, issue #231
+    (250, 200): 'خلصته', // page past the end
+    (-10, 200): '-5%', // odd: negative page shows a negative percent
+    (5, 0): '', // a book with no page count
+  };
+
+  for (final MapEntry(key: (page, total), value: label) in observed.entries) {
+    test('progressLabel($page, $total) is "$label"', () {
+      expect(progressLabel(page, total), label);
+    });
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الحالات منين؟</b> من الحدود: صفر، والنهاية بالظبط، وقبلها بواحد، وبعدها، وسالب، وقسمة على صفر. ده نفس الـ boundary values من [درس الـ unit tests](/course/testing/unit-tests/)، بس بتسأل الكود عن الإجابة بدل ما تقررها.
+- <b>الـ record keys والـ pattern:</b> `(page, total)` record كـ key، والـ `for` بيفك الـ entry بـ pattern من Dart 3. كل حالة بتبقى تست باسمها، فلو وقعت تعرف أنهي.
+- <b>التصليح مش هنا:</b> الـ 199/200 والـ -10 bugs، بس تصليحهم تغيير سلوك. الـ refactor بيتعمل والتستات دي خضرا من غير تعديل. وبعدين PR لوحده لكل bug، وبيبدأ bug-first: تعدّل السطر بتاعه في الـ map للقيمة الصح (`(199, 200): '99%'`)، يبقى أحمر، تصلّح، يخضر.
+
+### الـ bug-first في الفريق
+
+الـ bug-first مش عادة شخصية بس، ده جزء من شكل الـ PR:
+
+- <b>commit التست لوحده الأول:</b> PR التصليح فيه commitين: الأول التست اللي بيفشل، والتاني التصليح. الـ reviewer يقدر يعمل `git checkout HEAD~1` ويشغّل التست ويشوفه أحمر بعينه. كده متأكد إن التست بيعيد الـ bug فعلًا، مش تست بيعدّي في الحالتين.
+- <b>التست بيوصف السلوك، والـ issue في comment:</b> اسم التست `'a missed calendar day breaks the streak'`، مش `'bug 212'`. بعد سنة محدش هيفتكر الـ issue، بس القاعدة لسه مهمة.
+- <b>الـ bug في الـ UI؟</b> نفس الفكرة بأقل تست يقدر يعيده. لو الـ bug إن الزرار بيفضل enabled وهو بيحفظ، ده widget test أو blocTest، مش integration test. كل ما التست أصغر، كل ما أسرع وأثبت.
+- <b>مش قادر تعيده بتست؟</b> ده معلومة مهمة في حد ذاتها: يا إما مش فاهم الـ bug لسه، يا إما الكود محتاج يتقسم عشان يتختبر (زي الـ `DateTime.now()` المدفون). ماتصلّحش وانت مش قادر تثبت إن التصليح صلّح.
+
+### الخطوة قد إيه؟
+
+أصعب حاجة في الـ TDD مش التستات، هي <b>حجم الخطوة</b>. Kent Beck بيوصف 3 طرق للـ Green:
+
+| الطريقة | امتى | مثال من الجلسة |
+| --- | --- | --- |
+| Fake it | مش متأكد من الحل، أو أول تست | `=> 0` في اللفة 1 |
+| Triangulate | محتاج أمثلة أكتر عشان الحل العام يبان | 0 و1 و2 أجبروا `sessions.length` |
+| Obvious implementation | الحل واضح ومتأكد منه | الـ loop في اللفة 7 |
+
+- <b>الخطوات الصغيرة مش قانون:</b> لو الحل واضح، اكتبه على طول. لو التست وقع بشكل مش متوقع، ارجع لخطوات أصغر. الـ TDD بيديك ترس تغيّر بيه السرعة، مش بيجبرك تمشي بالبطيء.
+- <b>Red لأكتر من 10 دقايق:</b> علامة إن التست كبير. امسح الكود اللي كتبته (أيوه، امسحه)، وارجع للأخضر، واكتب تست أصغر. ده أسرع من إنك تفضل تحارب.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior: امتى TDD وامتى لأ">
+
+### الـ TDD أداة تصميم قبل ما يبقى أداة اختبار
+
+أهم حاجة طلعت من الجلسة مش الـ 8 تستات. هي إن الـ function بتاخد `now` بدل ما تسأل الجهاز، وإن الـ use case بياخد `Clock`، وإن القاعدة Dart صافي من غير Flutter. القرارات دي طلعت لأن التست كان <b>أول مستخدم</b> للكود: لو صعب تكتب التست، الكود صعب يتستخدم. الـ TDD بيحسّسك بالألم ده بدري، قبل ما يبقى 500 سطر مربوطين ببعض.
+
+### امتى TDD مايفيدش
+
+- <b>الـ spike والاستكشاف:</b> مش عارف هل الـ API ده بيرجّع اللي محتاجه؟ ولا الـ animation ده ممكن أصلًا؟ اكتب كود رمي في branch، اتعلم، وامسحه. وبعدين ابني الحقيقي بـ TDD. الـ TDD على كود هيترمي بيضيّع وقت.
+- <b>الـ layout والشكل:</b> «الكارت يبقى شكله حلو» مش حاجة تتكتب كـ `expect` قبل ما تشوفها. ابني الشاشة وانت بتبص عليها، وبعدين اقفل الشكل بـ [golden test](/course/testing/golden-tests/). السلوك اللي في الشاشة (الزرار disabled وهو بيحفظ) ينفع TDD عادي.
+- <b>متطلبات مش واضحة:</b> لو الـ PM نفسه مش عارف «السلسلة تتقطع امتى»، الـ test list مش هتتكتب. هنا محتاج prototype أو سؤال، مش تستات. ولو بدأت TDD هتعيد التستات كل يوم.
+- <b>الـ glue والـ config:</b> تسجيلات get_it، وتعريف الـ routes، والـ pass-through اللي بينادي method واحدة. مفيهاش قرار يتختبر. التست هيبقى نسخة من الكود، والـ integration test بيغطيها أحسن.
+- <b>تعلّم library جديدة:</b> هنا اللي بيفيد <b>learning tests</b>: تستات صغيرة بتكتبها عشان تفهم الـ library بتعمل إيه (dio بيرمي إيه لما الـ timeout يخلص؟). مش TDD لكودك، بس بتفضل موجودة، ولو الـ library غيرت سلوكها في version جديد، هتعرف.
+
+### أخطاء شائعة
+
+- <b>تكتب كل التستات الأول وبعدين الكود:</b> ده مش TDD. 8 تستات حمرا مع بعض مابيقولولكش تبدأ منين، وبتفقد الـ feedback بتاع كل خطوة. تست واحد، كود، تست.
+- <b>تتخطى الـ Refactor:</b> الأخضر بيحسسك إنك خلصت. بس من غير الـ refactor، الـ TDD بيطلّع كود شغال ووحش: كل حالة `if` جديدة فوق اللي قبلها. الـ refactor هو المرحلة اللي فيها الـ design بيتحسن.
+- <b>تختبر private functions:</b> لو عملت `@visibleForTesting` على `_dayOf` عشان تختبرها، ربطت التستات بالتفاصيل. أي تفصيلة مهمة بتبان من الـ public API. لو مش بتبان، يا إما مش مهمة، يا إما محتاجة تبقى class لوحدها.
+- <b>الـ TDD = 100% coverage:</b> لأ. الـ TDD بيدّي coverage عالي كأثر جانبي، بس الهدف كود اتصمم صح وقواعد موثّقة. والـ bug اللي فات كان في سطر عليه coverage 100%.
+- <b>تفرضه على الفريق كله مرة واحدة:</b> ابدأ بالـ domain والـ bug-first. دول أعلى عائد وأسهل في التعلم. الـ bug-first لوحده بيغيّر جودة المشروع حتى لو محدش عمل TDD كامل.
+
+### TDD مع أدوات الـ AI
+
+لما بتطلب من assistant يكتب كود، التستات اللي انت كاتبها الأول هي الـ spec اللي تحكم بيه على الكود. «اكتب `readingStreak` تعدّي التستات دي» أحسن بكتير من «اكتب function للسلسلة»: النتيجة ليها تعريف واضح لـ «صح»، ومش هتقبل كود شكله مقنع وهو غلط في حالة امبارح. وماتطلبش من نفس الـ assistant يكتب الكود والتستات مع بعض ويقولك «كله أخضر»: التستات دي هتختبر اللي الكود بيعمله، مش اللي انت عايزه.
+
+<Note kind="interview" title="سؤال interview">
+
+«بتعمل TDD؟ وامتى ماتعملوش؟» الإجابة القوية مش «دايمًا» ولا «مش بيفرق». بستخدمه في الـ domain والقواعد اللي فيها حالات كتير، زي حساب سلسلة قراءة أو قواعد الـ sync: test list الأول مع الـ PM، وبعدين Red → Green → Refactor، والتست الأول بيجبرني أخلي الكود قابل للاختبار، زي إن الوقت ييجي من `Clock` مش من `DateTime.now()`. وكل bug بيبدأ عندي بتست بيفشل بنفس اللي المستخدم شافه، في commit لوحده قبل التصليح. ومابستخدموش في الـ spikes، ولا في الـ layout اللي بقفله بـ golden بعدين، ولا لما المتطلبات نفسها مش واضحة، ولا في الـ glue code. وفي الكود القديم بكتب characterization tests بتقفل السلوك الحالي قبل أي refactor، حتى الغريب منه، وكل تصليح PR لوحده. وبقول بوضوح إن الـ TDD بيحمي الحالات اللي فكرت فيها بس، فبكمّله بـ property-based testing للقواعد الحساسة.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### تصليح الـ bug: من الإحساس للإثبات
+
+<BeforeAfter>
+
+<Side label="قبل: تصليح على طول" kind="before">
+
+```dart
+// "probably the 48h thing", changed and pushed
+if (now.difference(last).inHours > 36) return 0;
+```
+
+</Side>
+
+<Side label="بعد: تست بيفشل الأول" kind="after">
+
+```dart
+// issue #212
+test('a missed calendar day breaks the streak, even under 48 hours', () {
+  final sessions = [DateTime(2026, 9, 28, 22), DateTime(2026, 9, 29, 23, 30)];
+  expect(readingStreak(sessions, now: DateTime(2026, 10, 1, 8)), 0);
+});
+// red with Actual: <2>, then compare calendar days, then green
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: رقم سحري جديد بيصلّح حالة المستخدم ده بالصدفة، ويكسر حالة تانية (قريت امبارح الساعة 8 الصبح، ودلوقتي النهارده الساعة 9 بالليل: 37 ساعة، السلسلة اتقطعت غلط). ومفيش حاجة تمنع الـ bug يرجع. بعد: الـ bug متوصّف بتست، والتصليح غيّر طريقة التفكير نفسها (أيام مش ساعات)، والـ 7 تستات القديمة أكدوا إن مفيش حاجة اتكسرت.
+
+### Test-after ولا test-first
+
+<BeforeAfter>
+
+<Side label="التست بعد الكود" kind="before">
+
+```dart
+int readingStreak(List<Session> sessions) {
+  final now = DateTime.now();
+  // ...
+}
+
+// the test has to fake "today" somehow:
+// wait until midnight? change the device clock?
+```
+
+</Side>
+
+<Side label="التست قبل الكود" kind="after">
+
+```dart
+// the first test asked for `now`, so the design followed
+int readingStreak(Iterable<DateTime> sessions, {required DateTime now}) {
+  // ...
+}
+
+expect(readingStreak([daysAgo(1)], now: now), 1);
+```
+
+</Side>
+
+</BeforeAfter>
+
+لما التست بييجي بعد، بتكتشف إن الكود صعب يتختبر بعد ما اتكتب واتستخدم في 3 أماكن. ولما التست بييجي الأول، الصعوبة دي بتبان في أول دقيقة، وتصليحها كلمة في الـ signature.
+
+### الملفين النهائيين
+
+<CodeBlock label="lib/features/library/domain/reading_streak.dart">
+
+```dart
+/// Consecutive calendar days with at least one reading session, ending
+/// today or yesterday (today isn't over, so the streak is still alive).
+int readingStreak(Iterable<DateTime> sessions, {required DateTime now}) {
+  final days = sessions
+      .where((s) => !s.isAfter(now)) // another device's clock may run ahead
+      .map(_dayOf)
+      .toSet()
+      .toList()
+    ..sort((a, b) => b.compareTo(a)); // newest first
+  if (days.isEmpty) return 0;
+  // calendar days, not hours: Tuesday 23:30 -> Thursday 08:00 missed Wednesday
+  if (_dayOf(now).difference(days.first).inDays > 1) return 0;
+
+  var streak = 1;
+  for (var i = 1; i < days.length; i++) {
+    if (days[i - 1].difference(days[i]).inDays != 1) break;
+    streak++;
+  }
+  return streak;
+}
+
+// a calendar day as a UTC midnight: no DST, so days are exactly 24h apart
+DateTime _dayOf(DateTime t) => DateTime.utc(t.year, t.month, t.day);
+```
+
+</CodeBlock>
+
+<CodeBlock label="test/features/library/domain/reading_streak_test.dart">
+
+```dart
+import 'package:flutter_test/flutter_test.dart';
+import 'package:readly/features/library/domain/reading_streak.dart';
+
+void main() {
+  // Sunday 4 Oct 2026, 21:00
+  final now = DateTime(2026, 10, 4, 21);
+  DateTime daysAgo(int days, {int hour = 20}) =>
+      DateTime(2026, 10, 4 - days, hour); // DateTime rolls over month ends
+
+  group('readingStreak', () {
+    test('no sessions means no streak', () {
+      expect(readingStreak([], now: now), 0);
+    });
+
+    test('one session today is a streak of 1', () {
+      expect(readingStreak([daysAgo(0)], now: now), 1);
+    });
+
+    test('today and yesterday make a streak of 2', () {
+      expect(readingStreak([daysAgo(0), daysAgo(1)], now: now), 2);
+    });
+
+    test('two sessions on the same day count once', () {
+      expect(readingStreak([daysAgo(0, hour: 8), daysAgo(0, hour: 22)], now: now), 1);
+    });
+
+    group('given a session yesterday and none today', () {
+      test('then the streak is still alive', () {
+        expect(readingStreak([daysAgo(1)], now: now), 1);
+      });
+    });
+
+    test('a session two days ago is a broken streak', () {
+      expect(readingStreak([daysAgo(2)], now: now), 0);
+    });
+
+    test('a gap breaks the streak', () {
+      expect(readingStreak([daysAgo(0), daysAgo(1), daysAgo(3)], now: now), 2);
+    });
+
+    // issue #212: streak survived a whole missed day
+    test('a missed calendar day breaks the streak, even under 48 hours', () {
+      final sessions = [DateTime(2026, 9, 28, 22), DateTime(2026, 9, 29, 23, 30)];
+      expect(readingStreak(sessions, now: DateTime(2026, 10, 1, 8)), 0);
+    });
+
+    test('a session in the future is ignored', () {
+      expect(readingStreak([daysAgo(0), daysAgo(-1)], now: now), 1);
+    });
+  });
+}
+```
+
+</CodeBlock>
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="t-tdd-1">
+<Ask>في الـ Red، ليه لازم تشغّل التست وتشوفه بيفشل قبل ما تكتب الكود؟ ومش كفاية إنه «أحمر»، ليه؟</Ask>
+<Answer>
+
+عشان تتأكد إن التست بيختبر حاجة فعلًا: تست مابيفشلش أبدًا مابيحرسش حاجة. ولازم يفشل <b>للسبب الصح</b>، يعني `Expected: <1> Actual: <0>` اللي توقعته، مش exception أو import غلط. لو فشل لسبب تاني، يبقى التست مش بيختبر القاعدة اللي انت فاكرها، والأخضر بعد كده مالوش معنى.
+
+</Answer>
+</Question>
+
+<Question id="t-tdd-2">
+<Ask>في نص جلسة TDD كتبت تست «امبارح بس = 1» وعدّى من أول مرة من غير ما تغيّر الكود. تعمل إيه؟</Ask>
+<Answer>
+
+اكسر الكود بإيدك مؤقتًا (خليه يرجّع 0) وشغّل: لو التست وقع، يبقى بيحرس فعلًا والسلوك كان موجود أصلًا. رجّع الكود وسيب التست، لأنه بيوثّق قاعدة business ممكن refactor جاي يكسرها. ولو التست ماوقعش حتى والكود مكسور، يبقى التست نفسه غلط ولازم يتصلّح.
+
+</Answer>
+</Question>
+
+<Question id="t-tdd-3">
+<Ask>مستخدم قال إن السلسلة فضلت 2 مع إنه نسي يوم كامل. إيه أول حاجة تعملها، وليه قبل التصليح؟</Ask>
+<Answer>
+
+تكتب تست بيعيد نفس الحالة بالظبط (نفس الأوقات) ويفشل بنفس الرقم اللي المستخدم شافه. ده بيثبت إنك فهمت الـ bug مش بتخمّن، وبيقولك إمتى التصليح نجح، والتستات القديمة بتأكد إنه ماكسرش حاجة، والتست بيفضل موجود فالـ bug مايرجعش. والتست بيتعمله commit لوحده الأول عشان الـ reviewer يشوفه أحمر.
+
+</Answer>
+</Question>
+
+<Question id="t-tdd-4">
+<Ask>وانت بتكتب characterization tests لـ `progressLabel` لقيت إن 199 من 200 صفحة بتطلع «خلصته». تكتب التست بالقيمة الصح وتصلّح؟</Ask>
+<Answer>
+
+لأ. الـ characterization test بيقفل اللي الكود بيعمله النهارده، فبتكتب `'خلصته'` زي ما هي وجنبها comment وissue. الـ refactor بيتعمل والتستات دي خضرا. والتصليح تغيير سلوك، فليه PR لوحده بيبدأ bug-first: تغيّر القيمة المتوقعة للصح، يبقى أحمر، تصلّح، يخضر.
+
+</Answer>
+</Question>
+
+<Question id="t-tdd-5">
+<Ask>اذكر 3 حالات الـ TDD فيها مش أحسن اختيار، وإيه البديل في كل واحدة.</Ask>
+<Answer>
+
+الـ spike والاستكشاف: كود رمي في branch وبعدين TDD للحقيقي. الـ layout والشكل: ابنيه وانت بتبص واقفله بـ golden test. المتطلبات مش واضحة: prototype أو سؤال الأول. والـ glue code زي تسجيلات get_it والـ routes: الـ integration test بيغطيها. وتعلّم library جديدة: learning tests.
+
+</Answer>
+</Question>
+
+</Quiz>

@@ -1,0 +1,833 @@
+---
+title: "Golden tests: التست اللي بيبص على الشكل"
+description: "صورة مرجعية لكل شاشة، والـ CI بيقارن بيها pixel بـ pixel: الخطوط العربي، والـ light والـ dark والـ RTL، واختلاف المنصات، وalchemist، وreview الصور في الـ PR."
+minutes: 30
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="لعبة «اكتشف الفروق»">
+
+فاكر الصورتين اللي في آخر الجرنال، وتحتهم «اكتشف 7 فروق»؟ انت بتقعد تبص 10 دقايق، وبتلاقي 5 وتزهق. الكمبيوتر بيلاقي السبعة في جزء من الثانية، لأنه بيقارن pixel بـ pixel ومابيزهقش ومابيتعودش على الصورة. بس في حاجة واحدة مايقدرش يعملها: يقولك الفرق ده <b>غلط</b> ولا <b>مقصود</b>. لو الرسام غيّر لون القميص عن قصد، الكمبيوتر هيقول «في فرق» بنفس الصوت اللي هيقول بيه «الراجل ناقص له دراع». القرار ده بتاعك انت.
+
+</Analogy>
+
+الـ <b>golden test</b> هو بالظبط اللعبة دي. أول مرة بترسم الشاشة في التست وبتحفظ صورتها PNG في الـ repo، ودي «الصورة الذهبية» (golden). وكل مرة بعد كده، التست بيرسم الشاشة تاني ويقارنها بالصورة المحفوظة. لو في pixel اتغير، التست بيفشل وبيطلّعلك صورة فيها الفرق متعلّم عليه.
+
+طب ما الـ widget test موجود، ليه محتاج صورة؟ لأن الـ widget test بيسأل أسئلة انت كتبتها: «في زرار retry؟»، «النص ده ظاهر؟». بس فيه حاجات كتير محدش هيفتكر يكتب لها `expect`:
+
+- السهم في صفحة التفاصيل بيشاور شمال في العربي وهو المفروض يشاور يمين.
+- الـ padding راح الناحية الغلط لما الـ layout اتقلب RTL.
+- نص الحالة «بقراه» لونه رمادي على خلفية رمادي في الـ dark mode، فمش مقروء.
+- عنوان الكتاب الطويل بيتقص بشكل وحش لما المستخدم مكبّر الخط.
+- حد غيّر `colorScheme.primary` في الـ theme عشان شاشة واحدة، فـ 12 شاشة تانية اتغير شكلها.
+
+كل دول الـ widget test هيقولك عليهم «أخضر»، لأن كل الـ widgets موجودة فعلًا. الـ golden هو اللي بيشوف.
+
+|  | widget test | golden test |
+| --- | --- | --- |
+| بيسأل | «الحاجة دي موجودة؟ بتعمل كذا لما أدوس؟» | «الشكل لسه زي ما كان؟» |
+| بيمسك | سلوك: tap، validation، navigation | شكل: ألوان، مسافات، RTL، تقطيع النص |
+| بيفشل لما | السلوك اتكسر | أي pixel اتغير، حتى لو مقصود |
+| تكلفته | كود بس | كود + صور في الـ repo + حد يراجع الصور |
+| مايمسكش | إن الشكل باظ | إن الزرار مابيعملش حاجة |
+
+يعني الاتنين مكملين لبعض: الـ golden مش بديل للـ [widget test](/course/testing/widget-tests/)، هو العين اللي الـ widget test معندوش.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### أول golden
+
+هنصوّر شاشة المكتبة وفيها كتابين. نفس الـ `MockLibraryCubit` ونفس الـ `pumpApp` بتوع [درس الـ widget tests](/course/testing/widget-tests/)، والفرق إن الـ assertion بقى صورة:
+
+<CodeBlock label="test/features/library/presentation/library_view_golden_test.dart">
+
+```dart
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:mocktail/mocktail.dart';
+
+import '../../../helpers/builders.dart';
+import '../../../helpers/mocks.dart'; // MockLibraryCubit
+import '../../../helpers/pump_app.dart';
+
+void main() {
+  testWidgets('library with two books, Arabic, light', (tester) async {
+    final cubit = MockLibraryCubit();
+    when(() => cubit.state).thenReturn(LibraryLoaded([
+      aBook(),
+      aBook(id: 'OL82563W', title: 'Matilda', status: BookStatus.reading),
+    ]));
+
+    await tester.pumpApp(
+      BlocProvider<LibraryCubit>.value(value: cubit, child: const LibraryView()),
+    );
+
+    await expectLater(
+      find.byType(LibraryView),
+      matchesGoldenFile('goldens/library_ar_light.png'),
+    );
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>الـ matchesGoldenFile:</b> matcher زي `equals` بالظبط، بس بدل ما يقارن قيمة، بيرسم الـ widget لصورة ويقارنها بالملف. المسار نسبي لملف التست، فالصورة هتبقى في `test/features/library/presentation/goldens/`.
+- <b>الـ expectLater مش expect:</b> الرسم والمقارنة async. لو كتبت `expect` من غير `await`، مفيش ضمان إن المقارنة تخلص جوه التست: ساعات النتيجة بتضيع، وساعات بيطلع error غريب بعد ما التست يخلص. الـ golden دايمًا `await expectLater`.
+- <b>بيصوّر إيه بالظبط؟</b> الـ finder بيدوّر على أقرب <b>RepaintBoundary</b> فوق الـ widget ويصوّره كله. كل route في الـ Navigator عليها RepaintBoundary، فهنا الصورة هتبقى الشاشة كلها. لو عايز تصوّر widget صغير لوحده، لفّه في `RepaintBoundary`.
+- <b>الـ pumpApp:</b> بيحط الـ localization والـ theme والـ RTL. ده مهم هنا أكتر من أي تست تاني، لأن من غيره الصورة هتبقى LTR بإنجليزي وثيم Flutter الافتراضي، يعني صورة لشاشة محدش هيشوفها.
+- <b>الـ aBook:</b> من [درس الـ test doubles](/course/testing/test-doubles/). البيانات ثابتة، فالصورة ثابتة.
+
+### أول تشغيل: مفيش صورة لسه
+
+```bash
+flutter test test/features/library/presentation/library_view_golden_test.dart
+```
+
+```text
+══╡ EXCEPTION CAUGHT BY FLUTTER TEST FRAMEWORK ╞═══
+Could not be compared against non-existent file: "goldens/library_ar_light.png"
+```
+
+طبيعي: مفيش صورة مرجعية نقارن بيها. بتولّدها بـ flag واحد:
+
+```bash
+flutter test --update-goldens test/features/library/presentation/library_view_golden_test.dart
+```
+
+- <b>الـ --update-goldens:</b> بدل ما يقارن، بيكتب الصورة الجديدة مكان القديمة (أو بيعملها لو مش موجودة)، والتست بيعدّي.
+- <b>افتح الصورة وبص عليها بعينك:</b> ده أهم سطر في الدرس. الـ update مابيعرفش إذا كانت الشاشة صح. لو الشاشة فيها bug ساعة ما ولّدت الصورة، انت كده حفظت الـ bug كمرجع، والتست هيحميه.
+- <b>اعمل للصورة commit:</b> الـ PNG جزء من التست زي ملف الـ dart بالظبط. من غيرها الـ CI هيفشل بنفس رسالة «non-existent file».
+
+### لما التست يفشل
+
+حد زوّد `padding` في `BookTile` من 12 لـ 16. التست بيقول:
+
+```text
+Golden "goldens/library_ar_light.png": Pixel test failed, 3.41%, 31962px diff detected.
+Failure feedback can be found at .../presentation/failures
+```
+
+وفي فولدر `failures/` جنب التست بتلاقي 4 صور:
+
+| الملف | فيه إيه |
+| --- | --- |
+| `library_ar_light_masterImage.png` | الصورة المحفوظة (المرجع) |
+| `library_ar_light_testImage.png` | اللي اترسم دلوقتي |
+| `library_ar_light_isolatedDiff.png` | الـ pixels المختلفة بس، على خلفية فاضية |
+| `library_ar_light_maskedDiff.png` | الصورة كاملة والفرق متعلّم عليه بلون |
+
+بتفتح الـ maskedDiff، وبتشوف الفرق فين، وبتسأل سؤال واحد: <b>التغيير ده مقصود؟</b>
+
+- <b>لأ:</b> يبقى bug. صلّح الكود، وماتلمسش الصورة.
+- <b>أيوه:</b> شغّل `--update-goldens`، وبص على الصورة الجديدة، واعملها commit مع الكود اللي غيّرها في نفس الـ PR.
+
+وزوّد `failures/` في الـ `.gitignore`، لأنها نتيجة تشغيل مش جزء من الكود:
+
+```text
+# .gitignore
+**/failures/
+```
+
+<Diagram name="d-test-golden-cycle">
+
+دورة حياة الـ golden: الصورة بتتولّد مرة بـ `--update-goldens` وبتتعمل لها commit، وبعد كده كل تشغيل بيقارن بيها. لما تفشل، الفرق بيتحط في `failures/`، وانت اللي بتقرر: bug تصلّحه في الكود، ولا تغيير مقصود تحدّث بيه الصورة وتعرضها في الـ PR.
+
+</Diagram>
+
+### الصورة كلها مربعات
+
+أول ما تفتح الصورة، هتلاقي كل النص مربعات سودا، عربي وإنجليزي. مش bug في الشاشة: ده الخط الافتراضي في `flutter test`. التست مابيحمّلش خطوط الـ app لوحده، وبيستخدم خط اسمه <b>FlutterTest</b> (وقبله كان <b>Ahem</b>) بيرسم كل حرف كمربع بمقاس ثابت. الفكرة إن المقاسات تبقى ثابتة على أي جهاز، فالـ layout يتقاس والصورة ماتتغيرش.
+
+ده كويس للـ layout، بس في app عربي بيخبّي حاجات مهمة: الحروف العربي متوصّلة ببعض وطولها غير الإنجليزي، فالمربعات مش هتوريك إن «خلّصته» بتتقص عند حجم معين، ولا إن الخط اللي اخترته بيطلّع الحروف فوق بعض. عشان كده هتحمّل الخط الحقيقي.
+
+الخط متعرّف في الـ pubspec:
+
+<CodeBlock label="pubspec.yaml">
+
+```yaml
+flutter:
+  uses-material-design: true
+  fonts:
+    - family: Cairo
+      fonts:
+        - asset: assets/fonts/Cairo-Regular.ttf
+        - asset: assets/fonts/Cairo-Bold.ttf
+          weight: 700
+```
+
+</CodeBlock>
+
+والـ `AppTheme` بيقول `fontFamily: 'Cairo'` في الـ light والـ dark. الخطوة الناقصة إن التست يحمّل الخطوط دي قبل ما يرسم. أي ملف اسمه `flutter_test_config.dart` في فولدر `test/` بيشتغل قبل كل ملف تست تحته، فده مكانها:
+
+<CodeBlock label="test/flutter_test_config.dart">
+
+```dart
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+Future<void> testExecutable(FutureOr<void> Function() testMain) async {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  await loadAppFonts();
+  await testMain();
+}
+
+/// Loads every font in the pubspec (and MaterialIcons) so goldens show real text.
+Future<void> loadAppFonts() async {
+  final manifest = json.decode(
+    await rootBundle.loadString('FontManifest.json'),
+  ) as List<dynamic>;
+
+  for (final family in manifest.cast<Map<String, dynamic>>()) {
+    final loader = FontLoader(family['family'] as String);
+    for (final font in (family['fonts'] as List<dynamic>).cast<Map<String, dynamic>>()) {
+      loader.addFont(rootBundle.load(font['asset'] as String));
+    }
+    await loader.load();
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ testExecutable:</b> الاسم ده بالظبط. `flutter test` بيدوّر على الملف ده في فولدر التست وفي اللي فوقه لحد root الـ package، ويلف بيه الـ `main` بتاع كل ملف تست.
+- <b>الـ FontManifest.json:</b> Flutter بيولّده من الـ pubspec وقت التست، وفيه كل خط واسمه وملفاته. فلو زوّدت خط بكرة، مش محتاج تعدّل هنا.
+- <b>الأيقونات كمان:</b> `uses-material-design: true` بيحط `MaterialIcons` في نفس الـ manifest. من غير التحميل ده، كل `Icon` في الصورة بيبقى مربع.
+- <b>الـ fontFamily لازم يتكتب صريح:</b> الـ Material theme الافتراضي بيطلب Roboto على Android، وRoboto مش جوه الـ app أصلًا، فالتست هيرجع للمربعات. لما الـ `AppTheme` يقول `Cairo`، الخط موجود ومتحمّل.
+
+دلوقتي `--update-goldens` تاني، وافتح الصورة: نص عربي حقيقي، متوصّل، ومن اليمين للشمال.
+
+<Note kind="warn" title="google_fonts في التست">
+
+لو الـ app بيجيب الخط بـ `google_fonts` من النت، التست مش هيقدر ينزّله (الـ HTTP في `flutter test` بيرجّع 400 لأي طلب). نزّل ملفات الخط وحطها في الـ assets، وفي التست اقفل التحميل بـ `GoogleFonts.config.allowRuntimeFetching = false` في الـ `flutter_test_config.dart`، فالـ package تستخدم الملف المحلي أو تفشل بوضوح بدل ما تكتم الخطأ.
+
+</Note>
+
+</Level>
+
+<Level n="3" title="التفاصيل والحالات الصعبة">
+
+### كل الـ variants من غير ما تكرر التست
+
+Readly عربي وإنجليزي، وlight وdark. يعني كل شاشة ليها 4 أشكال على الأقل، وكل واحد ممكن يبوظ لوحده: الـ dark ممكن يكون فيه لون مش مقروء، والإنجليزي ممكن عنوانه يبقى أطول. بدل ما تنسخ التست 4 مرات، الـ `testWidgets` بياخد `variant` بيشغّل نفس التست مرة لكل قيمة:
+
+<CodeBlock label="ValueVariant: تست واحد، 4 صور">
+
+```dart
+enum GoldenCase {
+  arLight(Locale('ar'), ThemeMode.light),
+  arDark(Locale('ar'), ThemeMode.dark),
+  enLight(Locale('en'), ThemeMode.light),
+  enDark(Locale('en'), ThemeMode.dark);
+
+  const GoldenCase(this.locale, this.themeMode);
+  final Locale locale;
+  final ThemeMode themeMode;
+}
+
+final goldenCases = ValueVariant<GoldenCase>(GoldenCase.values.toSet());
+
+void main() {
+  testWidgets('library with two books', (tester) async {
+    final c = goldenCases.currentValue!;
+    final cubit = MockLibraryCubit();
+    when(() => cubit.state).thenReturn(LibraryLoaded([aBook(), aBook(id: 'OL82563W')]));
+
+    await tester.pumpApp(
+      BlocProvider<LibraryCubit>.value(value: cubit, child: const LibraryView()),
+      locale: c.locale,
+      themeMode: c.themeMode,
+    );
+
+    await expectLater(
+      find.byType(LibraryView),
+      matchesGoldenFile('goldens/library_${c.name}.png'),
+    );
+  }, variant: goldenCases);
+}
+```
+
+</CodeBlock>
+
+- <b>الـ enhanced enum:</b> كل case معاه الـ locale والـ theme بتوعه، واسمه (`c.name`) بيبقى اسم الصورة. لو زوّدت case، صورة جديدة بتتولّد لوحدها.
+- <b>اسم التست في الـ output:</b> الـ variant بيزوّد القيمة على الاسم، فلو الـ dark بس فشل هتشوف `library with two books (variant: GoldenCase.arDark)`، وتعرف على طول أنهي صورة تفتح.
+- <b>الـ locale بيقلب الاتجاه لوحده:</b> الـ MaterialApp اللي جوه `pumpApp` بيحط `Directionality` من الـ locale. فالـ `arLight` هي صورة الـ RTL، ومش محتاج variant منفصل له.
+
+### أحجام الشاشات والـ text scale
+
+الشاشة الافتراضية في التست 800×600، يعني شكل ماحدش بيستخدمه على موبايل. والمشاكل الحقيقية بتظهر في الأطراف: موبايل صغير، وتابلت، ومستخدم مكبّر الخط 150% (وده عادي جدًا عند ناس كتير). الـ `tester.view` بيخليك تحدد الشاشة:
+
+<CodeBlock label="test/helpers/screens.dart">
+
+```dart
+import 'package:flutter/widgets.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+/// Logical sizes of devices we care about.
+abstract final class Screens {
+  static const smallPhone = Size(320, 640);
+  static const phone = Size(390, 844);
+  static const tablet = Size(834, 1194);
+}
+
+extension ScreenSetup on WidgetTester {
+  void useScreen(Size logical, {double pixelRatio = 3}) {
+    view
+      ..physicalSize = logical * pixelRatio
+      ..devicePixelRatio = pixelRatio;
+    addTearDown(view.reset);
+  }
+
+  void useTextScale(double factor) {
+    platformDispatcher.textScaleFactorTestValue = factor;
+    addTearDown(platformDispatcher.clearTextScaleFactorTestValue);
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="أصعب حالة: موبايل صغير وخط كبير">
+
+```dart
+testWidgets('book page on a small phone with large text', (tester) async {
+  tester
+    ..useScreen(Screens.smallPhone)
+    ..useTextScale(1.5);
+
+  await tester.pumpApp(BookDetailsView(book: aBook(title: 'Harry Potter and the Philosopher\'s Stone')));
+
+  await expectLater(
+    find.byType(BookDetailsView),
+    matchesGoldenFile('goldens/book_details_small_x1_5.png'),
+  );
+});
+```
+
+</CodeBlock>
+
+- <b>الـ physicalSize بالـ pixels الحقيقية:</b> عشان كده بنضرب في الـ pixelRatio. الـ layout بيشوف 320×640 logical زي الموبايل بالظبط.
+- <b>الـ addTearDown(view.reset):</b> الـ view مشترك بين التستات في نفس الملف. لو مارجّعتهوش، التست اللي بعده هيترسم على موبايل صغير وهيفشل من غير سبب واضح.
+- <b>الـ textScaleFactorTestValue:</b> بيوصل للـ MediaQuery اللي الـ MaterialApp بيعمله، يعني نفس اللي بيحصل لما المستخدم يغيّر حجم الخط من إعدادات الموبايل.
+- <b>مش كل شاشة في كل حجم:</b> اختار الحالات اللي بتكسر فعلًا. شاشة التفاصيل فيها عنوان طويل ووصف، فهي اللي محتاجة الموبايل الصغير بخط كبير. الـ settings مش محتاجة.
+
+وعلى فكرة، لو النص طلع برا الشاشة، الـ widget test نفسه هيفشل بـ `A RenderFlex overflowed by 24 pixels`، حتى قبل المقارنة. ده من أحلى فوايد الحالات دي: overflow بيبان في التست مش عند المستخدم.
+
+### كل حاجة لازم تبقى ثابتة
+
+الـ golden بيقارن pixel بـ pixel، فأي حاجة بتتغير من تشغيل للتاني هتخلي التست يفشل مرة ويعدّي مرة. ودي أشهر أسباب الـ goldens المتقلبة:
+
+| المصدر | العَرَض | الحل |
+| --- | --- | --- |
+| animation شغالة (spinner، shimmer) | `pumpAndSettle timed out`، أو الصورة في frame مختلف كل مرة | `TickerMode(enabled: false, child: ...)` بيوقف الـ animations، فالـ spinner بيترسم ثابت |
+| صور من النت (غلاف الكتاب) | مكان الغلاف فاضي، أو بيظهر مرة ومرة لأ | الـ HTTP في التست بيرجّع 400 دايمًا، فخلّي الـ `errorBuilder` يرسم placeholder ثابت. أو اعرض صورة asset وحمّلها قبل الصورة |
+| الوقت («اتضاف من 3 أيام») | الصورة بتتغير كل يوم | الـ `FixedClock` من درس الـ test doubles، مش `DateTime.now()` |
+| الـ cursor بيرمش في `TextField` | الصورة فيها cursor مرة ومن غيره مرة | `EditableText.debugDeterministicCursor = true` |
+| بيانات عشوائية (ترتيب، ids) | عناصر الليستة بتتبدل | بيانات ثابتة من `aBook()`، ومفيش `Random()` من غير seed |
+
+صور الأغلفة بالذات محتاجة كلمة. الصور بتتفك (decode) برا الـ fake async بتاع `testWidgets`، فممكن الصورة تتاخد قبل ما الغلاف يجهز حتى لو هو asset. الحل إنك تحمّله في الـ real async قبل المقارنة:
+
+<CodeBlock label="غلاف asset جاهز قبل الصورة">
+
+```dart
+testWidgets('book page with a cover', (tester) async {
+  await tester.pumpApp(BookDetailsView(
+    book: aBook(),
+    cover: const AssetImage('test/assets/cover_fox.jpg'),
+  ));
+
+  // image decoding runs outside fake async: wait for it for real
+  await tester.runAsync(() => precacheImage(
+        const AssetImage('test/assets/cover_fox.jpg'),
+        tester.element(find.byType(BookDetailsView)),
+      ));
+  await tester.pump();
+
+  await expectLater(find.byType(BookDetailsView), matchesGoldenFile('goldens/book_cover.png'));
+});
+```
+
+</CodeBlock>
+
+- <b>الـ cover بيتحقن:</b> الـ `BookDetailsView` بياخد `ImageProvider` من برا، وفي الـ app بيبقى `NetworkImage` لـ covers.openlibrary.org. نفس فكرة الـ Clock: أي حاجة بتلمس العالم الخارجي بتيجي من الـ constructor.
+- <b>الـ runAsync:</b> بيشغّل الكود ده في وقت حقيقي مش fake، فالـ decode بيخلص فعلًا. وبعده `pump()` عشان الـ frame يترسم بالصورة.
+
+### جهازي أخضر والـ CI أحمر
+
+ولّدت الصور على الـ Mac بتاعك، وعملت push، والـ CI على Linux قال إن كل الـ goldens فشلت بفرق 0.3% أو 1%. مفيش حاجة اتغيرت في الكود. اللي حصل إن كل نظام بيرسم النص بطريقته: الـ anti-aliasing (تنعيم الحواف) والـ hinting وطريقة التقريب للـ sub-pixels بتختلف بين macOS وLinux وWindows. الفرق مش باين للعين، بس الـ golden بيقارن pixels.
+
+ونفس المشكلة بتحصل بين نسختين Flutter: تحديث في الـ engine ممكن يغيّر طريقة رسم الظل أو الخط، فكل الـ goldens تفشل مرة واحدة.
+
+القاعدة: <b>الصورة المرجعية بتتولّد في مكان واحد بس، وهو نفس المكان اللي بيقارن</b>. وعندك كذا طريقة:
+
+| الطريقة | إزاي | ميزتها | عيبها |
+| --- | --- | --- | --- |
+| الـ CI هو المرجع | workflow بيولّد الصور على Linux ويعمل لها commit | الصور بتطابق الـ CI دايمًا | دورة أبطأ: تعمل push وتستنى |
+| docker محلي بنفس الـ image | `flutter test --update-goldens` جوه container Linux | سريع ومطابق للـ CI | لازم الكل عنده docker |
+| alchemist CI goldens | النص بيترسم بلوكات، فمفيش خطوط تختلف | مستقل عن المنصة خالص | مش هتشوف النص العربي في الصورة (تحت) |
+| tolerance | تقبل فرق صغير | بيحل الفروق الصغيرة | ممكن يعدّي bug صغير حقيقي (تحت) |
+
+في Readly هنمشي بالأولى والتانية مع بعض. أول حاجة، علّم ملفات الـ golden بـ tag، فتقدر تشغّلها أو تستبعدها:
+
+<CodeBlock label="tag في أول ملف التست + dart_test.yaml">
+
+```dart
+// first lines of every *_golden_test.dart
+@Tags(['golden'])
+library;
+```
+
+```yaml
+# dart_test.yaml (package root)
+tags:
+  golden:
+    timeout: 2x # rendering is slower on CI machines
+```
+
+</CodeBlock>
+
+```bash
+flutter test --exclude-tags golden   # on your Mac: everything except pixels
+flutter test --tags golden           # on Linux/CI: only the goldens
+```
+
+ولو عايز تولّد على جهازك بنفس الـ Linux بتاع الـ CI، شغّل نفس نسخة Flutter جوه docker:
+
+```bash
+docker run --rm -v "$PWD":/app -w /app ghcr.io/cirruslabs/flutter:3.35.5 \
+  sh -c "flutter pub get && flutter test --tags golden --update-goldens"
+```
+
+ولما الفريق يكبر، خلّي الـ CI نفسه يولّد الصور بزرار:
+
+<CodeBlock label=".github/workflows/update-goldens.yml">
+
+```yaml
+name: update-goldens
+on: workflow_dispatch # run it on your branch from the Actions tab
+
+jobs:
+  goldens:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: apps/readly # the app package in the workspace
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version-file: pubspec.yaml # same Flutter as ci.yml
+          cache: true
+      - run: flutter pub get
+      - run: flutter test --tags golden --update-goldens
+      - name: Commit the new goldens
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add test
+          git commit -m "test: update goldens on linux" || echo "nothing changed"
+          git push
+```
+
+</CodeBlock>
+
+- <b>الـ flutter-version-file:</b> بيقرا نسخة Flutter من `environment: flutter:` في الـ pubspec (لازم تبقى نسخة محددة زي `3.35.5`). الـ `ci.yml` (بالشكل اللي في [درس الاستراتيجية](/course/testing/strategy/)) بيستخدم نفس السطر، فالمولّد والمقارن نفس الـ engine بالظبط. ومن غيره، `channel: stable` هيجيب نسخة جديدة يوم ما تنزل، وكل الـ goldens هتفشل في PR ملوش علاقة.
+- <b>الـ `working-directory`:</b> Readly workspace والـ app في `apps/readly`، فالـ `run` steps بتشتغل هناك. أما `flutter-version-file` فبيتقري من root الـ repo، من الـ pubspec اللي فيه الـ workspace.
+- <b>الـ commit على نفس الـ branch:</b> الـ workflow بيشتغل على الـ branch اللي اخترته، فالصور الجديدة بتظهر في الـ PR بتاعك وتتراجع معاه.
+- <b>تحديث Flutter نفسه PR لوحده:</b> ترفع النسخة في الـ pubspec، وتشغّل الـ workflow، والـ PR يبقى فيه «الـ engine اتغير، ودي الصور». كده محدش يخلط تغيير شكل حقيقي وسط 200 صورة اتغيرت بسبب الـ engine.
+
+وفي الـ `ci.yml` العادي، لو الـ goldens فشلت، ارفع فولدرات `failures/` كـ artifact عشان اللي بيراجع يشوف الفرق من غير ما يشغّل حاجة:
+
+<CodeBlock label="خطوة في ci.yml بعد التستات">
+
+```yaml
+- name: Tests
+  run: flutter test
+- uses: actions/upload-artifact@v4
+  if: failure()
+  with:
+    name: golden-failures
+    path: "**/test/**/failures/" # the app and every package in the workspace
+```
+
+</CodeBlock>
+
+والخطوة دي نفسها موجودة في الـ `ci.yml` الكامل بتاع [درس الاستراتيجية](/course/testing/strategy/)، جوه كل shard.
+
+### الـ tolerance comparator
+
+أحيانًا مش هتقدر تتحكم في المنصة 100%: مثلًا فريق فيه ناس على Windows ومحدش عايز docker، أو فروق صغيرة بتحصل بين runners مختلفين. الحل الأخير إنك تقبل نسبة صغيرة من الـ pixels تختلف. الـ `matchesGoldenFile` بيستخدم global اسمه `goldenFileComparator`، وانت تقدر تبدّله بواحد أرحم:
+
+<CodeBlock label="test/helpers/tolerant_golden_comparator.dart">
+
+```dart
+import 'package:flutter/foundation.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+/// Passes when at most [tolerance] of the pixels differ (0.001 = 0.1%).
+final class TolerantGoldenComparator extends LocalFileComparator {
+  TolerantGoldenComparator(super.testFile, {required this.tolerance});
+
+  final double tolerance;
+
+  @override
+  Future<bool> compare(Uint8List imageBytes, Uri golden) async {
+    final result = await GoldenFileComparator.compareLists(
+      imageBytes,
+      await getGoldenBytes(golden),
+    );
+    if (result.passed || result.diffPercent <= tolerance) {
+      result.dispose();
+      return true;
+    }
+    final error = await generateFailureOutput(result, golden, basedir);
+    result.dispose();
+    throw FlutterError(error);
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="تركيبه في flutter_test_config.dart">
+
+```dart
+Future<void> testExecutable(FutureOr<void> Function() testMain) async {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  await loadAppFonts();
+
+  // flutter test sets a LocalFileComparator for each test file: keep its folder
+  final comparator = goldenFileComparator;
+  if (comparator is LocalFileComparator) {
+    goldenFileComparator = TolerantGoldenComparator(
+      comparator.basedir.resolve('any_test.dart'), // only the folder matters
+      tolerance: 0.001,
+    );
+  }
+  await testMain();
+}
+```
+
+</CodeBlock>
+
+- <b>الـ LocalFileComparator:</b> ده الـ comparator الافتراضي، وبيعرف يقرا الصورة ويكتبها ويطلّع ملفات `failures/`. احنا بنغيّر قرار «عدّى ولا لأ» بس، وكل الباقي زي ما هو.
+- <b>الـ diffPercent كسر مش نسبة مئوية:</b> `0.001` يعني 0.1% من الـ pixels. الرسالة بتطبعه ×100.
+- <b>الـ basedir:</b> `flutter test` بيعمل comparator لكل ملف تست، والصور بتتقري نسبةً لفولدره. لو عملت comparator بمسار ثابت، كل الـ goldens هتدوّر في فولدر واحد ومش هتلاقي حاجة.
+
+<Note kind="warn" title="الـ tolerance بتعدّي bugs صغيرة">
+
+0.1% من شاشة 390×844 بـ pixel ratio 3 يعني حوالي 3000 pixel. divider اختفى، أو أيقونة اتبدلت بأيقونة شبهها، ممكن يبقوا أقل من كده. ابدأ بصفر، ولو اضطريت خلّيها أصغر رقم بيحل المشكلة، ومش أكبر من 0.5% أبدًا. والـ tolerance علاج لفرق المنصات، مش لـ golden متقلب: لو صورة بتتغير بسبب animation أو وقت، صلّح السبب.
+
+</Note>
+
+### alchemist: goldens بشكل أنضف
+
+الـ `matchesGoldenFile` لوحده شغال، بس مع الوقت هتلاقي نفسك بتكتب نفس الحاجات: شبكة من الحالات في صورة واحدة، وفصل بين صور الـ CI وصور جهازك، وtolerance. الـ <b>alchemist</b> (من Betterment) package بتعمل ده كله:
+
+```bash
+flutter pub add dev:alchemist
+```
+
+<CodeBlock label="BookTile: كل الحالات في صورة واحدة">
+
+```dart
+import 'package:alchemist/alchemist.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+import '../../../helpers/builders.dart';
+import '../../../helpers/pump_app.dart';
+
+void main() {
+  for (final (name, locale, mode) in const [
+    ('ar_light', Locale('ar'), ThemeMode.light),
+    ('ar_dark', Locale('ar'), ThemeMode.dark),
+    ('en_light', Locale('en'), ThemeMode.light),
+  ]) {
+    goldenTest(
+      'BookTile in every state ($name)',
+      fileName: 'book_tile_$name',
+      pumpWidget: (tester, widget) => tester.pumpApp(widget, locale: locale, themeMode: mode),
+      builder: () => GoldenTestGroup(
+        scenarioConstraints: const BoxConstraints(maxWidth: 360),
+        children: [
+          for (final status in BookStatus.values)
+            GoldenTestScenario(
+              name: status.name,
+              child: BookTile(book: aBook(status: status)),
+            ),
+          GoldenTestScenario(
+            name: 'very long title',
+            child: BookTile(book: aBook(title: 'The Lion, the Witch and the Wardrobe: Collector Edition')),
+          ),
+          GoldenTestScenario.withTextScaleFactor(
+            name: 'text scale 2.0',
+            textScaler: const TextScaler.linear(2),
+            child: BookTile(book: aBook()),
+          ),
+        ],
+      ),
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ goldenTest:</b> بيلف `testWidgets` و`matchesGoldenFile` مع بعض، وبيحط tag اسمه `golden` لوحده، فـ `--tags golden` شغالة من غير `@Tags`. والـ `fileName` من غير `.png`.
+- <b>الـ GoldenTestGroup والـ scenarios:</b> كل الحالات بتترسم جنب بعض في صورة واحدة، وفوق كل واحدة اسمها. بدل 6 صور للـ tile، صورة واحدة تراجعها في نظرة.
+- <b>الـ pumpWidget بـ pumpApp:</b> alchemist بيلف الـ widget في wrapper صغير فيه theme وlocalizations Flutter الافتراضية بس. الـ `BookTile` بيستخدم `AppLocalizations.of(context)!` عشان نص الحالة، فمن غيره هيقع. لما تمرّر `pumpApp`، الـ wrapper بيتحط جوه الـ MaterialApp بتاعنا وبياخد الـ theme والترجمة والاتجاه منه.
+- <b>الـ withTextScaleFactor:</b> scenario واحد بخط مكبّر جوه نفس الصورة، من غير ما تعدّل الـ view.
+- <b>الـ record في الـ loop:</b> كل variant سطر واحد. Dart 3 بيفك الـ record في الـ `for` على طول.
+
+والإعدادات العامة في نفس `flutter_test_config.dart`:
+
+<CodeBlock label="flutter_test_config.dart مع alchemist">
+
+```dart
+import 'dart:async';
+import 'dart:io';
+
+import 'package:alchemist/alchemist.dart';
+
+Future<void> testExecutable(FutureOr<void> Function() testMain) async {
+  final isRunningInCi = Platform.environment.containsKey('CI');
+
+  return AlchemistConfig.runWithConfig(
+    config: AlchemistConfig(
+      // local, readable goldens: generated on your machine, not compared in CI
+      platformGoldensConfig: PlatformGoldensConfig(enabled: !isRunningInCi),
+    ),
+    run: testMain,
+  );
+}
+```
+
+</CodeBlock>
+
+alchemist بيعمل نوعين صور لكل تست:
+
+| النوع | بيتحفظ في | النص | الهدف |
+| --- | --- | --- | --- |
+| CI goldens | `goldens/ci/` | بلوكات ملونة (خط Ahem)، والظلال مقفولة | المقارنة في الـ CI: نفس الـ pixels على أي منصة |
+| platform goldens | `goldens/macos/` أو `linux/` أو `windows/` | النص الحقيقي بخطوط الـ app | انت تبص عليها وتفهم الشكل |
+
+- <b>الخطوط بتتحمّل لوحدها:</b> alchemist بيقرا الـ `FontManifest.json` ويحمّل كل الخطوط قبل أول تست، زي الـ `loadAppFonts` بتاعنا بالظبط. فالـ platform goldens فيها Cairo الحقيقي.
+- <b>الـ CI goldens بتحل مشكلة المنصات:</b> النص بلوكات بمقاسات ثابتة، فـ Mac وLinux بيطلّعوا نفس الصورة. بس انت دفعت التمن: <b>الصورة مش هتوريك النص العربي</b>. هتمسك إن الـ layout اتقلب أو الـ padding راح، بس مش إن كلمة اتقصت غلط أو الحروف ركبت فوق بعض.
+- <b>الـ GitHub Actions بيحط `CI=true`:</b> فالـ platform goldens بتتقفل هناك لوحدها، والـ CI بيقارن صور `ci/` بس.
+- <b>الـ platform goldens في الـ .gitignore؟</b> فريق كله على Mac ممكن يعمل commit لـ `goldens/macos/` كمرجع للعين. فريق مختلط الأحسن يتجاهلها (`**/goldens/macos/` و`windows/` و`linux/`) ويخلّي الـ `ci/` بس في الـ repo.
+
+ولو عايز tolerance مع alchemist، فيه `diffThreshold` في `CiGoldensConfig` و`PlatformGoldensConfig` (مثلًا `CiGoldensConfig(diffThreshold: 0.001)`). بس خلي بالك: alchemist بيطبّق الـ threshold بس لو الـ `goldenFileComparator` هو `LocalFileComparator` نفسه، مش subclass. لو ركّبت الـ `TolerantGoldenComparator` بتاعنا ومعاه `diffThreshold`، التست هيرمي `UnsupportedError`. اختار واحد منهم.
+
+وفي حاجات تانية مفيدة في `goldenTest`: الـ `whilePerforming: press(find.byType(FilledButton))` بيصوّر الزرار وهو متداس، والـ `pumpBeforeTest: precacheImages` بيحمّل الصور قبل التصوير (بدل الـ `runAsync` اللي فوق)، والـ `constraints` بيحدد مقاس الصورة كلها.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+### امتى الـ goldens بتضر
+
+الـ golden أغلى تست في الصيانة، مش في الكتابة. كتابته 10 سطور، بس كل تغيير في الشكل بعد كده محتاج حد يفتح الصور ويقرر. ولما الثمن ده يبقى أكبر من الفايدة، الـ goldens بتبقى عبء:
+
+- <b>للـ logic:</b> «لما الـ state تبقى error يظهر زرار retry» ده سؤال لـ `find.byType(RetryButton)`، مش لصورة. الـ golden هنا هيفشل لو الزرار اتحرك 2 pixel، ومش هيقولك ليه.
+- <b>في product لسه بيتغير كل أسبوع:</b> لو الـ designer بيعيد شاشة الكتالوج كل sprint، كل PR فيه 20 صورة متغيرة، والفريق هيبطّل يبص عليهم. استنى لحد ما الشاشة تثبت.
+- <b>لكل widget صغير:</b> golden لكل `Text` و`Padding` في الـ design system معناه إن أي تغيير في الـ theme يكسر 300 صورة. صوّر الـ components اللي ليها حالات كتير (`BookTile`، `ErrorView`) والشاشات المهمة، مش كل حاجة.
+- <b>الـ update الأعمى:</b> أخطر حاجة. التست فشل، فحد شغّل `--update-goldens` وعمل commit من غير ما يفتح الصور. كده التست حوّل الـ bug لمرجع رسمي. لو ده بيحصل عندكم، الـ goldens بتديك إحساس أمان وهمي، وده أسوأ من إنها ماتبقاش موجودة.
+- <b>على منصات مختلفة من غير نظام:</b> لو الصور بتفشل كل شوية من غير ما حد غيّر حاجة، الفريق هيتعلم يتجاهل الأحمر. الأحمر لازم يعني حاجة.
+
+### كام golden وفين
+
+قاعدة عملية لـ Readly:
+
+| المستوى | إيه | الـ variants |
+| --- | --- | --- |
+| components بحالات كتير | `BookTile`، `ErrorView`، `SyncBadge` | كل الحالات في صورة alchemist واحدة، ×(ar light، ar dark، en) |
+| الشاشات الأساسية | المكتبة، التفاصيل، الـ login | loaded وerror وفاضية، ×(ar light، ar dark) |
+| الحالات المتطرفة | التفاصيل على موبايل صغير بخط 1.5 | صورة أو اتنين بس |
+
+ده حوالي 30 صورة، مش 300. كل صورة زيادة لازم تجاوب على سؤال: «لو اتغيرت، هيبقى غالبًا bug؟». لو الإجابة «غالبًا تغيير مقصود»، ماتصوّرهاش.
+
+### الـ review في الـ PR
+
+الـ golden مالوش قيمة غير لو حد بيبص على الصور. فخلّي البص ده سهل وإجباري:
+
+- <b>تحديث الصور في commit لوحده:</b> `test: update goldens for the new BookTile padding`. اللي بيراجع يعرف إن الـ commit ده صور بس، ويقارنها بالـ commit اللي قبله.
+- <b>GitHub بيعرض فرق الصور:</b> أي PNG اتغير في الـ PR بيتعرض بـ 2-up (جنب بعض)، وswipe، وonion skin (فوق بعض بشفافية). الـ onion skin بالذات بيوري الفرق في المسافات على طول.
+- <b>عدد الصور المتغيرة رقم بيتكلم:</b> لو PR صغير غيّر 2 صورة، تمام. لو PR «تعديل لون زرار» غيّر 80 صورة، يبقى في حاجة غلط: يا إما التغيير أكبر من اللي الـ PR بيقوله، يا إما الـ goldens بتصوّر نفس الحاجة كتير.
+- <b>الـ failures كـ artifact:</b> لما الـ CI يفشل، اللي بيراجع ينزّل `golden-failures` ويشوف الـ maskedDiff، من غير ما يعمل checkout ويشغّل.
+- <b>اكتب في وصف الـ PR ليه الصور اتغيرت:</b> «زوّدنا الـ padding في BookTile حسب الـ design الجديد (لينك)». من غير كده، الـ reviewer مش هيعرف يفرّق بين المقصود والـ bug.
+
+### حجم الـ repo
+
+كل صورة 30 لـ 200 KB، وكل update نسخة جديدة في تاريخ git للأبد. 30 صورة بتتحدث كام مرة في الشهر مش مشكلة. لو وصلت لمئات الصور بتتغير كتير، فكّر في Git LFS للـ `goldens/`، وده قرار بيتعمل له ADR لأن كل الفريق والـ CI لازم يكون عندهم LFS. بس غالبًا الحل الأحسن إنك تقلل الصور.
+
+<Note kind="interview" title="سؤال interview">
+
+«الـ golden tests بتعدّي على جهازي وبتفشل على الـ CI بفرق صغير، والفريق بقى بيعمل update على طول. تعمل إيه؟» السبب إن كل نظام بيرسم النص بشكل مختلف شوية (anti-aliasing وhinting)، فصور اتولّدت على Mac مش هتطابق Linux، ونفس الكلام بين نسختين Flutter. الحل إن الصور تتولّد في نفس البيئة اللي بتقارن: Linux بنسخة Flutter مثبتة في الـ pubspec، يا إما workflow في الـ CI بيولّدها، يا إما docker بنفس الـ image محليًا، والـ goldens عليها tag فتستبعدها على الـ Mac. أو alchemist CI goldens اللي بترسم النص بلوكات، مع العلم إنها مش هتوريك النص العربي. والـ tolerance آخر حل وبرقم صغير جدًا. وأهم من الأداة: الـ update الأعمى لازم يقف. الصور تتحدث في commit لوحده، والـ failures بتترفع artifact، والـ reviewer بيفتح كل صورة متغيرة. لو محدش بيبص على الصور، الـ goldens بقت بتحمي الـ bugs.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### golden بيكذب عليك
+
+<BeforeAfter>
+
+<Side label="قبل: صورة مربعات على الـ Mac" kind="before">
+
+```dart
+testWidgets('library', (tester) async {
+  // no fonts loaded, default 800x600, LTR English
+  await tester.pumpWidget(MaterialApp(
+    home: BlocProvider<LibraryCubit>.value(
+      value: cubit,
+      child: const LibraryView(),
+    ),
+  ));
+  expect( // not awaited: unreliable
+    find.byType(LibraryView),
+    matchesGoldenFile('library.png'),
+  );
+});
+```
+
+</Side>
+
+<Side label="بعد: الشاشة اللي المستخدم بيشوفها" kind="after">
+
+```dart
+@Tags(['golden'])
+library;
+
+// fonts come from flutter_test_config.dart
+testWidgets('library', (tester) async {
+  final c = goldenCases.currentValue!;
+  tester.useScreen(Screens.phone);
+  await tester.pumpApp(
+    BlocProvider<LibraryCubit>.value(
+      value: cubit,
+      child: const LibraryView(),
+    ),
+    locale: c.locale,
+    themeMode: c.themeMode,
+  );
+  await expectLater(
+    find.byType(LibraryView),
+    matchesGoldenFile('goldens/library_${c.name}.png'),
+  );
+}, variant: goldenCases);
+```
+
+</Side>
+
+</BeforeAfter>
+
+- <b>قبل:</b> النص مربعات، والشاشة بمقاس مش موبايل، والاتجاه LTR، ومفيش theme Readly. والـ `expect` من غير `await` معناه إن نتيجة المقارنة مش مضمونة توصل للتست. صورة متحفظة بس مش بتختبر حاجة بثقة.
+- <b>بعد:</b> خط Cairo الحقيقي، وموبايل 390×844، وكل locale وtheme في صورة، والـ tag بيخلّي التست يشتغل على Linux بس.
+
+### الـ flutter_test_config.dart النهائي (من غير alchemist)
+
+```dart
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+import 'helpers/tolerant_golden_comparator.dart';
+
+Future<void> testExecutable(FutureOr<void> Function() testMain) async {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  await loadAppFonts();
+  EditableText.debugDeterministicCursor = true; // no blinking cursor in goldens
+
+  // only if you really need it; start without
+  const tolerance = 0.0;
+  final comparator = goldenFileComparator;
+  if (tolerance > 0 && comparator is LocalFileComparator) {
+    goldenFileComparator = TolerantGoldenComparator(
+      comparator.basedir.resolve('any_test.dart'),
+      tolerance: tolerance,
+    );
+  }
+
+  await testMain();
+}
+
+Future<void> loadAppFonts() async {
+  final manifest = json.decode(
+    await rootBundle.loadString('FontManifest.json'),
+  ) as List<dynamic>;
+
+  for (final family in manifest.cast<Map<String, dynamic>>()) {
+    final loader = FontLoader(family['family'] as String);
+    for (final font in (family['fonts'] as List<dynamic>).cast<Map<String, dynamic>>()) {
+      loader.addFont(rootBundle.load(font['asset'] as String));
+    }
+    await loader.load();
+  }
+}
+```
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="t-golden-tests-1">
+<Ask>كتبت golden test، وشغّلته بـ `--update-goldens`، وعدّى. ليه ده مش معناه إن الشاشة سليمة، ولازم تعمل إيه قبل الـ commit؟</Ask>
+<Answer>
+
+الـ `--update-goldens` بيكتب اللي اترسم دلوقتي كمرجع من غير ما يقارن بحاجة، فهو بيعدّي دايمًا. لو الشاشة فيها bug ساعتها، الـ bug بقى هو المرجع والتست هيحميه. لازم تفتح الصورة وتبص عليها بعينك قبل ما تعملها commit.
+
+</Answer>
+</Question>
+
+<Question id="t-golden-tests-2">
+<Ask>فتحت صورة الـ golden لشاشة المكتبة، ولقيت كل النص مربعات سودا. إيه السبب، وتصلحه إزاي في app عربي؟</Ask>
+<Answer>
+
+`flutter test` مابيحمّلش خطوط الـ app، وبيرسم بخط FlutterTest (Ahem زمان) اللي كل حرف فيه مربع. الحل إنك تحمّل الخطوط من `FontManifest.json` بـ `FontLoader` في `test/flutter_test_config.dart` قبل `testMain`، وتتأكد إن الـ theme بيقول `fontFamily: 'Cairo'` صريح، لأن Roboto الافتراضي مش موجود في الـ app.
+
+</Answer>
+</Question>
+
+<Question id="t-golden-tests-3">
+<Ask>الـ goldens بتعدّي على الـ Mac بتاعك وبتفشل على الـ CI (Linux) بفرق 0.4%، ومفيش كود اتغير. ليه؟ واذكر حلين.</Ask>
+<Answer>
+
+كل نظام بيرسم النص بـ anti-aliasing وhinting مختلفين شوية، فالـ pixels مش متطابقة. الحلول: الصور تتولّد على Linux بنفس نسخة Flutter (workflow في الـ CI، أو docker محلي بنفس الـ image)، مع tag `golden` تستبعده على الـ Mac. أو alchemist CI goldens اللي بترسم النص بلوكات فبتبقى مستقلة عن المنصة. والـ tolerance الصغيرة آخر حل.
+
+</Answer>
+</Question>
+
+<Question id="t-golden-tests-4">
+<Ask>golden لشاشة المكتبة وهي بتحمّل بيفشل بـ `pumpAndSettle timed out`، وgolden صفحة التفاصيل بيطلع فيه الغلاف مرة وفاضي مرة. إيه السبب في كل واحد؟</Ask>
+<Answer>
+
+الأولى: الـ `CircularProgressIndicator` animation مابتخلصش، فالـ `pumpAndSettle` مش هيلاقي لحظة سكون أبدًا. الحل `TickerMode(enabled: false)` حوالين الشاشة، أو `pump()` بدل `pumpAndSettle`. التانية: فك الصور بيحصل برا الـ fake async، فالصورة ساعات بتتاخد قبل ما الغلاف يجهز. الحل `tester.runAsync(() => precacheImage(...))` وبعدين `pump()`، أو `pumpBeforeTest: precacheImages` في alchemist، وفي الحالتين الغلاف asset ثابت متحقن مش من النت.
+
+</Answer>
+</Question>
+
+<Question id="t-golden-tests-5">
+<Ask>PR عنوانه «تغيير لون الزرار الأساسي» فيه 85 صورة golden متغيرة. تعمل إيه كـ reviewer؟</Ask>
+<Answer>
+
+الرقم نفسه علامة: يا إما التغيير أكبر من اللي العنوان بيقوله (اللون في `colorScheme.primary` اللي بيأثر على شاشات كتير)، يا إما الـ goldens بتصوّر نفس الحاجة في أماكن كتير. افتح عينة بالـ onion skin واتأكد إن الفرق هو اللون بس، واطلب إن الصور تبقى في commit لوحدها والوصف يقول ليه اتغيرت. وبعدها فكّر تقلل الـ goldens: components بحالاتها وشاشات أساسية بس، مش كل widget.
+
+</Answer>
+</Question>
+
+</Quiz>

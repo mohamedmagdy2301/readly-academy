@@ -1,0 +1,32 @@
+---
+title: "التطبيق والمهام"
+description: "مهام وحدة الاختبارات في Readly: من أول unit test لحد CI بيمنع أي PR يكسر حاجة."
+type: "practice"
+---
+
+<Tasks>
+<Task id="wt-1">جهّز فولدر `test/` يعكس `lib/` بالظبط، وضيف `test/helpers/builders.dart` فيه `aBook()`، و`test/fixtures/` فيه ردود JSON حقيقية من Open Library، و`fixture()` بيقراها (الكود في درسي «الـ Test doubles» و«تست كل طبقة»).</Task>
+<Task id="wt-2">اكتب unit tests لكل value object في الـ domain (`BookId` و`Email`): قيمة صحيحة، وقيمة فاضية، والحدود بالظبط (أقصر وأطول قيمة مسموحة)، بـ parameterized test بلوب بدل ما تكرر التست.</Task>
+<Task id="wt-3">اكتب تست لكل use case في library وnotes بـ `FakeLibraryRepository`، واستخدم mocktail بس في الأماكن اللي محتاجة exception معين أو تتأكد من عدد المرات.</Task>
+<Task id="wt-4">اكتب تستات `BookDto.fromJson` على الـ fixtures: الـ `description` كنص، وكـ object فيه `value`، ومن غيره خالص. وتست للـ repository بيتأكد إن كل نوع `DioException` بيتحول للـ Failure الصح.</Task>
+<Task id="wt-5">اعمل contract test واحد لـ `LibraryRepository` يشتغل على الـ fake وعلى الـ impl فوق drift بـ `NativeDatabase.memory()`، فالـ fake يفضل صادق.</Task>
+<Task id="wt-6">اكتب blocTest لـ `CatalogSearchCubit`: الـ debounce بـ fake_async من غير انتظار حقيقي، والنتيجة القديمة اللي رجعت متأخر، والبحث الفاضي، وكل نوع Failure.</Task>
+<Task id="wt-7">اعمل `pumpApp` واكتب widget tests لشاشة المكتبة بكل states (loading وloaded وفاضية وerror)، ولشاشة الـ login: الـ validation، والزرار المقفول وقت الإرسال، والـ SnackBar لما السيرفر يرجّع 403.</Task>
+<Task id="wt-8">اعمل goldens لشاشة المكتبة وصفحة تفاصيل الكتاب: light وdark، وعربي وإنجليزي، وtext scale كبير. اتأكد إنها بتتولّد على Linux في الـ CI مش على جهازك بس.</Task>
+<Task id="wt-9">اكتب integration test بـ fake backend للـ flow ده: login، إضافة كتاب والنت مقطوع، رجوع النت، والكتاب يوصل للسيرفر. وشغّله على emulator في الـ CI مرة في اليوم.</Task>
+<Task id="wt-10">صلّح bug حقيقي في Readly بالطريقة bug-first: تست فاشل بيوصف الـ bug الأول، وبعدين الـ fix، وخلي التست في الـ PR نفسه.</Task>
+<Task id="wt-11">بعد ما تطبّق جلسة الـ reading streak من درس الـ TDD، طبّق TDD على قاعدة جديدة من الصفر لوحدك: «هدف القراية السنوي» (كام كتاب فاضل، ومعدل كام كتاب في الشهر عشان تلحق قبل آخر السنة). اكتب ليستة التستات الأول، وخلي كل commit يبقى خطوة red أو green أو refactor.</Task>
+<Task id="wt-12">ضيف للـ CI: الـ coverage بحد أدنى للـ domain والـ data بعد استبعاد الملفات المتولّدة، و`--test-randomize-ordering-seed random`، واكتب صفحة «test strategy» قصيرة في الـ README: إيه بنختبره بأنهي نوع، وليه.</Task>
+</Tasks>
+
+<Diagram name="d-602c0dca30">
+
+كل نوع تست في الوحدة دي ليه مكان في الهرم. المهام ماشية من تحت لفوق: الـ unit الأول لأنه الأرخص والأسرع، والـ integration في الآخر للـ flows الحرجة بس.
+
+</Diagram>
+
+<Deliverable>`flutter test` بيعدّي في أقل من دقيقة، والـ CI بيوقف أي PR بيكسر تست أو بينزّل الـ coverage عن الحد، وفي integration test واحد على الأقل للـ flow الحرج بيشتغل كل يوم.</Deliverable>
+
+<ReviewQuestion>اختار bug واحد حصل فعلًا في Readly أو في مشروع اشتغلت عليه. أنهي نوع تست كان هيمسكه بأرخص تكلفة؟ وليه مش النوع اللي أعلى منه في الهرم ولا اللي أقل منه؟</ReviewQuestion>
+
+<LogBox id="log-testing" />

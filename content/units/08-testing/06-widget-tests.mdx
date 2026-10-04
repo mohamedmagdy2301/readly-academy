@@ -1,0 +1,869 @@
+---
+title: "Widget tests: الشاشة لوحدها من غير جهاز"
+description: "تشغّل شاشة من Readly على شاشة وهمية بساعة وهمية: تلاقي الـ widgets، وتدوس وتكتب وتسحب، وتفهم pump وpumpAndSettle بالظبط، وتختبر الـ SnackBar والـ dialog والـ navigation والفورم والـ accessibility والـ RTL."
+minutes: 40
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="بروفة المسرح والمخرج">
+
+في بروفة المسرحية مفيش جمهور ولا تذاكر ولا إضاءة حقيقية. الديكور كرتون، والممثل اللي بيلعب دور «السيرفر» زميل واقف بورقة بيقرا منها. والأهم: <b>المخرج هو اللي ماسك الوقت</b>. الممثلين بيتحركوا لحد المشهد ويقفوا. ولا حد بيكمل غير لما المخرج يقول «اللي بعده». ولو قال «قدّم 5 دقايق»، بيقفزوا لآخر المشهد على طول.
+
+ولو المخرج قال «كمّلوا لحد ما الكل يقف»، والممثل اللي بيعمل دور المروحة فضل يلف من غير ما يقف، البروفة مش هتخلص أبدًا.
+
+</Analogy>
+
+الـ <b>widget test</b> هو البروفة دي. الشاشة بتتبني بجد: widgets حقيقية، وlayout حقيقي، وtaps حقيقية. بس مفيش جهاز ولا emulator، والـ Cubit ممكن يكون «زميل بيقرا من ورقة» (mock)، والوقت وهمي. والـ <b>WidgetTester</b> هو المخرج: مفيش frame بيترسم، ولا animation بتتحرك، ولا `Future.delayed` بيخلص، غير لما تقول `pump`.
+
+ليه نختبر الـ UI أصلًا، والـ Cubit متست؟ لأن في حاجات مالهاش علاقة بالـ Cubit وبتبوظ في الـ UI بس:
+
+- الـ state جت `LibraryError`، بس الشاشة عرضت spinner عشان حد غيّر ترتيب الـ `switch`.
+- زرار «حاول تاني» موجود، بس مش متوصل بـ `load()`.
+- الـ SnackBar بيظهر مرتين، أو مش بيظهر خالص، عشان اتحط في `build` بدل `BlocListener`.
+- الإيميل الغلط بيطلّع الخطأ وهو لسه بيكتب.
+- زرار الـ refresh مالوش label، فـ TalkBack بيقول «زرار» وبس.
+- النص بيقص في العربي على شاشة صغيرة لما المستخدم يكبّر الخط.
+
+الـ widget test بيمسك كل ده في ملي ثواني، من غير ما تفتح الـ app. وهو الطبقة اللي في النص بين [تستات الـ Cubit](/course/testing/cubit-tests/) و[الـ integration tests](/course/testing/integration/).
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### أول widget test
+
+الـ `LibraryView` من [درس الـ Cubit](/course/presentation/cubit/) بيعرض spinner أو ليستة كتب أو error حسب الـ state. هنختبره لوحده بـ Cubit مزيف:
+
+<CodeBlock label="test/features/library/presentation/library_view_test.dart">
+
+```dart
+// moves to test/helpers/mocks.dart next to the other mocks (test doubles lesson)
+class MockLibraryCubit extends MockCubit<LibraryState> implements LibraryCubit {}
+
+void main() {
+  late MockLibraryCubit cubit;
+
+  setUp(() => cubit = MockLibraryCubit());
+
+  testWidgets('shows a spinner while loading', (tester) async {
+    when(() => cubit.state).thenReturn(const LibraryLoading());
+
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: BlocProvider<LibraryCubit>.value(
+        value: cubit,
+        child: const LibraryView(),
+      ),
+    ));
+
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `testWidgets` بدل `test`:</b> بيدّيك `tester`، وبيشغّل التست في بيئة فيها شاشة وهمية (800×600 logical pixels) وساعة وهمية.
+- <b>الـ `MockCubit`:</b> من bloc_test. بيرجّع stream فاضي و`close()` جاهزين. بس <b>الـ `state` مش متبرمج</b>، ولو نسيت `when(() => cubit.state)`، الـ BlocBuilder هيقع بـ `type 'Null' is not a subtype of type 'LibraryState'`.
+- <b>الـ `BlocProvider.value`:</b> مش `create`. الـ Cubit بتاعك انت، والـ provider مايقفلوش. والـ `LibraryView` بيلاقيه بـ `context.read` زي الـ app بالظبط.
+- <b>بنختبر الـ View مش الـ Page:</b> الـ `LibraryPage` بتعمل `getIt<LibraryCubit>()` جوه `BlocProvider(create:)`. لو اختبرتها، هتحتاج get_it في التست. فصل Page وView (اللي عملناه في درس الـ Forms) هو اللي مخلّي الشاشة قابلة للتست.
+- <b>الـ `pumpWidget`:</b> بيحط الـ widget في الشجرة ويرسم أول frame.
+
+### الـ helper: pumpApp
+
+كل تست في المشروع محتاج نفس الغلاف: الترجمة، والـ theme، والعربي، وشوية حاجات تانية. لو كل تست كتبها بنفسه، هتلاقي تست ناسي الـ locale فبيختبر بالإنجليزي، وتست تاني ناسي الـ theme. فبنكتبها مرة في ملف واحد:
+
+<CodeBlock label="test/helpers/pump_app.dart">
+
+```dart
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:readly/core/theme/app_theme.dart';
+import 'package:readly/l10n/app_localizations.dart';
+
+extension PumpApp on WidgetTester {
+  Future<void> pumpApp(
+    Widget child, {
+    Locale locale = const Locale('ar'),
+    ThemeMode themeMode = ThemeMode.light,
+  }) {
+    return pumpWidget(
+      MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: AppTheme.light,
+        darkTheme: AppTheme.dark,
+        themeMode: themeMode,
+        locale: locale,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Material(child: child),
+      ),
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ extension على WidgetTester:</b> فبتكتب `tester.pumpApp(...)` كأنها جزء من Flutter. ودروس [الـ goldens](/course/testing/golden-tests/) و[الـ integration](/course/testing/integration/) هيستخدموها زي ما هي.
+- <b>العربي هو الـ default:</b> المستخدمين بالعربي، فالتستات بالعربي. والـ RTL بييجي لوحده: الـ `GlobalWidgetsLocalizations` اللي جوه `localizationsDelegates` بيحط `Directionality` بـ rtl لأي locale عربي. مش محتاج تلف الـ child بـ `Directionality` بإيدك.
+- <b>الـ theme الحقيقي:</b> `AppTheme.light` و`AppTheme.dark` نفسهم اللي في `ReadlyApp` من درس الإعدادات. والـ `themeMode` بيخليك تختبر الـ dark mode بسطر.
+- <b>الـ `Material`:</b> widgets زي `ListTile` و`TextField` و`InkWell` محتاجة `Material` فوقها، وإلا بتقع بـ `No Material widget found`. ولو الـ child صفحة فيها `Scaffold`، الـ Material اللي برا مش بيضر.
+- <b>الترجمة متزامنة:</b> الـ delegates اللي بيولّدها gen-l10n بترجع `SynchronousFuture`، فالنصوص العربي موجودة من أول frame، ومش محتاج `pump` زيادة عشانها.
+- <b>والـ providers؟</b> الـ helper مايعرفش حاجة عن الـ Cubits، عن قصد. كل تست بيلف الـ child بالـ `BlocProvider.value` اللي محتاجه. كده الـ mock ظاهر في التست نفسه، وماحدش بيتفاجئ بـ Cubit متحط في helper.
+
+والتست بقى كده:
+
+<CodeBlock label="بـ pumpApp">
+
+```dart
+void main() {
+  late MockLibraryCubit cubit;
+  final l10n = lookupAppLocalizations(const Locale('ar'));
+
+  setUp(() => cubit = MockLibraryCubit());
+
+  Widget subject() => BlocProvider<LibraryCubit>.value(
+        value: cubit,
+        child: const LibraryView(),
+      );
+
+  testWidgets('shows a spinner while loading', (tester) async {
+    when(() => cubit.state).thenReturn(const LibraryLoading());
+    await tester.pumpApp(subject());
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+  });
+
+  testWidgets('shows every book title', (tester) async {
+    when(() => cubit.state).thenReturn(LibraryLoaded([
+      aBook(),
+      aBook(id: 'OL1W', title: 'Matilda', status: BookStatus.finished),
+    ]));
+    await tester.pumpApp(subject());
+
+    expect(find.text('Fantastic Mr Fox'), findsOneWidget);
+    expect(find.byType(BookTile), findsNWidgets(2));
+  });
+
+  testWidgets('retry calls load', (tester) async {
+    when(() => cubit.state).thenReturn(const LibraryError(NetworkFailure()));
+    when(() => cubit.load()).thenAnswer((_) async {});
+    await tester.pumpApp(subject());
+
+    expect(find.text(l10n.errorNoInternet), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, l10n.retry));
+    verify(() => cubit.load()).called(1);
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `lookupAppLocalizations`:</b> function بيولّدها gen-l10n جنب `AppLocalizations`. بتجيب النصوص العربي من غير `BuildContext`. فالتست بيدوّر على `l10n.errorNoInternet` مش على «مفيش اتصال بالإنترنت». لو حد عدّل الجملة في ملف الـ ARB، التست مايتكسرش. ولو حد شال المفتاح، التست مش هيعمل compile.
+- <b>الـ `when(() => cubit.load())`:</b> الـ mock مش متبرمج يرد على `load()`، وهو بيرجّع `Future<void>`. من غير الـ stub، الدوسة هتقع بـ `type 'Null' is not a subtype of type 'Future<void>'`.
+- <b>الـ `subject()`:</b> function صغيرة بتبني الشاشة اللي بنختبرها، بدل ما نكرر الـ provider في كل تست.
+
+### pump وpump(duration) وpumpAndSettle
+
+ده أكتر حتة بتلخبط الناس في الـ widget tests، فخلينا نمشيها frame بـ frame. القاعدة الأساسية: <b>الـ tester مابيرسمش لوحده</b>. أي حاجة بتغيّر الشاشة (state جديدة، tap، animation، timer) بتعلّم إن في frame محتاج يترسم، بس الرسم مابيحصلش غير لما تقول `pump`.
+
+| الأمر | الساعة | الـ frames |
+| --- | --- | --- |
+| `tap()`، `enterText()` | مابتتحركش | ولا frame. بيبعت الـ event وبس، والـ widgets بتتعلم dirty |
+| `pump()` | مابتتحركش | frame واحد. بيبني اللي اتعلم dirty، ويشغّل الـ microtasks |
+| `pump(Duration(milliseconds: 300))` | بتقفز 300ms مرة واحدة | frame واحد في الآخر. الـ timers اللي ميعادها جوه المدة بتولع، والـ animation بتقفز لمكانها عند 300 |
+| `pumpAndSettle()` | بتتحرك 100ms كل مرة | `pump(100ms)` ورا بعض طول ما في frame متعلّم إنه محتاج يترسم. بيرجّع عدد المرات |
+
+<Diagram name="d-test-pump-timeline">
+
+المستخدم داس زرار بيفتح dialog، والـ dialog بيظهر بـ animation مدتها 150ms. الـ `pump()` بيرسم frame واحد عند صفر: الـ dialog موجود في الشجرة من اللحظة دي، حتى لو لسه شفاف. الـ `pump(300ms)` بيقفز للآخر برسمة واحدة. الـ `pumpAndSettle` بيرسم عند 100 و200 ويقف لما الـ animation تخلص. ولو في spinner بيلف على طول، عمره ما هيقف.
+
+</Diagram>
+
+نشوف ده في الكود. الـ `AddBookListener` بيفتح dialog لما الكتاب يكون موجود في المكتبة (هنكتبه في Level 3):
+
+<CodeBlock label="frame بـ frame">
+
+```dart
+// the cubit is a MockAddBookCubit whose stream emits AddBookError once
+await tester.pumpApp(addBookSubject()); // frame 1: nothing has happened yet
+expect(find.byType(AlertDialog), findsNothing);
+
+await tester.pump(); // the Cubit's new state arrives, the listener calls showDialog
+expect(find.byType(AlertDialog), findsOneWidget); // already in the tree, opacity ~0
+
+final frames = await tester.pumpAndSettle(); // 100ms, 200ms: the fade is done
+expect(frames, 2);
+```
+
+</CodeBlock>
+
+- <b>الـ `find` بيدوّر في الشجرة، مش في اللي ظاهر للعين:</b> بعد `pump()` واحدة الـ dialog شفاف تقريبًا، بس `find.byType(AlertDialog)` بيلاقيه. لو عايز تختبر إنه «ظاهر بالكامل»، ده شغل الـ golden test مش الـ finder.
+- <b>الـ 2:</b> الـ fade بتاع الـ dialog 150ms، فالـ pump عند 100 لسه في النص، وعند 200 خلص ومفيش frame جديد مطلوب.
+
+ودي المواقف اللي بتقابلها كل يوم:
+
+<CodeBlock label="4 مواقف">
+
+```dart
+// 1) a tap changes nothing until a frame is built
+await tester.tap(find.byKey(const Key('login.submit')));
+expect(find.text(l10n.errorFieldRequired), findsNothing); // not rebuilt yet
+await tester.pump();
+expect(find.text(l10n.errorFieldRequired), findsNWidgets(2));
+
+// 2) a timer only fires when the fake clock passes it
+await tester.enterText(find.byType(TextField), 'flutter'); // debounce: 350ms
+await tester.pump(const Duration(milliseconds: 349));
+verifyNever(() => search(any()));
+await tester.pump(const Duration(milliseconds: 1)); // the timer fires
+verify(() => search(any())).called(1);
+
+// 3) a Cubit on a stream: the state arrives in a microtask, pump() delivers it
+whenListen(cubit, Stream.value(newState), initialState: oldState);
+await tester.pumpApp(subject());
+await tester.pump(); // now the widget sees newState
+
+// 4) never settles: a spinner asks for a new frame forever
+when(() => cubit.state).thenReturn(const LibraryLoading());
+await tester.pumpApp(subject());
+await tester.pumpAndSettle(); // FlutterError: pumpAndSettle timed out
+```
+
+</CodeBlock>
+
+- <b>الموقف الرابع أشهر فشل في الـ widget tests:</b> الـ `CircularProgressIndicator` بيطلب frame جديد كل مرة، فالـ `pumpAndSettle` بيفضل يعمل pump كل 100ms لحد الـ timeout (10 دقايق وهمية، يعني آلاف الـ pumps) ويفشل بـ `pumpAndSettle timed out`. الحل: استخدم `pump()` لما الشاشة فيها حاجة بتتحرك على طول.
+- <b>الـ `pump(duration)` مش بيرسم اللي في النص:</b> لو في animation مدتها 300ms وعملت `pump(300ms)`، بتشوف آخرها بس. لو محتاج تتأكد من حاجة في نص الـ animation، `pump(150ms)` الأول.
+- <b>الـ `pumpAndSettle` مابيستناش الـ timers:</b> بيقف لما مفيش frames مطلوبة، حتى لو في `Timer` لسه هيولع بعد ثانية. الـ debounce مثلًا محتاج `pump(350ms)` صريحة.
+- <b>الـ Futures الحقيقية مابتخلصش:</b> الساعة الوهمية بتتحكم في الـ timers والـ microtasks. بس قراية ملف أو طلب HTTP حقيقي بيحتاج event loop حقيقي، ومش هيخلص مهما عملت pump. لو محتاج ده (نادرًا)، `await tester.runAsync(() => ...)`.
+
+### الـ finders
+
+| الـ finder | بيلاقي | مثال من Readly |
+| --- | --- | --- |
+| `find.byType(BookTile)` | كل widget من النوع ده | عدد الكتب في الليستة |
+| `find.byKey(const Key('login.email'))` | الـ widget اللي عليه الـ key ده | حقل مالوش نص ثابت |
+| `find.text('Matilda')` | `Text` بالنص ده بالظبط | عنوان كتاب، أو `l10n.retry` |
+| `find.textContaining('Fox')` | نص فيه الكلمة دي | نص طويل أو فيه رقم متغير |
+| `find.byIcon(Icons.refresh)` | `Icon` بالأيقونة دي | زرار من غير نص |
+| `find.byTooltip(l10n.refresh)` | widget عليه tooltip بالنص ده | `IconButton` في الـ AppBar |
+| `find.widgetWithText(FilledButton, l10n.retry)` | زرار من النوع ده جواه النص ده | الزرار مش أي نص في الشاشة |
+| `find.descendant(of: a, matching: b)` | b اللي جوه a | الأيقونة اللي جوه كارت معين |
+| `find.ancestor(of: a, matching: b)` | b اللي فوق a | الكارت اللي فيه عنوان معين |
+| `find.bySemanticsLabel('...')` | العنصر بالـ label اللي بيقراه TalkBack | أيقونة «خلصته» |
+
+والـ matchers اللي بتستخدمها معاهم: `findsOneWidget`، `findsNothing`، `findsNWidgets(2)`، `findsWidgets` (واحد أو أكتر).
+
+<CodeBlock label="الـ finders مع بعض">
+
+```dart
+testWidgets('only the finished book has the check icon', (tester) async {
+  when(() => cubit.state).thenReturn(LibraryLoaded([
+    aBook(),
+    aBook(id: 'OL1W', title: 'Matilda', status: BookStatus.finished),
+  ]));
+  await tester.pumpApp(subject());
+
+  Finder cardOf(String title) =>
+      find.ancestor(of: find.text(title), matching: find.byType(BookTile));
+
+  expect(
+    find.descendant(of: cardOf('Matilda'), matching: find.byIcon(Icons.check_circle)),
+    findsOneWidget,
+  );
+  expect(
+    find.descendant(of: cardOf('Fantastic Mr Fox'), matching: find.byIcon(Icons.check_circle)),
+    findsNothing,
+  );
+  expect(find.bySemanticsLabel(RegExp(l10n.statusFinished)), findsOneWidget);
+});
+```
+
+</CodeBlock>
+
+- <b>الـ `cardOf`:</b> بتطلع من العنوان لفوق لحد الكارت، وبعدين `descendant` بتنزل جوه الكارت ده بس. من غير كده، `find.byIcon(Icons.check_circle)` بيقولك «في أيقونة في الشاشة»، مش «في الكارت الصح».
+- <b>الـ `RegExp` في `bySemanticsLabel`:</b> الأيقونة عليها `semanticLabel: l10n.statusFinished`. بس الـ `ListTile` بيدمج الـ semantics بتاعة اللي جواه في عنصر واحد، فالـ label الحقيقي «Matilda» وتحته «خلصته». البحث بالنص بالظبط مش هيلاقي حاجة، والـ RegExp بيدوّر على الكلمة جوه الـ label المدموج. وده نفس اللي TalkBack بيقراه.
+
+### التفاعل
+
+<CodeBlock label="tap وenterText وdrag وscroll وlongPress">
+
+```dart
+testWidgets('refresh from the AppBar', (tester) async {
+  when(() => cubit.state).thenReturn(LibraryLoaded([aBook()]));
+  when(() => cubit.refresh()).thenAnswer((_) async {});
+  await tester.pumpApp(subject());
+
+  await tester.tap(find.byTooltip(l10n.refresh));
+  verify(() => cubit.refresh()).called(1);
+});
+
+testWidgets('pull to refresh', (tester) async {
+  when(() => cubit.state).thenReturn(LibraryLoaded([aBook()]));
+  when(() => cubit.refresh()).thenAnswer((_) async {});
+  await tester.pumpApp(subject());
+
+  await tester.fling(find.text('Fantastic Mr Fox'), const Offset(0, 300), 1000);
+  await tester.pumpAndSettle(); // the indicator animates, then refresh() completes
+  verify(() => cubit.refresh()).called(1);
+});
+
+testWidgets('the 40th book is reachable', (tester) async {
+  when(() => cubit.state).thenReturn(LibraryLoaded([
+    for (var i = 0; i < 40; i++) aBook(id: 'OL${i}W', title: 'Book $i'),
+  ]));
+  await tester.pumpApp(subject());
+  expect(find.text('Book 39'), findsNothing); // not built yet
+
+  await tester.scrollUntilVisible(find.text('Book 39'), 300);
+  expect(find.text('Book 39'), findsOneWidget);
+});
+```
+
+</CodeBlock>
+
+- <b>الـ `fling` مش `drag`:</b> الـ RefreshIndicator محتاج سحبة بسرعة ومسافة كفاية. الـ `fling` بيبعت سحبة بسرعة 1000 pixel في الثانية، و`drag` بيسحب من غير سرعة. الاتنين موجودين، والـ fling هو اللي بيفتح الـ indicator بثقة.
+- <b>الـ `findsNothing` قبل الـ scroll:</b> الـ `ListView.builder` مابيبنيش الـ items اللي برا الشاشة خالص. فـ `Book 39` مش «مستخبي»، ده مش موجود في الشجرة. ولو عملت `tap` عليه من غير scroll، هتاخد `The finder "Found 0 widgets with text "Book 39": []" could not find any matching widgets`.
+- <b>الـ `scrollUntilVisible(finder, 300)`:</b> بيسحب 300 pixel كل مرة لحد ما يلاقيه (لحد 50 مرة). لو الشاشة فيها أكتر من scrollable، حدد واحد بـ `scrollable: find.byType(Scrollable).first`.
+
+والـ `enterText` بيكتب في الحقل وبينادي `onChanged`، والـ `longPress` بيعمل ضغطة طويلة. لو الـ BookTile بيفتح bottom sheet بـ long press مثلًا:
+
+```dart
+await tester.longPress(find.text('Fantastic Mr Fox'));
+await tester.pumpAndSettle(); // the sheet slides up
+expect(find.byType(BottomSheet), findsOneWidget);
+```
+
+### التشغيل والـ output
+
+```bash
+flutter test test/features/library/presentation/library_view_test.dart
+flutter test --plain-name "retry calls load"
+```
+
+ولما finder مايلاقيش حاجة، الرسالة بتقولك إيه اللي كان بيدوّر عليه:
+
+```text
+Expected: exactly one matching candidate
+  Actual: _TextWidgetFinder:<Found 0 widgets with text "Fantastic Mr Fox": []>
+   Which: means none were found but one was expected
+```
+
+لو حسيت إن الـ widget موجود والـ finder مش لاقيه، اطبع الشجرة بـ `debugDumpApp()` جوه التست، أو شغّل التست من الـ IDE وحط breakpoint.
+
+</Level>
+
+<Level n="3" title="التفاصيل والحالات الصعبة">
+
+### whenListen: الـ state بتتغير والشاشة بتتفاعل
+
+الـ `when(() => cubit.state)` بيدّي state ثابتة. ده كفاية لـ BlocBuilder. بس الـ `BlocListener` مابيشتغلش على الـ state الأولى. بيشتغل على <b>التغيير</b>. الـ SnackBar بتاع «الـ refresh فشل» من درس الـ Cubit مثال: محتاج الـ state تتغير من `LibraryLoaded` لـ `LibraryLoaded` فيها `refreshFailure`.
+
+الـ `whenListen` من bloc_test بيبرمج الـ `stream` والـ `state` مع بعض:
+
+<CodeBlock label="SnackBar من BlocListener">
+
+```dart
+testWidgets('a failed refresh shows a SnackBar and keeps the books', (tester) async {
+  final loaded = LibraryLoaded([aBook()]);
+  whenListen(
+    cubit,
+    Stream.fromIterable([loaded.copyWith(refreshFailure: const NetworkFailure())]),
+    initialState: loaded,
+  );
+  await tester.pumpApp(subject());
+  expect(find.byType(SnackBar), findsNothing);
+
+  await tester.pump(); // deliver the stream event to the listener
+  expect(find.text(l10n.errorNoInternet), findsOneWidget);
+  expect(find.text('Fantastic Mr Fox'), findsOneWidget); // the list stays
+});
+```
+
+</CodeBlock>
+
+- <b>الـ `initialState`:</b> بيعمل stub لـ `cubit.state`، فأول build بيشوف الكتب.
+- <b>كل state بتعدّي على الـ stream بتحدّث `cubit.state` كمان:</b> ده جوه `whenListen` نفسه. فأي `context.read<LibraryCubit>().state` بعد كده بيشوف القيمة الجديدة.
+- <b>الـ `pump()` بعد الـ pumpApp:</b> الـ stream بيوصّل في microtask. الـ pump بيشغّل الـ microtasks ويبني frame، فالـ listener بينادي `showSnackBar` والـ SnackBar بيبان في الشجرة.
+- <b>السطر الأخير مهم:</b> بيحرس القرار إن الكتب ماتختفيش وقت الـ error. تست الـ Cubit بيحرس الـ state، والتست ده بيحرس إن الشاشة فعلًا بتعرضها كده.
+
+### dialog من BlocListener
+
+<CodeBlock label="AddBookListener">
+
+```dart
+class AddBookListener extends StatelessWidget {
+  const AddBookListener({required this.child, super.key});
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => BlocListener<AddBookCubit, AddBookState>(
+        listenWhen: (_, curr) =>
+            curr is AddBookError && curr.failure is ValidationFailure,
+        listener: (context, _) => showDialog<void>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            content: Text(AppLocalizations.of(dialogContext)!.alreadyInLibrary),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: Text(MaterialLocalizations.of(dialogContext).okButtonLabel),
+              ),
+            ],
+          ),
+        ),
+        child: child,
+      );
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ dialog بيظهر ويقفل">
+
+```dart
+class MockAddBookCubit extends MockCubit<AddBookState> implements AddBookCubit {}
+
+testWidgets('a duplicate book opens a dialog, OK closes it', (tester) async {
+  final cubit = MockAddBookCubit();
+  whenListen(
+    cubit,
+    Stream.value(const AddBookError(ValidationFailure('Already in library'))),
+    initialState: const AddBookIdle(),
+  );
+  await tester.pumpApp(BlocProvider<AddBookCubit>.value(
+    value: cubit,
+    child: const AddBookListener(child: SizedBox()),
+  ));
+  expect(find.byType(AlertDialog), findsNothing);
+
+  await tester.pumpAndSettle();
+  expect(find.text(l10n.alreadyInLibrary), findsOneWidget);
+
+  final ok = MaterialLocalizations.of(tester.element(find.byType(AlertDialog)))
+      .okButtonLabel;
+  await tester.tap(find.text(ok));
+  await tester.pumpAndSettle();
+  expect(find.byType(AlertDialog), findsNothing);
+});
+```
+
+</CodeBlock>
+
+- <b>الـ `pumpAndSettle` هنا آمن:</b> مفيش حاجة بتتحرك على طول. بيوصّل الـ state، ويفتح الـ dialog، ويستنى الـ animation تخلص.
+- <b>الـ `okButtonLabel`:</b> نص «حسنًا» جاي من ترجمة Flutter نفسها، مش من الـ ARB بتاعنا. فبدل ما تكتبه بإيدك، بتجيبه من `MaterialLocalizations` بالـ context بتاع الـ dialog. الـ `tester.element(finder)` بيرجّع الـ `BuildContext` بتاع أي widget في الشجرة.
+- <b>الـ `child: SizedBox()`:</b> بنختبر الـ listener لوحده. مش محتاجين الفورم كلها عشان نتأكد إن الـ dialog بيفتح.
+
+### الـ navigation مع go_router
+
+الـ `BookTile` بيعمل `context.push('/library/books/${book.id.value}')`. الـ `context.push` محتاج GoRouter فوقه، فالـ `pumpApp` (اللي جواه `MaterialApp` عادي) مش كفاية هنا. أبسط طريقة: GoRouter حقيقي، بـ routes صغيرة للتست:
+
+<CodeBlock label="tap على كتاب يفتح صفحته">
+
+```dart
+testWidgets('tapping a book opens its page', (tester) async {
+  when(() => cubit.state).thenReturn(LibraryLoaded([aBook()]));
+  final router = GoRouter(
+    initialLocation: '/library',
+    routes: [
+      GoRoute(
+        path: '/library',
+        builder: (_, __) => subject(),
+        routes: [
+          GoRoute(
+            path: 'books/:id',
+            builder: (_, state) => Text('book ${state.pathParameters['id']}'),
+          ),
+        ],
+      ),
+    ],
+  );
+  addTearDown(router.dispose);
+
+  await tester.pumpWidget(MaterialApp.router(
+    routerConfig: router,
+    locale: const Locale('ar'),
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+  ));
+  await tester.tap(find.text('Fantastic Mr Fox'));
+  await tester.pumpAndSettle(); // the page transition
+
+  expect(find.text('book OL45804W'), findsOneWidget);
+});
+```
+
+</CodeBlock>
+
+- <b>صفحة الكتاب `Text` بسيط:</b> مش بنختبر `BookPage` هنا. بنختبر إن الدوسة راحت للعنوان الصح بالـ id الصح. لو حد كتب `book.title` بدل `book.id.value` في الـ path، التست هيقع.
+- <b>الـ `addTearDown(router.dispose)`:</b> الـ GoRouter عنده listeners. الـ `addTearDown` بيتنادى بعد التست حتى لو فشل.
+- <b>الـ redirect:</b> نفس الطريقة بتختبر `buildRouter(auth)` من درس go_router: `MockAuthCubit` بـ `whenListen`، وتتأكد إن غير المسجّل بيلاقي صفحة الدخول. والـ flow الكامل من الدخول للمكتبة مكانه [الـ integration test](/course/testing/integration/).
+
+في طريقة تانية: mock للـ GoRouter وتحطه في الشجرة بـ `InheritedGoRouter`، وتعمل `verify` على `push`. بس الـ router الحقيقي بـ routes صغيرة أقرب للي بيحصل فعلًا، ومابيتكسرش لو غيّرت `push` لـ `go`.
+
+### الـ Forms والـ validation
+
+هنا الـ Cubit المزيف بيضر أكتر ما بيفيد. كل منطق الفورم («الخطأ يظهر بعد ما يسيب الحقل») جوه الـ `LoginCubit` والـ `LoginFormState`. لو عملته mock، هتبرمج انت الـ states بإيدك، والتست هيختبر الـ mock. فبنستخدم <b>LoginCubit حقيقي</b>، والـ mock بس للـ use case اللي بيكلّم السيرفر:
+
+<CodeBlock label="test/features/auth/presentation/login_view_test.dart">
+
+```dart
+class MockSignIn extends Mock implements SignIn {}
+
+void main() {
+  late MockSignIn signIn;
+  final l10n = lookupAppLocalizations(const Locale('ar'));
+  final email = find.byKey(const Key('login.email'));
+  final password = find.byKey(const Key('login.password'));
+  final submit = find.byKey(const Key('login.submit'));
+
+  setUpAll(() => registerFallbackValue(FakeSignInParams()));
+  setUp(() => signIn = MockSignIn());
+
+  Future<void> pumpLogin(WidgetTester tester) => tester.pumpApp(
+        BlocProvider(
+          create: (_) => LoginCubit(signIn),
+          child: const LoginView(),
+        ),
+      );
+
+  testWidgets('the email error shows only after leaving the field', (tester) async {
+    await pumpLogin(tester);
+
+    await tester.enterText(email, 'ali@gm');
+    await tester.pump();
+    expect(find.text(l10n.errorEmailInvalid), findsNothing); // still typing
+
+    await tester.tap(password); // focus moves, the email field is blurred
+    await tester.pump();
+    expect(find.text(l10n.errorEmailInvalid), findsOneWidget);
+
+    await tester.enterText(email, 'ali@gmail.com');
+    await tester.pump();
+    expect(find.text(l10n.errorEmailInvalid), findsNothing); // fixed: gone at once
+  });
+
+  testWidgets('submitting an empty form shows every error', (tester) async {
+    await pumpLogin(tester);
+
+    await tester.tap(submit);
+    await tester.pump();
+
+    expect(find.text(l10n.errorFieldRequired), findsNWidgets(2));
+    verifyNever(() => signIn(any()));
+  });
+}
+
+class FakeSignInParams extends Fake implements SignInParams {}
+```
+
+</CodeBlock>
+
+- <b>الـ Keys على الحقول:</b> الـ `TextField` مالوش نص ثابت تدوّر عليه (الـ label بيتغير مع اللغة، والنص بيتغير مع الكتابة). الـ `Key('login.email')` عقد ثابت بين الشاشة والتست. وهي نفس الـ keys اللي الـ integration test هيستخدمها.
+- <b>الـ `tap(password)` بيعمل blur:</b> الـ focus بينتقل، والـ `Focus.onFocusChange` اللي على حقل الإيميل بيتنادى بـ false، فالـ `emailBlurred()` بيتنادى. ده بالظبط اللي المستخدم بيعمله، فالتست بيختبر الـ timing اللي في الـ diagram بتاع درس الـ Forms.
+- <b>الـ `FakeSignInParams`:</b> الـ `registerFallbackValue` محتاج أي object من النوع. الـ `Fake` من mocktail بيعمل واحد من غير ما تحتاج `Email` و`Password` حقيقيين.
+- <b>الـ `findsNWidgets(2)`:</b> نفس رسالة «الخانة دي مطلوبة» تحت الحقلين.
+
+ولحماية الضغط مرتين وزرار الكيبورد:
+
+<CodeBlock label="الزرار مقفول وقت الإرسال، وDone بيبعت برضه">
+
+```dart
+testWidgets('the button is disabled while submitting', (tester) async {
+  final pending = Completer<Result<void>>();
+  when(() => signIn(any())).thenAnswer((_) => pending.future);
+  await pumpLogin(tester);
+
+  await tester.enterText(email, 'ali@gmail.com');
+  await tester.enterText(password, 'secret123');
+  await tester.tap(submit);
+  await tester.pump();
+
+  expect(tester.widget<FilledButton>(submit).onPressed, isNull);
+  expect(
+    find.descendant(of: submit, matching: find.byType(CircularProgressIndicator)),
+    findsOneWidget,
+  );
+  await tester.tap(submit); // a second tap on the disabled button
+  verify(() => signIn(any())).called(1);
+
+  pending.complete(const Success(null));
+  await tester.pump();
+  expect(tester.widget<FilledButton>(submit).onPressed, isNotNull);
+});
+
+testWidgets('Done on the keyboard submits too', (tester) async {
+  when(() => signIn(any())).thenAnswer((_) async => const Success(null));
+  await pumpLogin(tester);
+
+  await tester.enterText(email, 'ali@gmail.com');
+  await tester.enterText(password, 'secret123');
+  await tester.testTextInput.receiveAction(TextInputAction.done);
+  await tester.pump();
+
+  verify(() => signIn(any())).called(1);
+});
+```
+
+</CodeBlock>
+
+- <b>الـ `tester.widget<FilledButton>(submit)`:</b> بيرجّع الـ widget نفسه، فتقرا خصايصه. الـ `onPressed == null` معناه إن الزرار مقفول. ده أدق من إنك تبص على اللون.
+- <b>مفيش `pumpAndSettle` في التست الأول:</b> الزرار جواه spinner، والـ `pumpAndSettle` هيعمل timeout. `pump()` واحدة كفاية.
+- <b>الـ `testTextInput.receiveAction`:</b> بيمثّل إن المستخدم داس Done في الكيبورد، فالـ `onSubmitted` بتاع الحقل اللي عليه الـ focus بيتنادى. في درس الـ Forms قلنا إن قفل الزرار مش كفاية لأن الكيبورد طريق تاني للـ submit. التست ده بيحرس الطريق التاني.
+
+### الـ debounce في widget test: A Timer is still pending
+
+لو شاشة البحث بتستخدم `CatalogSearchCubit` حقيقي، وكتبت في الحقل وخلّصت التست:
+
+```text
+Pending timers:
+Timer (duration: 0:00:00.350000, periodic: false), created: ...
+A Timer is still pending even after the widget tree was disposed.
+```
+
+الـ testWidgets بيتأكد في الآخر إن مفيش timers فاضلة، لأن timer فاضل معناه كود هيشتغل بعد ما الشاشة اتقفلت. عندك سببين:
+
+- <b>التست ماقدّمش الساعة:</b> الحل `await tester.pump(const Duration(milliseconds: 350))`، وده كمان بيخليك تتأكد إن البحث حصل.
+- <b>الـ Cubit ماتقفلش، أو اتقفل ومالغاش الـ timer:</b> لو عملت الـ Cubit برا وحطيته بـ `BlocProvider.value`، محدش بيقفله لما الشجرة تتشال. ولو بـ `BlocProvider(create:)` والرسالة لسه بتظهر، يبقى `close()` مش بيلغي الـ timer. يعني الرسالة دي ساعات بتمسك bug حقيقي.
+
+### الـ accessibility
+
+Flutter فيه guidelines جاهزة بتتأكد من حاجات المستخدم اللي بيعتمد على TalkBack أو VoiceOver أو بيشوف بصعوبة:
+
+<CodeBlock label="meetsGuideline">
+
+```dart
+testWidgets('the library meets the accessibility guidelines', (tester) async {
+  final handle = tester.ensureSemantics();
+  when(() => cubit.state).thenReturn(LibraryLoaded([aBook()]));
+  await tester.pumpApp(subject());
+
+  await expectLater(tester, meetsGuideline(androidTapTargetGuideline)); // 48x48
+  await expectLater(tester, meetsGuideline(iOSTapTargetGuideline)); // 44x44
+  await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
+  await expectLater(tester, meetsGuideline(textContrastGuideline));
+  handle.dispose();
+});
+```
+
+</CodeBlock>
+
+- <b>الـ `ensureSemantics`:</b> بيشغّل شجرة الـ semantics اللي الـ guidelines بتقرا منها. والـ `dispose` في الآخر بيقفلها.
+- <b>الـ tap targets:</b> أي حاجة بتتداس لازم تبقى 48×48 على Android و44×44 على iOS على الأقل. أيقونة 24 من غير padding بتفشل.
+- <b>الـ `labeledTapTargetGuideline`:</b> أي حاجة بتتداس لازم يبقى ليها label. شيل الـ `tooltip` من زرار الـ refresh وشوف:
+
+```text
+Expected: Tappable widgets should have a semantic label
+   Which: SemanticsNode#4(...actions: [focus, tap], flags: [isButton, ...]):
+          expected tappable node to have semantic label, but none was found.
+```
+
+  الـ TalkBack كان هيقول «زرار» وبس، والمستخدم مش هيعرف ده بيعمل إيه. الـ `tooltip: l10n.refresh` بيحل المشكلة، وبيخلي `find.byTooltip` يلاقيه كمان.
+- <b>الـ `textContrastGuideline`:</b> بيقيس الـ contrast بين النص والخلفية. شغّله في الـ dark mode كمان: `tester.pumpApp(subject(), themeMode: ThemeMode.dark)`.
+
+### RTL وأحجام الشاشات والـ text scale
+
+الـ RTL بييجي من الـ locale، بس التست لازم يتأكد إن الـ layout فعلًا اتقلب. في العربي، الأيقونة في أول السطر يعني على اليمين:
+
+<CodeBlock label="الأيقونة على اليمين في العربي">
+
+```dart
+testWidgets('RTL: the book icon sits on the right in Arabic', (tester) async {
+  when(() => cubit.state).thenReturn(LibraryLoaded([aBook()]));
+  await tester.pumpApp(subject());
+
+  final icon = tester.getCenter(find.byIcon(Icons.menu_book));
+  final title = tester.getCenter(find.text('Fantastic Mr Fox'));
+  expect(icon.dx, greaterThan(title.dx));
+});
+```
+
+</CodeBlock>
+
+الـ `getCenter` و`getTopLeft` و`getSize` بيرجّعوا مكان الـ widget وحجمه على الشاشة الوهمية. لو حد كتب `EdgeInsets.only(left: 16)` أو `Alignment.centerLeft` بدل النسخ الـ directional، تست زي ده بيمسكها.
+
+والشاشة الوهمية الافتراضية 800×600، أكبر من أغلب الموبايلات. والمستخدم ممكن يكون مكبّر الخط ضعفين من إعدادات الموبايل:
+
+<CodeBlock label="موبايل صغير وخط كبير">
+
+```dart
+testWidgets('the error view fits a small phone with large text', (tester) async {
+  tester.view.physicalSize = const Size(320, 568);
+  tester.view.devicePixelRatio = 1;
+  tester.platformDispatcher.textScaleFactorTestValue = 2;
+  addTearDown(tester.view.reset);
+  addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+  when(() => cubit.state).thenReturn(const LibraryError(NetworkFailure()));
+  await tester.pumpApp(subject());
+
+  expect(find.text(l10n.retry), findsOneWidget);
+});
+```
+
+</CodeBlock>
+
+- <b>الـ `tester.view`:</b> الشاشة الوهمية. الـ `physicalSize` مع `devicePixelRatio = 1` بيدّيك 320×568 logical pixels، حجم iPhone SE الأول.
+- <b>الـ `addTearDown`:</b> لازم ترجّع الحجم والخط بعد التست، وإلا التستات اللي بعده في نفس الملف هتشتغل على الشاشة الصغيرة.
+- <b>التست مش محتاج expect على الـ overflow:</b> أي `RenderFlex` بيعمل overflow بيرمي error بيفشّل التست لوحده:
+
+```text
+The following assertion was thrown during layout:
+A RenderFlex overflowed by 37 pixels on the right.
+```
+
+  فمجرد إنك ترسم الشاشة في الحجم ده تست كامل. واعمل loop على كذا حجم وكذا text scale بدل ما تكتب تست لكل واحد.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>الـ widget test مش مكان الـ logic:</b> لو لقيت نفسك بتختبر «لو الـ query أقل من حرفين مايبحثش» في widget test، يبقى التست في المكان الغلط. ده تست Cubit، أسرع وأوضح. الـ widget test بيسأل: الـ state الفلانية بتترسم صح؟ والدوسة دي بتنادي الـ method الصح؟
+- <b>MockCubit ولا Cubit حقيقي؟</b> الـ MockCubit للشاشات اللي بتعرض state جاية من برا (المكتبة، صفحة الكتاب): بتحط الشاشة في أي state في سطر. الـ Cubit الحقيقي بـ use case مزيف لما الـ UI والـ Cubit متشابكين، زي الفورم: التفاعل نفسه هو اللي بتختبره.
+- <b>Keys ولا نص؟</b> النص اللي جاي من `l10n` كويس: مابيتكسرش لو الجملة اتغيرت، وبيتأكد إن الترجمة متوصلة. الـ Keys للحاجات اللي مالهاش نص ثابت (الحقول) أو اللي بتتكرر (`ValueKey(book.id)`). ماتحطش Key على كل widget، لأن كده الشاشة بقت مليانة كود للتست بس.
+- <b>`pumpAndSettle` مش «استنى لحد ما يخلص» وخلاص:</b> بيخبي الـ timing، وبيعمل timeout مع أي spinner أو animation بتتكرر، وبيبطّأ التست. استخدمه للـ transitions اللي ليها آخر (dialog، صفحة جديدة، bottom sheet). وفي أي حتة تانية، `pump()` أو `pump(duration)` بالظبط بيقولوا للي بيقرا التست الوقت اللي بيعدي.
+- <b>الـ widget test مش golden test:</b> الـ widget test بيقول «النص موجود والزرار شغال». مابيقولش «الشكل صح». النص ممكن يكون موجود ولونه زي الخلفية. الشكل شغل [الـ golden tests](/course/testing/golden-tests/)، وهي بتستخدم نفس `pumpApp`.
+- <b>كل تست بيبدأ من الصفر:</b> الـ testWidgets بيشيل الشجرة بعد كل تست، بس الحاجات اللي برا الشجرة (حجم الشاشة، الـ text scale، الـ GetIt، الـ static variables) لأ. أي حاجة غيّرتها تترجع في `addTearDown`، وإلا هيبقى عندك تست بيفشل بس لما يشتغل بعد تست تاني.
+- <b>الأخطاء اللي بتشوفها كل يوم ومعناها:</b> `pumpAndSettle timed out` يعني في حاجة بتتحرك على طول. `A Timer is still pending` يعني timer ماولعش أو ماتلغاش. `No Material widget found` يعني محتاج `pumpApp`. `type 'Null' is not a subtype of 'Future<void>'` يعني method في الـ mock مالهاش stub. `Found 0 widgets` بعد tap يعني الـ widget مش متبني (محتاج scroll) أو مستني `pump`.
+
+<Note kind="interview" title="سؤال interview">
+
+«التست بتاعك فشل بـ `pumpAndSettle timed out`. ليه، وتحله إزاي؟» الـ `pumpAndSettle` بيعمل pump كل 100ms طول ما في frame مطلوب. لو الشاشة فيها حاجة بتطلب frames على طول، زي `CircularProgressIndicator` أو animation بتتكرر، عمره ما هيستقر لحد الـ timeout. الحل مش timeout أكبر. الحل إني أعرف الشاشة في الحالة دي بيحصل فيها إيه: لو عايز أتأكد إن الـ spinner ظاهر، `pump()` واحدة كفاية. لو مستني timer زي debounce، `pump(Duration(milliseconds: 350))` بالمدة بالظبط. ولو الـ spinner مش المفروض يكون موجود أصلًا، يبقى التست مسك bug: الـ state ماتغيرتش، أو الـ mock مش متبرمج يرجّع نتيجة. والـ `pumpAndSettle` بسيبه للـ transitions اللي ليها آخر، زي dialog أو صفحة جديدة.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### الغلاف المتكرر
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+testWidgets('shows retry', (tester) async {
+  await tester.pumpWidget(MaterialApp(
+    localizationsDelegates:
+        AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    home: BlocProvider<LibraryCubit>.value(
+      value: cubit,
+      child: const LibraryView(),
+    ),
+  ));
+  expect(find.text('Retry'), findsOneWidget);
+});
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+testWidgets('shows retry', (tester) async {
+  await tester.pumpApp(
+    BlocProvider<LibraryCubit>.value(
+      value: cubit,
+      child: const LibraryView(),
+    ),
+  );
+  expect(find.text(l10n.retry), findsOneWidget);
+});
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: مفيش `locale`، فالـ MaterialApp اختار لغة الشاشة الوهمية، وهي `en_US`، والتست بيدوّر على «Retry» بالإنجليزي. يعني التست ماشافش الشاشة بالعربي ولا بالـ RTL أبدًا، ومن غير الـ theme الحقيقي كمان. بعد: كل التستات بالعربي والـ theme بتاعنا من سطر واحد، والنص جاي من `l10n`.
+
+### الـ spinner
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+testWidgets('shows a spinner while loading', (tester) async {
+  when(() => cubit.state).thenReturn(const LibraryLoading());
+  await tester.pumpApp(subject());
+  await tester.pumpAndSettle(); // "to be safe"
+  expect(find.byType(CircularProgressIndicator), findsOneWidget);
+});
+// FlutterError: pumpAndSettle timed out
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+testWidgets('shows a spinner while loading', (tester) async {
+  when(() => cubit.state).thenReturn(const LibraryLoading());
+  await tester.pumpApp(subject());
+  // pumpApp already built the first frame
+  expect(find.byType(CircularProgressIndicator), findsOneWidget);
+});
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: الـ `pumpAndSettle` «للأمان» بيستنى spinner يقف، والـ spinner عمره ما بيقف، والتست بياخد ثواني ويفشل. بعد: الـ `pumpWidget` اللي جوه `pumpApp` رسم أول frame، والـ spinner موجود فيه.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="t-widget-tests-1">
+<Ask>عملت `await tester.tap(find.byKey(const Key('login.submit')))` والفورم فاضية، وعلى طول `expect(find.text(l10n.errorFieldRequired), findsNWidgets(2))`. التست فشل وقال إنه مالقاش حاجة، مع إن الـ Cubit عمل emit للـ state الصح. ليه؟</Ask>
+<Answer>
+
+الـ `tap` بيبعت الـ event بس، والـ Cubit بيغيّر الـ state، بس الـ tester مابيرسمش frame جديد لوحده. الـ BlocBuilder لسه ماعملش rebuild. محتاج `await tester.pump()` بين الـ tap والـ expect.
+
+</Answer>
+</Question>
+
+<Question id="t-widget-tests-2">
+<Ask>إيه الفرق بين `pump(const Duration(milliseconds: 300))` و`pumpAndSettle()`، وامتى الأولى أحسن؟</Ask>
+<Answer>
+
+الأولى بتقدّم الساعة 300ms مرة واحدة، بتولّع الـ timers اللي جوه المدة، وبترسم frame واحد في الآخر. التانية بتعمل pump كل 100ms طول ما في frames مطلوبة، وبتقف لما الشاشة تستقر، وبتعمل timeout مع أي حاجة بتتحرك على طول. الأولى أحسن مع الـ timers (debounce مثلًا، لأن الـ pumpAndSettle مابيستناش timers)، ومع الشاشات اللي فيها spinner، ولما عايز التست يقول بالظبط الوقت اللي عدّى.
+
+</Answer>
+</Question>
+
+<Question id="t-widget-tests-3">
+<Ask>شاشة المكتبة بتعرض SnackBar من `BlocListener` لما الـ refresh يفشل. ليه `when(() => cubit.state).thenReturn(...)` مش كفاية تختبرها، وتستخدم إيه؟</Ask>
+<Answer>
+
+الـ BlocListener بيشتغل على التغيير بين state والتانية، مش على الـ state الأولى. الـ stub الثابت عمره ما بيغيّر حاجة. الحل `whenListen(cubit, Stream.fromIterable([failedState]), initialState: loaded)`، وبعد الـ pumpApp تعمل `pump()` عشان الـ stream يوصل والـ listener يعرض الـ SnackBar.
+
+</Answer>
+</Question>
+
+<Question id="t-widget-tests-4">
+<Ask>`meetsGuideline(labeledTapTargetGuideline)` فشل على شاشة المكتبة. إيه معناها، وإيه الحل الأغلب؟</Ask>
+<Answer>
+
+في حاجة بتتداس مالهاش semantic label، فقارئ الشاشة هيقول «زرار» من غير ما يقول بيعمل إيه. الأغلب يبقى `IconButton` من غير tooltip، زي زرار الـ refresh. الحل `tooltip: l10n.refresh`، أو `semanticLabel`، أو `Semantics(label: ...)` للـ widgets المخصوصة.
+
+</Answer>
+</Question>
+
+<Question id="t-widget-tests-5">
+<Ask>ليه `pumpApp` بتحط `locale: Locale('ar')` كـ default، وإيه اللي بيضيع لو التستات اشتغلت من غير locale؟</Ask>
+<Answer>
+
+لأن المستخدمين بالعربي، والـ locale العربي بيخلي الـ GlobalWidgetsLocalizations يحط Directionality بـ rtl. من غير locale، الـ MaterialApp بياخد لغة بيئة التست، وهي `en_US`، فبيختار الإنجليزي، والتستات عمرها ما بتشوف الـ RTL ولا النصوص العربي. وبكده bugs زي `EdgeInsets.only(left:)` أو نص عربي بيقص على شاشة صغيرة مش هتتمسك.
+
+</Answer>
+</Question>
+
+</Quiz>

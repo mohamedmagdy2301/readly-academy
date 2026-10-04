@@ -1,0 +1,991 @@
+---
+title: "أول unit test بالتفصيل: package:test من الصفر"
+description: "test وgroup وsetUp، وكل الـ matchers المهمة، والـ Futures والـ streams، وتست الـ Result والـ value objects، وإزاي تختار الحالات اللي تستاهل تتختبر."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="المصحح ونموذج الإجابة">
+
+المصحح في الامتحان ماعندوش وقت يفهم دماغ كل طالب. عنده <b>نموذج إجابة</b>، وبيقارن. بس النموذج مش كله «الإجابة لازم تبقى كذا بالظبط». في سؤال إجابته رقم محدد: <b>equals</b>. وسؤال «أي رقم بين 33.3 و33.4 صح» عشان التقريب: <b>closeTo</b>. وسؤال «الإجابة لازم يبقى فيها كلمة الـ Domain»: <b>contains</b>. وسؤال «الطالب لازم يقول إن المسألة دي مالهاش حل»: <b>throwsA</b>. وسؤال «اكتب 3 خطوات بالترتيب»: <b>emitsInOrder</b>.
+
+والمصحح مايصححش ورقتين مع بعض. كل ورقة بتبدأ من الصفر، وعلامة الطالب اللي قبلها مالهاش دعوة بالطالب اللي بعده: ده <b>setUp</b> جديد لكل تست.
+
+</Analogy>
+
+الـ unit test هو المصحح ده: بيدّي الكود input، وبياخد الإجابة، ويقارنها بنموذج الإجابة. والـ <b>matcher</b> هو نوع المقارنة. وأغلب مهارة كتابة التستات إنك تختار المقارنة الصح: لو شديت أوي (equals على object كامل)، التست هيقع لما حاجة مالهاش لازمة تتغير. لو رخّيت أوي (`isNotNull`)، التست هيعدّي والكود بايظ.
+
+### الـ «unit» إيه بالظبط؟
+
+مش لازم class واحدة. الـ unit هو <b>سلوك واحد</b> تقدر تختبره لوحده: قاعدة «الكتاب مايتضافش مرتين» في `AddBookToLibrary` unit، حتى لو التست بيستخدم الـ use case و`FakeLibraryRepository` مع بعض. اللي يخليه unit إنه سريع، ومعزول عن العالم الخارجي (شبكة، DB حقيقية، ساعة، UI)، ولو وقع بيقولك القاعدة اللي باظت بالظبط.
+
+في الدرس ده هنبني الأساس اللي كل الوحدة مبنية عليه: الـ API بتاع `package:test` حتة حتة، على كود Readly الحقيقي. الـ mocks والـ fakes بالتفصيل في [درس الـ test doubles](/course/testing/test-doubles/)، وهنا هنستخدم fakes صغيرة بإيدنا بس.
+
+</Level>
+
+<Level n="2" title="أول تست، سطر سطر">
+
+### التست الأول
+
+هنبدأ بـ `Password` من [درس الـ Forms](/course/presentation/forms/): value object بيرفض أي باسورد أقل من 8 حروف، ومن غير trim لأن المسافات جزء من الباسورد.
+
+<CodeBlock label="lib/features/auth/domain/password.dart (الكود اللي هنختبره)">
+
+```dart
+extension type const Password._(String value) {
+  static const minLength = 8;
+
+  static Result<Password> create(String input) => input.length >= minLength
+      ? Success(Password._(input)) // no trim: spaces are part of a password
+      : const Err(ValidationFailure('Password too short'));
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="test/features/auth/domain/password_test.dart">
+
+```dart
+import 'package:flutter_test/flutter_test.dart';
+import 'package:readly/core/result.dart';
+import 'package:readly/features/auth/domain/password.dart';
+
+void main() {
+  test('accepts a password of exactly 8 characters', () {
+    // Arrange
+    const input = 'secret12';
+
+    // Act
+    final result = Password.create(input);
+
+    // Assert
+    expect(result, isA<Success<Password>>());
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>`import 'package:flutter_test/flutter_test.dart'`:</b> فيه `test` و`expect` وكل الـ matchers. لو الكود في package Dart صافية، بتعمل import لـ `package:test/test.dart` بدله، والباقي زي ما هو.
+- <b>`void main()`:</b> كل ملف تست برنامج صغير. الـ runner بينادي `main` اللي بتسجّل التستات، وبعدين بيشغّلهم واحد واحد.
+- <b>`test(description, body)`:</b> الاسم جملة بتوصف السلوك، وهيظهر في الـ output لو التست وقع. والـ body هو التست نفسه.
+- <b>`expect(actual, matcher)`:</b> قلب أي تست. لو الـ actual مش مطابق للـ matcher، بيرمي `TestFailure` والتست بيقع، والسطور اللي بعده في نفس التست مابتتنفّذش.
+- <b>Arrange / Act / Assert:</b> جهّز الـ input، نفّذ حاجة واحدة، اتأكد من النتيجة. التلات comments دول مش إجباريين، بس الشكل ده هو اللي يخلي أي حد يقرا التست في 5 ثواني. وفي تستات صغيرة زي دي، سطر فاضي بين كل جزء كفاية.
+
+شغّله:
+
+<CodeBlock label="التشغيل">
+
+```bash
+flutter test test/features/auth/domain/password_test.dart
+```
+
+</CodeBlock>
+
+```text
+00:01 +1: All tests passed!
+```
+
+### اكسره عن قصد
+
+تست عمرك ماشفته أحمر، ماتعرفش إنه بيحرس حاجة. غيّر `minLength` لـ 9 وشغّل تاني:
+
+```text
+00:01 +0 -1: accepts a password of exactly 8 characters [E]
+  Expected: <Instance of 'Success<String>'>
+    Actual: <Instance of 'Err<String>'>
+     Which: is not an instance of 'Success<String>'
+```
+
+التست وقع، وده اللي عايزينه. رجّع الـ 9 لـ 8. ولاحظ حاجة غريبة: الرسالة بتقول `Success<String>` مش `Success<Password>`. ده مش غلط في التست، ده الـ extension type، وهنرجعله في Level 3 لأن ليه أثر حقيقي على تستاتك.
+
+### group: تستات ليها نفس الموضوع
+
+<CodeBlock label="group">
+
+```dart
+void main() {
+  group('Password.create', () {
+    test('accepts exactly 8 characters', () {
+      expect(Password.create('secret12'), isA<Success<Password>>());
+    });
+
+    test('rejects 7 characters', () {
+      expect(Password.create('secret1'), isA<Err<Password>>());
+    });
+
+    test('keeps spaces: 8 spaces is a valid password', () {
+      expect(Password.create('        '), isA<Success<Password>>());
+    });
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>الاسم الكامل:</b> الـ runner بيلزق اسم الـ group قبل اسم التست: «Password.create rejects 7 characters». فالـ group غالبًا اسم الحاجة اللي بتختبرها، والتست السلوك.
+- <b>التالت مهم:</b> «8 مسافات باسورد صح» قرار. لو حد بعد سنة زوّد `trim()` وهو فاكر إنه بيصلّح bug، التست ده هيقع ويفكّره إن ده كان مقصود. التست هنا بيوثّق قرار، مش بس بيحرس كود.
+- <b>الـ groups ممكن تتداخل:</b> `group` جوه `group`، بس أكتر من مستويين غالبًا معناه إن الملف بيختبر حاجات كتير.
+
+### setUp وtearDown: كل تست يبدأ من الصفر
+
+دلوقتي use case حقيقي: `AddBookToLibrary` من [درس الـ Domain](/course/domain-errors/domain/). محتاج repository، فهنعمل fake صغير في الذاكرة:
+
+<CodeBlock label="fake صغير (هنبنيه صح في درس الـ test doubles)">
+
+```dart
+class FakeLibraryRepository implements LibraryRepository {
+  final _books = <Book>[];
+
+  List<Book> get books => List.unmodifiable(_books);
+
+  @override
+  Future<Result<List<Book>>> getLibrary() async => Success(List<Book>.of(_books));
+
+  @override
+  Stream<List<Book>> watchLibrary() => Stream.value(List<Book>.of(_books));
+
+  @override
+  Future<Result<void>> addBook(Book book) async {
+    _books.add(book);
+    return const Success(null);
+  }
+
+  @override
+  Future<bool> contains(BookId id) async => _books.any((b) => b.id == id);
+}
+
+// test-only: a Book from a raw id. Becomes aBook() in the test doubles lesson.
+Book book(String id, String title, {BookStatus status = BookStatus.wantToRead}) =>
+    Book(
+      id: switch (BookId.create(id)) {
+        Success(:final value) => value,
+        Err() => throw ArgumentError.value(id, 'id', 'invalid test id'),
+      },
+      title: title,
+      status: status,
+    );
+```
+
+</CodeBlock>
+
+- <b>`implements LibraryRepository`:</b> الـ fake بينفّذ نفس العقد، فالـ use case مش عارف إنه بيكلّم fake. ده بالظبط اللي الـ abstraction في الـ domain بيشتريه.
+- <b>الـ helper `book`:</b> الـ `BookId` مايتعملش غير بـ `create`، فالـ helper بيفك الـ Result ويرمي لو الـ id غلط. لو التست نفسه كاتب id غلط، عايزه يقع بصوت عالي مش يكمّل بـ id بايظ.
+
+<CodeBlock label="test/features/library/domain/add_book_to_library_test.dart">
+
+```dart
+void main() {
+  group('AddBookToLibrary', () {
+    late FakeLibraryRepository repository;
+    late AddBookToLibrary addBook;
+
+    setUp(() {
+      repository = FakeLibraryRepository();
+      addBook = AddBookToLibrary(repository);
+    });
+
+    test('adds a book that is not in the library', () async {
+      final fox = book('OL45804W', 'Fantastic Mr Fox');
+
+      final result = await addBook(fox);
+
+      expect(result, isA<Success<void>>());
+      expect(await repository.contains(fox.id), isTrue);
+    });
+
+    test('rejects a book that is already in the library', () async {
+      final fox = book('OL45804W', 'Fantastic Mr Fox');
+      await repository.addBook(fox);
+
+      final result = await addBook(fox);
+
+      expect(
+        result,
+        isA<Err<void>>().having((e) => e.failure, 'failure', isA<ValidationFailure>()),
+      );
+      expect(repository.books, hasLength(1)); // not added a second time
+    });
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>`late` + `setUp`:</b> الـ `setUp` بيتنادى قبل <b>كل</b> تست، فكل تست بياخد repository جديد فاضي. لو عملت `final repository = FakeLibraryRepository();` في `main` مباشرة، الكتاب اللي التست التاني ضافه هيفضل موجود للتست اللي بعده، والتستات هتبقى معتمدة على ترتيبها.
+- <b>`async` في الـ body:</b> الـ use case بيرجّع `Future`، فالتست `async` وبيعمل `await`. الـ runner بيستنى الـ Future اللي راجع من الـ body قبل ما يقرر أخضر ولا أحمر.
+- <b>أكتر من `expect` في تست واحد:</b> عادي، طالما كلهم بيتأكدوا من <b>نفس السلوك</b>. «رفض» معناها Err ومعناها كمان إن الكتاب ماتضافش تاني. الاتنين جزء من نفس القاعدة.
+- <b>`having`:</b> بيتأكد إن الـ Err جواه `ValidationFailure` بالظبط مش أي failure. شرحه بالتفصيل في Level 3.
+
+### كل الـ hooks وترتيبهم
+
+<CodeBlock label="مين بيتنادى امتى">
+
+```dart
+void main() {
+  setUpAll(() => print('setUpAll'));       // once, before the first test
+  tearDownAll(() => print('tearDownAll')); // once, after the last test
+  setUp(() => print('outer setUp'));
+  tearDown(() => print('outer tearDown'));
+
+  group('inner', () {
+    setUp(() => print('inner setUp'));
+    tearDown(() => print('inner tearDown'));
+
+    test('a', () {
+      addTearDown(() => print('addTearDown of a'));
+      print('test a');
+    });
+    test('b', () => print('test b'));
+  });
+}
+```
+
+</CodeBlock>
+
+```text
+setUpAll
+outer setUp
+inner setUp
+test a
+addTearDown of a
+inner tearDown
+outer tearDown
+outer setUp
+inner setUp
+test b
+inner tearDown
+outer tearDown
+tearDownAll
+```
+
+<Diagram name="d-test-lifecycle">
+
+الـ setUp من بره لجوه، والـ tearDown من جوه لبره، والـ addTearDown بيتنفّذ قبل الـ tearDown، وآخر واحد اتسجّل بيتنفّذ الأول. والـ setUpAll والـ tearDownAll مرة واحدة للـ group كله.
+
+</Diagram>
+
+| الـ hook | بيتنادى | استخدمه لـ |
+| --- | --- | --- |
+| `setUp` | قبل كل تست | الـ objects اللي بتتغير: الـ repository، الـ use case، الـ fakes |
+| `tearDown` | بعد كل تست، حتى لو وقع | قفل حاجة اتفتحت في `setUp`: `controller.close()`، `db.close()` |
+| `addTearDown` | بعد التست اللي سجّله | تنضيف حاجة اتعملت جوه التست نفسه، جنب السطر اللي عملها |
+| `setUpAll` | مرة قبل كل التستات | حاجة غالية ومابتتغيرش: قراية ملف fixture، `registerFallbackValue` في mocktail |
+| `tearDownAll` | مرة بعد كل التستات | قفل اللي اتفتح في `setUpAll` |
+
+- <b>الـ `print` هنا للشرح بس:</b> very_good_analysis فيه `avoid_print`. في تست حقيقي، لو محتاج تطبع معلومة تساعد لما التست يقع، استخدم `printOnFailure('...')`، اللي مابيطبعش غير لو التست فشل.
+- <b>`setUpAll` للحاجات الـ immutable بس:</b> لو حطيت فيه repository، كل التستات هتشاركه، ورجعت لمشكلة الترتيب. القاعدة: لو حاجة ممكن تتغير جوه تست، مكانها `setUp`.
+- <b>ليه `addTearDown`:</b> التنضيف جنب الحاجة اللي محتاجاه، فلو حد مسح السطر اللي فتح الـ controller، التنضيف بيتمسح معاه:
+
+<CodeBlock label="addTearDown جنب اللي محتاجه">
+
+```dart
+test('...', () async {
+  final changes = StreamController<List<Book>>();
+  addTearDown(changes.close);
+  // ...
+});
+```
+
+</CodeBlock>
+
+</Level>
+
+<Level n="3" title="الـ matchers والـ async والـ streams بالتفصيل">
+
+### equals وإزاي بيقارن
+
+لما تكتب `expect(x, 3)`، الـ `3` بيتلف في `equals(3)` أوتوماتيك. والـ `equals` ذكي في حاجات وغبي في حاجات:
+
+- <b>الـ collections:</b> بيقارن عنصر عنصر، وبعمق. `expect([['Dune'], ['Zorba']], [['Dune'], ['Zorba']])` بيعدّي، ولو مختلفين بيقولك فين: `at location [1][0] is 'Zorb' instead of 'Zorba'`.
+- <b>الـ strings:</b> بيقولك أول حرف مختلف فين، ودي أسرع طريقة تلاقي مسافة زيادة.
+- <b>أي object تاني:</b> بيستخدم `==` بتاعه. ولو الـ class ماعملتش override لـ `==`، يبقى بيقارن الهوية: نفس الـ object في الذاكرة ولا لأ.
+
+وهنا الفخ:
+
+<CodeBlock label="ليه ده بيقع">
+
+```dart
+test('two identical books are equal', () {
+  expect(book('OL45804W', 'Fantastic Mr Fox'), book('OL45804W', 'Fantastic Mr Fox'));
+});
+```
+
+</CodeBlock>
+
+```text
+  Expected: <Instance of 'Book'>
+    Actual: <Instance of 'Book'>
+```
+
+نفس البيانات، بس `Book` هنا class عادي من غير `==` (زي أول نسخة في درس الـ Domain، قبل freezed)، فدول object-ين مختلفين. والرسالة مابتقولش أي حاجة مفيدة، لأن `toString` الافتراضي بيقول «Instance of 'Book'». عندك 3 حلول:
+
+- <b>تتأكد من الحقول اللي تهمك بـ `having`:</b> الأوضح غالبًا، وتحت.
+- <b>تدّي الـ class `==` حقيقي:</b> بـ freezed أو equatable، زي ما اتشرح في [درس الـ Domain](/course/domain-errors/domain/): الـ `==` بيقارن كل الحقول، فالـ `equals` يشتغل، والـ `toString` بيطبع البيانات فالرسالة تبقى مفهومة.
+- <b>تقارن حاجة ليها `==`:</b> زي العناوين بس: `expect(books.map((b) => b.title), ['Dune', 'Zorba'])`.
+
+من [درس الـ test doubles](/course/testing/test-doubles/) ولآخر الوحدة، الـ `Book` بـ freezed زي آخر درس الـ Domain، فـ `expect(book, aBook())` بيشتغل. بس الفخ ده هيقابلك مع أي class مالهاش `==`، وأولهم `Success` و`Err`: مالهمش `==`. فـ `expect(result, Success(fox))` هيقع دايمًا. والأغرب إن `expect(result, const Success<void>(null))` ممكن يعدّي، لأن الـ `const` objects بنفس القيمة بيبقوا نفس الـ object في الذاكرة. ده بيشتغل بالصدفة، وأول ما حد يشيل `const` من الكود، التست يقع من غير ما أي سلوك يتغير. ماتعتمدش عليه.
+
+### خريطة الـ matchers
+
+| النوع | الـ matchers | مثال من Readly |
+| --- | --- | --- |
+| مساواة وهوية | `equals`، `same`، `isNot` | `expect(book.title, 'Dune')` |
+| null وbool | `isNull`، `isNotNull`، `isTrue`، `isFalse` | `expect(await repo.contains(id), isTrue)` |
+| النوع | `isA<T>()` + `.having(...)` | `isA<Err<void>>()` |
+| أرقام | `greaterThan`، `lessThan`، `greaterThanOrEqualTo`، `inInclusiveRange`، `closeTo` | `closeTo(0.333, 0.001)` |
+| نصوص | `contains`، `startsWith`، `endsWith`، `matches(RegExp)`، `equalsIgnoringCase`، `equalsIgnoringWhitespace` | `startsWith('HTTP 5')` |
+| collections | `hasLength`، `isEmpty`، `isNotEmpty`، `contains`، `containsAll`، `containsAllInOrder`، `orderedEquals`، `unorderedEquals`، `everyElement`، `anyElement` | `everyElement(isA<Book>())` |
+| maps | `containsPair`، `contains` (على الـ keys) | `containsPair('code', 'library_full')` |
+| تركيب | `allOf`، `anyOf`، `isNot`، `predicate` | `allOf(isNotEmpty, hasLength(lessThan(20)))` |
+| exceptions | `throwsA`، `throwsArgumentError`، `throwsStateError`، `throwsFormatException`، `returnsNormally` | `throwsA(isA<FormatException>())` |
+| async | `completes`، `completion(m)`، `throwsA` على Future، `doesNotComplete` | `completion(isA<Success<void>>())` |
+| streams | `emits`، `emitsInOrder`، `emitsDone`، `emitsError`، `emitsThrough`، `neverEmits`، `mayEmit`، `emitsAnyOf`، `emitsInAnyOrder` | `emitsInOrder([...])` |
+
+والـ matchers بتتركّب: أي مكان بياخد قيمة بياخد matcher، فـ `hasLength(greaterThan(2))` و`everyElement(isA<Book>().having((b) => b.status, 'status', BookStatus.reading))` شغالين.
+
+### isA وhaving: تست الـ Result
+
+كل الـ use cases والـ repositories في Readly بترجّع `Result`، فده أكتر matcher هتكتبه في حياتك:
+
+<CodeBlock label="من النوع للتفاصيل">
+
+```dart
+// only the type
+expect(result, isA<Err<List<Book>>>());
+
+// the type, then a field, then a field inside it
+expect(
+  result,
+  isA<Err<List<Book>>>().having(
+    (e) => e.failure,
+    'failure',
+    isA<ServerFailure>().having((f) => f.statusCode, 'statusCode', 503),
+  ),
+);
+
+// the value inside a Success
+expect(
+  result,
+  isA<Success<List<Book>>>().having(
+    (s) => s.value.map((b) => b.title),
+    'titles',
+    ['Dune', 'Zorba'],
+  ),
+);
+```
+
+</CodeBlock>
+
+- <b>`having(feature, description, matcher)`:</b> الـ feature function بتطلّع حقل من الـ object، والـ description اسم بيظهر في رسالة الفشل، والـ matcher بيتطبّق على الحقل. والـ matcher نفسه ممكن يبقى `isA().having()` تاني، فبتنزل لأي عمق.
+- <b>الـ feature مش لازم يبقى حقل:</b> ممكن يبقى أي حساب، زي `s.value.map((b) => b.title)`. ده بيحوّل ليستة كتب لليستة strings، فالمقارنة مابتعتمدش على `==` بتاع Book، والرسالة بتبقى مقروءة.
+- <b>رسالة الفشل بتقول فين بالظبط:</b>
+
+```text
+  Expected: <Instance of 'Err<List<Book>>'> with `failure`: <Instance of 'ServerFailure'> with `statusCode`: <503>
+    Actual: <Instance of 'Err<List<Book>>'>
+     Which: has `failure` with value <Instance of 'NetworkFailure'> which is not an instance of 'ServerFailure'
+```
+
+### custom matcher: isSuccess وisErr
+
+بعد عشرين تست، `isA<Err<List<Book>>>().having((e) => e.failure, 'failure', isA<NetworkFailure>())` بقى ضوضاء. الحل matchers خاصة بالمشروع في ملف helpers:
+
+<CodeBlock label="test/helpers/result_matchers.dart">
+
+```dart
+import 'package:flutter_test/flutter_test.dart';
+import 'package:readly/core/failure.dart';
+import 'package:readly/core/result.dart';
+
+/// A Success whose value matches [value] (anything by default).
+Matcher isSuccess([Object? value = anything]) =>
+    isA<Success<Object?>>().having((s) => s.value, 'value', value);
+
+/// An Err whose failure is an [F].
+Matcher isErr<F extends Failure>() => _IsErr<F>();
+
+class _IsErr<F extends Failure> extends Matcher {
+  const _IsErr();
+
+  @override
+  bool matches(Object? item, Map<dynamic, dynamic> matchState) =>
+      item is Err && item.failure is F;
+
+  @override
+  Description describe(Description description) => description.add('Err with a $F');
+
+  @override
+  Description describeMismatch(
+    Object? item,
+    Description mismatchDescription,
+    Map<dynamic, dynamic> matchState,
+    bool verbose,
+  ) =>
+      switch (item) {
+        Err(:final failure) => mismatchDescription
+            .add('is Err with ${failure.runtimeType}: "${failure.message}"'),
+        Success(:final value) => mismatchDescription.add('is Success($value)'),
+        _ => mismatchDescription.add('is not a Result'),
+      };
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الاستخدام">
+
+```dart
+expect(await addBook(fox), isSuccess());
+expect(await addBook(fox), isErr<ValidationFailure>());
+expect(await repository.getLibrary(), isSuccess(hasLength(2)));
+```
+
+</CodeBlock>
+
+```text
+  Expected: Err with a ValidationFailure
+    Actual: <Instance of 'Err<void>'>
+     Which: is Err with NetworkFailure: "No internet connection"
+```
+
+- <b>`isSuccess` مبني على `isA`:</b> أغلب الـ custom matchers مش محتاجة class. تركيب `isA` و`having` في function باسم واضح كفاية. والـ `Success<Object?>` بيمسك `Success<void>` و`Success<List<Book>>` لأن الـ generics في Dart covariant.
+- <b>`_IsErr` كـ class:</b> لما تحتاج رسالة فشل أحسن. الـ `matches` بيقرر، والـ `describe` بيكتب سطر Expected، والـ `describeMismatch` بيكتب سطر Which. هنا بيطبع نوع الـ failure ورسالته، فبتعرف من الـ CI log إن النت هو اللي فاصل من غير ما تشغّل التست تاني.
+- <b>`CustomMatcher`:</b> لو عايز matcher لحقل واحد بس، `class extends CustomMatcher` بـ `featureValueOf` بيعمل نفس شغل `having` في class. نادرًا ما هتحتاجه.
+- <b>مكانها helpers:</b> `test/helpers/result_matchers.dart` مش `_test.dart`، وكل تستات الوحدة ممكن تستخدمها.
+
+### الـ exceptions: throwsA
+
+الـ repositories بترجّع `Result`، بس الطبقة اللي تحتها (الـ DTOs والـ data sources) بترمي exceptions، والـ guard بيمسكها. فلازم تختبر إنها بترمي الصح. مثال: تحويل حالة الكتاب من الـ JSON بتاع الـ backend:
+
+<CodeBlock label="lib/features/library/data/book_status_json.dart">
+
+```dart
+BookStatus parseStatus(String raw) => switch (raw) {
+      'want_to_read' => BookStatus.wantToRead,
+      'reading' => BookStatus.reading,
+      'finished' => BookStatus.finished,
+      _ => throw FormatException('Unknown book status', raw),
+    };
+```
+
+</CodeBlock>
+
+<CodeBlock label="التست">
+
+```dart
+test('throws a FormatException that carries the unknown value', () {
+  expect(
+    () => parseStatus('lost'),
+    throwsA(isA<FormatException>().having((e) => e.source, 'source', 'lost')),
+  );
+});
+
+test('the short form, when the type is enough', () {
+  expect(() => parseStatus('lost'), throwsFormatException);
+});
+```
+
+</CodeBlock>
+
+- <b>الـ closure `() =>` إجباري:</b> لو كتبت `expect(parseStatus('lost'), throwsA(...))`، الـ exception بيترمي وانت بتحسب الـ argument، قبل ما `expect` نفسه يتنادى. فالتست بيقع بـ exception مش بـ «expected to throw». الـ closure بيخلي `expect` هو اللي ينادي الكود ويمسك اللي اترمى.
+- <b>`throwsA` بياخد matcher:</b> فبتقدر تتأكد من النوع والرسالة والـ source، بنفس `having`.
+- <b>الاختصارات:</b> `throwsArgumentError` و`throwsStateError` و`throwsFormatException` و`throwsUnsupportedError` لما النوع لوحده كفاية. والعكس: `returnsNormally` يعني «مارماش حاجة».
+
+### الأرقام العشرية: closeTo
+
+شريط التقدم في كارت الكتاب اللي «بقراه»:
+
+<CodeBlock label="lib/features/library/domain/reading_progress.dart">
+
+```dart
+/// 0.0 .. 1.0 for the progress bar of a book being read.
+double readingProgress({required int page, required int totalPages}) {
+  if (totalPages <= 0) return 0; // unknown page count: no NaN on screen
+  return (page / totalPages).clamp(0, 1).toDouble();
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="التست">
+
+```dart
+test('page 1 of 3 is a third', () {
+  // expect(readingProgress(page: 1, totalPages: 3), 0.333); fails: 0.3333333333333333
+  expect(readingProgress(page: 1, totalPages: 3), closeTo(0.333, 0.001));
+});
+```
+
+</CodeBlock>
+
+- <b>ليه مش equals:</b> الـ double مابيمثلش أغلب الكسور بالظبط. حتى `0.1 + 0.2` مش بيساوي `0.3`. أي رقم جاي من قسمة أو ضرب double قارنه بـ `closeTo(value, delta)`.
+- <b>الـ delta من الـ domain:</b> شريط التقدم مش هيفرق معاه جزء من ألف، فـ `0.001` كفاية. في حسابات فلوس، المشكلة أصلًا إنك بتستخدم double، مش الـ delta.
+
+### الـ collections
+
+<CodeBlock label="matchers الليستات">
+
+```dart
+final titles = ['Dune', 'Fantastic Mr Fox', 'Zorba'];
+
+expect(titles, hasLength(3));
+expect(titles, contains('Dune'));
+expect(titles, containsAll(['Zorba', 'Dune']));         // any order, others allowed
+expect(titles, containsAllInOrder(['Dune', 'Zorba']));  // this order, gaps allowed
+expect(titles, orderedEquals(['Dune', 'Fantastic Mr Fox', 'Zorba'])); // exact
+expect(titles, unorderedEquals(['Zorba', 'Dune', 'Fantastic Mr Fox'])); // exact, any order
+expect(titles, everyElement(isNotEmpty));
+expect(titles, anyElement(startsWith('Fantastic')));
+
+final library = [book('OL1W', 'Dune', status: BookStatus.reading)];
+expect(library, everyElement(isA<Book>().having((b) => b.status, 'status', BookStatus.reading)));
+```
+
+</CodeBlock>
+
+- <b>اختار أضعف matcher بيعبّر عن القاعدة:</b> لو القاعدة «الليستة مترتبة بالعنوان»، `orderedEquals` صح. لو القاعدة «الكتاب الجديد اتضاف»، `contains` كفاية، و`orderedEquals` على الليستة كلها هيقع لو الترتيب اتغير لسبب مالوش علاقة.
+- <b>`everyElement` على ليستة فاضية بيعدّي:</b> «كل عناصر الليستة الفاضية reading» صح منطقيًا. لو الليستة لازم يبقى فيها حاجة، زوّد `isNotEmpty` أو `hasLength`.
+
+### الـ async: الـ Futures
+
+أشهر غلطة في التستات الـ async إنك تنسى إن اللي في إيدك Future:
+
+<CodeBlock label="من غير await">
+
+```dart
+test('rejects a duplicate', () {
+  final result = addBook(fox); // a Future, not a Result
+  expect(result, isA<Err<void>>());
+});
+```
+
+</CodeBlock>
+
+```text
+  Expected: <Instance of 'Err<void>'>
+    Actual: <Instance of 'Future<Result<void>>'>
+     Which: is not an instance of 'Err<void>'
+```
+
+ده الحظ الحلو: التست وقع. الحظ الوحش لما الـ `expect` يبقى جوه `then`:
+
+<CodeBlock label="التست خلص قبل ما يتأكد">
+
+```dart
+test('rejects a duplicate', () {
+  addBook(fox).then((result) => expect(result, isA<Err<void>>()));
+}); // the body returns right away: the expect runs after the test has ended
+```
+
+</CodeBlock>
+
+الـ body رجع من غير ما يستنى، فالتست اتحسب أخضر قبل ما الـ `expect` يشتغل. ولو الـ expect وقع بعدين، هتشوف «This test failed after it had already completed» وممكن تظهر تحت اسم تست تاني خالص. الحل دايمًا `async` و`await`، وفعّل `unawaited_futures` في الـ analyzer عشان يعلّم على أي Future من غير `await`.
+
+<CodeBlock label="الأشكال الصح">
+
+```dart
+test('await, then expect: the clearest', () async {
+  expect(await addBook(fox), isSuccess());
+});
+
+test('a matcher on the Future itself', () async {
+  await expectLater(addBook(fox), completion(isSuccess()));
+});
+
+test('a Future that fails', () async {
+  await expectLater(
+    remote.fetchLibrary(), // throws DioException when offline
+    throwsA(isA<DioException>()),
+  );
+});
+```
+
+</CodeBlock>
+
+- <b>`expect` ولا `expectLater`:</b> الاتنين بيقبلوا async matchers (`completion` و`throwsA` على Future والـ stream matchers)، والـ test runner بيستنى الاتنين قبل ما يخلّص التست. الفرق إن `expectLater` بيرجّع Future تقدر تعمل له `await`، فالسطور اللي بعده مش هتشتغل غير لما الـ matching يخلص. في أي async matcher استخدم `await expectLater`، فالترتيب يبقى واضح.
+- <b>`completes`:</b> «الـ Future خلص من غير error» من غير ما يهمك القيمة. و`doesNotComplete` العكس، ونادرًا ما هتحتاجه.
+
+### الـ streams
+
+`WatchLibrary` من درس الـ Domain بيفلتر المكتبة بالحالة ويرتّبها بالعنوان، مع كل تغيير. عشان تختبره، محتاج repository انت اللي بتتحكم في الـ stream بتاعه:
+
+<CodeBlock label="repository الـ stream بتاعه في إيد التست">
+
+```dart
+class StreamingLibrary implements LibraryRepository {
+  final changes = StreamController<List<Book>>(); // single-subscription: buffers until listened
+
+  @override
+  Stream<List<Book>> watchLibrary() => changes.stream;
+
+  // WatchLibrary never calls these
+  @override
+  Future<Result<List<Book>>> getLibrary() => throw UnimplementedError();
+  @override
+  Future<Result<void>> addBook(Book book) => throw UnimplementedError();
+  @override
+  Future<bool> contains(BookId id) => throw UnimplementedError();
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="test/features/library/domain/watch_library_test.dart">
+
+```dart
+void main() {
+  late StreamingLibrary library;
+  late WatchLibrary watchLibrary;
+
+  setUp(() {
+    library = StreamingLibrary();
+    watchLibrary = WatchLibrary(library);
+  });
+  tearDown(() => library.changes.close());
+
+  Stream<List<String>> titlesOf(BookStatus? status) =>
+      watchLibrary(WatchLibraryParams(status: status))
+          .map((books) => [for (final b in books) b.title]);
+
+  test('keeps only books being read, sorted by title, after every change', () async {
+    library.changes
+      ..add([
+        book('OL1W', 'Zorba', status: BookStatus.reading),
+        book('OL2W', 'Dune', status: BookStatus.finished),
+      ])
+      ..add([
+        book('OL1W', 'Zorba', status: BookStatus.reading),
+        book('OL3W', 'Atomic Habits', status: BookStatus.reading),
+      ])
+      ..close();
+
+    await expectLater(
+      titlesOf(BookStatus.reading),
+      emitsInOrder([
+        ['Zorba'],
+        ['Atomic Habits', 'Zorba'],
+        emitsDone,
+      ]),
+    );
+  });
+
+  test('passes database errors through', () async {
+    library.changes.addError(StateError('database closed'));
+
+    await expectLater(titlesOf(null), emitsError(isStateError));
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>`emitsInOrder`:</b> بياخد ليستة، وكل عنصر فيها matcher لحدث واحد بالترتيب. القيمة العادية بتتلف في `equals`، فـ `['Zorba']` بيقارن الليستة كلها. و`emitsDone` بيتأكد إن الـ stream قفل بعدهم ومافيش حاجة زيادة.
+- <b>الـ `map` للعناوين:</b> نفس فكرة `having`: بنحوّل لحاجة ليها `==` أكيد قبل ما نقارن، فالتست مش معتمد على `==` بتاع Book، والفشل بيقول العنوان اللي ناقص.
+- <b>الـ controller single-subscription:</b> بيحتفظ بالأحداث لحد ما حد يعمل listen، فإن التست يعمل `add` قبل `expectLater` مش مشكلة. وده مقصود.
+- <b>`emitsError`:</b> بيتأكد إن الحدث ده error مطابق للـ matcher. و`isStateError` من الـ type matchers الجاهزة.
+
+باقي الـ stream matchers:
+
+| الـ matcher | معناه | امتى تستخدمه |
+| --- | --- | --- |
+| `emits(m)` | الحدث الجاي بيطابق `m` | حدث واحد |
+| `emitsInOrder([...])` | الأحداث دي بالترتيب | تسلسل معروف |
+| `emitsThrough(m)` | فوّت أي حاجة لحد ما حدث يطابق `m` | مش فارق معاك اللي قبله، زي الـ loading |
+| `emitsDone` | الـ stream قفل | التأكد إن مفيش حاجة زيادة |
+| `emitsError(m)` | الحدث الجاي error مطابق | أخطاء الـ DB أو الشبكة |
+| `mayEmit(m)` | ممكن ييجي حدث كده، وممكن لأ | حدث اختياري، زي قيمة أولية |
+| `emitsAnyOf([...])` | واحد على الأقل من دول | أكتر من نتيجة صح |
+| `emitsInAnyOrder([...])` | كل دول، بأي ترتيب | أحداث من مصادر متوازية |
+| `neverEmits(m)` | لحد ما الـ stream يقفل، مفيش حدث بيطابق `m` | «الكتاب اللي خلص عمره ما يظهر في قايمة بقراه» |
+
+<CodeBlock label="neverEmits لازم الـ stream يقفل">
+
+```dart
+test('a finished book never shows up in the reading list', () async {
+  library.changes
+    ..add([book('OL2W', 'Dune', status: BookStatus.finished)])
+    ..add([book('OL2W', 'Dune', status: BookStatus.finished), book('OL1W', 'Zorba', status: BookStatus.reading)])
+    ..close(); // without close, neverEmits waits forever: a 30s timeout
+
+  await expectLater(titlesOf(BookStatus.reading), neverEmits(contains('Dune')));
+});
+```
+
+</CodeBlock>
+
+### فخاخ الـ streams في التست
+
+- <b>الـ stream مابيقفلش:</b> `emitsDone` و`neverEmits` بيستنوا الـ done. لو الـ stream مابيقفلش (زي `watch` بتاع drift)، التست هيفضل مستني لحد الـ timeout الافتراضي (30 ثانية) ويقع برسالة مالهاش علاقة بالمشكلة. اقفل الـ controller في التست، أو ماتستخدمش الـ matchers دي مع stream عمره ما بيقفل.
+- <b>listen مرتين:</b> الـ single-subscription stream مايتسمعش غير مرة. `expectLater` مرتين على نفس الـ stream بيرمي `Bad state: Stream has already been listened to`. اجمع كل اللي عايزه في `emitsInOrder` واحد، أو نادي `titlesOf` تاني عشان تاخد stream جديد.
+- <b>الـ broadcast بيضيّع الأحداث:</b> لو الـ stream broadcast (زي معظم الـ streams اللي جاية من `StreamController.broadcast`)، أي حدث بيتبعت قبل ما حد يسمع بيضيع. ساعتها الترتيب لازم يبقى: اشترك الأول، بعدين نفّذ، بعدين استنى:
+
+<CodeBlock label="اشترك، نفّذ، استنى">
+
+```dart
+final check = expectLater(repository.changes, emitsInOrder([...])); // subscribes now
+await repository.addBook(fox); // emits
+await check; // now wait for the matcher
+```
+
+</CodeBlock>
+
+### الـ value objects: BookId والـ extension type
+
+<CodeBlock label="تست BookId.create">
+
+```dart
+group('BookId.create', () {
+  test('trims the raw id', () {
+    expect(
+      BookId.create('  OL45804W '),
+      isA<Success<BookId>>().having((s) => s.value, 'value', 'OL45804W'),
+    );
+  });
+
+  test('rejects an empty id', () {
+    expect(BookId.create(''), isErr<ValidationFailure>());
+  });
+
+  test('rejects an id made of spaces only', () {
+    expect(BookId.create('   '), isErr<ValidationFailure>());
+  });
+});
+```
+
+</CodeBlock>
+
+الـ `BookId` و`Password` و`Email` في الكورس <b>extension types</b>. ده بيدّيهم أداء ممتاز (مفيش object زيادة في الـ runtime)، بس ليه 3 آثار على التستات لازم تعرفها:
+
+- <b>الـ type بيختفي في الـ runtime:</b> وقت التشغيل `BookId` هو `String`. فـ `isA<Success<BookId>>()` بيتأكد فعليًا من `Success<String>`، ورسايل الفشل بتقول `Success<String>` زي ما شفت فوق. والأخطر: `isA<BookId>()` بيعدّي مع <b>أي</b> String، حتى `''`.
+- <b>الـ equals بيقارن الـ String:</b> فـ `having((s) => s.value, 'value', 'OL45804W')` بيعدّي من غير ما تعمل BookId في التست. ده مريح، بس معناه إن التست مش بيتأكد إن القيمة BookId أصلًا. والـ compiler هو اللي بيضمن ده، مش التست.
+- <b>الحماية compile-time بس:</b> `'' as BookId` بيعدّي في الـ runtime، لأنه cast من String لـ String. فأي حد (حتى في التست) يقدر يعمل BookId فاضي من غير `create`. التستات لازم تعمل BookId بالطرق اللي الـ app نفسه بيستخدمها، مش بـ `as`: `create` زي الـ helper `book` فوق، أو `fromTrusted` للبيانات الموثوقة زي ما الـ builder في [درس الـ test doubles](/course/testing/test-doubles/) بيعمل، عشان ماتختبرش حالة عمرها ما هتحصل في الـ app.
+
+لو الـ value object محتاج يبقى نوع حقيقي في الـ runtime (عشان `is` يفرّق بينه وبين String، أو عشان حماية حتى من `as`)، اعمله `final class` بـ `==` و`hashCode`. ده قرار في الـ domain، بس التستات هي اللي بتكشفه.
+
+### تختبر أنهي حالات؟ equivalence partitioning وboundary values
+
+مش هتختبر كل باسورد ممكن. الفكرة إنك تقسّم كل الـ inputs لمجموعات الكود <b>بيتعامل معاها بنفس الطريقة</b> (equivalence partitions)، وتختبر قيمة واحدة من كل مجموعة. وبعدين تختبر <b>الحدود</b> بين المجموعات من الناحيتين، لأن أغلب الـ bugs هناك: `>` مكان `>=`، و`length - 1`.
+
+<Diagram name="d-test-boundaries">
+
+طول الباسورد فيه 3 مجموعات: فاضي، وقصير (1 لـ 7)، وصح (8 وأكتر). قيمة من كل مجموعة، والحد بين القصير والصح من الناحيتين: 7 و8. لو حد كتب `>` بدل `>=`، الـ 8 بس هي اللي هتمسكه.
+
+</Diagram>
+
+| المجموعة | قيمة ممثلة | الحدود |
+| --- | --- | --- |
+| فاضي | `''` | الطول 0 |
+| قصير | `'abcd'` | 1 و7 |
+| صح | `'a long passphrase'` | 8 |
+| مسافات بس، بطول صح | `'        '` | قرار: صح، لأن مفيش trim |
+
+ونفس التفكير على `readingProgress`: `totalPages` صفر أو سالب (مجموعة: «مش معروف»)، و`page` صفر (البداية)، وفي النص، و`page == totalPages` (الحد: 1.0)، و`page > totalPages` (بعد الحد: لازم يفضل 1.0)، و`page` سالب (لازم 0). ست حالات بتغطي كل سلوك، بدل مئات القيم العشوائية.
+
+ده تفكير <b>black box</b>: بتقسّم من الـ spec («أقل من 8 مرفوض»)، مش من شكل الكود. وبعدين تبص على الكود (white box) وتسأل: في `if` أو فرع ماجربتوش؟ هنا الـ `totalPages <= 0` فرع لوحده، فلازم ليه حالة.
+
+### الـ parameterized tests: ليستة حالات ولوب
+
+الست حالات دول شكلهم واحد. بدل 6 تستات متنسخة، ليستة records ولوب:
+
+<CodeBlock label="جدول حالات">
+
+```dart
+group('readingProgress', () {
+  const cases = [
+    (page: 0, total: 300, expected: 0.0, why: 'not started'),
+    (page: 150, total: 300, expected: 0.5, why: 'half way'),
+    (page: 300, total: 300, expected: 1.0, why: 'last page'),
+    (page: 320, total: 300, expected: 1.0, why: 'past the end is clamped'),
+    (page: -5, total: 300, expected: 0.0, why: 'negative page is clamped'),
+    (page: 10, total: 0, expected: 0.0, why: 'unknown page count, no NaN'),
+  ];
+
+  for (final c in cases) {
+    test('${c.why}: page ${c.page} of ${c.total} -> ${c.expected}', () {
+      expect(
+        readingProgress(page: c.page, totalPages: c.total),
+        closeTo(c.expected, 0.0001),
+      );
+    });
+  }
+});
+```
+
+</CodeBlock>
+
+- <b>`test` جوه اللوب، مش اللوب جوه `test`:</b> كده كل حالة تست مستقل باسمه. لو حالة وقعت، الـ output بيقول «past the end is clamped: page 320 of 300 -> 1.0» والباقي بيكمّل. لو اللوب جوه تست واحد، أول حالة تقع بتوقف الباقي، والاسم مابيقولش أنهي حالة.
+- <b>الـ `why`:</b> بيخلي الحالة تقول ليه موجودة. «320 of 300» لوحدها مش واضحة، «past the end is clamped» قاعدة.
+- <b>الـ records:</b> من Dart 3، من غير class لكل جدول. والأسماء (`page:` و`total:`) بتخلي الجدول يتقري زي spreadsheet.
+- <b>لو اللوب جوه تست لسبب ما:</b> زوّد `reason: c.why` في الـ `expect`، فالرسالة تقول أنهي حالة وقعت.
+
+### تسمية التستات
+
+اسم التست هو أول حاجة بتظهر لما يقع، وساعات الحاجة الوحيدة اللي حد هيقراها في الـ CI:
+
+| وحش | ليه | أحسن |
+| --- | --- | --- |
+| `test 1` | مابيقولش أي حاجة | `rejects 7 characters` |
+| `works` | إيه اللي شغال؟ | `adds a book that is not in the library` |
+| `addBook returns Err` | بيوصف الكود مش القاعدة | `rejects a book that is already in the library` |
+| `should call contains then addBook` | بيوصف التفاصيل الداخلية | `adds a book that is not in the library` |
+
+- <b>الـ group اسم الحاجة، والتست جملة بتكمّله:</b> «AddBookToLibrary rejects a book that is already in the library» بتتقري جملة واحدة.
+- <b>السلوك والشرط:</b> «يعمل إيه» + «امتى». «rejects» لوحدها ناقصة، «rejects a book that is already in the library» كاملة.
+- <b>مفيش اسمين زي بعض:</b> الـ runner مش هيمنعك، بس `--plain-name` هيشغّل الاتنين، والـ output مش هيفرّق بينهم.
+- <b>Given/When/Then:</b> شكل تاني للتسمية بلغة الـ product، بيتشرح في [درس الـ TDD](/course/testing/tdd/).
+
+### إعدادات التست: skip وtimeout وtags
+
+<CodeBlock label="الـ parameters الاختيارية">
+
+```dart
+test('syncs 500 books', () async {
+  // ...
+}, timeout: const Timeout(Duration(minutes: 1)), tags: ['slow']);
+
+test('Arabic plural rules for the book count', () {
+  // ...
+}, skip: 'waiting for the new l10n keys, see #214');
+```
+
+</CodeBlock>
+
+- <b>`timeout`:</b> الافتراضي 30 ثانية للتست. لو unit test محتاج أكتر من كده، غالبًا في انتظار حقيقي لازم يتشال، مش timeout لازم يتزوّد.
+- <b>`skip`:</b> بيظهر في الـ output كـ `~1`. اكتب السبب ورقم الـ issue دايمًا، وإلا هيفضل skipped لحد ما حد ينسى ليه. والـ skip مش بديل لتصليح تست بيقع.
+- <b>`tags`:</b> بتشغّل أو تستبعد مجموعة: `flutter test --exclude-tags slow`. والـ tags والـ `retry` بالتفصيل في [درس الاستراتيجية](/course/testing/strategy/). وفي كمان `testOn: 'vm'` لو تست مش هينفع غير على منصة معينة، و`onPlatform` لو عايز تغيّر الـ timeout أو تعمل skip على منصة بعينها. وتحذير من دلوقتي: `retry` بيخبي الـ flaky test مش بيصلّحه.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>سلوك واحد لكل تست، مش expect واحد:</b> القاعدة «expect واحد بس» بتطلّع تستات مكررة كتير، كل واحد بيعمل نفس الـ Arrange. المهم إن التست يختبر سلوك واحد، فلو وقع تعرف القاعدة. «رفض الكتاب المكرر» فيه expectين: Err، والكتاب ماتضافش تاني. ده سلوك واحد.
+- <b>مفيش logic في التست:</b> لو التست بيحسب النتيجة المتوقعة بنفس طريقة الكود (`expected = page / total`)، فهو بيكرر الـ bug لو موجود. اكتب الرقم: `0.5`. والـ `if` جوه التست معناه إن التست ممكن يعدّي من الفرع الغلط. الاستثناء الوحيد: لوب على جدول حالات.
+- <b>DAMP أحسن من DRY في التستات:</b> في الكود العادي بتشيل التكرار. في التستات، شوية تكرار أحسن من helper بيخبي المهم. لو القارئ محتاج يفتح 3 ملفات عشان يفهم التست بيعمل إيه، التست ده بقى أصعب من الكود اللي بيختبره. الـ helpers للضوضاء (عمل `Book` بحقوله كلها)، مش للحاجة اللي التست بيتكلم عنها.
+- <b>اختبر من الـ public API:</b> ماتعملش الـ method `@visibleForTesting` عشان تختبرها. لو method خاصة محتاجة تستات لوحدها، غالبًا هي سلوك لوحده مكانه class أو function تانية. والتستات اللي بتلمس الداخل بتتكسر مع كل refactor.
+- <b>الحالة المشتركة عدو خفي:</b> أي variable في `main` بيتغير جوه تست، أو static في الكود، بيخلي التستات معتمدة على ترتيبها. شغّل من وقت للتاني `flutter test --test-randomize-ordering-seed random`: لو حاجة وقعت، في تست بيعتمد على اللي قبله.
+- <b>الـ callbacks اللي عمرها ما بتتنادى:</b> `stream.listen((books) => expect(books, isEmpty))` بيعدّي لو الـ stream ماطلّعش حاجة خالص، لأن الـ expect عمره ما اتنفّذ. لما لازم تختبر callback، لفّه في `expectAsync1(callback, count: 1)`، فالتست يقع لو ماتنادتش بالعدد ده. والأحسن غالبًا stream matcher بدل listen.
+- <b>ماتتأكدش من نص الـ message:</b> الـ `failure.message` للـ logs، وممكن يتغير. اتأكد من النوع (`isErr<ValidationFailure>()`) أو من حقل ثابت زي `code`. التست اللي بيقارن «Book already in library» حرف حرف هيقع لما حد يصلّح غلطة إملائية.
+- <b>الوقت والعشوائية برّه التست:</b> أي كود بينادي `DateTime.now()` أو `Random()` مباشرة، تستاته مش Repeatable. الحل إنهم يدخلوا كـ dependencies (`Clock` و`FixedClock`)، وده في [درس الـ test doubles](/course/testing/test-doubles/).
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي بتختبر stream في Dart؟» بـ stream matchers مع `expectLater`: `emitsInOrder` للتسلسل، و`emitsThrough` لو مش فارق معايا اللي قبل، و`emitsError` للأخطاء، و`emitsDone` و`neverEmits` لما الـ stream بيقفل. والمصدر بيبقى `StreamController` في إيد التست، single-subscription عشان مايضيّعش أحداث قبل الـ listen. ولو الـ stream broadcast، بشترك الأول بـ `expectLater` من غير await، وبعدين أنفّذ، وبعدين أعمل await. وبتجنب `listen` مع `expect` جواه، لأنه بيعدّي لو مفيش ولا حدث، وبتجنب `emitsDone` على stream مابيقفلش زي drift لأنه هيوصل للـ timeout.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«عندك value object بيقبل طول من 8 لـ 64. هتكتب كام تست؟» مش بعدد القيم، بعدد المجموعات والحدود: قيمة من كل مجموعة (فاضي، قصير، صح، طويل)، والحدود من الناحيتين: 7 و8، و64 و65. وأي قرار مش واضح من الـ spec زي المسافات أو الـ emoji ليه تست لوحده يوثّقه. وبكتبهم كجدول records ولوب فيه `test` لكل حالة، عشان كل حالة تظهر باسمها لو وقعت.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### تست بيحرس ولا تست بيطمّن؟
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+final repository = FakeLibraryRepository();
+final addBook = AddBookToLibrary(repository);
+
+void main() {
+  test('test addBook', () async {
+    final fox = book('OL45804W', 'Fantastic Mr Fox');
+    await addBook(fox);
+    final result = await addBook(fox);
+    expect(result, isNotNull);
+    expect(result.toString(), contains('Err'));
+  });
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+void main() {
+  late FakeLibraryRepository repository;
+  late AddBookToLibrary addBook;
+
+  setUp(() {
+    repository = FakeLibraryRepository();
+    addBook = AddBookToLibrary(repository);
+  });
+
+  test('rejects a book that is already in the library', () async {
+    final fox = book('OL45804W', 'Fantastic Mr Fox');
+    await repository.addBook(fox);
+
+    final result = await addBook(fox);
+
+    expect(result, isErr<ValidationFailure>());
+    expect(repository.books, hasLength(1));
+  });
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: الـ repository متعرّف مرة لكل الملف، فأي تست تاني هيلاقي الكتاب موجود. والاسم مابيقولش القاعدة. و`isNotNull` دايمًا صح، و`toString` بيطبع `Instance of 'Err<void>'` وفيها كلمة Err بالصدفة، فلو حد غيّر الـ Failure لـ `ServerFailure` التست هيعدّي. والـ Arrange (أول `addBook`) بيستخدم الكود اللي بنختبره نفسه، فلو هو بايظ الـ Arrange بايظ. بعد: كل تست بيبدأ من الصفر، والكتاب بيتحط مباشرة في الـ repository، والـ matcher بيتأكد من نوع الفشل بالظبط، وإن الكتاب ماتضافش تاني.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="t-unit-tests-1">
+<Ask>كتبت `expect(parseStatus('lost'), throwsA(isA<FormatException>()))` والتست وقع بـ FormatException بدل ما يعدّي. ليه؟</Ask>
+<Answer>
+
+لأن `parseStatus('lost')` اتنفّذت وانت بتحسب الـ argument، قبل ما `expect` يتنادى، فالـ exception طلع من التست نفسه. الـ `throwsA` محتاج closure ينادي هو الكود ويمسك اللي اترمى: `expect(() => parseStatus('lost'), throwsA(isA<FormatException>()))`.
+
+</Answer>
+</Question>
+
+<Question id="t-unit-tests-2">
+<Ask>`expect(await repository.getLibrary(), Success([fox]))` بيقع، رغم إن الـ repository فيه `fox` بس. ليه، وتكتبه إزاي؟</Ask>
+<Answer>
+
+`Success` مالهاش `==`، فالـ `equals` بيقارن الهوية، والـ object اللي راجع مش هو نفس اللي انت عملته، حتى لو `Book` نفسه بـ freezed. الحل تتأكد من النوع والمحتوى بـ `isA` و`having`، وتحوّل الكتب لحاجة ليها `==`: `isA<Success<List<Book>>>().having((s) => s.value.map((b) => b.title), 'titles', ['Fantastic Mr Fox'])`، أو بـ `isSuccess(...)` من الـ helpers.
+
+</Answer>
+</Question>
+
+<Question id="t-unit-tests-3">
+<Ask>تست بيعمل `stream.listen((books) => expect(books, hasLength(2)))` وبيعدّي دايمًا. إيه الخطر؟ وتكتبه إزاي؟</Ask>
+<Answer>
+
+لو الـ stream ماطلّعش أي حدث، الـ callback عمره ما بيتنادى، فمفيش `expect` اتنفّذ، والتست أخضر. وكمان التست ممكن يخلص قبل ما الحدث ييجي. الحل `await expectLater(stream, emits(hasLength(2)))`، أو لو لازم callback، تلفّه في `expectAsync1(..., count: 1)` عشان التست يقع لو ماتنادتش.
+
+</Answer>
+</Question>
+
+<Question id="t-unit-tests-4">
+<Ask>قاعدة الـ search في Readly: الـ query لازم يبقى حرفين على الأقل بعد الـ trim. إيه الحالات اللي تختبرها؟</Ask>
+<Answer>
+
+قيمة من كل مجموعة والحدود من الناحيتين: فاضي `''`، ومسافات بس `'   '` (بعد الـ trim فاضي)، وحرف واحد `'f'` (الحد المرفوض)، وحرفين `'fl'` (الحد المقبول)، وحرف واحد حواليه مسافات `' f '` (بيتأكد إن الطول بعد الـ trim مش قبله)، وقيمة عادية زي `'flutter'`. ستة تستات في جدول records ولوب، كل حالة `test` باسمها.
+
+</Answer>
+</Question>
+
+<Question id="t-unit-tests-5">
+<Ask>`isA<BookId>()` عدّى مع `''`، و`'' as BookId` اتعمل من غير ما يمر على `create`. ليه، وده معناه إيه لتستاتك؟</Ask>
+<Answer>
+
+الـ `BookId` extension type، وفي الـ runtime هو `String`. فـ `isA<BookId>()` بيتأكد إنه String بس، والـ `as` بيعدّي لأنه cast من String لـ String. الحماية compile-time بس. معناه إن التستات لازم تعمل الـ BookId من `create` عشان ماتختبرش حالة مستحيلة، وماتعتمدش على `isA<BookId>()` إنه يثبت إن القيمة valid. ولو محتاج حماية في الـ runtime، الـ value object يبقى `final class`.
+
+</Answer>
+</Question>
+
+</Quiz>
