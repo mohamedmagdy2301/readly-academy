@@ -1,0 +1,425 @@
+---
+title: "الأخطاء في الكود الـ async"
+description: "الخطأ بيمشي إزاي في سلسلة awaits، وليه return من غير await بيهرب من الـ try، والـ Future اللي محدش عمله await، وFuture.wait وeagerError وcleanUp، وunawaited وignore، والـ timeout اللي مابيوقفش حاجة."
+minutes: 30
+draft: true
+---
+
+<Note kind="info" title="قبل الدرس ده">
+
+[درس «الأخطاء في Dart من الصفر»](/course/api-errors/dart-errors/) شرح الأساس: Exception ولا Error، والـ try من غير await، و`catchError`، والـ `ParallelWaitError`، والـ handlers العامة. الدرس ده بيكمّل من هناك: الخطأ بيمشي إزاي جوه الـ Futures نفسها، وامتى بيتحسب «محدش مسكه»، والأدوات اللي بتحدد مين مسؤول عنه.
+
+</Note>
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="الطرد اللي جاي بعلامة «تالف»">
+
+بعت 3 مناديب يجيبوا حاجات لمكتبك. كل مندوب معاه ورقة: يا يرجع بالحاجة، يا يرجع بورقة «ماعرفتش، والسبب كذا». الورقة دي مش هتوصلك لوحدها، لازم يكون في حد <b>مستني</b> عند الباب يستلمها. لو المندوب رجع ومالقاش حد مستني، الأمن بيسجّلها في دفتر «حاجات محدش استلمها»، حتى لو انت نزلت بعدها بدقيقة تسأل عليها.
+
+ولو قلت «أنا هستنى الـ 3 ونرجع كلنا مع بعض»، وأول واحد رجع بورقة «ماعرفتش»، عندك قرار: تمشي على طول وتسيب الاتنين التانيين (وهم لسه بيشتغلوا وهيرجعوا يلاقوا مفيش حد)، ولا تستنى الكل؟ ولو حد منهم رجع بحاجة تمنها غالي، مين يرجّعها؟
+
+</Analogy>
+
+الـ Future اللي فشل هو المندوب اللي رجع بورقة «ماعرفتش». والـ `await` أو `.then` هو الحد اللي مستني عند الباب. ودفتر الأمن هو الـ <b>uncaught error handler</b> اللي بيوصل لـ `PlatformDispatcher.instance.onError` وSentry. والقاعدة اللي هتتكرر في الدرس كله: <b>كل Future لازم يبقى ليه صاحب مستني نتيجته، من قبل ما يخلص.</b> لو مالوش، يبقى انت قررت ده صراحة، مش نسيته.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### الخطأ بيطلع من الـ await
+
+<CodeBlock label="السلسلة من الـ data source للـ guard">
+
+```dart
+// data source: throws
+Future<List<BookDto>> fetchLibrary() async {
+  final res = await _dio.get<List<dynamic>>('/library'); // DioException comes out of this await
+  return [for (final e in res.data!) BookDto.fromJson(e as Map<String, dynamic>)];
+}
+
+// repository: the guard catches it
+Future<Result<void>> refresh() => guard(() async {
+      final dtos = await _remote.fetchLibrary(); // ...and out of this one
+      await _local.upsertBooks(dtos.map((d) => d.toEntity().toRow(updatedAt: _clock.now())));
+    });
+```
+
+</CodeBlock>
+
+الـ Future اللي فشل مش «بيرمي» في لحظة ما فشل، هو بيكمل بخطأ. والـ `await` هو اللي بيحوّل «Future كمل بخطأ» لـ exception بيترمي في السطر ده بالظبط، فالـ try اللي حواليه يمسكه، ولو مفيش، الـ async function بتاعتك نفسها تكمل بنفس الخطأ، والـ `await` اللي فوقيها يرميه تاني. وكده الخطأ بيطلع awaits ورا بعض لحد الـ guard، زي الـ stack unwinding في الكود العادي.
+
+والـ stack trace بيوصل معاه، وفيه سطور شكلها كده:
+
+<CodeBlock label="الـ stack عبر الـ awaits">
+
+```text
+#0      DioMixin.fetch (package:dio/src/dio_mixin.dart:...)
+<asynchronous suspension>
+#1      LibraryRemoteSource.fetchLibrary (package:readly/features/library/data/library_remote_source.dart:18)
+<asynchronous suspension>
+#2      LibraryRepositoryImpl.refresh.<anonymous closure> (package:readly/features/library/data/library_repository_impl.dart:41)
+<asynchronous suspension>
+#3      guard (package:readly/core/errors/guard.dart:7)
+```
+
+</CodeBlock>
+
+كل `<asynchronous suspension>` معناها «هنا كان في await، والكود كمّل في دور تاني من الـ event loop». Dart بيجمعلك السلسلة كلها طالما كل حلقة فيها `await`. لو حلقة فيها `.then` أو Future اتساب من غير await، السلسلة بتتقطع عندها.
+
+### `return` جوه try: لازم `await`
+
+<CodeBlock label="الفرق كله في كلمة واحدة">
+
+```dart
+// LibraryLocalSource from the local storage lesson
+Future<T> _run<T>(Future<T> Function() action) async {
+  try {
+    return await action(); // the error comes out here, inside the try
+  } on Exception catch (e) {
+    throw CacheException(e.toString());
+  }
+}
+
+// someone "cleaned it up"
+Future<T> _run<T>(Future<T> Function() action) async {
+  try {
+    return action(); // the Future leaves the try before it fails
+  } on Exception catch (e) {
+    throw CacheException(e.toString()); // never runs
+  }
+}
+```
+
+</CodeBlock>
+
+في التانية، الـ `return action()` بيسلّم الـ Future للي نادى ويخرج من الـ try فورًا. الـ Future بيفشل بعدها، والـ try كان خلص. النتيجة إن الـ `SqliteException` بتعدّي زي ما هي، والـ guard مابيعرفهاش، فبتطلع للـ Cubit كـ crash بدل `CacheFailure`.
+
+القاعدة: <b>جوه try، أي Future بترجّعه لازم `return await`</b>. بره الـ try، الـ `await` في الـ return مالوش لازمة.
+
+### الـ Future اللي محدش مستنيه
+
+الخطأ في الـ Future بيتحسب «محدش مسكه» لو الـ Future كمل بخطأ <b>ومكانش في حد مستنيه ساعتها</b>. المهم اللحظة، مش إنك هتعمل await بعدين:
+
+<CodeBlock label="الـ await جه متأخر">
+
+```dart
+Future<BookPage> load(BookId id) async {
+  final notesFuture = _notes.fetchNotes(id.value);      // starts now, no listener yet
+  final work = await _catalog.fetchWork(id.value);      // 600ms
+  final notes = await notesFuture;                       // the listener arrives here
+  return BookPage(work, notes);
+}
+```
+
+</CodeBlock>
+
+لو الملاحظات فشلت بعد 200ms، والـ `fetchWork` لسه شغال، الـ Future بتاع الملاحظات كمل بخطأ ومحدش مستنيه. Dart بيبعت الخطأ للـ uncaught handler <b>فورًا</b>. وبعد 400ms الـ `await notesFuture` هيرمي نفس الخطأ تاني، والـ guard هيمسكه. يعني نفس الخطأ اتسجل في Sentry كـ crash، واتعرض للمستخدم كـ Failure عادية. وده بيحصل بس لما الملاحظات تفشل أسرع من الـ work، فهتلاقيه في الـ production بس.
+
+الحل إن الاتنين يبقى ليهم مستني من أول لحظة، وده اللي بيعمله `.wait`:
+
+```dart
+final (work, notes) = await (_catalog.fetchWork(id.value), _notes.fetchNotes(id.value)).wait;
+```
+
+### Future.wait: eagerError وcleanUp
+
+`.wait` اللي شفته في درس الأخطاء بيستنى الكل دايمًا ويرجّعلك كل القيم وكل الأخطاء. الـ `Future.wait` القديم عنده خيارين زيادة:
+
+<CodeBlock label="Future.wait بالكامل">
+
+```dart
+static Future<List<T>> wait<T>(
+  Iterable<Future<T>> futures, {
+  bool eagerError = false,   // true: complete with the first error at once
+  void Function(T successValue)? cleanUp, // on error: called with every value that succeeded
+});
+```
+
+</CodeBlock>
+
+| | `eagerError: false` (الافتراضي) | `eagerError: true` |
+| --- | --- | --- |
+| أول ما واحد يفشل | بيستنى الباقي يخلصوا | بيرمي الخطأ على طول |
+| الأخطاء التانية | بتضيع من غير ما حد يعرف | بتضيع من غير ما حد يعرف |
+| الـ Futures التانية | خلصت | <b>لسه شغالة</b>، ومحدش بيستنى نتيجتها |
+
+النقطة الأخيرة هي اللي بتوقّع: `eagerError` مابيلغيش حاجة. الـ Future في Dart مالوش cancel، فالطلبات التانية بتكمّل، وبتكتب في الـ DB لو كان ده شغلها.
+
+والـ `cleanUp` للحالة اللي النجاح فيه بيسيب حاجة لازم تتشال. مثال: Readly بيجهّز 3 صور للـ share card في ملفات مؤقتة. لو واحدة فشلت، الكارت مش هيتعمل، والملفين اللي نجحوا لازم يتمسحوا:
+
+<CodeBlock label="cleanUp: مسح اللي نجح لو حاجة فشلت">
+
+```dart
+final files = await Future.wait(
+  [for (final id in ids) _coverCache.renderToTempFile(id)],
+  cleanUp: (File file) => file.deleteSync(), // only runs if some other future failed
+);
+```
+
+</CodeBlock>
+
+لو الـ cleanUp نفسه رمى، الخطأ ده بيروح للـ uncaught handler. علشان كده خليه بسيط ومابيرميش.
+
+| عايز | استخدم |
+| --- | --- |
+| الكل لازم ينجح، وأي فشل يبقى فشل للعملية كلها | `.wait` على record (أنواع) أو ليست، وامسك `ParallelWaitError` |
+| تعرض اللي نجح وتتجاهل اللي فشل | `.wait` وخد `e.values` |
+| تمشي على أول فشل والباقي ملهوش لازمة | `Future.wait(..., eagerError: true)`، وفكّر في الطلبات اللي لسه شغالة |
+| تنضّف موارد اللي نجح لو حاجة فشلت | `Future.wait(..., cleanUp: ...)` |
+
+ولو كل Future بيرجّع `Result` (زي الـ use cases في Readly)، ولا واحد فيهم هيرمي غير لو في bug. فالـ `.wait` العادي كفاية، والقرار بيتعمل بـ switch على الـ Results، زي `LoadBookPage` في [درس الطلبات المتقدمة](/course/api-errors/advanced-requests/).
+
+### unawaited ولا ignore
+
+<CodeBlock label="اتنين شكلهم واحد ومعناهم مختلف">
+
+```dart
+// 1. "I chose not to wait": silences the lint, errors are still uncaught
+unawaited(_trackBookAdded(book.id)); // _trackBookAdded catches its own errors
+
+// 2. "I don't care if it fails": errors are swallowed for good
+_prefetchCover(book.id).ignore();
+```
+
+</CodeBlock>
+
+| | `unawaited(f)` | `f.ignore()` |
+| --- | --- | --- |
+| بيعمل إيه | ولا حاجة، غير إنه بيسكّت lint الـ `unawaited_futures` | بيسجّل handler بيبلع القيمة والخطأ |
+| لو `f` فشل | الخطأ بيروح للـ uncaught handler (Sentry) | ولا حاجة، كأنه ماحصلش |
+| مناسب لـ | شغل بيمسك أخطاؤه بنفسه، أو فشله لازم يتسجل | شغل فشله مايفرقش مع أي حد، زي prefetch |
+
+الـ `ignore()` خطير لو اتستخدم كتير: فشل حقيقي هيختفي من غير أي أثر. استخدمه للحاجات اللي لو فشلت هتتجاب تاني عادي (صورة اتعملها prefetch، والـ widget هيطلبها تاني لما يتعرض)، مش لكتابة أو لـ analytics عايز تعرف إنها بايظة.
+
+### الـ timeout مابيوقفش حاجة
+
+<CodeBlock label="timeout على Future">
+
+```dart
+final result = await _repository.refresh().timeout(
+  const Duration(seconds: 10),
+  onTimeout: () => const Err(NetworkFailure('timeout')), // instead of throwing TimeoutException
+);
+```
+
+</CodeBlock>
+
+الـ `timeout` بيعمل Future جديد بيخلص بعد 10 ثواني لو الأصلي ماخلصش. بس الأصلي <b>بيكمّل</b>: الطلب لسه في الشبكة، ولو رجع بعد 15 ثانية، الـ refresh هيكتب في الـ DB عادي. ولو فشل بعد الـ timeout، الخطأ بتاعه بيتجاهل. فالـ timeout بيوقّف <b>الانتظار</b> بس، مش الشغل.
+
+لو الشغل نفسه لازم يقف، الأداة اللي بتعمله لازم تدعم الإلغاء: الـ `receiveTimeout` والـ `CancelToken` بتوع dio، أو الـ `CancelScope` اللي في [درس الطلبات المتقدمة](/course/api-errors/advanced-requests/).
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### الـ CacheFailure بقت crash بعد cleanup
+
+حد فعّل lint بيقول «الـ await في الـ return مالوش لازمة»، وصلّح كل الـ warnings مرة واحدة، ومن ضمنهم الـ `return await action();` اللي في `LibraryLocalSource._run`. بعد أسبوع، Sentry وصله `SqliteException(13): database or disk is full` كـ fatal. المستخدمين اللي الموبايل عندهم مليان شافوا الشاشة واقفة على loading، بدل رسالة «المساحة مش كفاية».
+
+ده الـ `return` من غير await اللي فوق بالظبط. الـ try كان بيحمي حاجة واحدة: إن الـ Future يفشل وهو لسه جواه. والـ await هو اللي كان بيضمن ده.
+
+- <b>الصلّح:</b> رجّع الـ `await`، وزوّد تست للـ local source بيخلي الـ DAO يرمي ويتأكد إن اللي طالع `CacheException` (زي تستات الـ data layer في [درس تست الطبقات](/course/testing/layers/)).
+- <b>الدرس:</b> أي `return await` جوه `try` (سواء معاه catch أو finally) وظيفتها حماية مش زخرفة. وأي lint بيقترح يشيلها هناك، الاقتراح ده غلط.
+
+### نفس الخطأ مرتين في Sentry: مرة crash ومرة non-fatal
+
+ده الـ `notesFuture` اللي فوق. العلامة اللي تخليك تشك فيه: نفس الـ exception بيظهر كـ fatal وكـ handled، وبنفس الوقت تقريبًا، ومش دايمًا. ودوّر في الكود على أي Future متخزن في متغير، وبعده `await` لحاجة تانية، وبعدين `await` للمتغير.
+
+| الشكل | الحالة |
+| --- | --- |
+| `final a = f(); final b = await g(); await a;` | خطر: لو `a` فشل وانت مستني `g` |
+| `final (a, b) = await (f(), g()).wait;` | آمن: الاتنين ليهم مستني من الأول |
+| `final a = f(); await a;` من غير حاجة في النص | آمن، بس ليه مش `await f()`؟ |
+
+### الكتاب اتضاف والشاشة قالت «فشل»
+
+<CodeBlock label="eagerError وشغل لسه ماخلصش">
+
+```dart
+Future<void> addFromScan(List<String> isbns) async {
+  emit(const ScanAdding());
+  try {
+    await Future.wait([for (final i in isbns) _addByIsbn(i)], eagerError: true);
+    emit(const ScanAdded());
+  } on Exception catch (e) {
+    emit(ScanFailed(e)); // shown after the first failure
+  }
+}
+```
+
+</CodeBlock>
+
+المستخدم صوّر 5 كتب. الكتاب التاني ISBN بتاعه مش موجود، فالـ Future بتاعه فشل بعد 300ms، والشاشة قالت «فشل». بس التلاتة اللي بعده كانوا لسه شغالين، واتضافوا للمكتبة بعدها بثانية. المستخدم شاف «فشل»، وصوّرهم تاني، فاتضافوا مرتين.
+
+الـ eagerError مناسب بس لما الشغل التاني ملوش أثر لو كمّل (قراية، مش كتابة)، أو لما تقدر تلغيه فعلًا. هنا الشغل كتابة، فالصح إنك تستنى الكل وتقول للمستخدم اللي حصل بالظبط:
+
+<CodeBlock label="كل كتاب ليه نتيجته">
+
+```dart
+Future<void> addFromScan(List<String> isbns) async {
+  emit(const ScanAdding());
+  final results = await [for (final i in isbns) _addByIsbn(i)].wait; // each one returns Result
+  if (isClosed) return;
+  emit(ScanDone(
+    added: results.whereType<Success<Book>>().length,
+    failed: [for (final (i, r) in results.indexed) if (r is Err) isbns[i]],
+  ));
+}
+```
+
+</CodeBlock>
+
+«اتضاف 4، والـ ISBN ده مالقيناهوش». والـ use case بيرجّع Result، فالـ `.wait` مش هيرمي غير لـ bug.
+
+### الـ timeout رمى، والمستخدم داس retry، والـ refresh حصل مرتين
+
+الـ refresh عليه `.timeout(10s)`. السيرفر كان بطيء، فبعد 10 ثواني الشاشة قالت «الاتصال بطيء» وظهر زرار «حاول تاني». المستخدم داس. دلوقتي في refreshين شغالين: القديم اللي الـ timeout «وقفه» (بس هو لسه شغال)، والجديد. الاتنين رجعوا وكتبوا في الـ DB.
+
+هنا الكتابة idempotent (الـ upsert بيكتب نفس الصفوف)، فالضرر بطء بس. بس في عملية زي «ضيف ملاحظة»، ده ملاحظتين. الحلول بالترتيب:
+
+1. <b>الـ timeout في المكان اللي يقدر يلغي:</b> الـ `receiveTimeout` بتاع dio بيقفل الاتصال فعلًا، فالطلب مش هيرجع يكتب. الـ `.timeout` على Future في الـ Cubit مش بديل له.
+2. <b>العملية تحمي نفسها:</b> الـ `requestSync` بتاع الـ SyncService عنده flag `_running`، فلو اتنادى وهو شغال مابيبدأش تاني. ونفس الفكرة لأي refresh.
+3. <b>الكتابة نفسها idempotent:</b> الـ idempotency key بتاع [درس الـ conflicts](/course/offline/conflicts/) بيخلي السيرفر يتجاهل التكرار.
+
+### الزرار فضل متقفل بعد الخطأ
+
+<CodeBlock label="callback async مابيرجعش للي ناداه">
+
+```dart
+FilledButton(
+  onPressed: _saving ? null : () async {
+    setState(() => _saving = true);
+    await _cubit.exportLibrary(); // throws: a bug in the CSV code
+    setState(() => _saving = false); // never runs
+  },
+  child: const Text('صدّر المكتبة'),
+)
+```
+
+</CodeBlock>
+
+الـ `onPressed` نوعه `VoidCallback`، فالـ Future اللي الـ closure رجّعه محدش بيستناه. الخطأ بيروح لـ `PlatformDispatcher.instance.onError`، ومفيش حاجة رجّعت `_saving` لـ false، فالزرار مات لحد ما المستخدم يقفل الشاشة.
+
+- <b>أي flag بيترجع لازم يبقى في `finally`:</b> `try { await ... } finally { if (mounted) setState(() => _saving = false); }`. ونفس الكلام للـ `_running` في الـ SyncService، وهو أصلًا مكتوب كده.
+- <b>الأحسن إن الـ widget مايمسكش الـ flag:</b> الـ Cubit بيمسك «بيصدّر» في الـ state، والـ use case بيرجّع Result. الـ widget بيعرض بس.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>كل Future ليه صاحب:</b> يا `await`، يا `.wait` مع غيره، يا متخزن في مكان هيتعامل معاه (زي الـ policy المتخزن في الدرس اللي فات)، يا `unawaited` لـ function بتمسك أخطاؤها، يا `ignore()` لحاجة فشلها مايفرقش. أي Future مش في واحدة من الخمسة دول هو bug مستني يظهر.
+- <b>Result بيشيل نص المشكلة:</b> الـ Futures اللي بترجّع `Result` مابترميش غير لـ bug، فالـ `.wait` والـ `unawaited` والـ eagerError بقوا قرارات عن الـ bugs بس. ده سبب إن الـ repositories في Readly بترجّع Result من الأول، مش مجرد ذوق.
+- <b>الـ timeout والإلغاء في نفس المكان:</b> اللي بيعرف يلغي الشغل هو اللي يحط الـ timeout (dio، drift، الـ SyncService). الـ `.timeout` على Future في الـ presentation بيوقّف الانتظار وبيسيب الشغل يكمّل في الضلمة.
+- <b>الـ lints:</b> `unawaited_futures` جوه الـ async functions، و`discarded_futures` للـ Futures اللي بتتعمل في كود مش async (زي `onPressed` أو `initState`)، و`avoid_void_async`. ومن Dart 3.9 في annotation اسمها `@awaitNotRequired` على function زي `_trackBookAdded` بتقول للـ lints الاتنين إن مش لازم حد يستناها، وده أوضح من `unawaited` في كل مكان بينادوها فيه.
+
+<Note kind="interview" title="سؤال interview">
+
+«امتى خطأ في Future بيتحسب unhandled؟» لما الـ Future يكمل بخطأ ومكانش في handler متسجّل عليه في اللحظة دي (`await` أو `then` أو `catchError`). Dart مابيستناش يشوف هتسجّل بعدين ولا لأ، بيبعته للـ uncaught handler فورًا. فلو عملت Future ورحت تستنى حاجة تانية الأول، وهو فشل في النص، هيتسجّل unhandled حتى لو عملتله await بعدين. الحل إن الـ Futures اللي شغالة مع بعض تتستنى مع بعض بـ `.wait`.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«`Future.wait` مع `eagerError: true` بيلغي الـ Futures التانية؟» لأ. الـ Future في Dart مالوش cancel. الـ eagerError بيخلي الـ Future اللي راجع يكمل بأول خطأ على طول، بس الباقي بيكمّل شغله، ونتايجه وأخطاؤه بتضيع. لو الشغل ده كتابة، ممكن تقول للمستخدم «فشل» والحاجة تتعمل بعدها. ونفس الكلام لـ `timeout`: بيوقّف الانتظار، مش الشغل. الإلغاء الحقيقي لازم يبقى في الأداة نفسها: `CancelToken` في dio، أو `cancel()` للـ stream subscription.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### الحفظ وبعده analytics وprefetch
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+Future<void> add(Book book) async {
+  final saving = _addBook(book);
+  _analytics.log('book_added', {'id': book.id.value});
+  _prefetchCover(book.id);
+  final result = await saving;
+  emit(switch (result) {
+    Success() => const AddBookSaved(),
+    Err(:final failure) => AddBookError(failure),
+  });
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+Future<void> add(Book book) async {
+  final result = await _addBook(book);
+  if (isClosed) return;
+  emit(switch (result) {
+    Success() => const AddBookSaved(),
+    Err(:final failure) => AddBookError(failure),
+  });
+  if (result is Success) {
+    unawaited(_trackBookAdded(book.id)); // catches its own errors
+    _prefetchCover(book.id).ignore(); // a miss is refetched on display
+  }
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: 3 Futures من غير صاحب واضح. الـ analytics والـ prefetch لو فشلوا، الأخطاء بتروح لـ Sentry كـ crashes. والـ analytics بيتسجّل حتى لو الحفظ فشل. والـ `saving` نفسه ممكن يفشل وانت لسه بتنادي الـ analytics، بس هنا الكود sync في النص فمفيش مشكلة، لحد ما حد يزوّد await. بعد: الحفظ الأول وبـ await. الـ analytics بعد النجاح بس، في function بتمسك أخطاؤها، و`unawaited` بيقول إن ده مقصود. والـ prefetch `ignore()` لأن فشله مالوش أي أثر.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="async-err-1">
+<Ask>جوه try في async function كتبت `return _dao.byId(id);` من غير await، والـ DAO رمى `SqliteException`. الـ `on Exception` اللي تحت هيمسكه؟</Ask>
+<Answer>
+
+لأ. الـ return بيسلّم الـ Future ويخرج من الـ try قبل ما يفشل، فالخطأ بيعدّي للي نادى. جوه try لازم `return await`. بره الـ try الـ await في الـ return مالوش لازمة.
+
+</Answer>
+</Question>
+
+<Question id="async-err-2">
+<Ask>`final notes = fetchNotes(id); final work = await fetchWork(id); await notes;` والملاحظات فشلت قبل الـ work. إيه اللي بيحصل للخطأ؟</Ask>
+<Answer>
+
+بيتبعت للـ uncaught handler فورًا، لأن الـ Future كمل بخطأ ومكانش في حد مستنيه. وبعدها الـ `await notes` بيرمي نفس الخطأ تاني. فبيتسجّل مرتين: crash وhandled. الحل `.wait` على الاتنين.
+
+</Answer>
+</Question>
+
+<Question id="async-err-3">
+<Ask>`Future.wait([...], eagerError: true)` رمى بعد أول فشل. الـ Futures التانية حصلها إيه؟</Ask>
+<Answer>
+
+ولا حاجة، لسه شغالة. الـ Future مالوش cancel، والـ eagerError بيأثر على الـ Future اللي راجع بس. نتايجهم وأخطاؤهم بتضيع، ولو كانوا بيكتبوا، الكتابة هتحصل.
+
+</Answer>
+</Question>
+
+<Question id="async-err-4">
+<Ask>إيه الفرق بين `unawaited(f)` و`f.ignore()` لو `f` فشل؟</Ask>
+<Answer>
+
+الـ `unawaited` بيسكّت الـ lint بس، والخطأ بيروح للـ uncaught handler عادي. الـ `ignore()` بيسجّل handler بيبلع الخطأ، فمحدش هيعرف. الأول لشغل بيمسك أخطاؤه أو فشله لازم يتسجل، والتاني لحاجة فشلها مالوش أثر زي prefetch.
+
+</Answer>
+</Question>
+
+<Question id="async-err-5">
+<Ask>`refresh().timeout(Duration(seconds: 10))` رمى `TimeoutException`. الطلب وقف؟</Ask>
+<Answer>
+
+لأ. الـ timeout بيعمل Future جديد بيخلص بعد الوقت، والأصلي بيكمّل وممكن يكتب في الـ DB بعدها. الإلغاء الحقيقي في الأداة اللي بتعمل الشغل: `receiveTimeout` أو `CancelToken` في dio.
+
+</Answer>
+</Question>
+
+</Quiz>

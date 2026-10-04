@@ -1,0 +1,470 @@
+---
+title: "الـ operators: تحويل الـ Streams"
+description: "map وwhere وasyncMap وasyncExpand وdistinct، وdebounce وthrottle بإيدك وبالـ packages، وswitchMap وأخواتها، وإمتى تجيب rxdart أو stream_transform وإمتى تكتب 15 سطر."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="سير المصنع">
+
+في مصنع تعبئة، العلب ماشية على سير، والسير عليه محطات. محطة بتشيل العلب المكسورة (<b>فلتر</b>). محطة بتلزق الليبل (<b>تحويل</b>). محطة بتبعت كل علبة لمعمل بره يفحصها، وماتعدّيش اللي بعدها لحد ما ترجع (<b>تحويل بيستنى</b>). محطة بتبص لو العلبة دي زي اللي قبلها بالظبط فتشيلها (<b>منع التكرار</b>). وفي آخر السير عامل بيقول «مش هعبّي غير لما السير يهدى نص دقيقة» (<b>debounce</b>)، وعامل تاني بيقول «علبة واحدة كل دقيقة، والباقي يرجع» (<b>throttle</b>).
+
+كل محطة مابتعرفش اللي قبلها ولا اللي بعدها. بتاخد من السير وبتحط على السير. وعشان كده تقدر تركّبهم بأي ترتيب، وتشيل واحدة من غير ما الباقي يتأثر.
+
+</Analogy>
+
+الـ <b>operator</b> هو المحطة دي: method على الـ Stream بترجّع Stream جديد. `watchLibrary().map(...)` مش بيغيّر الـ stream الأصلي، بيعمل stream جديد بيسمع على الأصلي ويطلّع حاجة تانية. ولما تعمل listen على الآخر، كل محطة بتعمل listen على اللي قبلها، لحد المصدر. ولما تعمل cancel، الـ cancel بيمشي لفوق لحد المصدر.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### map وwhere: المحطات البسيطة
+
+ده الـ `WatchLibrary` بتاع [درس الـ Domain](/course/domain-errors/domain/)، وده عداد «بتقرا دلوقتي» في الـ Home:
+
+<CodeBlock label="map وwhere وdistinct">
+
+```dart
+// how many books am I reading right now?
+Stream<int> watchReadingCount() => _repository
+    .watchLibrary()
+    .map((books) => books.where((b) => b.status == BookStatus.reading).length)
+    .distinct(); // 3, 3, 3, 4 -> 3, 4
+```
+
+</CodeBlock>
+
+- <b>الـ `map`:</b> بياخد كل قيمة ويطلّع قيمة تانية. هنا من ليست كتب لرقم.
+- <b>الـ `where` جوه الـ map:</b> ده `where` بتاع الـ List، بيفلتر الكتب جوه القيمة الواحدة. أما `Stream.where` فبيفلتر <b>القيم نفسها</b>: `onConnectivityChanged.where((r) => !r.contains(ConnectivityResult.none))` بتاع الـ NetworkStatus بيعدّي بس الأحداث اللي فيها نت.
+- <b>الـ `distinct`:</b> بيقارن كل قيمة بآخر قيمة طلعت، ولو `==`، بيشيلها. drift بيطلّع الليست من جديد مع <b>أي</b> كتابة في جدول الكتب، حتى لو اللي اتغير عنوان كتاب مش بتقراه. الـ distinct بيخلي الـ Home مايتبنيش غير لما الرقم نفسه يتغير.
+
+### distinct على ليست
+
+<CodeBlock label="الـ List مالهاش == بالمحتوى">
+
+```dart
+import 'package:collection/collection.dart';
+
+@override
+Stream<List<Book>> watchLibrary() => _local
+    .watchBooks()
+    .map((rows) => [for (final r in rows) r.toEntity()])
+    .distinct(const ListEquality<Book>().equals); // compares item by item
+```
+
+</CodeBlock>
+
+`.distinct()` من غير function كان هيقارن بـ `==` بتاع الـ List، وده بيقارن الـ identity: كل ليست جديدة من drift object جديد، فمفيش ولا قيمة هتتشال. الـ `ListEquality` بيقارن العناصر واحد واحد بـ `==` بتاع Book، والـ Book بـ freezed فالـ `==` بتاعه بيقارن كل الحقول، زي ما اتقرر في [درس الـ Domain](/course/domain-errors/domain/). ولو الـ `==` كان بالـ id بس، الـ distinct ده كان هيمنع تغيير الحالة من «بقراه» لـ «خلصته» إنه يوصل للشاشة.
+
+### asyncMap وasyncExpand: محطة بتستنى
+
+<CodeBlock label="asyncMap: Future لكل قيمة، بالترتيب">
+
+```dart
+// every time the queue changes, ask how many ops the server rejected
+Stream<int> watchFailingCount() =>
+    _queue.onEnqueued.asyncMap((_) => _queue.failingCount()); // Future<int>
+```
+
+</CodeBlock>
+
+الـ `asyncMap` بياخد function بترجّع Future، ومابيعدّيش القيمة اللي بعدها لحد ما الـ Future ده يخلص. يعني لو جه 5 أحداث ورا بعض، الـ 5 queries هيتعملوا واحد ورا التاني، والنتايج بنفس الترتيب.
+
+<CodeBlock label="asyncExpand: Stream لكل قيمة، بالترتيب">
+
+```dart
+// import several CSV files one after the other, progress of each in order
+Stream<ImportProgress> importAll(Stream<File> files) =>
+    files.asyncExpand((file) => _importer.importFile(file));
+```
+
+</CodeBlock>
+
+الـ `asyncExpand` بيعمل listen على الـ stream الداخلي، وبيوقّف الخارجي لحد ما الداخلي يخلص. ده نفس `yield*` جوه loop في [درس الـ Stream](/course/dart-async/streams/)، بس كـ operator.
+
+| الـ operator | الـ function بترجّع | بيستنى؟ | لو جت قيمة وهو شغال |
+| --- | --- | --- | --- |
+| `map` | قيمة | لأ | مفيش «شغال» |
+| `asyncMap` | Future | أيوه | بتستنى دورها |
+| `expand` | Iterable | لأ | كل عنصر event |
+| `asyncExpand` | Stream | أيوه، لحد ما الداخلي يخلص | بتستنى دورها |
+
+### debounce بإيدك
+
+الـ `CatalogSearchCubit` في [درس الـ Cubit](/course/presentation/cubit/) عمل debounce بـ `Timer`. نفس الفكرة كـ operator:
+
+<CodeBlock label="core/streams/debounce.dart">
+
+```dart
+extension DebounceX<T> on Stream<T> {
+  /// Emits a value only after [wait] has passed with no newer value.
+  Stream<T> debounced(Duration wait) => Stream.multi((out) {
+        Timer? timer;
+        final sub = listen(
+          (value) {
+            timer?.cancel();
+            timer = Timer(wait, () => out.add(value)); // only the last one survives
+          },
+          onError: out.addError,
+          onDone: () {
+            timer?.cancel(); // a pending value is dropped on done
+            out.close();
+          },
+        );
+        out
+          ..onPause = sub.pause
+          ..onResume = sub.resume
+          ..onCancel = () {
+            timer?.cancel();
+            return sub.cancel();
+          };
+      }, isBroadcast: isBroadcast);
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `Stream.multi`:</b> الـ function بتشتغل مع كل listen، فكل مستمع ليه `timer` لوحده. لو الـ timer كان بره، مستمعين اتنين كانوا هيلغوا timers بعض.
+- <b>الـ cancel بيمشي لفوق:</b> لما اللي تحت يعمل cancel، بنلغي الـ timer والـ subscription على المصدر. من غير كده الـ timer كان هيضرب بعد ما الشاشة اتقفلت.
+- <b>الـ onDone:</b> قررنا نرمي القيمة المستنية. للبحث ده صح: الـ stream بيخلص لما الـ Cubit يتقفل، ومحدش مستني نتيجة. لو حالتك محتاجة آخر قيمة، اعمل `out.add` قبل الـ close.
+
+وده 25 سطر لـ operator واحد، ولسه محتاج تستات بـ `fakeAsync`. ده بالظبط السؤال اللي آخر الدرس.
+
+### throttle: الأولى تعدّي والباقي يستنى
+
+<CodeBlock label="throttle بإيدك">
+
+```dart
+extension ThrottleX<T> on Stream<T> {
+  /// Emits the first value, then ignores everything for [window].
+  Stream<T> throttled(Duration window) => Stream.multi((out) {
+        Timer? gate;
+        final sub = listen(
+          (value) {
+            if (gate != null) return; // inside the window: dropped
+            out.add(value);
+            gate = Timer(window, () => gate = null);
+          },
+          onError: out.addError,
+          onDone: () {
+            gate?.cancel();
+            out.close();
+          },
+        );
+        out.onCancel = () {
+          gate?.cancel();
+          return sub.cancel();
+        };
+      }, isBroadcast: isBroadcast);
+}
+```
+
+</CodeBlock>
+
+<Diagram name="d-async-debounce-throttle">
+
+نفس الكتابة على 3 خطوط. الـ debounce بيستنى السكوت ويطلّع آخر قيمة. الـ throttle بيطلّع أول قيمة ويقفل فترة، واللي ييجي جوه الفترة بيترمي.
+
+</Diagram>
+
+| | debounce | throttle |
+| --- | --- | --- |
+| بيطلّع | آخر قيمة بعد ما الدنيا تهدى | أول قيمة، وبعدين يقفل فترة |
+| لو الأحداث مابتقفش | ولا قيمة لحد ما تقف | قيمة كل فترة |
+| في Readly | البحث وانت بتكتب | الـ scroll لتحت عشان «حمّل الصفحة الجاية»، زرار «زامن دلوقتي» |
+
+### نفس الكلام بالـ packages
+
+| | `rxdart` 0.28 | `stream_transform` 2.1 | `package:async` |
+| --- | --- | --- | --- |
+| مين | community | فريق Dart | فريق Dart |
+| debounce | `debounceTime(d)` | `debounce(d)` | لأ |
+| throttle | `throttleTime(d, leading:, trailing:)` | `throttle(d, trailing:)` | لأ |
+| آخر واحد بس | `switchMap` | `switchMap` | لأ |
+| ارمي الجديد وانت شغال | `exhaustMap` | لأ | لأ |
+| دمج | `Rx.combineLatest2`، `Rx.merge` | `combineLatest`، `merge` | `StreamGroup.merge` |
+| قيمة أولية | `startWith` | `startWith` | لأ |
+| قيمة حالية زي Cubit | `BehaviorSubject` | لأ | لأ |
+| حاجات تانية | أكتر من 70 operator | `takeUntil`، `scan`، `tap`، `asyncMapSample` | `StreamQueue`، `CancelableOperation` |
+
+ورا بعض بالترتيب مش موجود في rxdart باسم `concatMap`. ده `asyncExpand` اللي في Dart نفسه.
+
+### switchMap وأخواته: الأنماط الأربعة كـ operators
+
+لو قريت [درس Cubit متقدم](/course/cubit-bloc/cubit-advanced/)، الأنماط الأربعة هناك هي نفسها operators:
+
+| النمط | الـ operator | بيعمل إيه في حدث جديد والقديم لسه شغال |
+| --- | --- | --- |
+| restart | `switchMap` | بيلغي الـ subscription على القديم ويبدأ الجديد |
+| drop | `exhaustMap` (rxdart) | بيرمي الجديد |
+| queue | `asyncMap`، `asyncExpand` | الجديد بيستنى |
+| latest | `asyncMapSample` (stream_transform) | بيحتفظ بأحدث واحد بس ويشغّله بعد القديم |
+| concurrent | `concurrentAsyncMap` (stream_transform) | الاتنين مع بعض |
+
+والـ transformers بتاعة `bloc_concurrency` (`restartable` و`droppable` و`sequential`) مبنية على نفس الفكرة: الـ events stream والـ handler بيتحولوا لـ stream من الـ states بالـ operator المناسب.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### نتايج البحث بتتعرض واحدة ورا التانية
+
+حد كتب البحث كـ stream pipeline بـ `asyncMap`:
+
+<CodeBlock label="asyncMap: كل بحث بيستنى اللي قبله">
+
+```dart
+_sub = _queries.stream
+    .debounced(const Duration(milliseconds: 350))
+    .asyncMap((q) => _searchBooks(SearchParams(query: q, page: 1)))
+    .listen((result) => emit(_toState(result)));
+```
+
+</CodeBlock>
+
+المستخدم كتب «dahl»، ووقف ثانية، وغيّرها لـ «roald dahl». الطلب الأول بطيء (3 ثواني). الـ asyncMap مش هيبدأ الطلب التاني غير لما الأول يخلص، فالمستخدم شاف نتايج «dahl» بعد 3 ثواني، وبعدها بثانية نتايج «roald dahl». الشاشة بتلحق ورا الكتابة بدل ما تتبعها.
+
+البحث نمط restart: الجديد يلغي القديم. ده `switchMap`:
+
+<CodeBlock label="switchMap من stream_transform">
+
+```dart
+import 'package:stream_transform/stream_transform.dart';
+
+_sub = _queries.stream
+    .map((q) => q.trim())
+    .distinct()
+    .debounce(const Duration(milliseconds: 350))
+    .switchMap((q) => q.length < 2
+        ? Stream.value(const SearchIdle())
+        : Stream.fromFuture(_searchBooks(SearchParams(query: q, page: 1)))
+            .map(_toState)
+            .startWith(const SearchLoading()))
+    .listen(emit, onError: addError);
+```
+
+</CodeBlock>
+
+- <b>الـ request id اختفى:</b> الـ switchMap بيلغي الـ subscription على stream «dahl» أول ما «roald dahl» ييجي، فنتيجته مش هتوصل أبدًا. ده نفس الـ `_latestRequest` بتاع الـ CatalogSearchCubit، بس الـ operator هو اللي ماسكه.
+- <b>بس الطلب نفسه لسه شغال:</b> الـ cancel على `Stream.fromFuture` بيبطّل يستنى الـ Future، والـ Future مالوش cancel. الطلب بيكمّل لحد ما السيرفر يرد، ونتيجته بتترمي. لو الـ bandwidth فارق، الإلغاء الحقيقي في الـ data layer بـ `CancelToken`.
+- <b>الـ `distinct` قبل الـ debounce:</b> «dahl» وبعدين «dahl » بمسافة: بعد الـ trim هما نفس القيمة، فمفيش بحث تاني.
+
+### الـ Home بيتبني مع كل كتابة في الـ DB
+
+ده الـ distinct اللي فوق لما مايكونش موجود. كل upsert بيعمله الـ refresh، وكل `markSynced` بيعمله الـ SyncService بعد كل عملية، بيصحّي الـ query في drift، والـ query بيطلّع ليست جديدة حتى لو مفيش حاجة اتغيرت في الصفوف اللي بتطلع. drift مابيقارنش النتيجة بالقديمة، والـ docs بتاعته بتقول إن الـ stream queries بتتحدث أكتر من اللازم.
+
+المكان الصح للـ distinct هو الـ repository، مرة واحدة، عشان كل اللي بيسمع ياخد الفايدة. والـ BlocBuilder كمان بيقارن الـ states، فلو الـ state بـ equatable أو freezed، الـ rebuild مش هيحصل. بس الـ map والـ toEntity والـ sort اللي في الـ use case اتعملوا على الفاضي، فالـ distinct في الـ data layer لسه بيوفّر.
+
+### exception جوه map بقت error على الـ stream
+
+<CodeBlock label="toEntity رمى في صف واحد">
+
+```dart
+_local.watchBooks().map((rows) => [for (final r in rows) r.toEntity()]);
+// one row has an id that BookId.fromTrusted rejects: ArgumentError
+```
+
+</CodeBlock>
+
+الـ exception اللي بيترمي جوه الـ function بتاعة `map` أو `where` أو `asyncMap` مابيوقّعش الـ app. الـ operator بيمسكه ويطلّعه <b>error event</b> على الـ stream، والـ stream بيكمّل. يعني الشاشة بتاخد `onError`، والقيمة الجاية بتيجي عادي. لو الـ Cubit مافيهوش onError، الخطأ بيروح للـ uncaught handler، والشاشة فاضلة على آخر ليست.
+
+وده سلوك كويس، بس معناه إن الـ error بيمشي في الـ pipeline كله. الـ `handleError` اللي في [درس الأخطاء في Dart](/course/api-errors/dart-errors/) لو قبل الـ map، مش هيشوف أخطاء الـ map. الترتيب بيفرق: كل operator بيشوف اللي جاي من فوقه بس.
+
+### combineLatest مابيطلّعش حاجة
+
+الـ tile بتاع الكتاب في المكتبة محتاج حاجتين: الكتب، وهل في نت (عشان أيقونة «هيتزامن لما النت يرجع»):
+
+<CodeBlock label="الاتنين لازم يطلّعوا الأول">
+
+```dart
+final tiles = _repository
+    .watchLibrary()
+    .combineLatest(_network.onOnline.map((_) => true), (books, online) => (books, online));
+// nothing arrives until the network changes at least once
+```
+
+</CodeBlock>
+
+الـ `combineLatest` مابيطلّعش أي قيمة غير لما كل stream يطلّع قيمة واحدة على الأقل. الـ `watchLibrary` بيطلّع على طول (drift بيطلّع النتيجة أول ما تسمع). بس الـ `onOnline` broadcast بيطلّع لما النت «يرجع» بس، فلو النت شغال من الأول، الشاشة هتفضل فاضية. الحل stream بيبدأ بالقيمة الحالية: الـ `isOnline` اللي اتعمل بـ `Stream.multi` في [درس الـ Stream](/course/dart-async/streams/)، أو `startWith(true)` لو مفيش غيره.
+
+### الحسبة التقيلة اتعملت مرتين
+
+<CodeBlock label="map على broadcast stream لمستمعين اتنين">
+
+```dart
+final stats = libraryCubit.stream.map((s) => ReadingStats.from(s.books)); // 50ms each
+// StatsHeader and StatsChart both build a StreamBuilder on `stats`
+```
+
+</CodeBlock>
+
+الـ `cubit.stream` broadcast، والـ `map` على broadcast بيرجّع broadcast. بس كل مستمع بيعمل subscription لوحده، فالـ function بتاعة الـ map بتشتغل مرة <b>لكل مستمع</b> مع كل قيمة. widgetين يعني 100ms مع كل تغيير.
+
+الحسبة دي مكانها الـ state نفسها، مرة واحدة: حقل في الـ state بيتحسب في الـ Cubit، والـ widgets تختار منه بـ `BlocSelector`. ولو الحسبة تقيلة لدرجة إنها تقطّع frame، يبقى [isolate](/course/dart-async/isolates/).
+
+### الـ throttle بتاعي ضيّع آخر scroll
+
+الـ throttle اللي فوق بيطلّع أول حدث في الفترة ويرمي الباقي. للـ pagination ده تقريبًا صح: أول ما المستخدم يوصل لآخر الليست، حمّل. بس لو المستخدم وصل للآخر في آخر 50ms من الفترة، الحدث ده اترمى، ومفيش scroll تاني جاي، فالصفحة الجاية مش هتتحمل لحد ما يحرّك الليست.
+
+ده الفرق بين `leading` و`trailing`: الـ trailing بيطلّع آخر حدث اترمى لما الفترة تخلص. الـ `throttleTime` في rxdart بياخد الاتنين (`leading: true, trailing: false` افتراضي)، والـ `throttle` في stream_transform بياخد `trailing`. ولو كتبته بإيدك، يبقى ده سطر زيادة وتست زيادة.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+### تجيب package ولا تكتب بإيدك؟
+
+| الموقف | القرار |
+| --- | --- |
+| `map` و`where` و`distinct` و`asyncMap` | Dart نفسه. مفيش سبب لأي package |
+| debounce واحد في مكان واحد | `Timer` في الـ Cubit زي درس الـ Cubit، أو الـ extension اللي فوق |
+| debounce وswitchMap وcombineLatest في كذا feature | `stream_transform`: صغير، من فريق Dart، ونفس أسامي الـ operators |
+| الفريق جاي من Rx (RxJava، RxSwift) أو محتاج `BehaviorSubject` و`exhaustMap` | `rxdart` |
+| Bloc بالـ events | `bloc_concurrency`، والـ transformer بياخد أي operator من دول |
+
+اللي بيفرق مش عدد الـ operators، اللي بيفرق تمن الصيانة. الـ extension اللي كتبته بإيدك محتاج تستات لكل حالة (pause، cancel، done، error، broadcast)، والـ package اتعمله ده. وفي نفس الوقت، كل package تيجي في الـ pubspec هتحتاج تتحدث وتتراجع. rxdart آخر نسخة ليه 0.28.0 من 2024، وده مش عيب لـ library ثابتة، بس اعرفه قبل ما تبني عليه.
+
+### الـ operators مكانها فين في الطبقات؟
+
+- <b>الـ data layer:</b> اللي ليه علاقة بالمصدر: `distinct` بعد drift، وتحويل الـ rows، وتحويل الـ errors لـ CacheException. ده الدرس اللي بعد الجاي.
+- <b>الـ use case:</b> القواعد: الفلترة والترتيب والدمج بين repositoryين (`WatchLibrary`).
+- <b>الـ Cubit:</b> اللي ليه علاقة بالمستخدم: debounce للكتابة، وswitchMap للبحث.
+- <b>الـ UI:</b> ولا حاجة. `StreamBuilder` على `stream.map(...)` معمول جوه `build` بيعمل stream جديد مع كل rebuild، وبيعمل subscription من الأول.
+
+### ماتحوّلش كل حاجة لـ stream
+
+الـ pipeline الجميل اللي من 8 operators صعب يتقري، وصعب يتعمله debug (الـ stack trace مليان `_MapStream` و`_ForwardingStreamSubscription`)، وأي تعديل محتاج تفهم كل المحطات. الـ Cubit بـ `Timer` وrequest id اللي في الوحدة 5 أطول بسطرين، بس أي حد يقراه. استخدم الـ operators لما الـ stream موجود أصلًا (drift، connectivity، أحداث الـ SyncQueue)، مش عشان تحوّل method calls عادية لـ stream علشان تستخدمها.
+
+<Note kind="interview" title="سؤال interview">
+
+«إيه الفرق بين asyncMap وswitchMap وexhaustMap؟» التلاتة بياخدوا قيمة ويشغّلوا شغل async ليها. الـ asyncMap بيعمل الشغل واحد ورا التاني، والقيم الجديدة بتستنى، فكل النتايج بتوصل بالترتيب، وده مناسب لعمليات لازم تتعمل كلها. الـ switchMap بيلغي اللي شغال لما قيمة جديدة تيجي، فآخر قيمة بس هي اللي نتيجتها توصل، وده البحث. الـ exhaustMap بيرمي القيم الجديدة طول ما في واحد شغال، وده زرار الحفظ. والإلغاء في switchMap بيلغي الـ subscription، مش الـ Future نفسه، فالطلب بيكمّل ونتيجته بتترمي.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«ليه `distinct()` مش شغال على stream من drift؟» لأن drift بيطلّع ليست جديدة مع كل كتابة في الجدول، والـ List في Dart `==` بتاعها بيقارن الـ identity، فكل قيمة مختلفة عن اللي قبلها. الحل `distinct(const ListEquality<Book>().equals)`، ويشترط إن الـ entity نفسه `==` بتاعه بيقارن كل الحقول (freezed أو equatable)، مش الـ id بس، وإلا تغيير الحالة مش هيعدّي.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### CatalogSearchCubit: Timer وrequest id ولا operators
+
+<BeforeAfter>
+
+<Side label="Timer + request id" kind="before">
+
+```dart
+void queryChanged(String input) {
+  _debounce?.cancel();
+  final query = input.trim();
+  if (query.length < 2) {
+    _latestRequest++;
+    emit(const SearchIdle());
+    return;
+  }
+  _debounce = Timer(const Duration(milliseconds: 350), () => _search(query));
+}
+
+Future<void> _search(String query) async {
+  final requestId = ++_latestRequest;
+  emit(const SearchLoading());
+  final result = await _searchBooks(SearchParams(query: query, page: 1));
+  if (isClosed || requestId != _latestRequest) return;
+  emit(_toState(result));
+}
+```
+
+</Side>
+
+<Side label="operators" kind="after">
+
+```dart
+CatalogSearchCubit(this._searchBooks) : super(const SearchIdle()) {
+  _sub = _queries.stream
+      .map((q) => q.trim())
+      .distinct()
+      .debounce(const Duration(milliseconds: 350))
+      .switchMap((q) => q.length < 2
+          ? Stream.value(const SearchIdle())
+          : Stream.fromFuture(_searchBooks(SearchParams(query: q, page: 1)))
+              .map(_toState)
+              .startWith(const SearchLoading()))
+      .listen(emit, onError: addError);
+}
+
+final _queries = StreamController<String>();
+late final StreamSubscription<CatalogSearchState> _sub;
+
+void queryChanged(String input) => _queries.add(input);
+
+@override
+Future<void> close() async {
+  await _sub.cancel();
+  await _queries.close();
+  return super.close();
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+الاتنين بيعملوا نفس الحاجة. الأولى أطول شوية بس كل سطر واضح وبيتختبر بـ `fakeAsync` من غير أي package. التانية بتقول النية في مكان واحد («آخر بحث بعد ما الكتابة تهدى»)، بس محتاجة `stream_transform`، والـ debugging فيها أصعب. وفي فرق صغير: في التانية الـ «أقل من حرفين» بيستنى الـ debounce هو كمان قبل ما يرجع للـ Idle. في Readly الأولى هي اللي في الكود، والتانية مفيدة لو الـ feature فيها streams كتير أصلًا.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="async-ops-1">
+<Ask>`watchLibrary().distinct()` على stream من drift. هيشيل القيم المكررة؟</Ask>
+<Answer>
+
+لأ. كل قيمة List جديدة، و`==` بتاع الـ List بيقارن الـ identity، فمفيش قيمتين متساويين. محتاج `distinct(const ListEquality<Book>().equals)`، والـ Book لازم `==` بتاعه يقارن كل الحقول.
+
+</Answer>
+</Question>
+
+<Question id="async-ops-2">
+<Ask>البحث بـ `asyncMap` بيعرض نتايج قديمة ورا بعض. ليه، وإيه الـ operator الصح؟</Ask>
+<Answer>
+
+الـ asyncMap بيعمل كل بحث بعد اللي قبله يخلص، فكل النتايج بتوصل بالترتيب حتى القديمة. البحث نمط restart: `switchMap`، اللي بيلغي الـ subscription على البحث القديم أول ما الجديد ييجي، فنتيجته مابتوصلش.
+
+</Answer>
+</Question>
+
+<Question id="async-ops-3">
+<Ask>`switchMap` لغى البحث القديم. الطلب بتاعه وقف على السيرفر؟</Ask>
+<Answer>
+
+لأ. الإلغاء على `Stream.fromFuture` بيبطّل يستنى، والـ Future في Dart مالوش cancel، فالطلب بيكمّل ونتيجته بتترمي. الإلغاء الحقيقي في الـ data layer بـ `CancelToken` بتاع dio.
+
+</Answer>
+</Question>
+
+<Question id="async-ops-4">
+<Ask>`combineLatest` بين `watchLibrary()` و`onOnline` ومفيش ولا قيمة بتطلع. ليه؟</Ask>
+<Answer>
+
+الـ combineLatest مابيطلّعش غير لما كل stream يطلّع قيمة على الأقل. الـ `onOnline` بيطلّع لما النت يرجع بس، فلو كان شغال من الأول، مفيش قيمة. محتاج stream بيبدأ بالقيمة الحالية، أو `startWith`.
+
+</Answer>
+</Question>
+
+<Question id="async-ops-5">
+<Ask>debounce كتبته بـ `StreamTransformer.fromHandlers` والـ `Timer` متعرّف بره الـ handlers، واتنين بيسمعوا عليه. إيه اللي هيبوظ؟</Ask>
+<Answer>
+
+الـ timer متشارك بين المستمعين، فكل واحد بيلغي timer التاني، والقيم بتضيع أو بتروح للمستمع الغلط. الحالة لازم تبقى لكل subscription، يعني جوه `Stream.multi` أو `StreamTransformer.fromBind` اللي بيعمل state مع كل listen.
+
+</Answer>
+</Question>
+
+</Quiz>

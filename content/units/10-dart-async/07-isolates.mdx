@@ -1,0 +1,322 @@
+---
+title: "الـ Isolates: الشغل التقيل بره الـ UI"
+description: "يعني إيه isolate، وIsolate.run وcompute، وإيه اللي ينفع يتبعت وإيه لأ، وparsing لملف كبير من غير ما الشاشة تقف، وامتى الـ isolate يستاهل وامتى بيبطّأ."
+minutes: 30
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="الموظف اللي في الأوضة اللي ورا">
+
+ارجع للكاشير بتاع [أول درس في الوحدة](/course/dart-async/future/). زبون جاب كيس فيه 10 آلاف جنيه فكّة. لو الكاشير عدّهم بنفسه، الطابور كله هيقف نص ساعة. فبينادي موظف من الأوضة اللي ورا، ويديله الكيس، ويرجع للطابور. الموظف بيعدّ في أوضته على ترابيزته، ولما يخلص بيبعت ورقة فيها الرقم ويمشي.
+
+بس الموظف ده مش شايف درج الكاشير، ولا الدفتر، ولا التليفون. أي حاجة محتاجها لازم تتبعتله، والكاشير بيبعتله <b>صورة</b> من الورق مش الأصل. وكمان استدعاؤه بياخد وقت: يقوم، ويدخل، ويفهم المطلوب. لو الزبون جاب 20 جنيه فكّة، استدعاء الموظف أبطأ من إن الكاشير يعدّهم بنفسه.
+
+</Analogy>
+
+الموظف ده هو <b>isolate</b> تاني. كل isolate ليه ذاكرة لوحده وevent loop لوحده، وبيشتغل على core تاني في المعالج، فبيشتغل <b>في نفس الوقت</b> مع الـ main isolate بجد، مش بالتناوب زي الـ async. والتمن: مفيش ذاكرة مشتركة. الـ main مايقدرش يدّيه الـ Cubit ولا الـ Dio ولا الـ get_it. بيبعتله بيانات بس، وبتتنسخ في الطريق.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### Isolate.run: شغل واحد ويخلص
+
+في [درس «أول طلب من Dart»](/course/api-errors/first-request/) الـ export بتاع المكتبة (4MB JSON) اتعمله parse بـ `Isolate.run`. نفس الأداة، بس على حاجة تانية: ملف الـ CSV بتاع استيراد Goodreads من [درس الـ Stream](/course/dart-async/streams/). مستخدم عنده 3000 كتاب على Goodreads، والملف 2MB، والـ parsing بياخد 350ms على موبايل متوسط. ده أكتر من 20 frame واقفين:
+
+<CodeBlock label="features/import/data/goodreads_parser.dart">
+
+```dart
+// top-level: it runs in another isolate, so it must not touch `this`
+List<GoodreadsRow> parseGoodreadsCsv(String csv) {
+  final lines = const LineSplitter().convert(csv);
+  final header = _splitCsvLine(lines.first);
+  final title = header.indexOf('Title');
+  final isbn = header.indexOf('ISBN13');
+  final shelf = header.indexOf('Exclusive Shelf');
+  return [
+    for (final line in lines.skip(1))
+      if (_splitCsvLine(line) case final cells when cells.length == header.length)
+        GoodreadsRow(title: cells[title], isbn: cells[isbn], shelf: cells[shelf]),
+  ];
+}
+
+// the importer
+Future<List<GoodreadsRow>> _parse(File file) async {
+  final path = file.path; // a String: cheap to send
+  return Isolate.run(() => parseGoodreadsCsv(File(path).readAsStringSync()));
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `Isolate.run`:</b> بيعمل isolate جديد، ويشغّل الـ function جواه، ويرجّع النتيجة كـ Future، والـ isolate بيموت. ولو الـ function رمت، نفس الخطأ بيترمي عند الـ `await`، فالـ try العادي شغال.
+- <b>الملف بيتقري جوه الـ isolate:</b> بعتنا الـ path (كام byte) مش محتوى الملف (2MB). الـ `dart:io` شغال في أي isolate، فالقراية نفسها كمان بقت بره الـ main.
+- <b>النتيجة مش بتتنسخ:</b> الـ `Isolate.run` بيرجّع النتيجة بـ `Isolate.exit`، وده بينقل الذاكرة للـ main من غير نسخ. فالـ 3000 `GoodreadsRow` مابيتكلفوش مرتين.
+- <b>الـ `path` متغير محلي مش `file.path` جوه الـ closure:</b> الـ closure بياخد معاه نسخة من كل حاجة بيلمسها. `file` هنا آمن، بس العادة دي بتحميك لما الحاجة اللي بتلمسها تبقى `this`.
+
+<Diagram name="d-async-isolate">
+
+الـ main isolate بيبعت الـ path لـ isolate جديد ليه ذاكرته. الـ isolate بيقرا ويعمل parse على core تاني، والـ main فاضي يرسم frames. والنتيجة بترجع من غير نسخ، والـ isolate بيموت.
+
+</Diagram>
+
+### compute بتاع Flutter
+
+```dart
+final rows = await compute(parseGoodreadsCsv, csvText);
+```
+
+الـ `compute(fn, message)` في Flutter على الموبايل والديسكتوب هو `Isolate.run(() => fn(message))` بالظبط. الفرق الوحيد على الـ web: مفيش isolates، فالـ `compute` بيشغّل الـ function على نفس الـ event loop. يعني على الـ web مش هتكسب حاجة، والـ `dart:isolate` نفسه مش مدعوم هناك. في Readly (موبايل) `Isolate.run` أوضح، لأنه بياخد closure بدل function ورسالة واحدة.
+
+### إيه اللي ينفع يعدّي بين الـ isolates
+
+| ينفع | مابينفعش |
+| --- | --- |
+| `String` و`int` و`bool` و`double` و`null` | `Socket` و`RandomAccessFile` (ملف مفتوح) وأي حاجة ماسكة مورد من الـ OS |
+| `List` و`Map` و`Set` من حاجات بتنفع | `ReceivePort` |
+| `Uint8List` وباقي الـ typed data | أي `Finalizable` (زي connection بتاع SQLite) |
+| objects من الـ classes بتاعتك (بتتنسخ) | objects بتشاور على حاجة من دول، مهما كانت متدارية جوه |
+| closures (في `Isolate.run`) بكل اللي بيلمسوه | |
+
+القاعدة العملية: ابعت <b>بيانات</b> (path، bytes، DTOs، records) مش <b>خدمات</b> (Dio، AppDatabase، Repository، Cubit).
+
+### القياس قبل أي قرار
+
+الـ isolate مش «أسرع». هو بيشيل الشغل من على الـ main عشان الشاشة ماتقفش، وبيضيف تمن. فالسؤال الأول دايمًا: الشغل ده بياخد كام؟
+
+<CodeBlock label="قياس سريع في profile mode">
+
+```dart
+final sw = Stopwatch()..start();
+final rows = parseGoodreadsCsv(csv);
+_logger.debug('parse: ${sw.elapsedMilliseconds}ms for ${rows.length} rows');
+```
+
+</CodeBlock>
+
+- <b>في profile mode مش debug:</b> الـ debug أبطأ بكتير، وهيخليك تشوف مشاكل مش موجودة. `flutter run --profile` على موبايل حقيقي، ويفضل يكون موبايل متوسط مش أحدث حاجة.
+- <b>الـ frame budget:</b> 16ms على شاشة 60Hz، و8ms على 120Hz. الـ Flutter cookbook بيقول إن أي شغل أكتر من 16ms هيبان للمستخدم كـ jank.
+- <b>DevTools Performance:</b> الـ frames الحمرا في الـ UI thread، وتحتها الـ CPU profiler بيقولك أنهي function واخدة الوقت.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### Illegal argument in isolate message
+
+<CodeBlock label="الـ closure لمس this">
+
+```dart
+class GoodreadsImporter {
+  GoodreadsImporter(this._local, this._clock);
+  final LibraryLocalSource _local; // holds the drift connection
+  final Clock _clock;
+
+  Future<List<GoodreadsRow>> _parse(File file) =>
+      Isolate.run(() => _parseCsv(File(file.path).readAsStringSync())); // _parseCsv is an instance method
+}
+```
+
+</CodeBlock>
+
+الـ `_parseCsv` method في الـ class، فالنداء عليه معناه `this._parseCsv`، فالـ closure لمس `this`. والـ `this` فيه `_local`، وجواه الـ DAO، وجواه connection بتاع drift فيه ports وموارد مابتتبعتش. Dart بيحاول ينسخ كل ده، وبيرمي `Invalid argument(s): Illegal argument in isolate message: object is unsendable`.
+
+والأسوأ لو مارماش: لو كل اللي في `this` بيتنسخ، هتنسخ objects كبيرة على الفاضي من غير ما تحس، والـ isolate يبقى أبطأ من الـ main.
+
+- <b>الحل:</b> الـ function اللي بتشتغل جوه الـ isolate تبقى top-level أو `static`، وبتاخد بيانات بس. ده اللي عملناه في `parseGoodreadsCsv`.
+- <b>وبيدّيك حاجة زيادة:</b> function top-level بتاخد String وبترجّع List بتتختبر بـ `dart test` عادي، من غير isolate ولا Flutter.
+
+### الـ isolate خلّى الاستيراد أبطأ
+
+حد شاف `Isolate.run` في الـ parser وعجبه، فحطه في كل حاجة: الـ `toEntity` لليستة الـ 20 كتاب في نتايج البحث، وحساب «كتب خلصتها السنة دي»، والـ sort. الشاشات بقت أبطأ.
+
+| الشغل | على الـ main | في `Isolate.run` |
+| --- | --- | --- |
+| `toEntity` لـ 20 كتاب | أقل من 1ms | عمل الـ isolate + نسخ الـ input، أكتر بكتير من الشغل نفسه |
+| parse لـ CSV فيه 3000 سطر | 350ms، الشاشة واقفة | نفس الـ 350ms تقريبًا، والشاشة شغالة |
+| `jsonDecode` لـ 4MB | 200ms | dio بيعمله في isolate لوحده لو الرد 50KB أو أكتر |
+
+الـ isolate مابيخليش الشغل أسرع، بيخليه في مكان تاني. لو الشغل أقل من frame، التمن أكتر من المكسب. ولو الـ input كبير، النسخ نفسه بيبقى شغل: بعت 4MB String للـ isolate بيتنسخ على الـ main قبل ما يبدأ. ابعت الـ path أو الـ bytes من مكان مايحتاجش نسخ.
+
+### الـ plugin رمى جوه الـ isolate
+
+<CodeBlock label="path_provider جوه Isolate.run">
+
+```dart
+Future<void> exportBackup(List<BookDto> books) => Isolate.run(() async {
+      final dir = await getApplicationDocumentsDirectory(); // throws in the background isolate
+      File('${dir.path}/backup.json').writeAsStringSync(jsonEncode(books));
+    });
+```
+
+</CodeBlock>
+
+الـ plugins زي `path_provider` و`shared_preferences` بتكلّم Android وiOS عن طريق platform channels، والـ channels دي متوصلة بالـ main isolate بس. في isolate جديد، أول نداء بيرمي (binding مش متعمله initialize، أو `MissingPluginException`).
+
+- <b>الحل الأول، وغالبًا الأحسن:</b> اسأل الـ plugin على الـ main، وابعت النتيجة: `final dir = await getApplicationDocumentsDirectory();` بره، وجوه الـ isolate تستخدم `dir.path` بس.
+- <b>لو لازم الـ plugin جوه:</b> من Flutter 3.7، الـ background isolates تقدر تكلّم الـ plugins: هات `RootIsolateToken.instance!` على الـ main وابعته، وجوه الـ isolate نادي `BackgroundIsolateBinaryMessenger.ensureInitialized(token)` قبل أي plugin. بس فيه حدود: الـ isolate يقدر يبعت للـ platform، مايقدرش يستقبل رسايل بتبدأ من عندها.
+
+### get_it فاضي جوه الـ isolate
+
+<CodeBlock label="الـ logger مش موجود هناك">
+
+```dart
+List<GoodreadsRow> parseGoodreadsCsv(String csv) {
+  // ...
+  getIt<AppLogger>().debug('skipped ${bad.length} rows'); // StateError: AppLogger is not registered
+}
+```
+
+</CodeBlock>
+
+كل isolate ليه نسخة لوحده من كل الـ static والـ top-level variables، فاضية زي ما الـ app لسه فاتح. الـ `getIt` اللي في الـ isolate الجديد مافيهوش أي تسجيل. ونفس الحكاية لأي cache في static، أو config اتقري في `main()`. وده نفس سبب الـ `setupDependencies()` التانية في الـ workmanager في [درس Offline-first](/course/offline/offline/).
+
+الـ function اللي بتشتغل في الـ isolate لازم تبقى مكتفية بنفسها: تاخد كل اللي محتاجاه كـ parameter، وترجّع كل اللي عندها كـ نتيجة. لو محتاج log، رجّع عدد الصفوف اللي اتشالت في النتيجة، والـ main يعمل log.
+
+### بحث في 4000 كتاب مع كل حرف
+
+المستخدم عايز يدوّر في مكتبته (مش الكتالوج) بالعنوان والمؤلف، وبـ fuzzy match. على 4000 كتاب، الـ match بياخد 40ms. حد حطه في `Isolate.run`، فبقى مع كل حرف بعد الـ debounce: isolate جديد، ونسخ الـ 4000 كتاب ليه، وmatch، ونتيجة. الـ UI بقت ناعمة، بس كل حرف بقى بياخد 80ms بدل 40، والبطارية بتخلص.
+
+لما الشغل التقيل بيتكرر على نفس البيانات، `Isolate.run` غلط، لأنه بيبدأ من الصفر كل مرة. الخيارات بالترتيب:
+
+1. <b>خليه شغل الـ DB:</b> drift بيشغّل الـ SQL في isolate لوحده أصلًا. `LIKE` على عمود متعمله index، أو جدول FTS5 للبحث الحقيقي، والـ query بيرجع النتيجة بس. ده غالبًا الحل كله.
+2. <b>isolate عايش طول ما الشاشة مفتوحة:</b> `Isolate.spawn` مرة واحدة، تبعتله الكتب مرة، وبعدين كل query رسالة صغيرة ورد صغير بـ `SendPort` و`ReceivePort`. شغالة، بس انت المسؤول عن عمره وعن قفله وعن أخطاؤه (`onError` port زي ما اتقال في [درس الأخطاء في Dart](/course/api-errors/dart-errors/)). ماتعملهاش غير لو الـ DB ماتنفعش.
+
+### على الـ web الشاشة برضه بتقف
+
+لو Readly اتبنى للـ web، نفس كود الاستيراد بـ `compute` هيخلي الشاشة تقف 350ms. على الـ web مفيش isolates في Flutter، والـ `compute` بيشغّل الـ function على نفس الـ event loop. يعني الشغل اتعمل في نفس المكان.
+
+لو الـ web مهم، الحل إن الشغل يتقسم: دفعات من 200 سطر، وبين كل دفعة `await Future.pause()` عشان الـ event loop يرسم frame. ده مش أسرع، بس الشاشة مابتقفش. أو الأحسن: الـ parsing يتعمل على السيرفر، والـ web يرفع الملف بس.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+| الشغل | فين |
+| --- | --- |
+| انتظار (شبكة، ديسك، timer) | `await` على الـ main. الـ isolate هنا مالوش أي فايدة |
+| queries وفلترة وترتيب على بيانات في الـ DB | الـ SQL في drift، وهو أصلًا في isolate لوحده |
+| JSON من الشبكة | dio بيعمل الـ decode في isolate للردود الكبيرة. الـ `fromJson` لو تقيل: اطلب bytes واعمل الاتنين في `Isolate.run` |
+| حساب واحد تقيل (أكتر من frame) على بيانات في الذاكرة | `Isolate.run` بـ function top-level |
+| نفس الحساب التقيل بيتكرر على نفس البيانات | الـ DB الأول، وبعدين isolate عايش بـ ports |
+| فك الصور ورسمها | الـ engine بيعمله بره الـ main أصلًا. اطلب حجم صغير (`cacheWidth`) بدل ما تفك 4000×3000 |
+
+- <b>قيس الأول:</b> في profile mode على موبايل متوسط. الـ isolate من غير رقم بيقول إنه محتاج، تعقيد زيادة.
+- <b>الـ isolate حدود واضحة:</b> function بتاخد بيانات وبترجّع بيانات، مابتعرفش get_it ولا plugins ولا `this`. وده بيخليها أسهل كود في الـ app تختبره.
+- <b>دوّر على حد بيعمله أصلًا:</b> drift، وdio، والـ image decoding في الـ engine. أغلب الشغل التقيل في app زي Readly له مكان بره الـ main من غير ما تكتب isolate.
+
+<Note kind="interview" title="سؤال interview">
+
+«إيه الفرق بين async وisolate؟» الـ async بيخلي الـ isolate الواحد يعمل حاجة تانية وهو مستني حاجة بره (شبكة، ديسك)، بس كل الكود لسه على thread واحد بالتناوب. الـ isolate التاني ليه ذاكرته وevent loop بتاعه وبيشتغل على core تاني في نفس الوقت، فهو اللي بيحل الحسابات التقيلة. والتمن إن مفيش ذاكرة مشتركة: البيانات بتتنسخ في الرسايل (ما عدا نتيجة `Isolate.run` اللي بتتنقل من غير نسخ)، والـ isolate مايعرفش الـ singletons ولا الـ plugins من غير setup.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«`Isolate.run` ولا `compute` ولا `Isolate.spawn`؟» الـ `compute` بتاع Flutter هو `Isolate.run` على الموبايل، وعلى الـ web بيشتغل على نفس الـ thread. الـ `Isolate.run` لشغل واحد: بيعمل isolate، ويرجّع النتيجة، ويموت، والخطأ بيترمي عند الـ await. الـ `Isolate.spawn` لـ isolate عايش فترة وبتكلّمه برسايل كتير بـ ports، وده لما نفس الشغل التقيل بيتكرر، بس انت المسؤول عن قفله وعن أخطاؤه.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### الاستيراد: الـ parsing على الـ main ولا في isolate
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+class GoodreadsImporter {
+  Future<List<GoodreadsRow>> _parse(File file) async {
+    final csv = await file.readAsString();
+    return _parseCsv(csv); // 350ms on the UI isolate
+  }
+
+  List<GoodreadsRow> _parseCsv(String csv) {
+    _logger.debug('parsing ${csv.length} chars');
+    // ...
+  }
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+class GoodreadsImporter {
+  Future<List<GoodreadsRow>> _parse(File file) async {
+    final path = file.path;
+    final rows = await Isolate.run(
+      () => parseGoodreadsCsv(File(path).readAsStringSync()),
+      debugName: 'goodreads-parse',
+    );
+    _logger.debug('parsed ${rows.length} rows');
+    return rows;
+  }
+}
+
+// goodreads_parser.dart: top-level, no logger, no `this`
+List<GoodreadsRow> parseGoodreadsCsv(String csv) { /* ... */ }
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: الـ `async` بيخلي القراية من الديسك ماتقفش الشاشة، بس الـ parsing نفسه 350ms على الـ main، والـ progress bar اللي في الشاشة واقف. والـ `_parseCsv` method بتلمس `_logger`، فمش هتنفع تتنقل لـ isolate زي ما هي. بعد: الـ parser function top-level بتاخد String وبترجّع List، والقراية والـ parsing الاتنين في isolate، والـ log على الـ main بعد ما النتيجة ترجع. والـ `debugName` بيخلي الـ isolate يبان باسمه في DevTools.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="async-iso-1">
+<Ask>`Isolate.run(() => _parseCsv(csv))` و`_parseCsv` method في الـ class. ليه رمى «Illegal argument in isolate message»؟</Ask>
+<Answer>
+
+لأن نداء method في الـ class معناه `this._parseCsv`، فالـ closure لمس `this`، وDart بيحاول ينسخ الـ object كله للـ isolate، ومن ضمنه حاجات مابتتبعتش زي connection الـ DB. الحل function top-level أو static بتاخد بيانات بس.
+
+</Answer>
+</Question>
+
+<Question id="async-iso-2">
+<Ask>`toEntity` لـ 20 كتاب في نتايج البحث. تحطه في `Isolate.run`؟</Ask>
+<Answer>
+
+لأ. الشغل أقل من 1ms، وعمل isolate ونسخ الـ input أغلى منه بكتير. الـ isolate للشغل اللي أكتر من frame (16ms على 60Hz)، وده بيتقاس في profile mode مش بيتخمن.
+
+</Answer>
+</Question>
+
+<Question id="async-iso-3">
+<Ask>`getApplicationDocumentsDirectory()` جوه `Isolate.run` رمى. ليه، وإيه الحل الأبسط؟</Ask>
+<Answer>
+
+الـ plugins بتكلّم الـ platform عن طريق channels متوصلة بالـ main isolate. الحل الأبسط: اسأل الـ plugin على الـ main وابعت الـ path للـ isolate. ولو لازم جوه: `RootIsolateToken` و`BackgroundIsolateBinaryMessenger.ensureInitialized` من Flutter 3.7.
+
+</Answer>
+</Question>
+
+<Question id="async-iso-4">
+<Ask>بحث fuzzy في 4000 كتاب مع كل حرف بـ `Isolate.run`. إيه المشكلة، وإيه البديل؟</Ask>
+<Answer>
+
+كل حرف بيعمل isolate جديد وبينسخ الـ 4000 كتاب، فالشغل بقى أبطأ وبيصرف بطارية. البديل الأول إن البحث يبقى SQL في drift (index أو FTS5)، وهو أصلًا في isolate لوحده. ولو ماينفعش، isolate عايش بـ `Isolate.spawn` وports، والكتب بتتبعتله مرة واحدة.
+
+</Answer>
+</Question>
+
+<Question id="async-iso-5">
+<Ask>`compute` على نسخة الـ web والشاشة برضه وقفت. ليه؟</Ask>
+<Answer>
+
+على الـ web مفيش isolates في Flutter، والـ `compute` بيشغّل الـ function على نفس الـ event loop. الحل هناك إنك تقسم الشغل لدفعات وبينها `await Future.pause()`، أو تنقله للسيرفر.
+
+</Answer>
+</Question>
+
+</Quiz>

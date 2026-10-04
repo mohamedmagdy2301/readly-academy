@@ -1,0 +1,411 @@
+---
+title: "عمر الـ subscription: cancel والتسريب"
+description: "مين بيملك الـ StreamSubscription ومين يلغيها، والـ cancel بيعمل إيه لفوق، وإزاي الـ subscription اللي اتنست بتمسك الشاشة كلها في الذاكرة، والـ close في Cubit، والـ listen مرتين على single stream."
+minutes: 30
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="الجرنال اللي بيوصل لشقة فاضية">
+
+واحد ساب الشقة ونسي يلغي اشتراك الجرنال. كل يوم الموزع بيحط عدد قدام الباب. الأعداد بتتكوم، والموزع بيلف كل يوم على الفاضي، وصاحب العمارة مش قادر يأجّر الشقة لحد تاني لأن «لسه في حد بيستلم فيها». ولو الموزع رن الجرس في يوم، محدش هيفتح، أو أسوأ: حد غريب يفتح ويستلم حاجة مش بتاعته.
+
+الحل مش إن الموزع يفهم لوحده. الحل إن اللي عمل الاشتراك هو اللي يلغيه، يوم ما يسيب الشقة، مش بعدها.
+
+</Analogy>
+
+الـ <b>StreamSubscription</b> هي الاشتراك ده. والقاعدة اللي هتمشي معاك الدرس كله: <b>اللي عمل listen هو اللي بيعمل cancel، في نفس اللحظة اللي عمره بيخلص فيها.</b> الـ Cubit بيلغي في `close`، والـ State بيلغي في `dispose`، والـ service بيلغي في `dispose` بتاعه. والشقة اللي مش عارف تأجّرها هي الـ memory: طول ما الـ subscription عايشة، كل اللي الـ callback بتاعها لامسه مش هيتمسح.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### StreamSubscription: اللي في إيدك
+
+| الـ method | بتعمل إيه |
+| --- | --- |
+| `cancel()` | مفيش events تاني من اللحظة دي. وبترجّع Future بيخلص لما المصدر يخلّص تنضيفه |
+| `pause()` / `resume()` | single stream: المصدر بيبطّل يطلّع. broadcast: المصدر بيكمّل، والـ events بتتخزن عندك |
+| `isPaused` | هل هي متوقفة دلوقتي |
+| `onData` / `onError` / `onDone` | تغيّر الـ callback بعد الـ listen |
+| `asFuture()` | Future بيخلص لما الـ stream يخلص، وبيرمي لو جه error |
+
+الـ cancel مش «قريب»: أول ما تناديه، ولا event هيوصل للـ callback تاني، حتى لو كان في واحد في الطريق. والـ Future اللي راجع بيقولك «المصدر خلّص تنضيفه»: الـ `finally` بتاع الـ async* اشتغل، أو الـ `onCancel` بتاع الـ controller خلص.
+
+### الـ cancel بيمشي لفوق
+
+<Diagram name="d-async-watch-pipeline">
+
+رحلة stream المكتبة من drift للشاشة. الـ cancel بيبدأ من الـ Cubit لما الشاشة تتقفل، وبيعدّي على كل map وdistinct في السكة، لحد ما drift يبطّل يراقب الـ query.
+
+</Diagram>
+
+لما الـ `LibraryCubit` يعمل cancel، الـ subscription بتاعته على الـ stream اللي طالع من الـ `map` في الـ use case بتتلغي. والـ map ده كان عامل subscription على الـ stream اللي قبله، فبيلغيه. وهكذا لحد drift، اللي بيشيل الـ query من القايمة اللي بيعيد تشغيلها مع كل كتابة. cancel واحد تحت بيقفل السلسلة كلها. ولو نسيته، السلسلة كلها بتفضل شغالة، والـ query بيتعاد مع كل upsert لشاشة مش موجودة.
+
+### الـ Cubit: listen في الـ constructor، cancel في الـ close
+
+<CodeBlock label="LibraryCubit">
+
+```dart
+class LibraryCubit extends Cubit<LibraryState> {
+  LibraryCubit(WatchLibrary watchLibrary) : super(const LibraryLoading()) {
+    _sub = watchLibrary(const WatchLibraryParams()).listen(
+      (books) => emit(LibraryLoaded(books)),
+      onError: addError,
+    );
+  }
+
+  late final StreamSubscription<List<Book>> _sub;
+
+  @override
+  Future<void> close() async {
+    await _sub.cancel(); // first: no event can reach emit after this line
+    return super.close();
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `late final` مش `?`:</b> الـ subscription بتتعمل في الـ constructor ومرة واحدة، فمفيش حالة تبقى فيها null. لو بتتعمل في method زي `watch()` ممكن تتنادى أكتر من مرة (فلتر جديد مثلًا)، يبقى nullable، و`_sub?.cancel()` قبل الـ listen الجديد، زي [درس Cubit متقدم](/course/cubit-bloc/cubit-advanced/).
+- <b>الـ cancel قبل `super.close()`:</b> الـ `super.close()` بيقفل الـ stream بتاع الـ Cubit، وبعده أي `emit` بيرمي `StateError: Cannot emit new states after calling close`. فالـ subscription لازم تقف الأول.
+- <b>الـ await:</b> مش عشان الـ events، دي وقفت فورًا. عشان المصدر يخلّص تنضيفه قبل ما الـ close يرجع. في التستات ده بيفرق: `await cubit.close()` بيضمن إن مفيش حاجة لسه شغالة.
+
+### الـ widget: initState وdidUpdateWidget وdispose
+
+<CodeBlock label="SyncBadge بيسمع على stream جاي من بره">
+
+```dart
+class SyncBadge extends StatefulWidget {
+  const SyncBadge({super.key, required this.pending});
+  final Stream<int> pending;
+  @override
+  State<SyncBadge> createState() => _SyncBadgeState();
+}
+
+class _SyncBadgeState extends State<SyncBadge> {
+  StreamSubscription<int>? _sub;
+  int _count = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _subscribe();
+  }
+
+  @override
+  void didUpdateWidget(SyncBadge old) {
+    super.didUpdateWidget(old);
+    if (old.pending != widget.pending) {
+      _sub?.cancel(); // the parent handed us another stream
+      _subscribe();
+    }
+  }
+
+  void _subscribe() => _sub = widget.pending.listen((n) => setState(() => _count = n));
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Badge.count(count: _count);
+}
+```
+
+</CodeBlock>
+
+الـ `didUpdateWidget` هو اللي بيتنسي. الـ State بيعيش طول ما الـ widget في نفس المكان في الشجرة، حتى لو الأب بنى widget جديد بـ stream تاني. من غيره، الـ badge هيفضل يعرض أرقام الـ stream القديم.
+
+وكل ده هو بالظبط اللي `StreamBuilder` بيعمله جواه: subscribe وcancel، والتغيير لو الـ stream اتغير. فلو كل اللي محتاجه إنك تعرض قيمة، `StreamBuilder` أو `BlocBuilder` أقصر وأأمن. الـ listen بإيدك في widget للحالات اللي الـ builder مايكفيش فيها.
+
+### single stream: listen مرة واحدة في عمره
+
+<CodeBlock label="Bad state حتى بعد الـ cancel">
+
+```dart
+final progress = importer.import(rows); // async*: single-subscription
+
+final first = progress.listen(print);
+await first.cancel();
+progress.listen(print); // Bad state: Stream has already been listened to.
+```
+
+</CodeBlock>
+
+الـ single stream ليه listen واحد في عمره كله. حتى لو الأول عمل cancel، مفيش listen تاني. لو محتاج تسمع تاني، اطلب stream جديد: نادي `importer.import(rows)` تاني، وده هيبدأ الشغل من الأول. وده سبب إن الـ repository فيه method اسمها `watchLibrary()` مش field اسمه `library`: كل نداء بيرجّع stream جديد لصاحبه.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### Sentry: «Cannot emit new states after calling close»
+
+<CodeBlock label="callback async جوه listen">
+
+```dart
+_sub = _repository.watchLibrary().listen((books) async {
+  final covers = await _coverCache.missing(books); // checks the disk
+  emit(LibraryLoaded(books, missingCovers: covers));
+});
+```
+
+</CodeBlock>
+
+الـ cancel موجود في الـ close، ومع ذلك الـ StateError بيظهر. الـ cancel بيمنع events <b>جديدة</b> توصل للـ callback. بس لو الـ callback كان اشتغل قبل الـ close ووقف عند `await`، الـ cancel مالوش علاقة بيه. الـ await بيخلص بعد ما الـ Cubit اتقفل، والـ emit بيرمي.
+
+وفي مشكلة تانية: الـ `listen` مابيستناش الـ callback يخلص. لو drift طلّع ليستتين ورا بعض، الـ callbackين شغالين مع بعض، واللي يخلص الأول يعمل emit الأول، حتى لو كان بتاع الليست القديمة.
+
+الحل إن الشغل الـ async يبقى جوه الـ pipeline مش جوه الـ callback:
+
+<CodeBlock label="asyncMap في الـ pipeline">
+
+```dart
+_sub = _repository
+    .watchLibrary()
+    .asyncMap((books) async => (books, await _coverCache.missing(books))) // in order, one at a time
+    .listen(
+      (r) => emit(LibraryLoaded(r.$1, missingCovers: r.$2)),
+      onError: addError,
+    );
+```
+
+</CodeBlock>
+
+الـ asyncMap بيعمل الشغل بالترتيب، والـ emit بقى sync جوه الـ callback، فأول ما الـ cancel يحصل، مفيش emit. ولو الشغل ده بيتأخر والقيم بتيجي بسرعة، `switchMap` بدل asyncMap، زي [درس الـ operators](/course/dart-async/operators/).
+
+### كل مرة تفتح شاشة الكتاب، الـ memory بتزيد
+
+في DevTools، تاب Memory: افتح صفحة كتاب واقفلها 10 مرات، واعمل snapshot، ودوّر على `BookDetailsCubit`. المفروض 0 أو 1. لقيت 10.
+
+<CodeBlock label="الـ subscription اللي ماسكة الـ Cubit">
+
+```dart
+class BookDetailsCubit extends Cubit<BookDetailsState> {
+  BookDetailsCubit(this._loadBookPage, SyncQueue queue) : super(const BookDetailsLoading()) {
+    queue.onEnqueued.listen((_) => _reloadSyncBadge()); // never cancelled
+  }
+  // ...
+}
+```
+
+</CodeBlock>
+
+الـ `SyncQueue` singleton عايش طول عمر الـ app. الـ controller بتاعه ماسك الـ subscription، والـ subscription ماسكة الـ closure، والـ closure ماسكة `this`، والـ Cubit ماسك الـ state بتاعه: تفاصيل الكتاب والملاحظات وأي صورة. ولا حاجة من دول تقدر تتمسح، لأن في سلسلة references من حاجة عايشة لحد هنا. والـ Cubit اتقفل، فأول `enqueue` هيعمل `_reloadSyncBadge`، وجواه `emit`، فـ StateError كمان.
+
+- <b>الصلّح:</b> `late final StreamSubscription<void> _queueSub;` والـ cancel في الـ close.
+- <b>الأحسن:</b> الـ Cubit مايسمعش على الـ `SyncQueue` نفسه. الـ `SyncStatusCubit` بتاع [درس Offline-first](/course/offline/offline/) بيسمع مرة واحدة للـ app كله، والشاشة تقرا منه بـ `context.select`.
+- <b>القاعدة اللي بتمسكها في الـ review:</b> أي `.listen(` نتيجته مش متخزنة في متغير، يبقى محدش هيعمله cancel. الـ lint اسمه `cancel_subscriptions`، وأخوه `close_sinks` للـ StreamControllers اللي مابتتقفلش.
+
+### بعد الـ logout، الـ sync بيشتغل مرتين
+
+الـ `SyncService` singleton، وفي `start()` بيعمل listen على `onOnline` و`onEnqueued` ويحطهم في `_subs`. في الـ logout، حد قرر يعمل للـ SyncService reset عشان مايفضلش ماسك حاجة من المستخدم القديم:
+
+```dart
+await getIt.resetLazySingleton<SyncService>();
+```
+
+الـ get_it رمى النسخة، والنسخة الجديدة اتعملت مع أول طلب. بس النسخة القديمة لسه مشتركة في `onOnline`. الـ get_it مابيعرفش إن جواها subscriptions، هو بس بطّل يرجّعها. فلما النت يرجع، الاتنين بيعملوا drain، والـ `_running` flag بتاع كل واحد مايعرفش التاني.
+
+<CodeBlock label="الـ service بيعرف يقفل نفسه، والـ DI بيناديه">
+
+```dart
+class SyncService {
+  // ...
+  Future<void> dispose() async {
+    for (final s in _subs) {
+      await s.cancel();
+    }
+    _subs.clear();
+  }
+}
+
+// di/setup.dart
+getIt.registerLazySingleton<SyncService>(
+  () => SyncService(getIt(), getIt(), getIt(), getIt()),
+  dispose: (s) => s.dispose(), // called by resetLazySingleton and popScope
+);
+```
+
+</CodeBlock>
+
+أي singleton بيعمل listen لازم يبقى عنده `dispose`، ولازم الـ DI يناديها. ولو استخدمت الـ scopes اللي في [درس الـ Session](/course/di-scale/session/)، الـ `popScope` بينادي الـ dispose لكل اللي اتسجّل جوه الـ scope.
+
+### الـ StreamBuilder رمى «already been listened to»
+
+<CodeBlock label="stream single متخزن في الـ State، والـ StreamBuilder اتعمل من جديد">
+
+```dart
+// ImportPage State
+late final Stream<ImportProgress> _progress = _importer.import(widget.rows);
+
+@override
+Widget build(BuildContext context) => _showDetails
+    ? DetailedProgress(child: StreamBuilder(stream: _progress, builder: _detailed))
+    : StreamBuilder(stream: _progress, builder: _compact);
+```
+
+</CodeBlock>
+
+لما المستخدم داس «التفاصيل»، الـ StreamBuilder القديم اتشال (وعمل cancel)، والجديد اتبنى في مكان تاني في الشجرة، فده State جديد بيعمل listen على نفس الـ stream. والـ stream ده single اتسمع عليه قبل كده، فبيرمي.
+
+- <b>stream واحد، مستمع واحد ثابت:</b> الـ `ImportCubit` هو اللي بيسمع، والشاشة بتعرض الـ state بـ BlocBuilder في أي شكل.
+- <b>ولو مفيش Cubit:</b> الـ StreamBuilder يفضل في نفس المكان في الشجرة، والـ `_showDetails` يغيّر الـ builder بس.
+- <b>`asBroadcastStream()` مش الحل هنا:</b> بيسكّت الـ error، بس اللي بيسمع متأخر هيفوته اللي فات، والمصدر مش هيقف لما الكل يمشي، زي ما شفنا في [درس الـ Stream](/course/dart-async/streams/).
+
+### الـ listen جوه build
+
+<CodeBlock label="subscription جديدة مع كل rebuild">
+
+```dart
+@override
+Widget build(BuildContext context) {
+  context.read<SyncStatusCubit>().stream.listen((s) {
+    if (s.failing > 0) _showBanner(context);
+  });
+  return const LibraryView();
+}
+```
+
+</CodeBlock>
+
+الـ build بيتنادى كتير: الكيبورد فتح، الثيم اتغير، الأب اتبنى. كل مرة subscription جديدة ومحدش بيلغيها، والـ banner بيظهر مرة لكل subscription. الـ build لازم يبقى pure: يرجّع widgets بس. ورد الفعل على تغيير مكانه `BlocListener`، وهو بيعمل الـ subscription مرة ويلغيها مع الـ widget.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>المالك واضح من الكود:</b> الـ subscription تتخزن في field في نفس الـ class اللي عملت listen، وتتلغي في الـ method اللي بتنهي عمرها. لو مش عارف تقول مين هيلغيها في جملة، يبقى محدش.
+- <b>سيب الأدوات تملك عنك:</b> `BlocBuilder` و`BlocListener` و`StreamBuilder` بيعملوا الـ subscribe والـ cancel صح. وفي الـ Bloc، `emit.forEach(stream, onData: ...)` بيلغي الـ subscription لوحده لما الـ handler يتلغي أو الـ Bloc يتقفل. كل listen بتكتبه بإيدك مسؤولية زيادة.
+- <b>الـ pause مش بديل للـ cancel:</b> على broadcast stream، الـ pause بيخلي الـ events تتخزن عندك لحد الـ resume، فالـ memory بتزيد. لو الشاشة مش ظاهرة ومش محتاج اللي فاتها، cancel ودلوقتي، واعمل listen تاني لما ترجع. الـ drift بيطلّع النتيجة الحالية أول ما تسمع، فمش هتخسر حاجة.
+- <b>الـ leaks بتتقاس، مش بتتخمن:</b> DevTools Memory بـ snapshot قبل وبعد فتح وقفل الشاشة كذا مرة، والـ diff بيوريك مين فضل. وفي الـ review: كل `listen(` جنبه field، وكل field جنبه cancel. والـ lints `cancel_subscriptions` و`close_sinks` بيمسكوا الحالات البسيطة.
+- <b>الـ singletons اللي بتسمع محتاجة dispose:</b> get_it مابيعرفش إن الـ object ماسك subscriptions. الـ `dispose:` في التسجيل، أو الـ scopes، هما اللي بيضمنوا إن الـ reset بيقفل بجد.
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي الـ StreamSubscription بتعمل memory leak؟» المصدر (زي singleton أو الـ DB) ماسك الـ subscription، والـ subscription ماسكة الـ callback، والـ callback ماسك `this` (الـ Cubit أو الـ State) وكل اللي فيه. طول ما المصدر عايش، الـ garbage collector مش هيقدر يمسح أي حاجة في السلسلة دي، حتى لو الشاشة اتقفلت من بدري. وكمان الـ callback بيفضل يشتغل، فيعمل emit على Cubit مقفول أو setState على State اتعمله dispose. الحل إن اللي عمل listen يعمل cancel في الـ close أو الـ dispose.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«عملت cancel في الـ close، وبرضه جالك "Cannot emit new states after calling close". إزاي؟» الـ cancel بيمنع events جديدة، بس مابيوقّفش callback شغال أصلًا. لو الـ callback بتاع الـ listen فيه `await`، وبعده `emit`، والـ close حصل وهو مستني، الـ emit هيحصل على Cubit مقفول. الحل إن الشغل الـ async يبقى في الـ pipeline بـ `asyncMap` أو `switchMap`، والـ callback يبقى sync، أو على الأقل `if (isClosed) return;` بعد الـ await.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### BookNotesCubit: 3 اشتراكات
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+class BookNotesCubit extends Cubit<BookNotesState> {
+  BookNotesCubit(this._notes, this._status, this.bookId)
+      : super(const BookNotesState()) {
+    _notes.watchNotes(bookId).listen((n) async {
+      final pinned = await _notes.pinnedIds(bookId);
+      emit(state.copyWith(notes: n, pinned: pinned));
+    });
+    _status.stream.listen((s) {
+      emit(state.copyWith(unsynced: s.unsynced.contains(bookId)));
+    });
+  }
+  final NotesRepository _notes;
+  final SyncStatusCubit _status;
+  final BookId bookId;
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+class BookNotesCubit extends Cubit<BookNotesState> {
+  BookNotesCubit(NotesRepository notes, this.bookId) : super(const BookNotesState()) {
+    _sub = notes
+        .watchNotes(bookId)
+        .asyncMap((n) async => (n, await notes.pinnedIds(bookId)))
+        .listen(
+          (r) => emit(state.copyWith(notes: r.$1, pinned: r.$2)),
+          onError: addError,
+        );
+  }
+  final BookId bookId;
+  late final StreamSubscription<(List<Note>, Set<NoteId>)> _sub;
+
+  @override
+  Future<void> close() async {
+    await _sub.cancel();
+    return super.close();
+  }
+}
+
+// the unsynced badge reads SyncStatusCubit directly in the widget:
+// context.select((SyncStatusCubit c) => c.state.unsynced.contains(bookId))
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: subscriptionين مش متخزنين، فمحدش هيلغيهم، والـ SyncStatusCubit (عايش طول عمر الـ app) ماسك الـ BookNotesCubit في الذاكرة لحد ما الـ app يتقفل. والـ callback الأول async، فممكن يعمل emit بعد الـ close، وممكن ليستتين يتعرضوا بالعكس. وCubit ماسك Cubit، ودي حاجة [درس Cubit متقدم](/course/cubit-bloc/cubit-advanced/) قال ليه لأ. بعد: subscription واحدة، متخزنة، وبتتلغي في الـ close. الشغل الـ async في الـ pipeline بالترتيب. والـ badge بيقرا من الـ SyncStatusCubit في الـ widget مباشرة.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="async-life-1">
+<Ask>في الـ `close` بتاع Cubit، ليه `await _sub.cancel()` يبقى قبل `super.close()`؟</Ask>
+<Answer>
+
+لأن `super.close()` بيقفل الـ stream بتاع الـ Cubit، وأي emit بعده بيرمي StateError. فالـ subscription لازم تبطّل تبعت الأول. والـ await بيضمن إن المصدر خلّص تنضيفه قبل ما الـ close يرجع، وده بيفرق في التستات.
+
+</Answer>
+</Question>
+
+<Question id="async-life-2">
+<Ask>Cubit عمر شاشة واحدة عمل listen على stream من singleton ومالغاش. إيه اللي بيحصل بعد ما الشاشة تتقفل؟</Ask>
+<Answer>
+
+الـ singleton ماسك الـ subscription، والـ subscription ماسكة الـ callback، والـ callback ماسك الـ Cubit وكل الـ state بتاعه، فمفيش حاجة منهم بتتمسح من الـ memory. ومع أول event، الـ callback بيعمل emit على Cubit مقفول فيرمي StateError.
+
+</Answer>
+</Question>
+
+<Question id="async-life-3">
+<Ask>عملت `cancel()` على subscription على async* stream، وبعدين `listen` تاني على نفس الـ stream. إيه اللي هيحصل؟</Ask>
+<Answer>
+
+`Bad state: Stream has already been listened to.` الـ single stream ليه listen واحد في عمره، حتى بعد الـ cancel. لو عايز تسمع تاني، نادي الـ function تاني واعمل stream جديد.
+
+</Answer>
+</Question>
+
+<Question id="async-life-4">
+<Ask>الـ widget بياخد `Stream` في الـ constructor وبيعمل listen في `initState`. الأب بناه تاني بـ stream مختلف. إيه اللي ناقص؟</Ask>
+<Answer>
+
+الـ `didUpdateWidget`: الـ State فاضل نفسه، فالـ subscription لسه على الـ stream القديم. في `didUpdateWidget` قارن `old.stream` بـ `widget.stream`، ولو اختلفوا اعمل cancel وlisten من جديد. أو استخدم `StreamBuilder` اللي بيعمل ده لوحده.
+
+</Answer>
+</Question>
+
+<Question id="async-life-5">
+<Ask>`resetLazySingleton<SyncService>()` في الـ logout. ليه الـ sync بقى بيشتغل مرتين؟</Ask>
+<Answer>
+
+الـ get_it بطّل يرجّع النسخة القديمة، بس مالغاش الـ subscriptions اللي جواها، فهي لسه بتسمع على `onOnline`. والنسخة الجديدة سمعت هي كمان. الحل `dispose` في الـ SyncService بتلغي `_subs`، ويتسجّل كـ `dispose:` في الـ registration عشان الـ reset ينادي عليها.
+
+</Answer>
+</Question>
+
+</Quiz>

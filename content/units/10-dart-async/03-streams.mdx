@@ -1,0 +1,466 @@
+---
+title: "Stream من الصفر"
+description: "الـ Stream من جوه: async* وyield، وlisten وawait for، والفرق الحقيقي بين single-subscription وbroadcast، وStreamController بالـ callbacks بتاعته، وامتى تستخدم كل طريقة."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="الجرنال والراديو">
+
+<b>الجرنال</b> اشتراك باسمك. الأعداد بتتطبع وتتحط قدام بابك، ولو كنت مسافر بتلاقيها متكومة لما ترجع، ماضاعش منها حاجة. بس الاشتراك ده لشخص واحد: لو جارك عايز يقرا، يعمل اشتراك لوحده. ولو قلت للموزع «وقّف شوية»، بيبطّل يطبع لحد ما تقوله كمّل.
+
+<b>الراديو</b> بيذيع لأي حد فاتح على المحطة. مليون واحد بيسمعوا نفس النشرة في نفس اللحظة. بس لو فتحت الراديو الساعة 9 وخمسة، نشرة 9 راحت عليك، ومحدش هيعيدها عشانك.
+
+</Analogy>
+
+الـ <b>Stream</b> في Dart نوعين بالظبط زي دول. الـ <b>single-subscription</b> هو الجرنال: مستمع واحد، والقيم بتستناه لو لسه ماسمعش، وبيقدر يقول للمصدر «استنى» (pause). ده نوع أغلب الـ streams: قراية ملف، والـ stream اللي بيرجع من `async*`، والـ `watch()` بتاع drift. والـ <b>broadcast</b> هو الراديو: أي عدد مستمعين، ومفيش ذاكرة. ده نوع الأحداث اللي «بتحصل» زي الـ `onEnqueued` بتاع الـ SyncQueue، والـ stream بتاع أي Cubit.
+
+والفرق الأهم من النوع: مين اللي بيبدأ الشغل؟ الـ Future بيبدأ لما تعمله. الـ Stream في الغالب مابيعملش حاجة لحد ما حد يعمل <b>listen</b>، وبيبطّل لما يعمل <b>cancel</b>. الـ stream وصفة، والـ subscription هي الطبخة نفسها.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### 3 أنواع أحداث
+
+أي stream بيطلّع 3 حاجات بس: <b>data</b> (قيمة)، و<b>error</b> (خطأ، والـ stream ممكن يكمّل بعده)، و<b>done</b> (خلاص، مفيش تاني). والـ `listen` بياخد callback لكل واحد:
+
+<CodeBlock label="listen بالكامل">
+
+```dart
+final StreamSubscription<List<Book>> sub = repository.watchLibrary().listen(
+  (books) => print('${books.length} books'),     // data: zero or more times
+  onError: (Object e, StackTrace st) => print(e),  // error: zero or more times
+  onDone: () => print('closed'),                  // done: at most once
+  cancelOnError: false,                           // the default: keep going after an error
+);
+```
+
+</CodeBlock>
+
+الـ `listen` بيرجّع <b>StreamSubscription</b>: الخيط اللي بيربطك بالـ stream، ومنه بتعمل `cancel()` و`pause()` و`resume()`. عمر الـ subscription ده موضوع [درس الـ lifecycle](/course/dart-async/lifecycle/) كله.
+
+### async* وyield: stream من function
+
+Readly هيزوّد ميزة استيراد المكتبة من Goodreads: المستخدم بيختار ملف CSV فيه مئات الكتب، والشاشة بتعرض شريط تقدم. ده stream طبيعي جدًا: «لسه 120 من 800»، «لسه 240 من 800»، لحد ما يخلص.
+
+<CodeBlock label="features/import/data/goodreads_importer.dart">
+
+```dart
+class ImportProgress {
+  const ImportProgress(this.done, this.total);
+  final int done;
+  final int total;
+}
+
+class GoodreadsImporter {
+  GoodreadsImporter(this._local, this._clock);
+  final LibraryLocalSource _local;
+  final Clock _clock;
+
+  Stream<ImportProgress> import(List<GoodreadsRow> rows) async* {
+    yield ImportProgress(0, rows.length);
+    for (var i = 0; i < rows.length; i += 100) {
+      final batch = rows.skip(i).take(100);
+      final now = _clock.now().toUtc();
+      await _local.upsertBooks(batch.map((r) => r.toBook().toRow(updatedAt: now)));
+      yield ImportProgress(i + batch.length, rows.length); // one event per batch
+    }
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `async*`:</b> بتقول إن الـ function بترجّع Stream، وجواها تقدر تعمل `await` عادي.
+- <b>الـ `yield`:</b> بيبعت قيمة واحدة على الـ stream. والـ function بتكمّل بعدها.
+- <b>الـ done لوحده:</b> لما الـ function توصل لآخرها، الـ stream بيطلّع done. ولو رمت exception، بيطلع error وبعده done.
+- <b>الـ body مابيبدأش غير مع الـ listen:</b> لو ناديت `import(rows)` ومحدش سمع، ولا كتاب هيتكتب. وده عكس الـ Future تمامًا.
+
+وفي `yield*`، وده بيبعت كل اللي في stream تاني كأنه منك:
+
+<CodeBlock label="yield*: stream جوه stream">
+
+```dart
+Stream<ImportProgress> importAll(List<List<GoodreadsRow>> files) async* {
+  for (final rows in files) {
+    yield* import(rows); // every event of the inner stream, then continue
+  }
+}
+```
+
+</CodeBlock>
+
+### طريقتين تسمع بيهم
+
+<CodeBlock label="listen ولا await for">
+
+```dart
+// 1. listen: returns at once, the callbacks run later
+_sub = importer.import(rows).listen((p) => emit(ImportRunning(p)));
+
+// 2. await for: the function waits here until the stream is done
+Future<void> runImport(List<GoodreadsRow> rows) async {
+  await for (final p in importer.import(rows)) {
+    emit(ImportRunning(p));
+  }
+  emit(const ImportFinished()); // only after the last batch
+}
+```
+
+</CodeBlock>
+
+| | `listen` | `await for` |
+| --- | --- | --- |
+| الكود اللي بعده | بيكمّل على طول | بيستنى الـ stream يخلص |
+| الإلغاء | `sub.cancel()` من أي مكان | `break` أو `return` من جوه الـ loop بس |
+| الـ error | بيروح لـ `onError` والـ stream يكمّل | بيترمي من الـ loop وبيلغي الـ subscription |
+| مناسب لـ | stream مالوش آخر (`watch()`) | stream له آخر ومستنيه (import، قراية ملف) |
+
+الـ `await for` على stream مالوش آخر، زي `watchLibrary()`، معناه إن الكود اللي بعد الـ loop عمره ما هيشتغل.
+
+### StreamController: لما الأحداث بتيجي من بره
+
+الـ `async*` مناسب لما انت اللي بتنتج القيم بالترتيب. بس أحيانًا القيم جاية من callbacks مالكش تحكم في توقيتها: حد نادى `enqueue`، أو الـ OS بلّغك بحاجة. هنا الـ <b>StreamController</b>: طرف بتكتب فيه (`add`)، وطرف بيتقري (`stream`).
+
+ده بالظبط اللي في الـ `SyncQueue` بتاع [درس Offline-first](/course/offline/offline/):
+
+<CodeBlock label="SyncQueue: broadcast للأحداث">
+
+```dart
+class SyncQueue {
+  final _enqueued = StreamController<void>.broadcast();
+
+  Stream<void> get onEnqueued => _enqueued.stream; // readers only see the Stream
+
+  Future<void> enqueue(SyncKind kind, String bookId) async {
+    // ... insert the op
+    _enqueued.add(null); // "something new": whoever listens right now
+  }
+
+  Future<void> dispose() => _enqueued.close();
+}
+```
+
+</CodeBlock>
+
+- <b>الـ controller private، والـ stream public:</b> اللي بره يسمع بس، مايقدرش يعمل `add`. نفس فكرة الـ Cubit: الـ `emit` جوه، والـ `stream` بره.
+- <b>broadcast هنا صح:</b> «في عملية جديدة» حدث بيحصل دلوقتي. الـ SyncService بيسمع من أول ما الـ app يفتح، ولو محدش سامع لحظتها، مفيش حد محتاج الحدث ده.
+- <b>الـ close:</b> بيطلّع done لكل المستمعين. وبعده أي `add` بيرمي `Bad state: Cannot add new events after calling close`.
+
+<Diagram name="d-async-single-broadcast">
+
+الـ single-subscription بيخزّن القيم لحد أول مستمع وبيرفض أي مستمع تاني. الـ broadcast بيوزّع على كل اللي سامعين دلوقتي، واللي اتبعت ومحدش سامع بيضيع.
+
+</Diagram>
+
+### الـ callbacks بتاعة الـ controller: ابدأ الشغل لما حد يسمع
+
+<CodeBlock label="StreamController بيبدأ ويقف مع المستمع">
+
+```dart
+Stream<int> pendingOpsCount(Duration every) {
+  late final StreamController<int> controller;
+  Timer? timer;
+
+  Future<void> tick() async => controller.add(await _queue.count());
+
+  controller = StreamController<int>(
+    onListen: () {
+      tick(); // the first value right away
+      timer = Timer.periodic(every, (_) => tick());
+    },
+    onPause: () => timer?.cancel(),
+    onResume: () => timer = Timer.periodic(every, (_) => tick()),
+    onCancel: () => timer?.cancel(), // nobody listens: stop polling
+  );
+  return controller.stream;
+}
+```
+
+</CodeBlock>
+
+الـ timer مابيبدأش غير لما حد يعمل listen، وبيقف لما يعمل cancel. من غير الـ callbacks دي، الـ timer كان هيشتغل من لحظة ما الـ function اتنادت، ويفضل شغال للأبد حتى لو الشاشة اتقفلت. (وفي الحقيقة الـ `watch()` بتاع drift أحسن من الـ polling ده بكتير. ده مثال على الـ callbacks بس.)
+
+| الـ callback | بيتنادى امتى | single | broadcast |
+| --- | --- | --- | --- |
+| `onListen` | أول مستمع | أيوه | أيوه، أول ما عدد المستمعين يبقى 1 |
+| `onPause` / `onResume` | المستمع عمل pause أو resume | أيوه | لأ: broadcast مالوش pause للمصدر |
+| `onCancel` | المستمع عمل cancel | أيوه | لما آخر مستمع يمشي |
+
+### طرق تانية تعمل بيها stream
+
+| الطريقة | بتعمل إيه | مثال |
+| --- | --- | --- |
+| `Stream.value(x)` | قيمة واحدة وdone | fake في التست |
+| `Stream.fromIterable(list)` | كل عنصر event | ديمو أو تست |
+| `Stream.fromFuture(f)` | قيمة الـ Future وdone | تحويل Future لـ stream عشان تدمجه |
+| `Stream.periodic(d, f)` | قيمة كل `d` | عداد، ساعة |
+| `Stream.empty()` | done على طول | fake لـ `onOnline` في التست |
+| `Stream.multi((c) {...})` | الـ function بتشتغل مع كل listen، بـ controller لكل مستمع | stream بيبدأ بالقيمة الحالية لأي حد يسمع |
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### الاستيراد ماحصلش أصلًا
+
+<CodeBlock label="الـ stream اتعمل ومحدش سمع">
+
+```dart
+Future<void> start(List<GoodreadsRow> rows) async {
+  emit(const ImportRunning(ImportProgress(0, 0)));
+  _importer.import(rows); // a Stream: nothing runs until someone listens
+  emit(const ImportFinished());
+}
+```
+
+</CodeBlock>
+
+ولا كتاب اتكتب، ومفيش أي error. الـ `async*` بيرجّع stream على طول من غير ما يشغّل سطر واحد من الـ body، والـ body بيبدأ مع أول `listen`. وده مختلف عن الـ Future اللي بيبدأ لحظة ما تعمله. والـ lint `unawaited_futures` مش هيمسكها، لأن ده مش Future.
+
+الحل إنك تسمع: `await for` لو عايز تستنى لحد ما يخلص، أو `listen` لو الشاشة هتتابع التقدم.
+
+### الشاشة اتقفلت والاستيراد لسه بيكتب
+
+المستخدم بدأ استيراد 800 كتاب وقفل الشاشة. الـ Cubit عمل `cancel()` للـ subscription في الـ `close`. اللي بيحصل للـ `async*`:
+
+- <b>الـ cancel بيوقّف الـ function عند أول `yield` جاي:</b> الـ `yield` بيتصرف كأنه `return`، فالـ function بتخرج من هناك.
+- <b>اللي شغال دلوقتي بيكمّل:</b> لو الـ function كانت مستنية `await _local.upsertBooks(batch)`، الدفعة دي هتتكتب كاملة، والوقف بيحصل في الـ yield اللي بعدها.
+- <b>الـ `finally` بيشتغل:</b> لو في `try/finally` حوالين الـ loop، الـ finally بيشتغل وقت الوقف. ده مكان قفل الملف أو مسح الملف المؤقت.
+
+<CodeBlock label="التنضيف في finally">
+
+```dart
+Stream<ImportProgress> importFile(File csv) async* {
+  final temp = await _copyToTemp(csv);
+  try {
+    final rows = await _parse(temp);
+    yield* import(rows);
+  } finally {
+    await temp.delete(); // runs on done, on error, and on cancel
+  }
+}
+```
+
+</CodeBlock>
+
+يعني الإلغاء في الـ `async*` مش فوري: بيستنى الـ yield الجاي. علشان كده الـ yield بيبقى بعد كل خطوة كبيرة، مش بعد كل 800 كتاب.
+
+### stream مالوش آخر جوه `await for`
+
+<CodeBlock label="الـ Cubit علّق">
+
+```dart
+Future<void> watch() async {
+  await for (final books in _repository.watchLibrary()) {
+    emit(LibraryLoaded(books));
+  }
+  _logger.debug('library stream ended'); // never printed
+}
+```
+
+</CodeBlock>
+
+الـ `watch()` بتاع drift مالوش done، فالـ function دي مابتخلصش، والـ Future بتاعها عمره ما بيكمل. وأي حد عمل `await cubit.watch()` (تست مثلًا) هيعلّق للأبد. والأسوأ: مفيش `StreamSubscription` في إيدك عشان تعمل cancel في الـ `close`. الـ subscription بتتلغي بس لو الـ loop خرج، والـ loop مش هيخرج.
+
+الـ `await for` للـ streams اللي ليها آخر وانت مستنيه. للـ streams اللي بتعيش مع الشاشة: `listen` وsubscription متخزنة وcancel، زي الـ `LibraryCubit` في [درس الـ Cubit](/course/presentation/cubit/).
+
+### الحدث اتبعت قبل ما حد يسمع
+
+<CodeBlock label="الـ SyncService ماشافش أول enqueue">
+
+```dart
+// di/setup.dart
+final queue = SyncQueue(db);
+await queue.enqueue(SyncKind.addBook, pendingId); // an op left from a crash, re-added
+final sync = SyncService(queue, remote, db, network)..start(); // listens now: too late
+```
+
+</CodeBlock>
+
+الـ `onEnqueued` broadcast، والحدث اتبعت ومكانش في حد سامع، فضاع. الـ SyncService بدأ ومافيش حاجة قالتله إن في عملية. وفي الحالة دي بالذات الـ `start()` بيعمل `requestSync()` لوحده فالعملية هتتبعت، بس ده حظ مش تصميم.
+
+القاعدة: الـ broadcast <b>إشارة</b> «حصل حاجة»، مش مصدر الحقيقة. الحقيقة في الـ DB (الـ queue نفسها)، واللي بيسمع على الإشارة بيروح يقرا الحقيقة. ولو المستمع محتاج يعرف «الوضع دلوقتي إيه» أول ما يسمع، الإشارة مش كفاية، محتاج stream بيبدأ بالقيمة الحالية:
+
+<CodeBlock label="Stream.multi: كل مستمع بياخد القيمة الحالية الأول">
+
+```dart
+// core/network/network_status.dart
+class ConnectivityNetworkStatus implements NetworkStatus {
+  // ...
+  bool _online = true;
+  final _changes = StreamController<bool>.broadcast();
+
+  Stream<bool> get isOnline => Stream.multi((listener) {
+        listener.add(_online); // this listener gets the current value first
+        final sub = _changes.stream.listen(listener.add, onError: listener.addError);
+        listener.onCancel = sub.cancel;
+      });
+}
+```
+
+</CodeBlock>
+
+الـ function اللي جوه `Stream.multi` بتشتغل مع كل `listen` لوحده، بـ controller خاص بالمستمع ده. فكل واحد بيسمع بياخد `_online` الأول، وبعدين التغييرات. ودي نفس الطريقة اللي الـ `InMemoryLibraryLocal` في [درس تست الطبقات](/course/testing/layers/) بيقلّد بيها الـ `watch()` بتاع drift.
+
+### Bad state: Cannot add new events after calling close
+
+<CodeBlock label="الـ add بعد الـ close">
+
+```dart
+// on logout, the session reset closes everything
+await getIt<SyncQueue>().dispose();
+
+// meanwhile, a drain that already started finishes and enqueues a retry
+await _queue.enqueue(SyncKind.updateStatus, id); // StateError
+```
+
+</CodeBlock>
+
+الـ controller اتقفل، وفي async function كانت شغالة قبل القفل، وكمّلت بعده. الحل الأول إن القفل يحصل بعد ما كل حاجة تقف (الـ SyncService يقف الأول، وبعدين الـ queue)، وده ترتيب الـ reset في [درس الـ Session](/course/di-scale/session/). والحماية الإضافية في الـ controller نفسه:
+
+```dart
+void _notify() {
+  if (!_enqueued.isClosed) _enqueued.add(null); // a late signal after dispose is harmless
+}
+```
+
+الـ check ده مقبول هنا لأن الحدث إشارة، وضياعه بعد الـ dispose مش مشكلة. ماتعملهوش على stream بيشيل بيانات حقيقية: هناك الـ StateError بيقولك إن في ترتيب غلط لازم يتصلّح.
+
+### `asBroadcastStream` عشان «الخطأ يمشي»
+
+<CodeBlock label="اتنين بيسمعوا على stream واحد">
+
+```dart
+final progress = importer.import(rows).asBroadcastStream();
+progress.listen((p) => emit(ImportRunning(p)));     // the Cubit
+progress.listen((p) => _notifications.update(p));   // the system notification
+```
+
+</CodeBlock>
+
+ده شغال، بس فيه حاجتين لازم تعرفهم. الأولى: الـ subscription على المصدر بتبدأ مع أول مستمع، و<b>مابتتلغيش</b> لما المستمعين يمشوا إلا لو بعت `onCancel` بيلغيها بنفسه. فلو الاتنين عملوا cancel، الاستيراد هيكمّل للآخر. التانية: الـ broadcast مالوش pause، فلو المستمع بطيء، القيم بتتكوّم في الذاكرة.
+
+الأوضح غالبًا إن حد واحد يسمع ويوزّع: الـ `ImportCubit` يسمع، والـ notification تسمع على الـ Cubit نفسه (اللي هو أصلًا broadcast وفيه state). ولو لازم `asBroadcastStream`، ابعتله `onCancel: (sub) => sub.cancel()` عشان المصدر يقف لما آخر مستمع يمشي.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>`async*` الأول، والـ controller لما الأحداث جاية من callbacks:</b> الـ `async*` بيعمل الـ pause والـ cancel والـ done والـ errors صح لوحده. الـ controller محتاج منك تعمل كل ده بإيدك، وكل controller لازم حد يقفله.
+- <b>single ولا broadcast؟</b> اسأل: لو محدش سامع، القيمة دي تستنى ولا تضيع عادي؟ قراية ملف أو نتيجة query لازم تستنى: single. «حصل حاجة» إشارة ممكن تضيع: broadcast. والـ broadcast مش حل لـ «عايز اتنين يسمعوا»: كل واحد يعمل `watch()` لنفسه، أو حد واحد يسمع ويوزّع.
+- <b>الإشارة مش الحقيقة:</b> الـ broadcast event بيقول «اتغير حاجة». اللي بيسمع يقرا الحالة من مصدرها. لو الحدث نفسه شايل البيانات ومحدش لازم يفوّتها، يبقى ده stream بقيمة حالية (`Stream.multi`، أو Cubit، أو `watch()` من الـ DB).
+- <b>Stream ولا Future في الـ API بتاعك؟</b> Future لإجابة واحدة. Stream لحاجة بتتغير (`watchLibrary`) أو عملية طويلة ليها تقدم (`import`). ماتعملش Stream لحاجة بتطلّع قيمة واحدة «عشان يبقى reactive»: اللي بيستخدمه هيحتاج يفكر في الـ cancel على الفاضي.
+- <b>الـ `sync: true` في الـ controller:</b> بيوصّل القيمة جوه الـ `add` نفسه بدل ما يستنى microtask. أسرع، بس المستمع بيشتغل في نص الكود بتاعك، ولو المستمع عمل `add` تاني، الدنيا بتتلخبط. ماتستخدمهوش غير لو بتعمل operator وكل اللي بتعمله إنك بتعدّي حدث جالك.
+
+<Note kind="interview" title="سؤال interview">
+
+«إيه الفرق بين single-subscription stream وbroadcast stream؟» الـ single بيسمح بمستمع واحد بس، وبيخزّن القيم لحد ما حد يسمع، وبيدعم pause فالمصدر يقدر يبطّأ. وده الافتراضي في `async*` و`StreamController()` والملفات والـ queries. الـ broadcast بيسمح بأي عدد، ومابيخزّنش، فاللي يسمع متأخر بيفوته اللي فات، وده مناسب للأحداث زي «في عملية جديدة» أو stream بتاع Cubit. ولو سمعت مرتين على single بيرمي `Bad state: Stream has already been listened to`.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«الـ async* function بتبدأ امتى وبتقف امتى؟» بتبدأ مع أول listen، مش لما تناديها. وبتقف لما توصل لآخرها (done)، أو ترمي (error ثم done)، أو المستمع يعمل cancel. والـ cancel بيوقّفها عند أول `yield` بعده، فاللي شغال دلوقتي بيكمّل، والـ `finally` بيشتغل. ولو المستمع عمل pause، الـ function بتقف عند الـ yield لحد الـ resume.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### الاستيراد: controller بإيدك ولا async*
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+Stream<ImportProgress> import(List<GoodreadsRow> rows) {
+  final controller = StreamController<ImportProgress>();
+  () async {
+    for (var i = 0; i < rows.length; i += 100) {
+      final batch = rows.skip(i).take(100);
+      await _local.upsertBooks(batch.map(_toRow));
+      controller.add(ImportProgress(i + batch.length, rows.length));
+    }
+    controller.close();
+  }();
+  return controller.stream;
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+Stream<ImportProgress> import(List<GoodreadsRow> rows) async* {
+  yield ImportProgress(0, rows.length);
+  for (var i = 0; i < rows.length; i += 100) {
+    final batch = rows.skip(i).take(100);
+    await _local.upsertBooks(batch.map(_toRow));
+    yield ImportProgress(i + batch.length, rows.length);
+  }
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: الشغل بيبدأ لحظة النداء حتى لو محدش سمع، والـ cancel مابيوقفهوش (الـ loop مايعرفش إن حد مشي)، ولو `upsertBooks` رمى، الخطأ بيروح للـ handler العام والـ controller مابيتقفلش أبدًا، فاللي سامع مستني للأبد. بعد: الشغل بيبدأ مع الـ listen، وبيقف مع الـ cancel عند الـ yield الجاي، والخطأ بيطلع error على الـ stream وبعده done. نفس عدد السطور، ومفيش حاجة تنساها.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="async-stream-1">
+<Ask>ناديت `importer.import(rows)` (async*) ومحدش عمل listen. كام كتاب هيتكتب؟</Ask>
+<Answer>
+
+ولا كتاب. الـ async* بيرجّع stream على طول، والـ body مابيبدأش غير مع أول listen. ومفيش lint هيمسكها لأنه مش Future.
+
+</Answer>
+</Question>
+
+<Question id="async-stream-2">
+<Ask>`await for` على `repository.watchLibrary()` جوه method في الـ Cubit. إيه المشكلة؟</Ask>
+<Answer>
+
+الـ watch مالوش done، فالـ loop مابيخلصش، والـ method مابترجعش، والكود اللي بعد الـ loop مابيشتغلش. ومفيش subscription في إيدك تعمل لها cancel في الـ close. للـ streams اللي بتعيش مع الشاشة استخدم `listen` واحفظ الـ subscription.
+
+</Answer>
+</Question>
+
+<Question id="async-stream-3">
+<Ask>`StreamController.broadcast()` عمل `add` قبل ما الـ SyncService يسمع. الحدث ده راح فين؟ وإيه اللي يضمن إن العملية تتبعت؟</Ask>
+<Answer>
+
+ضاع، لأن الـ broadcast مابيخزّنش. اللي يضمن هو إن الحدث مجرد إشارة، والحقيقة في الـ DB: الـ SyncService بيعمل `requestSync()` أول ما يبدأ ويقرا الـ queue نفسها، فمش معتمد على إنه يكون سمع الحدث.
+
+</Answer>
+</Question>
+
+<Question id="async-stream-4">
+<Ask>المستخدم قفل شاشة الاستيراد والـ async* كان جوه `await _local.upsertBooks(batch)`. الدفعة دي هتتكتب؟ والـ finally هيشتغل؟</Ask>
+<Answer>
+
+الدفعة دي هتتكتب كاملة، لأن الـ cancel بيوقّف الـ function عند أول `yield` بعده، مش في نص الـ await. وعند الـ yield ده الـ function بتخرج والـ `finally` بيشتغل، فده مكان التنضيف.
+
+</Answer>
+</Question>
+
+<Question id="async-stream-5">
+<Ask>عايز كل حد يسمع على `isOnline` ياخد الحالة الحالية فورًا وبعدين التغييرات. broadcast controller لوحده ينفع؟</Ask>
+<Answer>
+
+لأ، الـ broadcast بيدّي اللي جاي بس. استخدم `Stream.multi`: الـ function بتاعته بتشتغل مع كل listen بـ controller خاص بالمستمع، فتبعتله القيمة الحالية الأول وبعدين توصّله بالتغييرات، وتلغي الاشتراك الداخلي في `onCancel`.
+
+</Answer>
+</Question>
+
+</Quiz>

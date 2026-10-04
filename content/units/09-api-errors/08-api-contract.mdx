@@ -199,7 +199,7 @@ Dio buildApiDio(AppConfig config, TokenStore tokens) {
 </CodeBlock>
 
 - <b>الـ interceptors حقيقية:</b> الـ AuthInterceptor والـ RetryInterceptor والـ guard والـ `_mapDio` كلهم بيشتغلوا زي ما هما. الشبكة بس هي الـ fake، فالـ 422 بيوصل الشاشة بنفس الطريق اللي هيوصل بيه من السيرفر الحقيقي.
-- <b>flag مش flavor:</b> الـ `mock.json` فيه `APP_ENV: dev`، فهو بيتبني بـ `--flavor dev` ومايكسرش check الـ `appFlavor` بتاع درس الـ release في الوحدة 10. هو mode جوه dev، مش app رابع على الموبايل.
+- <b>flag مش flavor:</b> الـ `mock.json` فيه `APP_ENV: dev`، فهو بيتبني بـ `--flavor dev` ومايكسرش check الـ `appFlavor` بتاع درس الـ release في الوحدة 12. هو mode جوه dev، مش app رابع على الموبايل.
 - <b>الـ latency:</b> من غيرها، الـ loading state عمرها ما هتتشاف، وbugs زي الضغط المتكرر مش هتبان.
 
 الخطر الوحيد إن الـ fake والسيرفر الحقيقي يختلفوا مع الوقت. الحل إن الـ fixtures والـ fake يتبنوا من نفس العقد، وده في Level 4.
@@ -254,7 +254,7 @@ Dio buildApiDio(AppConfig config, TokenStore tokens) {
 
 ### لازم كل المستخدمين يعملوا update
 
-في درس الـ release في الوحدة 10، الـ `CheckForUpdate` بيسأل السيرفر عن أقل build مسموح بيه وهو بيفتح، ولو النسخة أقدم بيقفل الـ app على شاشة الـ update. ولو الطلب فشل، المستخدم بيكمّل (fail open). من ناحية العقد، الـ endpoint ده بيكبر:
+في درس الـ release في الوحدة 12، الـ `CheckForUpdate` بيسأل السيرفر عن أقل build مسموح بيه وهو بيفتح، ولو النسخة أقدم بيقفل الـ app على شاشة الـ update. ولو الطلب فشل، المستخدم بيكمّل (fail open). من ناحية العقد، الـ endpoint ده بيكبر:
 
 <CodeBlock label="GET /app-config?platform=android">
 
@@ -364,7 +364,7 @@ app.use((req, res, next) => {
 دلوقتي نفس الرقم موجود في 3 أماكن:
 
 - <b>logs السيرفر:</b> كل سطر للطلب ده عليه الـ id، حتى لو الرد ضاع في السكة.
-- <b>الـ breadcrumbs:</b> الـ LoggingInterceptor بتاع درس الـ Observability في الوحدة 10 يزوّد الـ id في السطر: `✕ 504 POST /books/:bookId/notes [7f3a9c1e]`. ولما Sentry ياخد issue، الـ breadcrumbs اللي معاه فيها الأرقام. مش محتاج حاجة في Sentry غير كده.
+- <b>الـ breadcrumbs:</b> الـ LoggingInterceptor بتاع درس الـ Observability في الوحدة 12 يزوّد الـ id في السطر: `✕ 504 POST /books/:bookId/notes [7f3a9c1e]`. ولما Sentry ياخد issue، الـ breadcrumbs اللي معاه فيها الأرقام. مش محتاج حاجة في Sentry غير كده.
 - <b>شاشة المستخدم:</b> رقم المرجع اللي في درس «الأخطاء في الشاشة»، بقى موجود حتى في الـ timeout.
 
 والـ `X-Request-Id` غير الـ `Idempotency-Key` تمامًا. الـ request id لطلب HTTP واحد ومحاولاته جوه نفس الـ interceptor، وهدفه إنك تلاقي الطلب. الـ idempotency key لعملية، بيتولد مرة ويتحفظ في الـ queue ويعيش بعد ما الـ app يتقفل، وهدفه إن السيرفر مايكررش العملية. لو استخدمت واحد مكان التاني، يا هتفقد الـ tracing يا هتكسر الـ dedupe.
@@ -436,7 +436,7 @@ class ApiMetricsInterceptor extends Interceptor {
 
 ### الـ API key بتاع خدمة الخرايط اتسرق من الـ app
 
-Readly زوّد «مكتبات قريبة منك»، بـ key لخدمة أماكن بتتحاسب بالطلب، متحط في `--dart-define`. بعد أسبوع الفاتورة اتضاعفت 40 مرة. حد فك الـ APK، وطلّع الـ key، واستخدمه في app بتاعه. درس الـ release في الوحدة 10 قال القاعدة: أي حاجة في الـ binary مش سر، والـ `--dart-define` والـ obfuscation مش استثناء. هنا الحل من ناحية الـ API:
+Readly زوّد «مكتبات قريبة منك»، بـ key لخدمة أماكن بتتحاسب بالطلب، متحط في `--dart-define`. بعد أسبوع الفاتورة اتضاعفت 40 مرة. حد فك الـ APK، وطلّع الـ key، واستخدمه في app بتاعه. درس الـ release في الوحدة 12 قال القاعدة: أي حاجة في الـ binary مش سر، والـ `--dart-define` والـ obfuscation مش استثناء. هنا الحل من ناحية الـ API:
 
 <CodeBlock label="الـ backend بيمسك الـ key، والـ app بيكلّم الـ backend">
 

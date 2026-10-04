@@ -1,0 +1,470 @@
+---
+title: "Future وasync/await والـ event loop"
+description: "الـ Future من جوه: إزاي Dart بيستنى وهو شغال على thread واحد، والـ event loop، والفرق بين الـ microtask والـ event queue، وليه async مش معناها «في الخلفية»."
+minutes: 30
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="الكاشير الوحيد في الكافيه">
+
+كافيه صغير فيه كاشير واحد بس. زبون طلب قهوة، الكاشير حط الكوباية تحت المكنة وداس الزرار. هو مش هيقف يبص على المكنة دقيقتين، هو بيكتب على الكوباية «أحمد» ويروح للزبون اللي بعده. ولما المكنة تصفّر، الكاشير بيخلّص اللي في إيده الأول، وبعدين يرجع يسلّم القهوة.
+
+وجنب الكاشير ورقتين. ورقة <b>«قبل ما تنادي حد جديد»</b>: حاجات صغيرة لازم تخلص فورًا بعد الزبون الحالي، زي «ادّي الزبون ده الباقي». وورقة <b>«الطابور»</b>: الزباين الجداد، والمكنة اللي صفّرت، والتليفون اللي بيرن. الكاشير بيخلّص كل اللي في الورقة الأولى، وبعدين ياخد <b>واحد بس</b> من الطابور، ويرجع للورقة الأولى تاني.
+
+والكاشير ده مابيعملش حاجتين في نفس اللحظة أبدًا. لو زبون طلب منه يعدّ 10 آلاف جنيه فكّة، الطابور كله واقف، والمكنة صفّرت ومحدش سامعها. السر إنه مابيستناش حاجة ممكن تشتغل لوحدها، مش إنه سريع.
+
+</Analogy>
+
+الكاشير ده هو الـ <b>isolate</b> بتاع الـ app: thread واحد بيشغّل كود الـ Dart كله، من `build` لحد الـ Cubit. والقهوة اللي في المكنة هي الـ <b>Future</b>: شغل بيحصل بره الكود بتاعك (السيرفر بيرد، الـ DB بيقرا من الديسك، timer بيعدّ) وانت عندك «إيصال» هيتحول لقيمة بعدين. والورقتين هما الـ <b>microtask queue</b> والـ <b>event queue</b>، واللفة اللي الكاشير بيعملها بينهم اسمها <b>event loop</b>.
+
+والحتة بتاعة الفكّة هي أهم جملة في الدرس: `async` و`await` مش بيشغّلوا الكود في الخلفية. هم بيخلّوا الـ thread الوحيد يعمل حاجة تانية <b>وهو مستني</b> حاجة بره. لو الشغل نفسه حسابات تقيلة، مفيش انتظار أصلًا، والشاشة هتقف. ودي حاجة الدرس الأخير في الوحدة بيحلّها.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### Future: إيصال بقيمة جاية
+
+<CodeBlock label="3 حالات لأي Future">
+
+```dart
+final Future<Result<List<Book>>> pending = _getLibrary(); // uncompleted: the request is out
+
+// later, exactly one of these happens, once:
+//   completed with a value  -> await gives you the Result
+//   completed with an error -> await throws it
+```
+
+</CodeBlock>
+
+الـ Future بيبدأ <b>uncompleted</b>، وبعدين بيكمل مرة واحدة بس: يا بقيمة يا بخطأ. ومفيش حالة رجوع: الـ Future اللي خلص مابيتغيرش تاني. ولو عايز قيم كتير على مدار الوقت، ده Stream، وده الدرس التالت.
+
+والحاجة اللي ناس كتير مش واخدة بالها منها: الشغل بيبدأ <b>لحظة ما تنادي الـ function</b>، مش لحظة الـ `await`. السطر الأول فوق بعت الطلب خلاص، والـ `await` بعدين بيقول «وقّفني هنا لحد ما الرد يوصل» بس.
+
+### async وawait
+
+<CodeBlock label="LibraryCubit.load مع prints">
+
+```dart
+Future<void> load() async {
+  print('1: load starts');
+  emit(const LibraryLoading());
+  final result = await _getLibrary(); // the function pauses here
+  print('3: result arrived');
+  emit(switch (result) {
+    Success(:final value) => LibraryLoaded(value),
+    Err(:final failure) => LibraryError(failure),
+  });
+}
+
+// in the widget
+cubit.load();
+print('2: load() returned a Future');
+```
+
+</CodeBlock>
+
+الترتيب اللي هيطلع: `1` بعدين `2` بعدين `3`. ليه؟
+
+- <b>الـ async function بتشتغل عادي لحد أول `await`:</b> الـ `1` والـ `emit(LibraryLoading)` حصلوا فورًا، في نفس اللحظة اللي ناديت فيها `load()`، قبل ما ترجع للي ناداها.
+- <b>عند الـ `await`، الـ function بتتعلّق وبترجّع Future:</b> الكود اللي نادى `load()` بيكمّل، فبيطبع `2`.
+- <b>لما الـ Future يخلص، باقي الـ function بيترجع يشتغل:</b> مش في نفس اللحظة، لكن في دور جديد من الـ event loop. فبيطبع `3`.
+
+النقطة الأولى دي سر الـ flag بتاع `_saving` في [درس الـ Cubit](/course/presentation/cubit/): الـ `if (_saving) return; _saving = true;` بيحصلوا قبل أول `await`، فمستحيل ضغطتين يعدّوا الاتنين. لأن الكاشير مابيسيبش الزبون في نص جملة.
+
+### الـ event loop: ترتيب مش ترتيب السطور
+
+<CodeBlock label="خمّن الترتيب قبل ما تشغّل">
+
+```dart
+import 'dart:async';
+
+void main() {
+  print('A');
+  Future(() => print('B'));                 // event queue
+  scheduleMicrotask(() => print('C'));      // microtask queue
+  Future.value(1).then((_) => print('D'));  // microtask queue
+  Timer.run(() => print('E'));              // event queue
+  print('F');
+}
+```
+
+</CodeBlock>
+
+الناتج: `A F C D B E`.
+
+<Diagram name="d-async-event-loop">
+
+الـ event loop: الكود اللي شغال بيخلص للآخر، وبعدين كل الـ microtasks لحد ما الطابور يفضى، وبعدين event واحد بس من الـ event queue، ويرجع يبص على الـ microtasks تاني.
+
+</Diagram>
+
+- <b>`A` و`F`:</b> الكود العادي. الـ `main` بيخلص الأول، ولا حاجة بتقاطعه.
+- <b>`C` و`D`:</b> الاتنين microtasks، فبيشتغلوا أول ما الـ stack يفضى وقبل أي event. والـ `then` على Future خلصان أصلًا (`Future.value`) مابيشتغلش فورًا، بيتحط microtask.
+- <b>`B` و`E`:</b> الاتنين events، فبيستنوا كل الـ microtasks. وبينهم بالترتيب اللي اتحطوا بيه.
+
+| الكود | بيروح فين |
+| --- | --- |
+| `scheduleMicrotask(f)`، `Future.microtask(f)` | microtask queue |
+| `.then` على Future خلص (والـ `await` بيكمّل بنفس الطريقة) | microtask queue |
+| `Future(f)`، `Timer.run(f)`، `Timer(duration, f)`، `Future.delayed(d)`، `Future.pause()` | event queue (timer) |
+| رد السيرفر، قراية ملف، ضغطة إصبع، الـ frame الجديد | event queue (بييجوا من بره) |
+
+ليه الطابورين؟ الـ microtask للحاجات اللي «لازم تخلص قبل ما الدنيا تتحرك»: كمالة الـ Future اللي لسه خالص، وتوصيل قيمة الـ stream. والـ event لأي حاجة جاية من بره. والنتيجة المهمة: <b>لو الـ microtasks مابتخلصش، الـ events مش هتيجي خالص</b>، ومن ضمنها الـ frame. loop بيعمل `scheduleMicrotask` لنفسه بيوقّف الـ app زي `while (true)` بالظبط.
+
+### الـ Future بيبدأ لما تعمله، مش لما تستناه
+
+<CodeBlock label="صفحة تفاصيل الكتاب: ورا بعض ولا مع بعض">
+
+```dart
+// one after the other: ~600ms + ~400ms
+final work = await _catalog.fetchWork(id);
+final notes = await _notes.fetchNotes(id);
+
+// both start now, then we wait for both: ~600ms
+final workFuture = _catalog.fetchWork(id);
+final notesFuture = _notes.fetchNotes(id);
+final work2 = await workFuture;
+final notes2 = await notesFuture;
+```
+
+</CodeBlock>
+
+التانية أسرع لأن الطلبين خرجوا قبل أي `await`. بس فيها مشكلة لو `fetchWork` فشل: الـ `await` الأول هيرمي، و`notesFuture` هيفضل محدش مستنيه، ولو فشل هو كمان، الخطأ بتاعه هيوصل كـ «Unhandled». علشان كده الطريقة الصح للتوازي هي `.wait` اللي شفتها في [درس Dart في الوحدة 1](/course/foundations/dart/)، وتفاصيل أخطاءها في الدرس الجاي.
+
+### الأدوات اللي بتعمل Future
+
+| الأداة | بتعمل إيه | امتى |
+| --- | --- | --- |
+| `Future.value(x)` | Future خلصان بقيمة | fake في التست، أو cache موجود |
+| `Future.error(e, st)` | Future خلصان بخطأ | fake بيفشل في التست |
+| `Future.pause(d)` | بيستنى `d` وخلاص (من Dart 3.13) | retry بعد وقت، ديمو بطيء |
+| `Future.delayed(d, f)` | بيستنى `d` وبعدين يشغّل `f` | لما في حاجة تتحسب بعد الانتظار |
+| `Future.microtask(f)` | يشغّل `f` في microtask | نادر جدًا في كود الـ app |
+| `Future.sync(f)` | يشغّل `f` دلوقتي، ولو رمى يرجّع Future بخطأ بدل ما يرمي | تلف function ممكن تبقى sync أو async |
+| `Completer<T>()` | Future انت اللي بتقرر امتى يخلص | تحوّل API بالـ callbacks لـ Future |
+
+### Completer: تحويل callback لـ Future
+
+بعض الـ APIs قديمة وبتشتغل بـ callback مش Future. مثال من Flutter نفسه: عايز تعرف أبعاد صورة الغلاف قبل ما ترفعها، والـ `ImageStream` بيبلّغك بـ listener:
+
+<CodeBlock label="core/images/image_size.dart">
+
+```dart
+Future<Size> imageSize(ImageProvider provider) {
+  final completer = Completer<Size>();
+  final stream = provider.resolve(ImageConfiguration.empty);
+  late final ImageStreamListener listener;
+  listener = ImageStreamListener(
+    (info, _) {
+      completer.complete(Size(info.image.width.toDouble(), info.image.height.toDouble()));
+      stream.removeListener(listener); // one answer is all we need
+    },
+    onError: (Object e, StackTrace? st) {
+      completer.completeError(e, st);
+      stream.removeListener(listener);
+    },
+  );
+  stream.addListener(listener);
+  return completer.future;
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `completer.future`:</b> بترجّعه على طول، واللي نادى بيعمل عليه `await` عادي.
+- <b>`complete` مرة واحدة بس:</b> التانية بترمي `StateError: Future already completed`. لو الـ callback ممكن يتنادى أكتر من مرة، اتشيك على `completer.isCompleted` الأول.
+- <b>الـ `completeError(e, st)` بالـ stack:</b> زي ما قلنا في [درس الأخطاء في Dart](/course/api-errors/dart-errors/)، من غيره اللي مستني هيلاقي stack فاضي.
+- <b>شيل الـ listener:</b> الـ Future خلص، بس الـ listener لسه متعلّق في الـ stream لو ماشلتهوش.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### الدالة async والشاشة برضه هنّجت
+
+الـ export بتاع المكتبة بيتعمل كـ CSV جوه الـ app، والـ function مكتوبة `async` عشان «ماتوقفش الـ UI»:
+
+<CodeBlock label="async وبرضه بيوقف كل حاجة">
+
+```dart
+Future<String> exportCsv(List<Book> books) async {
+  final buffer = StringBuffer('id,title,status\n');
+  for (final b in books) {               // 3000 books, no await anywhere
+    buffer.writeln('${b.id.value},${_escape(b.title)},${b.status.name}');
+  }
+  return buffer.toString();
+}
+```
+
+</CodeBlock>
+
+الـ `async` هنا بيغيّر حاجة واحدة: النتيجة بتتلف في Future. بس الـ loop كله بيشتغل في نفس الـ event على نفس الـ thread، لأن مفيش `await` واحد جواه يخلي الكاشير يرجع للطابور. الـ frame مستني، والـ spinner اللي فوق واقف.
+
+حتى لو حطيت `await Future.pause()` كل 100 كتاب، ده بيقسّم الشغل على events، بس الشغل نفسه لسه على نفس الـ thread وبياخد نفس الوقت. الحل الحقيقي للحسابات التقيلة هو thread تاني، وده [درس الـ Isolates](/course/dart-async/isolates/).
+
+القاعدة: `await` بيوفّر وقت الانتظار بس (شبكة، ديسك، timer). مابيوفّرش وقت الحسابات.
+
+### الـ dialog بيرمي «context isn't mounted» أو مابيظهرش
+
+<CodeBlock label="محاولات معروفة في initState">
+
+```dart
+@override
+void initState() {
+  super.initState();
+  // 1. throws: the widget is not in the tree yet, and dependOnInheritedWidget is not allowed here
+  // showDialog(context: context, builder: (_) => const WhatsNewDialog());
+
+  // 2. "works" by luck: an event after this one, usually after the first frame
+  Future.delayed(Duration.zero, _showWhatsNew);
+
+  // 3. too early: a microtask runs before the frame is built
+  Future.microtask(_showWhatsNew);
+}
+```
+
+</CodeBlock>
+
+الـ `Future.microtask` بيشتغل أول ما الـ `initState` والـ build الحالي يخلصوا، قبل ما الـ frame يتبني أصلًا. والـ `Future.delayed(Duration.zero)` بيبقى event، فغالبًا بيجي بعد الـ frame، بس «غالبًا» مش ضمان: ده بيعتمد على الـ events اللي في الطابور قدامه. الطريقة اللي بتقول المعنى بالظبط:
+
+<CodeBlock label="بعد أول frame">
+
+```dart
+@override
+void initState() {
+  super.initState();
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    if (!mounted) return;
+    _showWhatsNew();
+  });
+}
+```
+
+</CodeBlock>
+
+والأحسن من ده كله إن قرار «اعرض الـ dialog» مايبقاش في الـ `initState` أصلًا: الـ Cubit يقرر، والـ `BlocListener` يعرض، زي ما اتعمل في [درس الـ Cubit](/course/presentation/cubit/).
+
+### الـ check اتعمل قبل الـ await والدنيا اتغيرت بعده
+
+الـ `policy()` بتاع [درس الـ release](/course/production/release/) بيسأل السيرفر عن أقل build مسموح بيه. وهو بيفتح، الـ redirect بتاع go_router بيسأله عشان يقرر يودّي على `/update` ولا لأ، والـ banner بتاع الـ update الاختياري بيسأله هو كمان. فبنعمل كاش في الذاكرة:
+
+<CodeBlock label="AppVersionRepositoryImpl: كاش للـ policy">
+
+```dart
+VersionPolicy? _policy;
+
+@override
+Future<Result<VersionPolicy>> policy() async {
+  if (_policy != null) return Success(_policy!);
+  final result = await guard(() => _remote.fetchPolicy()); // two callers arrive together
+  if (result case Success(:final value)) _policy = value;
+  return result;
+}
+```
+
+</CodeBlock>
+
+الـ redirect نادى الأول، شاف `_policy == null` وبعت طلب ووقف عند الـ `await`. الكاشير راح للـ banner، شاف `_policy` لسه null (الطلب الأول لسه ماخلصش)، فبعت طلب تاني. طلبين لنفس الحاجة في نفس الثانية.
+
+الكود اللي قبل الـ `await` مضمون إنه يشتغل مرة واحدة من غير مقاطعة. الكود اللي بعده ممكن يلاقي الدنيا اتغيرت. الحل إنك تحفظ الـ <b>Future</b> نفسه مش النتيجة:
+
+<CodeBlock label="اللي بيسأل وفي طلب شغال، بياخد نفس الـ Future">
+
+```dart
+Future<Result<VersionPolicy>>? _policy;
+
+@override
+Future<Result<VersionPolicy>> policy() {
+  return _policy ??= guard(() => _remote.fetchPolicy()).then((result) {
+    if (result is Err) _policy = null; // a failure is not cached: the next call tries again
+    return result;
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `??=` بيحصل قبل أي await:</b> فالنداء التاني بيلاقي الـ Future متخزن ويستنى نفس الطلب.
+- <b>الفشل مايتخزنش:</b> وإلا الـ app هيفضل شايف نفس الـ NetworkFailure لحد ما يتقفل.
+- <b>الـ function مش `async`:</b> لأنها بترجّع Future جاهز. لو كتبتها `async` كانت هتلفه في Future جديد كل مرة، وده شغال بس مالوش لازمة.
+- <b>نفس الفكرة بالتفصيل:</b> الـ in-flight dedupe في [درس الطلبات المتقدمة](/course/api-errors/advanced-requests/) بيعمل كده لأي GET، بـ Map من الـ key للـ Future.
+
+ونفس الفكرة في الـ Cubit: بعد كل `await` اسأل الشاشة لسه موجودة؟ والـ state لسه زي ما هي؟ والطلب ده لسه هو الأحدث؟ ودي الـ 3 أسئلة اللي الطريق كله بتاعها في [درس Cubit متقدم](/course/cubit-bloc/cubit-advanced/).
+
+### 20 غلاف بيتحملوا واحد ورا التاني
+
+عايزين الأغلفة تظهر أوفلاين زي باقي المكتبة، فبعد كل refresh بنحمّل أغلفة الكتب الجديدة على الديسك بـ `CoverCache`:
+
+<CodeBlock label="await جوه loop">
+
+```dart
+final covers = <Uint8List>[];
+for (final book in books) {
+  covers.add(await _coverCache.download(book.id)); // 20 × 300ms = 6 seconds
+}
+```
+
+</CodeBlock>
+
+كل لفة بتستنى اللي قبلها. ده صح لو الترتيب مهم أو العملية التانية محتاجة الأولى، زي الـ SyncService اللي لازم يبعت العمليات بالترتيب. هنا الصور مالهاش علاقة ببعض. بس الحل مش إنك تبعت الـ 20 مرة واحدة: Open Library هيرد بـ 429، والموبايل هيفتح 20 اتصال. الحل دفعات:
+
+<CodeBlock label="4 في المرة">
+
+```dart
+Future<List<R>> inBatches<T, R>(
+  List<T> items,
+  Future<R> Function(T) task, {
+  int size = 4,
+}) async {
+  final results = <R>[];
+  for (var i = 0; i < items.length; i += size) {
+    final batch = items.skip(i).take(size).map(task);
+    results.addAll(await batch.wait); // the 4 run together, then the next 4
+  }
+  return results;
+}
+
+final covers = await inBatches(books, (b) => _coverCache.download(b.id));
+```
+
+</CodeBlock>
+
+الـ `.wait` على `Iterable<Future<R>>` بيرجّع `List<R>` بنفس الترتيب. 20 صورة بقوا 5 دفعات، يعني حوالي 1.5 ثانية بدل 6. ولو صورة واحدة فشلت، الـ `.wait` بيرمي `ParallelWaitError`، والتعامل معاه في الدرس الجاي.
+
+### `then` و`await` متلخبطين في نفس الـ function
+
+<CodeBlock label="مين بيستنى مين؟">
+
+```dart
+Future<void> addAndOpen(Book book) async {
+  _addBook(book).then((result) {
+    if (result is Success) _router.push('/library/${book.id.value}');
+  });
+  emit(state.copyWith(lastAdded: book)); // runs before the book is saved
+}
+```
+
+</CodeBlock>
+
+الـ `then` مابيوقّفش الـ function، فالـ emit حصل قبل الحفظ، والـ Future اللي `addAndOpen` بترجّعه بيخلص قبل الإضافة. واللي بيعمل `await addAndOpen(...)` (زي تست) هيكمّل والكتاب لسه ماتضافش. والأسوأ إن الـ Future اللي `then` رجّعه محدش ماسكه، فلو رمى، الخطأ بيضيع لـ handler العام.
+
+القاعدة في Readly: `async` و`await` بس، والـ `then` لما تكون بتبني Future وترجّعه زي `policy()` فوق، مش جوه function async.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>async مش معناها background:</b> الـ isolate واحد، والـ await بيوفّر الانتظار بس. أي شغل CPU أكتر من frame (16ms على 60Hz، و8ms على 120Hz) هيبان على الشاشة، مهما كان مكتوب `async`.
+- <b>رجّع Future حتى لو مش محتاجه دلوقتي:</b> `Future<void> refresh()` مش `void refresh()`. الـ RefreshIndicator محتاج يستنى، والتست محتاج يستنى، والـ lint `avoid_void_async` بيمسك `void f() async`. والـ `void` اللي فيها `async` بتخلي أي خطأ يروح للـ handler العام من غير ما حد يقدر يمسكه.
+- <b>ماتخليش كل حاجة async «احتياطي»:</b> الـ async معدية: function واحدة async بتخلي كل اللي فوقها لازم يستنى، وكل `await` فرصة الـ state تتغير تحتك. الـ mapper والـ validation والـ value objects يفضلوا sync. ولو interface ممكن يتنفذ sync أو async (زي cache في الذاكرة أو على الديسك)، `FutureOr<T>` موجود، بس في الغالب Future أبسط للي بيستخدم.
+- <b>الترتيب الدقيق بين microtask وevent تفصيلة تنفيذ:</b> اعرفه عشان تفهم الـ bugs، بس ماتبنيش عليه logic. لو كودك صح بس لأن «الـ microtask بيجي الأول»، أول refactor هيكسره. اعتمد على حاجات بتقول المعنى: `await`، و`addPostFrameCallback`، وFuture متخزن.
+- <b>الوقت في التست:</b> أي كود فيه `Future.delayed` أو `Timer` مايتختبرش بالانتظار الحقيقي. الـ `fakeAsync` بيخليك تحرّك الساعة بإيدك، وده في [درس «تست الـ Cubit»](/course/testing/cubit-tests/).
+
+<Note kind="interview" title="سؤال interview">
+
+«Dart single-threaded، يبقى إزاي بيعمل حاجات async؟» الكود بتاعك بيشتغل على thread واحد في الـ isolate، بس الانتظار نفسه (الشبكة، الديسك، الـ timers) بيحصل بره، في الـ OS أو الـ engine. لما النتيجة توصل، بتدخل الـ event queue، والـ event loop بيشغّلها لما الـ thread يفضى. الـ `await` بيعلّق الـ function ويرجّع الـ thread للـ loop، فالـ UI بتكمّل. وده معناه إن الحسابات التقيلة بتوقف الشاشة حتى لو async، وحلها isolate تاني.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«إيه الفرق بين الـ microtask queue والـ event queue؟» الـ event loop بيفضّي الـ microtask queue كلها الأول، وبعدين ياخد event واحد، ويرجع للـ microtasks. الـ microtasks فيها كمالة الـ Futures (`then` وبعد `await`) و`scheduleMicrotask`. الـ events فيها الـ timers والـ I/O والـ gestures والـ frames. فـ `Future.microtask` بيشتغل قبل `Future(...)` و`Future.delayed(Duration.zero)` دايمًا، والـ microtasks اللي مابتخلصش بتجمّد الـ app.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### BookDetailsCubit: then متداخلة ولا async
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+void load(BookId id) {
+  emit(const BookDetailsLoading());
+  _getBookDetails(id.value).then((details) {
+    _getNotes(id).then((notes) {
+      emit(BookDetailsLoaded(details, notes));
+    });
+  });
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+Future<void> load(BookId id) async {
+  emit(const BookDetailsLoading());
+  final result = await _loadBookPage(id); // both requests start together inside
+  if (isClosed) return;
+  emit(switch (result) {
+    Success(:final value) => BookDetailsLoaded(value),
+    Err(:final failure) => BookDetailsError(failure),
+  });
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: الطلبين ورا بعض من غير سبب، والـ function `void` فمحدش يقدر يستناها (ولا التست ولا الـ RefreshIndicator)، والـ Results مش متشافة (الـ `details` هنا Result مش BookDetails)، والـ emit ممكن يحصل بعد ما الشاشة اتقفلت. بعد: الـ `LoadBookPage` بتاع [درس الطلبات المتقدمة](/course/api-errors/advanced-requests/) بيبعت الطلبين مع بعض بـ `.wait`، والـ function بترجّع Future، والـ `isClosed` بعد الـ await، والـ switch بيجبرك تتعامل مع الفشل.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="async-future-1">
+<Ask>`print('A'); Future(() => print('B')); scheduleMicrotask(() => print('C')); print('D');` بيطبع إيه بالترتيب، وليه؟</Ask>
+<Answer>
+
+`A D C B`. الـ `A` والـ `D` كود عادي بيخلص الأول. بعدين الـ event loop بيفضّي الـ microtask queue (`C`) قبل ما ياخد أي event، والـ `Future(...)` بيتحط في الـ event queue فبييجي آخر حاجة.
+
+</Answer>
+</Question>
+
+<Question id="async-future-2">
+<Ask>function مكتوبة `async` بتعمل loop على 3000 كتاب من غير ولا `await` جواه. الشاشة هتقف؟</Ask>
+<Answer>
+
+أيوه. الـ `async` بيلف النتيجة في Future بس، والـ loop كله بيشتغل على نفس الـ thread في event واحد، والـ frame مستني. الـ await بيوفّر وقت الانتظار، مش وقت الحسابات. الحل isolate تاني لو الشغل فعلًا تقيل.
+
+</Answer>
+</Question>
+
+<Question id="async-future-3">
+<Ask>`final f = fetchWork(id);` وبعدها بـ 5 سطور `await f;`. الطلب بيطلع امتى؟</Ask>
+<Answer>
+
+في السطر الأول. الـ Future بيبدأ لحظة ما تنادي الـ function، والـ `await` بيستنى النتيجة بس. وده اللي بيخلي طلبين يطلعوا مع بعض لو عملتهم الاتنين قبل أي await.
+
+</Answer>
+</Question>
+
+<Question id="async-future-4">
+<Ask>ليه `if (_saving) return; _saving = true;` في أول `save()` بيمنع ضغطتين، مع إن الـ function async؟</Ask>
+<Answer>
+
+لأن الـ async function بتشتغل عادي من غير مقاطعة لحد أول `await`. السطرين دول بيحصلوا مع بعض في نفس الـ event، فالضغطة التانية لازم تيجي بعدهم وتلاقي `_saving` بقى true. أي check بعد `await` مالوش نفس الضمان.
+
+</Answer>
+</Question>
+
+<Question id="async-future-5">
+<Ask>عايز تعرض dialog أول ما الشاشة تفتح. `Future.microtask`، ولا `Future.delayed(Duration.zero)`، ولا `addPostFrameCallback`؟</Ask>
+<Answer>
+
+`addPostFrameCallback`، لأنه بيقول المعنى بالظبط: بعد ما الـ frame يتبني. الـ microtask بيشتغل قبل الـ frame، والـ `delayed(zero)` event «غالبًا» بعده من غير ضمان. وجوه الـ callback اتشيك على `mounted`. والأحسن إن القرار يبقى في الـ Cubit والعرض في `BlocListener`.
+
+</Answer>
+</Question>
+
+</Quiz>

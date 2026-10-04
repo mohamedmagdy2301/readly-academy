@@ -1,0 +1,24 @@
+---
+title: "التطبيق والمهام"
+description: "مهام وحدة Dart Async والـ Streams في Readly: من ترتيب الـ event loop بإيدك لحد stream المكتبة من drift للشاشة من غير تسريب، واستيراد Goodreads في isolate."
+type: "practice"
+---
+
+<Tasks>
+<Task id="da-1">اكتب `bin/event_loop.dart` فيه 8 سطور بتطبع بـ `print` وFuture و`scheduleMicrotask` و`Timer.run` و`Future.value().then` وasync function فيها await. اكتب الترتيب اللي متوقعه في تعليق قبل ما تشغّل، وبعدين شغّل وقارن، واشرح كل سطر اتحرك عن توقعك (درس «Future وasync/await والـ event loop»).</Task>
+<Task id="da-2">فعّل في `analysis_options.yaml`: `discarded_futures` و`avoid_void_async` و`cancel_subscriptions` و`close_sinks` جنب `unawaited_futures`، وصلّح كل warning. أي `onPressed: () async` اتغير لنداء method في الـ Cubit بترجّع Future، وأي flag بيترجع بقى في `finally`.</Task>
+<Task id="da-3">دوّر في الـ data layer على أي `return` جوه `try` من غير `await`، وأي Future متخزن في متغير وقبل الـ await بتاعه في await تاني. صلّح الاتنين، واكتب تست للـ `LibraryLocalSource` بيخلي الـ DAO يرمي ويتأكد إن اللي طالع `CacheException` (درس «الأخطاء في الكود الـ async»).</Task>
+<Task id="da-4">اعمل `AppVersionRepositoryImpl.policy()` بكاش للـ Future نفسه، والفشل مايتخزنش. اكتب تست بينادي `policy()` مرتين من غير await بينهم ويتأكد إن الـ remote اتنادى مرة واحدة، وتست تاني إن الفشل الأول مايمنعش محاولة تانية.</Task>
+<Task id="da-5">اعمل `GoodreadsImporter.import` بـ `async*` بيطلّع `ImportProgress` كل 100 كتاب، و`ImportCubit` بيسمع عليه ويلغيه في الـ close. اتأكد بتست إن الـ cancel في نص الاستيراد بيوقّف الكتابة عند الـ yield الجاي، وإن الـ `finally` بيمسح الملف المؤقت (درس «Stream من الصفر»).</Task>
+<Task id="da-6">زوّد `distinct(const ListEquality<Book>().equals)` في `watchLibrary()`، وقيس بـ `debugPrint` في الـ `BlocBuilder` بتاع الـ Home كام rebuild بيحصل في sync فيه 20 عملية، قبل وبعد. واكتب الرقمين في الـ PR (درس «الـ operators»).</Task>
+<Task id="da-7">اكتب `debounced` و`throttled` كـ extensions في `core/streams/`، بتستات `fakeAsync` بتغطي: القيمة الأخيرة بعد السكوت، والـ cancel قبل الـ timer، واتنين بيسمعوا على broadcast. وبعدين قرر: تستخدمهم في الـ CatalogSearchCubit ولا تفضل على الـ Timer؟ اكتب السبب في `docs/adr/` (درس «الـ operators»).</Task>
+<Task id="da-8">راجع كل `listen(` في الـ app: كل واحد جنبه field، وكل field جنبه cancel في `close` أو `dispose`. ضيف `dispose` للـ `SyncService` وسجّله بـ `dispose:` في get_it. وبعدين في DevTools Memory افتح صفحة كتاب واقفلها 10 مرات، واتأكد إن عدد الـ `BookDetailsCubit` مابيزيدش (درس «عمر الـ subscription»).</Task>
+<Task id="da-9">طبّق الرحلة كاملة من درس «الـ Streams في Readly»: `_cacheErrors()` في الـ local source، والفلترة بالحالة في الـ query، والـ `LibraryCubit` بالـ watch والـ refresh مع بعض، و`hasSyncedOnce` عشان المستخدم الجديد مايشوفش «مكتبتك فاضية»، و`watchSingleOrNull` في صفحة الكتاب لو اتمسح من جهاز تاني.</Task>
+<Task id="da-10">انقل parsing ملف Goodreads لـ `Isolate.run` بـ function top-level، وقيس في profile mode على موبايل متوسط: الوقت، والـ frames اللي اتأخرت في DevTools، قبل وبعد. ولو الملف صغير (أقل من 100 كتاب) خليه على الـ main، واكتب الحد اللي اخترته وليه (درس «الـ Isolates»).</Task>
+</Tasks>
+
+<Deliverable>كل Future في Readly ليه صاحب: await، أو `.wait`، أو `unawaited` لـ function بتمسك أخطاؤها، أو `ignore()` لحاجة فشلها مالوش أثر. كل subscription ليها مالك بيلغيها، والـ lints بتمسك أي واحدة جديدة. وstream المكتبة بيمشي من drift للشاشة بأخطاء مترجمة ومن غير rebuilds على الفاضي، والاستيراد من Goodreads شغال بشريط تقدم وبيقف لو الشاشة اتقفلت، من غير ما الـ UI تقطّع.</Deliverable>
+
+<ReviewQuestion>اختار stream واحد في Readly (المكتبة، أو الـ SyncStatus، أو الاستيراد)، وارسم رحلته: مين بيعمله، وكل operator في السكة وبيعمل إيه، ومين بيعمل listen، ومين بيلغيه وامتى، والـ error بيمشي فين لو حصل في كل حلقة. وبعدين قول: لو الـ contract بتاعه اتغير لـ `Stream<Result<T>>`، إيه اللي هيتحسن وإيه اللي هيبقى أصعب؟</ReviewQuestion>
+
+<LogBox id="log-dart-async" />

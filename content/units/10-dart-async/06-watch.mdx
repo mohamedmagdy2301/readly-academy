@@ -1,0 +1,429 @@
+---
+title: "الـ Streams في Readly من الـ DB للشاشة"
+description: "الرحلة كاملة: watch() في drift، والـ local source، والـ repository وقرار الـ contract (Stream<T> ولا Stream<Result<T>>)، والـ use case، والـ Cubit، والـ UI، والمشاكل اللي بتظهر في كل حلقة."
+minutes: 40
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="خزان المياه اللي فوق السطح">
+
+العمارة فيها خزان واحد فوق السطح، وكل الحنفيات في الشقق بتاخد منه. الميه بتنزل في مواسير، وفي السكة فلتر، وعداد، ومحبس لكل شقة. محدش بيملا جردل من الشارع ويوزّعه على الشقق: اللي عايز يزوّد ميه بيملا الخزان، والحنفيات بتاخد لوحدها. ولما شقة تقفل المحبس بتاعها، الميه بتقف عندها هي بس، والخزان مايعرفش.
+
+وفي سؤال لازم العمارة تقرر فيه: لو الميه اتلوثت، تعرف إزاي؟ يا إما الميه نفسها بتنزل ومعاها ورقة «الميه دي مش صالحة» (القيمة نفسها بتقول)، يا إما في جرس إنذار لوحده بيرن في الشقة (قناة منفصلة للمشاكل). الاتنين شغالين، بس كل واحد مناسب لنوع مشاكل.
+
+</Analogy>
+
+الخزان هو الـ DB في drift، والمواسير هي الطبقات، والحنفية هي الـ widget. ده الـ <b>single source of truth</b> بتاع [درس Offline-first](/course/offline/offline/): الـ refresh والـ sync والإضافة كلهم بيملوا الخزان، والشاشة بتاخد من الـ stream بس. والمحبس هو الـ cancel. وسؤال الميه الملوثة هو سؤال الـ contract اللي الدرس ده هيحسمه: <b>الفشل يمشي جوه القيمة (`Stream<Result<T>>`)، ولا على قناة الـ errors بتاعة الـ stream (`Stream<T>`)؟</b>
+
+</Level>
+
+<Level n="2" title="الرحلة حلقة حلقة">
+
+<Diagram name="d-async-watch-pipeline">
+
+الكتابة في drift بتصحّي الـ query، والليست بتطلع من الـ DAO وتعدّي على الـ local source والـ repository والـ use case لحد الـ Cubit والـ widget. والـ cancel بيمشي في الاتجاه العكسي لما الشاشة تتقفل.
+
+</Diagram>
+
+### 1. drift: الـ query اللي بيتعاد
+
+<CodeBlock label="BooksDao من درس التخزين المحلي">
+
+```dart
+Stream<List<BookRow>> watchAll() =>
+    (select(books)..orderBy([(b) => OrderingTerm.asc(b.title)])).watch();
+```
+
+</CodeBlock>
+
+اللي لازم تعرفه عن الـ stream ده بالظبط:
+
+| السلوك | المعنى في Readly |
+| --- | --- |
+| بيطلّع النتيجة الحالية أول ما تسمع | الشاشة بتعرض الكاش في أول frames، من غير ما تستنى أي حاجة |
+| أي كتابة في جدول `books` بتعيد الـ query | حتى لو اللي اتغير صف مش ظاهر، أو مفيش حاجة اتغيرت فعلًا |
+| مابيقارنش النتيجة بالقديمة | قيم متكررة كتير، والـ `distinct` مسؤوليتك |
+| أكتر من مستمع على نفس الـ stream ممكن | واللي ييجي وهو شغال بياخد آخر نتيجة على طول |
+| الـ query بيتنفذ في isolate تاني (`driftDatabase`) | الـ SQL مابيقطّعش الـ UI، بس الـ map اللي بعده بيشتغل على الـ main isolate |
+| الكتابة من بره drift (isolate الـ workmanager) مابتصحيهوش | `markTablesUpdated` زي ما اتعمل في درس Offline-first |
+
+### 2. الـ local source: الـ errors بلغة الـ data layer
+
+الـ `LibraryLocalSource` في [درس التخزين المحلي](/course/data-network/local-storage/) لف كل Future بـ `_run` عشان أي exception من drift يطلع `CacheException`. بس الـ `watchBooks()` كان بيرجّع الـ stream زي ما هو، فلو الـ query رمى (`SqliteException` لأن الـ DB اتقفلت أو الديسك مليان)، الـ error بيوصل للـ Cubit بنوع drift. الـ stream محتاج نفس المعاملة:
+
+<CodeBlock label="data/library_local_source.dart">
+
+```dart
+Stream<List<BookRow>> watchBooks() => _dao.watchAll().transform(_cacheErrors());
+
+// drift throws SqliteException or DriftRemoteException: the layers above only know CacheException
+StreamTransformer<T, T> _cacheErrors<T>() => StreamTransformer.fromHandlers(
+      handleError: (error, stackTrace, sink) => sink.addError(
+        error is Exception ? CacheException(error.toString()) : error, // Errors (bugs) pass as they are
+        stackTrace,
+      ),
+    );
+```
+
+</CodeBlock>
+
+نفس قاعدة الـ `_run`: الـ `Exception` بيتحول، والـ `Error` (bug) بيعدّي زي ما هو. والـ stack الأصلي معاه.
+
+### 3. الـ repository: الـ entity والـ distinct
+
+<CodeBlock label="LibraryRepositoryImpl.watchLibrary">
+
+```dart
+@override
+Stream<List<Book>> watchLibrary() => _local
+    .watchBooks()
+    .map((rows) => [for (final r in rows) r.toEntity()])
+    .distinct(const ListEquality<Book>().equals);
+```
+
+</CodeBlock>
+
+الـ `distinct` هنا مرة واحدة لكل اللي فوق، زي ما اتشرح في [درس الـ operators](/course/dart-async/operators/). وكل نداء لـ `watchLibrary()` بيرجّع stream جديد بـ subscription جديدة لصاحبه، فمفيش «already been listened to».
+
+### 4. الـ contract: `Stream<T>` ولا `Stream<Result<T>>`؟
+
+الـ Futures في Readly كلها `Future<Result<T>>`: الفشل جوه القيمة، والـ switch بيجبرك تتعامل معاه. فطبيعي تسأل: ليه الـ stream مش `Stream<Result<List<Book>>>`؟ (وفي كورسات ومشاريع تانية هتلاقي نفس الفكرة باسم `Stream<Either<Failure, T>>` من dartz أو fpdart. هي هي.)
+
+<CodeBlock label="الشكلين">
+
+```dart
+// A: failure travels on the stream's error channel
+Stream<List<Book>> watchLibrary();
+
+// B: failure travels inside the value
+Stream<Result<List<Book>>> watchLibrary();
+```
+
+</CodeBlock>
+
+| | A: `Stream<T>` | B: `Stream<Result<T>>` |
+| --- | --- | --- |
+| الفشل في الـ type | لأ، لازم تعرف إن في `onError` | أيوه، والـ switch بيجبرك |
+| الـ operators | `map` و`where` و`distinct` شغالين على القيمة على طول | كل operator لازم يفك الـ Result الأول |
+| بعد الفشل | الـ stream بيكمّل لو مفيش `cancelOnError` | بيكمّل طبيعي، الفشل قيمة زي أي قيمة |
+| الـ bugs | على قناة الـ errors | برضه على قناة الـ errors: الـ Result مش بيلغيها |
+| مناسب لـ | فشل نادر ومالوش رد من المستخدم | فشل متوقع والمستخدم لازم يشوفه ويتصرف |
+
+<b>قرار Readly: `watchLibrary()` يفضل `Stream<List<Book>>`.</b> السبب في سؤال واحد: «إيه الفشل اللي ممكن يحصل في الـ stream ده، والمستخدم يعمل فيه إيه؟» الـ stream ده بيقرا من DB على الجهاز. الفشل المتوقع في المكتبة (النت قطع، السيرفر رد 500) بيحصل في `refresh()`، وده `Future<Result<void>>` أصلًا. الفشل الوحيد اللي ممكن يطلع من الـ watch هو الـ DB نفسها باظت، ودي حاجة نادرة، والمستخدم مالوش فيها غير «حاول تاني» أو «كلم الدعم». فالـ Result هنا هيضيف فك وتغليف في كل operator عشان حالة شبه مستحيلة.
+
+وده نفس اللي [درس الـ Domain](/course/domain-errors/domain/) قاله لما عمل `WatchLibrary` من غير Result: «الـ stream بيقول المكتبة دلوقتي شكلها كده، مش طلب نجح أو فشل».
+
+<b>امتى B؟</b> لما الفشل جزء طبيعي من حياة الـ stream والمستخدم لازم يشوفه وهو مستمر. مثال: لو Readly عمل stream جاي من الشبكة (SSE أو WebSocket من جدول [درس الطلبات المتقدمة](/course/api-errors/advanced-requests/))، كل reconnect فاشل هو `NetworkFailure` لازم يظهر كـ banner والـ stream يكمّل يحاول. هنا الـ Result بيقول الحقيقة:
+
+<CodeBlock label="guardStream: نفس الـ guard للـ streams">
+
+```dart
+// core/errors/guard_stream.dart
+Stream<Result<T>> guardStream<T>(Stream<T> source) => source.transform(
+      StreamTransformer.fromHandlers(
+        handleData: (value, sink) => sink.add(Success(value)),
+        handleError: (error, stackTrace, sink) {
+          final failure = failureOf(error); // the same mapping guard() uses, pulled out
+          if (failure != null) {
+            sink.add(Err(failure)); // expected: a value the UI switches on
+          } else {
+            sink.addError(error, stackTrace); // a bug: stays an error
+          }
+        },
+      ),
+    );
+```
+
+</CodeBlock>
+
+نفس قاعدة الـ guard: اللي نعرفه بيتحول لـ Failure، والـ bug بيفضل bug. الفرق إن الـ stream بيكمّل بعد الـ Err.
+
+### 5. الـ use case
+
+الـ `WatchLibrary` بتاع درس الـ Domain زي ما هو: `map` بيفلتر بالحالة ويرتّب. هو موجود لأن فيه قاعدة. لو الشاشة عايزة الليست زي ما هي، الـ Cubit يسمع على `watchLibrary()` مباشرة.
+
+### 6. الـ Cubit: الـ watch للبيانات والـ refresh للشبكة
+
+<CodeBlock label="LibraryCubit بالشكل النهائي">
+
+```dart
+class LibraryCubit extends Cubit<LibraryState> {
+  LibraryCubit(WatchLibrary watchLibrary, this._repository) : super(const LibraryLoading()) {
+    _sub = watchLibrary(const WatchLibraryParams()).listen(_onBooks, onError: _onWatchError);
+    unawaited(refresh()); // the cache shows now, the network updates it in the background
+  }
+
+  final LibraryRepository _repository;
+  late final StreamSubscription<List<Book>> _sub;
+
+  void _onBooks(List<Book> books) => emit(switch (state) {
+        LibraryLoaded current => current.copyWith(books: books), // isRefreshing is kept
+        _ => LibraryLoaded(books),
+      });
+
+  void _onWatchError(Object error, StackTrace stackTrace) {
+    addError(error, stackTrace); // to the BlocObserver, then Sentry
+    if (state is! LibraryLoaded) {
+      emit(const LibraryError(CacheFailure('library unavailable')));
+    } // with books on screen: keep them, the next value may still come
+  }
+
+  Future<void> refresh() async {
+    final current = state;
+    if (current is LibraryLoaded) {
+      if (current.isRefreshing) return;
+      emit(current.copyWith(isRefreshing: true));
+    }
+    final result = await _repository.refresh(); // writes to drift: the books arrive via _onBooks
+    if (isClosed) return;
+    final now = state;
+    if (now is LibraryLoaded) {
+      emit(now.copyWith(
+        isRefreshing: false,
+        refreshFailure: switch (result) {
+          Err(:final failure) => failure,
+          Success() => null,
+        },
+      ));
+    }
+  }
+
+  @override
+  Future<void> close() async {
+    await _sub.cancel();
+    return super.close();
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ refresh مابيرجّعش كتب:</b> بيكتب في drift، والـ watch بيجيبها. فالـ `refresh` بيمسك حالة الشبكة بس (`isRefreshing` و`refreshFailure`)، والـ `_onBooks` بيمسك البيانات. ده الـ `LibraryLoaded` بتاع [درس الـ Cubit](/course/presentation/cubit/) بنفس الحقول.
+- <b>الـ `_onBooks` بيحافظ على الـ isRefreshing:</b> الـ refresh بيكتب في drift وهو لسه شغال، فالـ watch بيطلّع ليست جديدة في النص. لو `_onBooks` عمل `LibraryLoaded(books)` جديدة، الـ spinner هيختفي قبل ما الـ refresh يخلص. وبما إن `copyWith` بيمسح `refreshFailure`، أي ليست جديدة بتمسح رسالة الفشل القديمة، والـ SnackBar كان ظهر خلاص.
+- <b>الـ watch error مش شاشة error لو في بيانات:</b> لو الكتب ظاهرة وقراية واحدة فشلت، مسح الليست عشان خطأ نادر أسوأ من إنك تسيبها. الخطأ بيتسجل، والشاشة بتفضل.
+
+### 7. الـ UI
+
+<CodeBlock label="الشاشة والـ tile">
+
+```dart
+BlocBuilder<LibraryCubit, LibraryState>(
+  builder: (context, state) => switch (state) {
+    LibraryLoading() => const Center(child: CircularProgressIndicator()),
+    LibraryLoaded(:final books) => RefreshIndicator(
+        onRefresh: context.read<LibraryCubit>().refresh,
+        child: BookList(books: books),
+      ),
+    LibraryError(:final failure) => ErrorView(
+        message: failure.localized(AppLocalizations.of(context)!),
+        onRetry: context.read<LibraryCubit>().refresh,
+      ),
+  },
+)
+
+// inside each BookTile: rebuilds only when this book's sync answer changes
+final unsynced = context.select((SyncStatusCubit c) => c.state.unsynced.contains(book.id));
+```
+
+</CodeBlock>
+
+الـ widget مابيعرفش إن في stream أصلًا. هو بيعرض state، والـ BlocBuilder هو اللي بيسمع ويلغي. وده المكان الوحيد في الرحلة اللي مفيش فيه `listen` بإيدك.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### مستخدم جديد شاف «مكتبتك فاضية» وهي مش فاضية
+
+أول مرة يعمل login على موبايل جديد. الـ DB فاضية، فـ drift طلّع `[]` على طول، والشاشة قالت «مكتبتك فاضية، ضيف أول كتاب». بعد ثانيتين الـ refresh خلص والكتب ظهرت. بس المستخدم كان داس «ضيف كتاب» خلاص، أو قفل الـ app وهو فاكر إن كتبه ضاعت.
+
+الـ `[]` من الـ DB ليه معنيين: «المكتبة فاضية فعلًا» أو «لسه ماحملناش حاجة خالص». والـ stream لوحده مايعرفش يفرّق. اللي بيعرف هو حد عارف إن في sync حصل قبل كده:
+
+<CodeBlock label="الـ empty state بيسأل: اتزامنّا قبل كده؟">
+
+```dart
+LibraryLoaded(:final books, hasSyncedOnce: false, refreshFailure: null) when books.isEmpty =>
+  const Center(child: CircularProgressIndicator()), // first sync still running: not "empty"
+LibraryLoaded(:final books, hasSyncedOnce: false, refreshFailure: final failure?) when books.isEmpty =>
+  ErrorView(message: failure.localized(l10n), onRetry: cubit.refresh), // first sync failed
+LibraryLoaded(:final books) when books.isEmpty => const EmptyLibrary(),
+```
+
+</CodeBlock>
+
+والـ `hasSyncedOnce` حقل جديد في `LibraryLoaded`، الـ Cubit بيملاه من الـ repository (`lastSyncedAt` متخزن في drift أو في الـ preferences)، مش متغير في الـ widget. ولو أول refresh فشل، المستخدم يشوف «مش قادرين نجيب مكتبتك» بزرار «حاول تاني»، مش «مكتبتك فاضية». والقاعدة: كل state فاضية لازم تسأل «فاضي ولا لسه ماوصلش؟».
+
+### صفحة الكتاب علّقت بعد ما الكتاب اتمسح من جهاز تاني
+
+المستخدم فاتح صفحة كتاب على الموبايل، ومسحه من التابلت. الـ refresh جاب المكتبة من غير الكتاب، والـ upsert شاله. صفحة التفاصيل كانت عاملة `watchSingle()` على الكتاب ده:
+
+<CodeBlock label="watchSingle ولا watchSingleOrNull">
+
+```dart
+// throws when the row is gone: an error on the stream, then whatever the Cubit does with it
+Stream<BookRow> watchBook(String id) =>
+    (select(books)..where((b) => b.id.equals(id))).watchSingle();
+
+// null when the row is gone: a normal value the screen can react to
+Stream<BookRow?> watchBook(String id) =>
+    (select(books)..where((b) => b.id.equals(id))).watchSingleOrNull();
+```
+
+</CodeBlock>
+
+الكتاب اللي اتمسح مش error، ده حالة: «الكتاب ده مابقاش في مكتبتك». الـ `watchSingleOrNull` بيطلّع null، والـ Cubit بيحوّلها لـ `BookRemoved` state، والـ `BlocListener` بيرجع للمكتبة بـ SnackBar. والـ `watchSingle` مكانه بس لو غياب الصف معناه bug.
+
+### المكتبة بتقطّع مع كل sync
+
+مستخدم عنده 4000 كتاب. وهو بيعمل scroll والـ SyncService شغال، كل عملية بتخلص بتعمل `markSynced`، وده كتابة في جدول `books`، فالـ query بيتعاد، و4000 صف بيعدّوا على `toEntity` و`ListEquality` وفلتر وsort في الـ use case. كل ده على الـ main isolate، وبياخد 30ms، والـ scroll بيقطّع.
+
+بالترتيب، من الأرخص للأغلى:
+
+1. <b>الفلترة والترتيب في الـ SQL:</b> الـ `where` والـ `orderBy` في الـ query نفسه بيتعملوا في isolate الـ DB. الـ use case بيبعت الـ params للـ repository بدل ما يفلتر بعد الـ map.
+2. <b>اقرا اللي الشاشة محتاجاه بس:</b> الليست محتاجة العنوان والحالة والغلاف، مش الوصف والملاحظات. query بأعمدة أقل يعني rows أخف.
+3. <b>الـ syncState في جدول لوحده:</b> لو الـ markSynced بيكتب في جدول تاني، الـ watch بتاع الكتب مش هيصحى. ده تغيير في الـ schema، فبيتعمل بـ migration زي [درس التخزين المحلي](/course/data-network/local-storage/).
+4. <b>لو لسه تقيل:</b> الـ map نفسه في isolate، وده [الدرس الجاي](/course/dart-async/isolates/).
+
+### الـ error بتاع drift وصل لـ Sentry كـ crash مش CacheFailure
+
+ده قبل الـ `_cacheErrors()` في الـ local source. الـ `LibraryCubit` كان عامل `onError: addError` بس، فالخطأ اتسجّل، والشاشة كانت لسه على `LibraryLoading` لأن مفيش ولا قيمة وصلت، فالـ spinner فضل للأبد. الحاجتين اللي اتصلحوا فوق: الخطأ بقى `CacheException` من الـ data layer، والـ `_onWatchError` بيحوّل `LibraryLoading` لـ `LibraryError` فيها «حاول تاني».
+
+### الـ contract اتغير لـ `Stream<Result>` والكود كله بقى فك وتغليف
+
+حد في الفريق غيّر `watchLibrary` لـ `Stream<Result<List<Book>>>` «عشان يبقى زي الباقي». بص على `WatchLibrary` بعدها:
+
+<CodeBlock label="كل operator بيفك الـ Result">
+
+```dart
+Stream<Result<List<Book>>> call(WatchLibraryParams params) =>
+    _repository.watchLibrary().map((result) => switch (result) {
+          Success(:final value) => Success(value
+              .where((b) => params.status == null || b.status == params.status)
+              .toList()
+            ..sort((a, b) => a.title.compareTo(b.title))),
+          Err() => result,
+        });
+```
+
+</CodeBlock>
+
+وكل `distinct` بقى محتاج equality للـ Result، وأي `combineLatest` بقى switch على اتنين. ومع ده، الـ Cubit لسه محتاج `onError` للـ bugs. الكود زاد، والأمان ماازدش، لأن الـ Err اللي في الـ type ده مش هيحصل عمليًا. شكل الـ contract لازم ييجي من نوع الفشل، مش من «كل حاجة شبه بعض».
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>الشاشة بتقرا من stream، والشبكة بتكتب في الـ DB:</b> ده بيخلي كل الـ Cubits اللي محتاجة نفس البيانات متزامنة من غير ما يعرفوا بعض، وبيخلي الـ offline ببلاش تقريبًا. التمن: الـ data layer أعقد، وكل كتابة بتصحّي كل الـ watchers.
+- <b>`Stream<T>` ولا `Stream<Result<T>>`:</b> اسأل «الفشل ده متوقع، والمستخدم بيعمل فيه حاجة وهو مستمر؟». لو أيوه (stream جاي من الشبكة)، الـ Result. لو الفشل نادر وبنية تحتية (DB محلية)، قناة الـ errors، والـ Cubit يتعامل معاها مرة واحدة. والـ bugs في الحالتين على قناة الـ errors.
+- <b>كل حلقة ليها شغلة واحدة:</b> الـ DAO بيكلّم drift. الـ local source بيترجم الـ errors. الـ repository بيحوّل لـ entity ويعمل distinct. الـ use case فيه القواعد. الـ Cubit بيحوّل لـ state. الـ widget بيعرض. لو حلقة بتعمل شغلة حلقة تانية (الـ widget بيفلتر، أو الـ Cubit بيعرف `BookRow`)، الطبقات اتكسرت.
+- <b>الـ distinct مرة واحدة، تحت:</b> في الـ repository، عشان كل اللي فوق يستفيد. والـ state بـ equatable أو freezed فوق، عشان الـ Cubit مايعملش emit لنفس الحاجة.
+- <b>الأرقام قبل الـ isolate:</b> لما الـ watch يتقل، الحل غالبًا في الـ query (where، أعمدة أقل، جداول أصغر بتتكتب كتير)، مش في نقل الـ map لـ isolate.
+- <b>التست:</b> الـ fake بتاع الـ local source بـ `Stream.multi` اللي بيطلّع الحالية مع كل listen، و`StreamQueue` عشان تاخد القيم واحدة واحدة، زي [درس تست الطبقات](/course/testing/layers/).
+
+<Note kind="interview" title="سؤال interview">
+
+«الـ repository يرجّع `Stream<Either<Failure, T>>` ولا `Stream<T>`؟» حسب نوع الفشل. لو الـ stream جاي من الشبكة والفشل متوقع والمستخدم لازم يشوفه والـ stream يكمّل (reconnect مثلًا)، الـ Either أو Result صح، لأنه بيحط الفشل في الـ type وبيجبر الـ UI يتعامل معاه. لو الـ stream من DB محلية كمصدر حقيقة، الفشل المتوقع بيحصل في الـ refresh (Future بـ Result)، واللي بيطلع من الـ watch نادر ومن البنية التحتية، فـ `Stream<T>` مع ترجمة الـ errors في الـ data layer و`onError` في الـ Cubit أبسط وأوضح. وفي الحالتين، الـ bugs بتفضل errors مش Failures.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي الشاشة بتتحدث لوحدها لما كتاب يتضاف من شاشة تانية؟» الإضافة بتكتب في drift. الـ `watch()` في الـ DAO بيعيد الـ query مع أي كتابة في الجدول، والليست الجديدة بتعدّي على الـ repository (بيحوّلها لـ entities ويشيل المكرر بـ distinct)، والـ use case، لحد الـ Cubit اللي بيعمل emit، والـ BlocBuilder بيرسم. مفيش حد نادى حد. ولما الشاشة تتقفل، الـ Cubit بيعمل cancel، والـ cancel بيطلع لحد drift فيبطّل يراقب الـ query.
+
+</Note>
+
+</Level>
+
+<LessonPart title="الكود كامل في مكان واحد">
+
+```dart
+// data/local/books_dao.dart
+Stream<List<BookRow>> watchAll({BookStatus? status}) {
+  final query = select(books)
+    ..where((b) {
+      final visible = b.syncState.equals('deleted').not(); // tombstones stay hidden
+      return status == null ? visible : visible & b.status.equalsValue(status); // filtered in SQL
+    })
+    ..orderBy([(b) => OrderingTerm.asc(b.title)]);
+  return query.watch();
+}
+
+// data/library_local_source.dart
+Stream<List<BookRow>> watchBooks({BookStatus? status}) =>
+    _dao.watchAll(status: status).transform(_cacheErrors());
+
+// data/library_repository_impl.dart
+@override
+Stream<List<Book>> watchLibrary({BookStatus? status}) => _local
+    .watchBooks(status: status)
+    .map((rows) => [for (final r in rows) r.toEntity()])
+    .distinct(const ListEquality<Book>().equals);
+
+// domain/watch_library.dart: the rule now lives in the query, the use case passes it down
+class WatchLibrary extends StreamUseCase<List<Book>, WatchLibraryParams> {
+  WatchLibrary(this._repository);
+  final LibraryRepository _repository;
+
+  @override
+  Stream<List<Book>> call(WatchLibraryParams params) =>
+      _repository.watchLibrary(status: params.status);
+}
+
+// presentation/library_cubit.dart: as in Level 2
+// presentation/library_page.dart: BlocBuilder + context.select per tile
+```
+
+الفلترة اتنقلت من الـ map في الـ use case للـ query نفسه، والـ use case بقى بيعدّي الـ params. ولو مفيش قاعدة تانية فيه، هو دلوقتي سطر واحد، والـ Cubit ممكن يكلّم الـ repository مباشرة زي ما درس الـ Domain قال. والـ `watchLibrary({BookStatus? status})` هو نفس الفلتر اللي [درس Cubit متقدم](/course/cubit-bloc/cubit-advanced/) افترضه.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="async-watch-1">
+<Ask>الـ refresh في Readly مابيرجّعش كتب. أومال الكتب الجديدة بتوصل للشاشة إزاي؟</Ask>
+<Answer>
+
+الـ refresh بيكتب في drift، والـ `watch()` بيعيد الـ query مع أي كتابة في الجدول، والليست الجديدة بتمشي في الـ stream لحد الـ Cubit. الـ refresh بيرجّع `Result<void>` عشان الـ Cubit يعرف حالة الشبكة بس (بيحدّث، فشل).
+
+</Answer>
+</Question>
+
+<Question id="async-watch-2">
+<Ask>ليه `watchLibrary()` في Readly `Stream<List<Book>>` مش `Stream<Result<List<Book>>>`؟</Ask>
+<Answer>
+
+لأن الـ stream بيقرا من DB محلية، والفشل المتوقع (نت، سيرفر) بيحصل في `refresh()` اللي بيرجّع Result أصلًا. اللي ممكن يطلع من الـ watch نادر ومن البنية التحتية، والـ Result كان هيضيف فك وتغليف في كل operator عشانه. الـ Result للـ streams اللي الفشل فيها متوقع والمستخدم لازم يشوفه، زي stream من الشبكة.
+
+</Answer>
+</Question>
+
+<Question id="async-watch-3">
+<Ask>مستخدم جديد شاف «مكتبتك فاضية» لثانيتين قبل ما كتبه تظهر. السبب؟</Ask>
+<Answer>
+
+drift طلّع `[]` على طول لأن الـ DB فاضية، والشاشة ماعرفتش تفرّق بين «فاضية فعلًا» و«لسه ماحملناش». الحل إن الـ state يعرف إذا كان في sync حصل قبل كده، ولو لأ والـ refresh شغال، يعرض loading بدل الـ empty state.
+
+</Answer>
+</Question>
+
+<Question id="async-watch-4">
+<Ask>صفحة الكتاب عاملة `watchSingle()`، والكتاب اتمسح من جهاز تاني. إيه اللي بيحصل، وإيه الأحسن؟</Ask>
+<Answer>
+
+الـ `watchSingle` بيطلّع error لما الصف يختفي. بس الكتاب اللي اتمسح حالة مش bug، فالأحسن `watchSingleOrNull`: بيطلّع null، والـ Cubit يحوّلها لـ state «الكتاب اتشال»، والـ BlocListener يرجع للمكتبة برسالة.
+
+</Answer>
+</Question>
+
+<Question id="async-watch-5">
+<Ask>`SqliteException` من الـ watch وصل للـ Cubit بنوع drift. مكان الترجمة فين؟</Ask>
+<Answer>
+
+في الـ local source، زي `_run` بتاع الـ Futures: transformer على الـ stream بيحوّل أي `Exception` لـ `CacheException` بنفس الـ stack، والـ Errors بتعدّي زي ما هي. كده اللي فوق الـ data layer مايعرفش drift.
+
+</Answer>
+</Question>
+
+</Quiz>

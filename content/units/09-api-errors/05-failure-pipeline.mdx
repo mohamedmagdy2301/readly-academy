@@ -337,7 +337,7 @@ Future<Result<T>> guard<T>(Future<T> Function() run) async {
 - <b>الـ `Error.throwWithStackTrace`:</b> الـ stack بيفضل بتاع الـ fromJson، يعني بيشاور على السطر، يعني على الحقل اللي اتغير. والـ body نفسه عمره ما بيدخل الـ exception: فيه ملاحظات المستخدم ومكتبته.
 - <b>الـ path مش الـ URL كله في الـ message:</b> الـ query ممكن يبقى فيها كلام المستخدم، زي اللي بيدوّر عليه في الـ catalog.
 - <b>الـ HTML مش هنا:</b> الـ captive portal بيطلع `UnexpectedBodyException` من الـ `JsonOnlyInterceptor` قبل أي parse، وبيبقى `NetworkFailure`. الـ `ParseException` للـ JSON اللي شكله اتغير بس، أو الـ body الفاضي.
-- <b>يتبلّغ كـ non-fatal:</b> المستخدم شاف رسالة عادية، بس الفريق لازم يعرف النهارده إن نسخة الـ app دي مابقتش فاهمة السيرفر. علشان كده `bad_response` من الـ Failures اللي بتتبعت لـ Sentry، زي ما هنشوف في درس الـ Observability في الوحدة 10.
+- <b>يتبلّغ كـ non-fatal:</b> المستخدم شاف رسالة عادية، بس الفريق لازم يعرف النهارده إن نسخة الـ app دي مابقتش فاهمة السيرفر. علشان كده `bad_response` من الـ Failures اللي بتتبعت لـ Sentry، زي ما هنشوف في درس الـ Observability في الوحدة 12.
 
 والفرق بينه وبين الـ bug الحقيقي:
 
@@ -395,7 +395,7 @@ if (result case Err(:final failure)) report('NotesCubit: ${failure.message}', fa
 - <b>الـ guard:</b> هو اللي بيقرر: ده warning (نت، 422 متوقع) ولا error لازم حد يصلحه (`bad_response`، `bad_certificate`، `unknown`).
 - <b>الـ Cubit:</b> مابيسجّلش. الـ Failure اللي وصلته اتسجلت خلاص. لو محتاج تعرف المستخدم شاف إيه، ده analytics event، مش log، وهنشوفه في درس "الأخطاء في الشاشة".
 
-درس الـ Observability في الوحدة 10 بيضيف للـ guard الـ `logger` والـ `operation` والـ `expected`، ويقرر بالظبط إيه اللي يبقى issue في Sentry وإيه اللي يبقى breadcrumb. المهم دلوقتي إن المكان واحد.
+درس الـ Observability في الوحدة 12 بيضيف للـ guard الـ `logger` والـ `operation` والـ `expected`، ويقرر بالظبط إيه اللي يبقى issue في Sentry وإيه اللي يبقى breadcrumb. المهم دلوقتي إن المكان واحد.
 
 ### المستخدم كتب ملاحظة فاضية والطلب راح للسيرفر
 
