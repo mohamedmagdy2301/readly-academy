@@ -1,0 +1,271 @@
+---
+title: "في Escore: الـ API والأخطاء"
+description: "عقد الـ API بين Escore والـ backend، والطريق من الـ DioException لحد الشاشة، وفين الـ 422 خسرت الـ fields بتاعتها، وbug pagination سببه حرفين."
+minutes: 20
+draft: true
+---
+
+الوحدة دي ماشية من «يعني إيه request» لحد عقد مايتكسرش مع الـ backend. في Escore الـ backend والـ app بيتكتبوا في نفس الفريق، وده بيبان في العقد: شكل واحد لكل الردود، والـ app عارفه كويس. بس الطريق من الخطأ للشاشة فيه خطوات كتير بتضيّع معلومات.
+
+### العقد: shape واحد لكل الردود
+
+الـ backend (Node/Express) عنده utility واحدة بتطلّع كل الردود:
+
+<CodeBlock label="escore-backend/src/utils/ApiResponse.ts">
+
+```ts
+export interface ApiResponseData<T = unknown> {
+  success: boolean;
+  message: string;
+  data?: T;
+  errors?: Array<{ field: string; message: string }>;
+  meta?: PaginationMeta;
+}
+
+export interface PaginationMeta {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+  hasNextPage: boolean;
+  hasPrevPage: boolean;
+}
+```
+
+</CodeBlock>
+
+ده بالظبط اللي درس «عقد الـ API» طلبه: envelope ثابت، وأخطاء الـ validation فيها `field`، والـ pagination ليها شكل واحد. والـ `message` بيرجع مترجم من السيرفر على حسب الـ header `X-Language` اللي الـ app بيبعته مع كل طلب. والـ versioning عن طريق `/api/v1` في الـ path.
+
+#### بس الـ app بيفك الـ envelope بطريقتين
+
+<CodeBlock label="core/api/dio_consumer/response_handler.dart">
+
+```dart
+static dynamic _normalizeSuccessResponse(dynamic data) {
+  if (data is Map<String, dynamic>) {
+    final hasMeta = data.containsKey('meta') || data.containsKey('pagination');
+    final hasData = data.containsKey('data');
+
+    // For paginated responses, return the full structure
+    if (hasMeta && hasData) {
+      return data;
+    }
+    // For single entity wrapped in success/data (NOT paginated)
+    if (data.containsKey('success') && hasData && !hasMeta) {
+      return data['data'];
+    }
+    return data;
+  }
+  return data;
+}
+```
+
+</CodeBlock>
+
+يعني لو الرد فيه `meta`، الـ data source بياخد الـ envelope كله. ولو مافيهوش، بياخد `data` بس. الـ data source مش عارف هياخد أنهي شكل غير لو عرف إذا كان الـ backend حاطط `meta` ولا لأ. علشان كده فيه data sources بتعمل الاتنين: «لو فيه `r['data']` خده، ولو مفيش يبقى ده الـ data نفسه». العقد ثابت على السيرفر، بس الـ app عمل منه شكلين.
+
+والكود ده بيقبل كمان `{status: 'success', data}` و`pagination` بدل `meta`، وفي الـ models فيه `_id` و`id`، و`game` و`games`. ده كله من API قديم اتغير. القاعدة اللي درس العقد قالها: الـ tolerance دي مكانها الـ DTO بس، ولها تاريخ انتهاء.
+
+### الطريق من الخطأ للشاشة
+
+#### الخطوة 1: كل حاجة بتتمسك في مكان واحد
+
+<CodeBlock label="core/api/dio_consumer/dio_consumer.dart">
+
+```dart
+Future<Either<Failure, dynamic>> _safeApiCall(
+  Future<Response<dynamic>> Function() apiCall, {int retryCount = 0}) async {
+  try {
+    final response = await apiCall();
+    return ResponseHandler.handleResponse(response, apiCall);
+  } on DioException catch (e) {
+    if (_shouldRetry(e, retryCount)) {
+      await Future<void>.delayed(_getRetryDelay(retryCount));
+      return _safeApiCall(apiCall, retryCount: retryCount + 1);
+    }
+    return left(ServerFailure.fromDioException(e));
+  } on SocketException catch (e) {
+    return left(ServerFailure(e.message));
+  } on FormatException catch (e) {
+    return left(ServerFailure('Invalid data format: ${e.message}'));
+  } on TimeoutException catch (e) {
+    return left(ServerFailure('Request timeout: ${e.message}'));
+  } on Exception catch (e) {
+    return left(ServerFailure('Unexpected error: $e'));
+  }
+}
+```
+
+</CodeBlock>
+
+الكويس: مفيش exception بيعدّي من هنا. أي data source أو repository أو Cubit بياخد `Either` ومش محتاج try/catch.
+
+الوحش: **كل الأنواع بتطلع `ServerFailure`**. الـ `SocketException` (مفيش نت) بقى `ServerFailure` مش `NetworkFailure`، والـ timeout بقى `ServerFailure` مش `TimeoutFailure`. في درس «من الـ Exception للـ Failure» الخريطة كانت: كل نوع مشكلة ليه Failure، والشاشة بتعرض حاجة مختلفة لكل واحد. هنا الخريطة اتلمّت في خانة واحدة.
+
+#### الخطوة 2: الـ 4xx مش exception
+
+`validateStatus` في Escore بيقبل أي حاجة أقل من 500، فالـ 4xx بيرجع `Response` عادي ويروح لـ `ResponseHandler`:
+
+<CodeBlock label="response_handler.dart">
+
+```dart
+if (_isSuccessfulResponse(statusCode)) {
+  // Even on a 2xx/304, if the body explicitly says success:false treat it
+  // as a server failure so callers get a proper Failure instead of trying
+  // to parse an error payload as entity data.
+  if (data is Map<String, dynamic> && data['success'] == false) {
+    return left(ServerFailure.fromBadResponse(statusCode, data));
+  }
+  return right(_normalizeSuccessResponse(data));
+}
+return left(ServerFailure.fromBadResponse(statusCode, data));
+```
+
+</CodeBlock>
+
+لاحظ الـ check على `success: false` جوه 200. ده من الحاجات اللي درس «خريطة أخطاء الـ API» حذّر منها: سيرفر بيرجّع 200 وفيه خطأ. Escore بيتعامل معاها صح.
+
+#### الخطوة 3: الـ 422 بتخسر الـ fields
+
+السيرفر بيبعت `errors: [{ field: "email", message: "..." }]`. وده اللي بيحصل للـ array دي في الـ app:
+
+<CodeBlock label="core/error/failures.dart">
+
+```dart
+String _extractValidationErrors(List<dynamic> errors) {
+  final errorMessages = errors.map((e) {
+    if (e is Map<String, dynamic>) {
+      String? message;
+      // Format 1: { field: "email", message: "Invalid email" }
+      if (e.containsKey('message')) {
+        message = e['message']?.toString();
+      }
+      // Format 2: { path: "email", msg: "Invalid email" }
+      // Format 3: { param: "email", message: "Invalid email" }
+      // ...
+      if (message != null && message.isNotEmpty) {
+        return _translateBackendMessage(message);
+      }
+    }
+    return _translateBackendMessage(e.toString());
+  });
+  return errorMessages.join('\n');
+}
+```
+
+</CodeBlock>
+
+الـ `field` بيترمي، والرسايل بتتلزق في نص واحد بـ `\n`. فالشاشة مابقتش تقدر تحط «الإيميل مستخدم» تحت خانة الإيميل، وبتعرض toast فيه كل الأخطاء.
+
+والمحزن إن `ValidationFailure` في نفس الملف عندها `field` و`errors` map، وإن `error_handler.dart` بيعمل الـ mapping ده صح. بس `ErrorHandler` محدش بيستخدمه (اتشرح في درس Escore في وحدة الـ Domain والأخطاء). العقد اتعمل صح على السيرفر، والـ app عنده الـ type الصح، والسلك اللي بيوصّلهم مقطوع.
+
+#### الخلاصة لكل status code
+
+| الحالة | اللي بيحصل في Escore |
+| --- | --- |
+| 401 | `AuthInterceptor` بيعمل refresh أو logout. ولو وصل لتحت: `ServerFailure(statusCode: 401)` |
+| 403 | الـ login بيستخدمه عشان يعرف «الإيميل مش متأكد» |
+| 404 و409 | الـ follow والـ unfollow بيعتبروهم نجاح (idempotent) |
+| 422 | نص واحد جوه `ServerFailure`، والـ fields ضاعت |
+| 429 | رسالة عامة مترجمة، ورسالة السيرفر بتتجاهل |
+| 5xx | retry 3 مرات، وبعدين `ServerFailure` |
+| مفيش نت | الـ repositories بتشيّك قبل الطلب وبترجّع `OfflineFailure`. ولو النت قطع والطلب شغال: `ServerFailure` |
+| guest بيعمل حاجة محتاجة حساب | الـ interceptor بيلغي الطلب، والمستخدم بيشوف «Request was canceled» بدل «سجّل دخول» |
+
+### الأخطاء في الشاشة
+
+الشاشة بتعرض خطأ ولا «أوفلاين»؟ في Escore القرار ده مابيتاخدش من نوع الـ Failure، بيتاخد من حالة الاتصال **دلوقتي**:
+
+<CodeBlock label="features/events/presentation/screens/event_details_wrapper.dart">
+
+```dart
+EventDetailsError() => CustomScaffoldSecond(
+  appBar: const BackAppBarWidget(),
+  body: sl<ConnectivityController>().isInternetNotifier.value
+      ? CustomErrorWidget(onPressed: _retry)
+      : OfflineEmptyStateWidget(onRetry: _retry),
+),
+```
+
+</CodeBlock>
+
+لو الطلب فشل عشان السيرفر واقع، والنت قطع قبل ما الشاشة تعمل build، المستخدم هيشوف «انت أوفلاين». ولو الطلب فشل عشان النت قطع، والنت رجع بسرعة، هيشوف «حصل خطأ». الشاشة لازم تعرض اللي حصل فعلًا للطلب، والمعلومة دي مكانها الـ Failure. بس الـ Failure هنا مش شايلاها، لأن كل حاجة بقت `ServerFailure`. يعني مشكلة الخطوة 1 هي اللي خلّت الشاشة تدوّر على حل تاني.
+
+وكمان فيه مكتبتين toast في المشروع (`toastification` في 39 مكان و`cherry_toast` في 11)، وCubits بتدوّر في نص الرسالة زي `contains('verify') && contains('email')`.
+
+### الطلبات المتقدمة
+
+**رفع الصور**: `FormData` مع `MultipartFile`، بس الكود متكرر في data sourceين (more وauth)، وكل واحد بيطلّع اسم الملف بطريقة. والضغط بيحصل في الـ UI (`compressQuality: 80` في الـ cropper، و`imageQuality: 70` في الـ picker)، و`flutter_image_compress` في الـ pubspec ومحدش بيستخدمه.
+
+**الإلغاء**: مفيش `CancelToken` في المشروع كله. `safeEmit` بيمنع الـ crash لما الـ Cubit يتقفل، بس الطلب نفسه بيكمل ويستهلك نت.
+
+**الطلبات المتوازية**: `Future.wait` موجودة، بس في الـ Cubits والشاشات مش في الـ repositories. مثلًا `TournamentFixturesCubit` بيبعت 3 طلبات مع بعض (لايف، ولسه ماجاش، وخلص). ودرس الطلبات المتقدمة قال إن الـ repository هو المكان اللي بيجمع الطلبات، عشان الـ Cubit ياخد نتيجة واحدة.
+
+**الـ WebSocket**: الرسايل بتتحوّل لـ `sealed class WsEvent` بـ `fromJson` واحد، ومعاه `WsUnknownEvent` لأي نوع مش معروف. يعني لو السيرفر ضاف event جديد، النسخ القديمة من الـ app مش هتقع. ده حماية العقد في الاتجاه التاني: الـ app القديم لازم يستحمل سيرفر أحدث منه.
+
+### bug سببه حرفين
+
+<CodeBlock label="core/models/pagination_meta.dart">
+
+```dart
+factory PaginationMeta.fromJson(Map<String, dynamic> json) {
+  return PaginationMeta(
+    currentPage: _toInt(json['page']) ?? 1,
+    totalPages: _toInt(json['totalPages']) ?? 1,
+    // ...
+  );
+}
+
+Map<String, dynamic> toJson() {
+  return {
+    'currentPage': currentPage,
+    'totalPages': totalPages,
+    // ...
+  };
+}
+```
+
+</CodeBlock>
+
+`fromJson` بيقرا `page` لأن ده اللي السيرفر بيبعته. و`toJson` بيكتب `currentPage`. والـ offline cache بيخزّن الـ pagination بـ `toJson` وبيقراها بـ `fromJson`، فأي ليست بترجع من الـ cache بتبقى `currentPage = 1`. لو المستخدم كان واصل للصفحة 3 والـ app اتقفل وفتح أوفلاين، أول «load more» هيطلب الصفحة 2 تاني.
+
+تست واحد كان هيمسكه: `expect(PaginationMeta.fromJson(meta.toJson()).toJson(), meta.toJson())`. ده اسمه round-trip test، ولازم يتكتب لأي class فيه `fromJson` و`toJson` الاتنين. (بنقارن الـ JSON لأن `PaginationMeta` مش `Equatable`. لو كان `Equatable`، كنت تقارن الـ objects على طول.)
+
+### لو هنعيدها
+
+1. خريطة واحدة للأخطاء: `SocketException` تبقى `NetworkFailure`، والـ timeout يبقى `TimeoutFailure`، و422 يبقى `ValidationFailure` بالـ fields.
+2. الشاشة بتقرر «أوفلاين ولا خطأ» من نوع الـ Failure، مش من حالة الاتصال دلوقتي.
+3. الـ `ResponseHandler` بيرجّع شكل واحد دايمًا (الـ envelope كله)، والـ DTO هو اللي يفكه.
+4. round-trip test لكل model فيه `toJson`.
+5. `CancelToken` لأي طلب مربوط بشاشة ممكن تتقفل قبل ما يرجع.
+
+<Quiz>
+
+<Question id="escore-api-1">
+<Ask>السيرفر بيبعت `errors: [{field, message}]` على الـ 422. إيه اللي بيضيع في Escore وبيأثر على المستخدم إزاي؟</Ask>
+<Answer>
+
+الـ `field` بيضيع: الرسايل بتتجمع في نص واحد جوه `ServerFailure`. فالشاشة مش عارفة أنهي رسالة لأنهي خانة، وبتعرض toast فيه كل الأخطاء ورا بعض، بدل ما كل خانة تبقى حمرا ورسالتها تحتها. والـ type الصح (`ValidationFailure` بـ `errors` map) موجود في المشروع، بس الـ mapper اللي شغال مابيستخدموش.
+
+</Answer>
+</Question>
+
+<Question id="escore-api-2">
+<Ask>ليه قرار «أوفلاين ولا خطأ» من `isInternetNotifier.value` جوه الـ build غلط، حتى لو شغال أغلب الوقت؟</Ask>
+<Answer>
+
+لأنه بيقرا حالة الاتصال وقت الـ build، مش وقت ما الطلب فشل. فممكن السيرفر يكون واقع والنت يقطع بعدها، فتظهر «أوفلاين». أو النت يقطع ويرجع، فتظهر «خطأ». سبب الفشل جزء من نتيجة الطلب، فلازم يتشال في الـ Failure (`NetworkFailure` في مقابل `ServerFailure`)، والشاشة تقرا منه.
+
+</Answer>
+</Question>
+
+<Question id="escore-api-3">
+<Ask>إيه الـ round-trip test، وإزاي كان هيمسك bug الـ `PaginationMeta`؟</Ask>
+<Answer>
+
+تست بيحوّل object لـ JSON وبيرجّعه object تاني، ويتأكد إنه زي ما كان: `expect(PaginationMeta.fromJson(meta.toJson()).toJson(), meta.toJson())`. مع `currentPage: 3`، `toJson` هيكتب `currentPage` و`fromJson` هيدوّر على `page` مش هيلاقيه ويحط 1، فالتست هيقع على طول. أي class بيتكتب ويتقري من نفس الشكل (cache أو storage) محتاج التست ده.
+
+</Answer>
+</Question>
+
+</Quiz>

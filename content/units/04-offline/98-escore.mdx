@@ -1,0 +1,265 @@
+---
+title: "في Escore: ليه مش offline-first، وإيه اللي اتعمل بداله"
+description: "Escore remote-first بتلات طبقات cache، والـ follow فيه optimistic update وrollback من غير sync queue، والنتيجة اللايف بتعدّي من الـ WebSocket للـ Cubit للـ cache."
+minutes: 20
+draft: true
+---
+
+الوحدة دي قالت: الـ DB المحلية هي مصدر الحقيقة، وكل كتابة بتدخل sync queue، والسيرفر يلحق بعدين. Escore ماعملش أي حاجة من دي، وده كان قرار صح في أغلب الـ app. الدرس ده عن ليه، وعن اللي اتعمل بداله، وعن المكانين اللي كان محتاج فيهم حاجة من الوحدة دي ومااتعملتش.
+
+### القرار: remote-first مع cache
+
+اسأل نفسك تلات أسئلة قبل ما تقرر offline-first:
+
+| السؤال | Readly | Escore |
+| --- | --- | --- |
+| البيانات بتاعة مين؟ | المستخدم هو اللي بيكتبها | السيرفر، والمستخدم بيقرا |
+| البيانات القديمة ليها قيمة؟ | آه، مكتبتك هي هي | قليلة: نتيجة ماتش من ساعة مالهاش لازمة وهو لايف |
+| حجم الكتابة | كتير: إضافة وحالة وملاحظات | قليل: follow، vote، تعليق |
+
+Escore بيقرا بيانات لايف أغلب الوقت، فالـ DB المحلية كمصدر للحقيقة مش هتقدّم حاجة، وهتضيف تعقيد الـ sync والـ conflicts كله. اللي Escore محتاجه هو إن الـ app يفتح بسرعة ويعرض حاجة لو النت ضعيف، وده cache مش sync.
+
+### تلات طبقات cache، كل واحدة ليها دور
+
+الـ mixin `OfflineAwareRepository` فيه جدول بيشرح التلات طبقات:
+
+<CodeBlock label="core/base/offline_aware_repository.dart">
+
+```dart
+/// | Layer | Lives in | TTL | Role |
+/// |---|---|---|---|
+/// | 1. Cubit SWR | cubit `Map<key, _Entry>` | 3–5 min | Instant repeat-tab nav — show stale data while revalidating |
+/// | 2. Hive offline | this mixin | 15–30 min | Cold-start + offline survival |
+/// | 3. HTTP cache  | `dio_cache_interceptor` | backend `max-age` + ETag | Dedup identical requests over the wire |
+///
+/// `fetchWithCache` is **online-first**: cubits explicitly drive the SWR
+/// semantics above this layer.
+```
+
+</CodeBlock>
+
+1. **في الـ Cubit (SWR)**: لو رجعت لتاب فتحته من دقيقتين، البيانات بتظهر في نفس اللحظة، والتحديث بيحصل في الخلفية.
+2. **Hive**: نسخة JSON من آخر response، عشان الـ app يفتح على حاجة، ويعرض حاجة لما النت يقطع.
+3. **HTTP**: السيرفر بيقول `max-age` وETag، فالطلب المتكرر مابيعدّيش على الشبكة.
+
+والـ repository online-first: لو فيه نت يكلّم السيرفر، ولو الطلب فشل يرجّع من Hive، ولو مفيش نت خالص يرجّع من Hive أو `OfflineFailure`. ده عكس Readly بالظبط، اللي بيقرا من drift دايمًا والسيرفر بيحدّث drift.
+
+#### الـ TTL على حسب نوع البيانات
+
+<CodeBlock label="core/services/offline_cache/cache_config.dart">
+
+```dart
+static const Duration detailsTtl = Duration(minutes: 30);
+static const Duration listTtl = Duration(minutes: 15);
+static const Duration staticTtl = Duration(hours: 24);
+static const Duration liveTtl = Duration(minutes: 5);
+static const Duration liveSubResourceTtl = Duration(minutes: 3);
+```
+
+</CodeBlock>
+
+والـ TTL ممكن يتحسب من البيانات نفسها: ماتش لايف بياخد 5 دقايق، وماتش خلص بياخد 30 (`dynamicTtl: (match) => match.isLive ? liveTtl : detailsTtl`). ولو أي ماتش في ليست لايف، الليست كلها TTL بتاعها بيقصر.
+
+### الاتصال: interface مش إنترنت
+
+<CodeBlock label="core/app/connectivity_controller.dart">
+
+```dart
+bool isInternetConnected(List<ConnectivityResult> result) {
+  final wasOffline = !isInternetNotifier.value;
+  if (result.contains(ConnectivityResult.none)) {
+    isInternetNotifier.value = false;
+    return false;
+  } else if (result.contains(ConnectivityResult.wifi) ||
+      result.contains(ConnectivityResult.mobile)) {
+    isInternetNotifier.value = true;
+    // Mark in-memory SWR caches as stale on reconnection
+    if (wasOffline) {
+      SwrCacheInvalidator.markAllStale();
+    }
+    return true;
+  }
+  return false;
+}
+```
+
+</CodeBlock>
+
+لما النت يرجع، كل الـ caches اللي في الـ memory بتتعلّم إنها قديمة، وحوالي 20 شاشة فيها `ReconnectionRefreshMixin` بيعمل refresh بعد نص ثانية. ده كويس. بس خلي بالك من حاجتين. `connectivity_plus` بيقولك فيه wifi، مش فيه إنترنت، فشبكة فندق محتاجة login هتتحسب online. وethernet والـ VPN مش متعالجين خالص.
+
+والأفعال اللي محتاجة نت (follow، vote، تعليق، reaction) قبل ما تبدأ بتعمل check بـ `context.requireOnline()`، اللي بيطلّع toast «محتاج إنترنت». يعني الـ app مش بيحاول يأجّل الفعل لبعدين، بيمنعه من الأول.
+
+### الـ Follow: optimistic update وrollback، من غير queue
+
+ده المكان الوحيد اللي Escore فيه «كتابة» بتتكرر كتير. ومفيش sync queue: الـ follow أوفلاين ممنوع. بس أونلاين، الزرار بيتغير على طول قبل ما السيرفر يرد:
+
+<CodeBlock label="features/following/presentation/cubit/mixins/follow_ops_mixin.dart">
+
+```dart
+Future<void> performFollowOp({
+  required String targetId,
+  required EntityType targetType,
+  required bool follow,
+  required FCMTokenManager fcmTokenManager,
+  required void Function() rollback,
+}) async {
+  // Broadcast the optimistic change so other mounted surfaces update live.
+  FollowSyncBus.instance.emit(type: targetType, id: targetId, isFollowing: follow);
+  try {
+    final ok = follow
+        ? await fcmTokenManager.notifyFollowAction(targetId: targetId, targetType: targetType)
+        : await fcmTokenManager.notifyUnFollowAction(targetId: targetId, targetType: targetType);
+    if (!ok) {
+      rollback();
+      FollowSyncBus.instance.emit(type: targetType, id: targetId, isFollowing: !follow);
+    }
+  } on Exception {
+    rollback();
+    FollowSyncBus.instance.emit(type: targetType, id: targetId, isFollowing: !follow);
+  } finally {
+    _pendingFollowOps.remove(targetId);
+  }
+}
+```
+
+</CodeBlock>
+
+فيه هنا تلات أفكار من الوحدة دي، بشكل أصغر:
+
+- **منع التكرار**: `_pendingFollowOps` بيمنع ضغطتين على نفس الزرار يبعتوا طلبين مع بعض.
+- **كل الشاشات بتشوف نفس الحالة**: `FollowSyncBus` stream عام، وأي Cubit فاتح لاعب أو فريق بيسمع عليه ويحدّث نفسه، فالليست والتفاصيل والـ feed بيتغيروا مع بعض.
+- **response قديم مايرجّعش الحالة القديمة**: `FollowIntentRegistry` بيفتكر آخر ضغطة لمدة 90 ثانية. لو response قديم وصل بعد الضغطة وفيه `isFollowing: false`، الـ app بيصدّق الضغطة مش الـ response. وده نسخة صغيرة من «آخر كتابة تكسب» بتاعة درس الـ conflicts.
+
+#### والـ idempotency؟
+
+مفيش `Idempotency-Key`. Escore معتمد على حاجة أبسط: الـ follow بطبيعته idempotent على السيرفر، فـ follow مرتين نتيجته نفس follow مرة. والـ app بيعتبر 409 على الـ follow و404 على الـ unfollow نجاح:
+
+<CodeBlock label="tournaments_repository_impl.dart">
+
+```dart
+return response.fold(
+  (failure) {
+    // 409 = already following → idempotent success
+    if (failure is ServerFailure && failure.statusCode == 409) {
+      return const Right(null);
+    }
+    return Left(_mapFailure(failure));
+  },
+  (_) => const Right(null),
+);
+```
+
+</CodeBlock>
+
+ده شغال لأن العملية نفسها ليها مفتاح طبيعي: المستخدم والحاجة اللي بيتابعها. التعليق مالوش مفتاح زي ده، فلو الطلب اتعاد (والـ `DioConsumer` بيعيد الـ POST على الـ timeout، زي ما شفنا في درس الشبكة) ممكن يتنشر التعليق مرتين. هنا كان `Idempotency-Key` اللي الكورس شرحه هيبقى الحل.
+
+<Note kind="warn" title="طريقين للـ follow">
+
+اللاعيبة والفرق والألعاب والأندية بيعملوا follow عن طريق `FCMTokenManager`، وده service للـ notifications في `core`. البطولات والأحداث بيعملوا follow عن طريق الـ repository بتاعهم. يعني نفس الفعل ليه طريقين، وواحد فيهم بيتخطى طبقة الـ data خالص. ده حصل لأن الـ follow في الأول كان معناه «اشترك في notifications»، فاتحط جنب الـ FCM. ولما بقى feature لوحده، فضل مكانه.
+
+</Note>
+
+### رحلة النتيجة اللايف
+
+في درس «رحلة request» تتبعت ضغطة زرار في كل الطبقات. هنا الرحلة معكوسة: السيرفر هو اللي بيبدأ.
+
+<Journey>
+
+<Step file="core/services/websocket/match_websocket_service.dart">
+
+السيرفر بيبعت `score_update` على الـ WebSocket. الـ service بيتأكد إن الرسالة نص وأقل من 256 KB، وبيحوّلها لـ `WsScoreUpdateEvent` (sealed class)، ويبعتها على stream خاص بالنوع ده.
+
+</Step>
+
+<Step file="features/matches/presentation/cubit/match_details/match_details_cubit.dart">
+
+الـ Cubit سامع على الـ stream. بيجمّع الأحداث اللي بتوصل في 120ms ويطبّقهم مرة واحدة، عشان 5 تحديثات ورا بعض مايعملوش 5 rebuilds.
+
+</Step>
+
+<Step file="features/matches/domain/utils/match_update_helper.dart">
+
+`MatchUpdateHelper.applyScoreUpdate` بيطلّع `MatchEntity` جديدة بالنتيجة الجديدة. Dart صافي وعليه تستات.
+
+</Step>
+
+<Step file="match_details_cubit.dart">
+
+الـ Cubit بيعمل emit للـ state الجديدة، وبعدين بيكتب الماتش الجديد في الـ cache.
+
+</Step>
+
+</Journey>
+
+<CodeBlock label="match_details_cubit.dart">
+
+```dart
+safeEmit(currentState.copyWith(match: finalMatch));
+
+// M-17: keep the offline cache aligned with the live state so a
+// background+reopen doesn't surface pre-WS scores.
+if (!identical(finalMatch, match)) {
+  _matchesRepository.patchCachedMatch(finalMatch);
+}
+```
+
+</CodeBlock>
+
+الخطوة الأخيرة دي مهمة: من غيرها، لو قفلت الـ app وفتحته، هيعرض النتيجة القديمة اللي في Hive لحد ما الطلب يرجع. والكومنت فيه رقم الـ issue (M-17)، فأي حد يقدر يعرف ليه السطر ده موجود.
+
+والـ WebSocket نفسه معمول كويس: reconnect بـ exponential backoff مع jitter ±20%، وping كل 25 ثانية، والاتصال بيتقفل لما الـ app يروح الخلفية ويتفتح تاني لما يرجع، وبيعمل subscribe تاني على نفس الماتشات بعد الـ reconnect.
+
+### اللي كان محتاج حاجة من الوحدة دي
+
+<Note kind="warn" title="1. الـ cache مش مربوط بالمستخدم">
+
+مفاتيح الـ Hive cache فيها اللغة بس (`ar_tournament_detail_123`)، ومفيهاش id المستخدم. والـ response فيه `isFollowing`، وده خاص بكل مستخدم. والـ logout بيمسح الـ caches اللي في الـ memory والـ HTTP cache، بس مابيمسحش Hive. يعني لو عملت logout ودخلت بحساب تاني والنت ضعيف، ممكن تشوف حالة الـ follow بتاعة الحساب القديم. الحل واحد من اتنين: id المستخدم يبقى جزء من المفتاح، أو الـ logout يمسح Hive كمان.
+
+</Note>
+
+<Note kind="warn" title="2. أحداث الـ WebSocket مش مترتبة">
+
+كل event فيه `timestamp`، بس الكود مابيقارنهوش. الـ app معتمد إن النتيجة في كل event هي النتيجة الكاملة، مش «+1»، فالـ event اللي بيوصل متأخر هيكتب نتيجة قديمة فوق الجديدة لحد الـ event اللي بعده. درس الـ conflicts قال: لو عندك `updatedAt`، استخدمه. سطر واحد كان هيكفي: `if (event.timestamp.isBefore(lastApplied)) return;`.
+
+</Note>
+
+وكمان الـ states فيها `isFromCache`، بس قيمتها `!_isOnline` مش «البيانات جاية من الـ cache فعلًا»، ومفيش شاشة بتعرضها. فالمستخدم مابيعرفش إن اللي قدامه نسخة قديمة.
+
+### لو هنعيدها
+
+1. نفس القرار: remote-first مع cache. ده كان صح لـ app زي ده.
+2. أي cache فيه بيانات خاصة بالمستخدم، مفتاحه فيه id المستخدم، وبيتمسح مع الـ logout.
+3. طريق واحد للـ follow، عن طريق الـ repository.
+4. `Idempotency-Key` لأي POST مالوش مفتاح طبيعي، زي التعليق وتذكرة الدعم.
+5. شريط «آخر تحديث من X دقيقة» لما الشاشة تعرض بيانات من الـ cache وهي أوفلاين.
+
+<Quiz>
+
+<Question id="escore-offline-1">
+<Ask>إمتى offline-first يبقى قرار غلط؟ استخدم Escore كمثال.</Ask>
+<Answer>
+
+لما البيانات بتاعة السيرفر مش المستخدم، وقيمتها بتقل بسرعة مع الوقت، والكتابة قليلة. في Escore النتيجة اللايف بعد دقايق مالهاش لازمة، والمستخدم بيقرا أغلب الوقت. فالـ DB المحلية كمصدر حقيقة هتضيف sync وconflicts وmigrations من غير ما المستخدم يستفيد حاجة. الـ cache بالـ TTL بيدّي نفس الإحساس بالسرعة بتعقيد أقل بكتير.
+
+</Answer>
+</Question>
+
+<Question id="escore-offline-2">
+<Ask>`FollowIntentRegistry` بيحل مشكلة إيه بالظبط؟</Ask>
+<Answer>
+
+المستخدم بيدوس follow، فالزرار بيتغير على طول. بس فيه طلب تاني كان طالع قبل الضغطة (refresh لليست مثلًا)، وده رجع بعدها وفيه `isFollowing: false`. لو صدّقناه، الزرار هيرجع لحالته القديمة كأن الضغطة ماحصلتش. الـ registry بيفتكر الضغطة لمدة 90 ثانية، وأي response في الفترة دي بيتعدّل عشان يطابقها. وبعد الـ 90 ثانية السيرفر بيرجع هو المرجع، عشان لو المستخدم غيّر من جهاز تاني التغيير يظهر.
+
+</Answer>
+</Question>
+
+<Question id="escore-offline-3">
+<Ask>ليه الـ 409 على الـ follow ينفع يتحسب نجاح، ونفس الفكرة ماتنفعش للتعليق؟</Ask>
+<Answer>
+
+الـ follow ليه مفتاح طبيعي: المستخدم والحاجة اللي بيتابعها. فالسيرفر يقدر يعرف إنه متكرر ويرجّع 409، والنتيجة النهائية هي نفسها. التعليق مالوش مفتاح طبيعي: تعليقين بنفس النص ممكن يبقوا مقصودين. فالسيرفر مايعرفش يفرّق بين «retry» و«تعليق جديد»، وده بالظبط شغل الـ `Idempotency-Key`.
+
+</Answer>
+</Question>
+
+</Quiz>

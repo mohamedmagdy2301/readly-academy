@@ -1,0 +1,112 @@
+---
+title: "Escore: المشروع الحقيقي جنب Readly"
+description: "إيه هو Escore، وحجمه بالأرقام، وهيكله، وإزاي تقرا درس «في Escore» اللي في آخر كل وحدة."
+minutes: 10
+draft: true
+---
+
+Readly هو المعمل: مشروع صغير بتتعلّم عليه كل أداة صح من الأول. Escore بقى مشروع حقيقي: app منشور على الـ stores، وعليه مستخدمين، وفريق، وdeadlines. في آخر كل وحدة هتلاقي درس اسمه «في Escore»، بيوريك نفس أفكار الوحدة اتطبّقت إزاي في Escore: فين المنهجية نفعت، وفين اختصرنا، وفين اختصرنا غلط.
+
+الهدف مش إننا نمدح المشروع ولا نجلده. الهدف إنك تشوف الفرق بين «الكود في الكورس» و«الكود بعد أكتر من ألفين commit»، لأن ده اللي هتقابله في أول شغل.
+
+### Escore بيعمل إيه
+
+Escore هو app نتايج وأخبار للـ esports: ماتشات بنتيجة لايف، وبطولات بـ brackets وجداول ترتيب، وأخبار بتعليقات وreactions، وتقدر تتابع لاعيبة وفرق وألعاب وأندية، وتجيلك notifications بالتفاصيل. وفيه كمان صفحة Discover وبحث، وwidget على شاشة الـ iPhone.
+
+الفرق الأساسي عن Readly: Escore أغلبه **قراية** لبيانات بتتغير كل ثانية (النتيجة اللايف)، والكتابة فيه قليلة (follow، vote، تعليق). وده هيفرق جامد لما نيجي للـ offline في الوحدة 4.
+
+### بالأرقام
+
+| | Readly (في آخر الكورس) | Escore |
+| --- | --- | --- |
+| الـ features | 5 | 16 |
+| ملفات Dart في `lib/` | حوالي 100 | حوالي 1,740 |
+| سطور الكود | آلاف قليلة | حوالي 174 ألف |
+| الـ Cubits | حوالي 10 | 72 (ومفيش ولا Bloc) |
+| ملفات الـ use cases | لكل قاعدة حقيقية | 79 |
+| ملفات التست | تغطية فوق 90% للـ domain والـ data | 70 ملف، ومفيش تستات للـ API ولا الـ DI |
+| الـ CI | من الأسبوع 1 | مفيش |
+| التقسيم | packages في الأسبوع 6 | package واحدة |
+
+الأرقام دي مش للمقارنة «مين أحسن». Readly معمول عشان يعلّم، وEscore معمول عشان ينزل. بس كل سطر في الجدول ده وراه قرار، وهنتكلم عن كل قرار في وحدته.
+
+### الهيكل
+
+Escore ماشي feature-first زي Readly بالظبط، مع `core/` كبير:
+
+```text
+lib/
+├─ main.dart                 # 15 lines: system UI, then runApp(AppInitializer)
+├─ escore_app.dart           # MaterialApp.router + global providers
+├─ core/
+│  ├─ api/                   # ApiConsumer, DioConsumer, interceptors, EndPoints
+│  ├─ base/                  # BaseCubit, UseCase, OfflineAwareRepository
+│  ├─ dependency_injection/  # get_it: one module per feature
+│  ├─ error/                 # Failure hierarchy
+│  ├─ router/                # go_router, guards, deep links
+│  ├─ storage/               # LocalStorage, SecureStorage
+│  ├─ services/              # websocket, notifications, offline cache, ...
+│  └─ ...                    # language, styles, utils, extensions
+└─ features/
+   ├─ tournaments/           # data / domain / presentation
+   ├─ matches/
+   ├─ news/
+   ├─ following/
+   └─ ... 12 more
+```
+
+| الـ feature | data / domain / presentation | ملاحظة |
+| --- | --- | --- |
+| tournaments | ✓ ✓ ✓ | الأكبر: 381 ملف وحوالي 33 ألف سطر |
+| matches | ✓ ✓ ✓ | 8 Cubits وuse case واحد بس، عن قصد |
+| news | ✓ ✓ ✓ | 20 use case: أكتر feature ماشية «بالكتاب» |
+| following | ✓ ✓ ✓ | لاعيبة وفرق وألعاب، كل واحد بـ repository لوحده |
+| auth | ✓ ✓ ✓ | دخول بالإيميل وGoogle وApple وكـ guest |
+| settings | ✓ ✓ ✓ | الـ domain موجود على الـ disk ومحدش بيستخدمه |
+| app_config | ✓ ✓ ✓ | أصغر feature كاملة: force update وmaintenance |
+| layout, splash, notification_inbox | presentation بس | شاشات من غير بيانات خاصة بيها |
+
+يعني 13 feature من 16 فيها التلات طبقات. لحد هنا الهيكل شبه Readly. الفرق بيبان لما تفتح الملفات نفسها، وده موضوع باقي الدروس.
+
+### إزاي تقرا دروس Escore
+
+كل درس «في Escore» ماشي بنفس الترتيب تقريبًا لكل فكرة:
+
+1. **الكورس بيقول إيه**، في سطر أو اتنين، عشان تفتكر.
+2. **عملنا إيه في Escore**، بمقتطف حقيقي من الكود ومسار الملف (المسارات كلها من جوه `lib/`).
+3. **ليه**: السبب الحقيقي، حتى لو كان «ماكانش فيه وقت».
+4. **لو هنعيدها**: الحاجة اللي هتعملها انت من أول يوم في مشروعك.
+
+<Note kind="info" title="المقتطفات مختصرة">
+
+الكود في الدروس دي منقول من Escore بس متقصّر: شلنا الـ logs والتفاصيل اللي مش في الموضوع، ومفيش أي URLs أو keys. لو رقم سطر مش مظبوط بالحرف، فده لأن المشروع لسه شغال وبيتغير.
+
+</Note>
+
+<Note kind="warn" title="Escore مش «المثال الصح»">
+
+لما تلاقي حاجة في Escore عكس اللي في الكورس، ماتفترضش إن الكورس غلط. أغلب الاختلافات اتعملت تحت ضغط وقت، وكتير منها متسجّل في `docs/architecture/_inventory/risk-register.md` جوه المشروع كـ debt لازم يتسد. والعكس كمان: فيه حاجات Escore عملها أحسن من أي مثال في كورس، لأنها اتختبرت على مستخدمين حقيقيين.
+
+</Note>
+
+<Quiz>
+
+<Question id="escore-start-1">
+<Ask>إيه أهم فرق في طبيعة البيانات بين Readly وEscore، وهيأثر على إيه؟</Ask>
+<Answer>
+
+Readly بيكتب كتير (مكتبتك، الحالة، الملاحظات) ومحتاج يشتغل أوفلاين، فالـ DB المحلية هي مصدر الحقيقة. Escore أغلبه قراية لبيانات لايف بتتغير كل ثانية، والكتابة فيه قليلة. فـ Escore ماشي remote-first مع cache، مش offline-first، وده هيبان في وحدة الـ offline.
+
+</Answer>
+</Question>
+
+<Question id="escore-start-2">
+<Ask>13 feature من 16 في Escore فيها data وdomain وpresentation. ليه ده مش كفاية تقول إن المشروع ماشي Clean Architecture؟</Ask>
+<Answer>
+
+لأن الفولدرات بتقول الطبقات موجودة، بس مش بتقول الاعتماديات ماشية في الاتجاه الصح. ممكن يبقى عندك فولدر `domain` بيعمل import لـ Flutter، أو widget بتكلّم الـ HTTP client مباشرة، أو domain مكتوب ومحدش بيستخدمه. القاعدة الذهبية بتتقاس بالـ imports مش بأسماء الفولدرات.
+
+</Answer>
+</Question>
+
+</Quiz>

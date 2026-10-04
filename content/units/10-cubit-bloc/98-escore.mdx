@@ -1,0 +1,194 @@
+---
+title: "في Escore: 72 Cubit وصفر Bloc"
+description: "أنواع الـ Cubit اللي اتكتبت في Escore فعلًا، والأماكن اللي اتكتب فيها Bloc transformer بالإيد جوه Cubit، وHydratedCubit من غير المكتبة، وامتى كان Bloc هيستاهل."
+minutes: 20
+draft: true
+---
+
+الوحدة دي عدّت على كل نوع Cubit، وبعدين الـ Bloc والـ transformers، وانتهت بقرار «Cubit ولا Bloc». Escore فيه 72 Cubit وصفر Bloc، فالقرار اتاخد. بس لما تقرا الـ Cubits الكبيرة هتلاقي جواها debounce وthrottle وdroppable مكتوبين بالإيد. الدرس ده بيمشي على أنواع الـ Cubit زي ما اتشرحت في الوحدة، ويشوف كل نوع في Escore، وفي الآخر يسأل: كان المفروض Bloc فين؟
+
+### Cubit بقيمة واحدة: `Cubit<bool>`
+
+<CodeBlock label="core/admin/admin_preview_cubit.dart">
+
+```dart
+class AdminPreviewCubit extends Cubit<bool> {
+  AdminPreviewCubit({
+    required LocalStorage localStorage,
+  })  : _localStorage = localStorage,
+        super(localStorage.getBool(StorageKeys.adminShowInactive) ?? false);
+
+  final LocalStorage _localStorage;
+
+  /// Persist and apply the toggle. No-op if unchanged.
+  Future<void> setShowInactive({required bool value}) async {
+    if (value == state) return;
+    await _localStorage.setBool(StorageKeys.adminShowInactive, value);
+    emit(value);
+  }
+
+  Future<void> toggle() => setShowInactive(value: !state);
+}
+```
+
+</CodeBlock>
+
+أبسط نوع في درس «أنواع الـ Cubit»: switch بيظهر للأدمن بس، قيمته `bool`. ولاحظ إنه بيقرا قيمته الأولى من الـ storage في الـ constructor، وبيكتبها مع كل تغيير. ده **HydratedCubit مكتوب بالإيد**، في 10 سطور ومن غير المكتبة. لـ Cubit واحد بقيمة واحدة، ده اختيار معقول. لو كان فيه 10 Cubits بيعملوا كده، `hydrated_bloc` كان هيبقى أوفر.
+
+وده كمان Cubit متجرّب صح: الـ storage داخل في الـ constructor كـ `LocalStorage` interface، فالتست بيدّيله `InMemoryStorage` وخلاص.
+
+### Cubit بالـ pagination: الـ generic اللي ماحدش استخدمه
+
+`PaginatedResourceCubit<T>` في `core/base` بياخد function بتجيب صفحة، وبيعمل الـ loading والـ loadMore والـ refresh والبحث لوحده. والـ Cubit اللي بيورّثه بيبقى سطور قليلة، والـ state بتاعه typedef:
+
+```dart
+typedef EventNewsState = PaginatedResourceState<NewsArticleEntity>;
+```
+
+ده النوع اللي درس «الأنواع المتقدمة» شرحه. بس اتستخدم في 3 Cubits بس (في events)، وفيه 22 `loadMore` تانيين مكتوبين بالإيد. السبب غالبًا إنه اتكتب بعد ما أغلب الـ features خلصت، ومحدش رجع ينقلها. الـ abstraction اللي بييجي متأخر محتاج حد يعمل migration، وإلا هيفضل طريقة زيادة جنب الطرق القديمة.
+
+### Cubit بيسمع على stream
+
+<CodeBlock label="core/base/follow_sync_mixin.dart">
+
+```dart
+mixin FollowSyncMixin<S> on BaseCubit<S> {
+  StreamSubscription<FollowChange>? _followSyncSub;
+
+  void startFollowSync() {
+    _followSyncSub ??= FollowSyncBus.instance.stream.listen((change) {
+      if (isClosed) return;
+      onFollowSync(change);
+    });
+  }
+
+  /// Apply an external follow [change] to this cubit's state. Must be
+  /// idempotent and id-matched.
+  void onFollowSync(FollowChange change);
+
+  @override
+  Future<void> close() {
+    unawaited(_followSyncSub?.cancel());
+    _followSyncSub = null;
+    return super.close();
+  }
+}
+```
+
+</CodeBlock>
+
+ده الـ pattern اللي درس «Cubit متقدم» شرحه للتواصل بين Cubits من غير ما يعرفوا بعض: stream مشترك في النص، وكل Cubit بيسمع ويحدّث نفسه. ومعمول صح من ناحيتين. الـ subscription بيتلغي في `close()` جوه الـ mixin، فمحدش يقدر ينساه. وفيه `if (isClosed) return;` قبل أي حاجة.
+
+الحاجة الوحيدة اللي ناقصة إن `FollowSyncBus.instance` static. لو كان داخل في الـ constructor، كل Cubit كان هيتست بـ stream fake.
+
+#### والعكس: Cubit بيسمع على Cubit تاني من `sl`
+
+<CodeBlock label="features/discover/presentation/cubit/discover_feed/discover_feed_cubit.dart">
+
+```dart
+// Reload when an admin flips the inactive-entity preview toggle so the feed
+// switches between active-only and all (active + inactive) items.
+_adminPreview = sl<AdminPreviewCubit>();
+_adminPreviewSub = _adminPreview.stream.listen((_) {
+  DiscoverFeedCache.clear();
+  unawaited(loadDiscoverFeed(forceRefresh: true));
+});
+```
+
+</CodeBlock>
+
+نفس الكود ده متنسّخ في 5 Cubits. الفكرة سليمة (لما الـ toggle يتغير اعمل reload)، بس فيه حاجتين اتعملوا غلط: الـ Cubit بيجيب Cubit تاني من الـ service locator، وبيسمع على الـ state بتاعه مباشرة. درس «Cubit متقدم» قال إن الـ Cubit مايعرفش Cubit تاني: الاتنين يسمعوا على مصدر واحد تحت (repository أو stream)، أو الشاشة تربطهم بـ `BlocListener`.
+
+### الـ Cubits الكبيرة: transformers مكتوبة بالإيد
+
+درس الـ Bloc شرح الـ event transformers: `restartable` بيلغي الشغل القديم لما ييجي event جديد، و`droppable` بيتجاهل الـ events الجديدة لحد ما القديم يخلص، و`debounce` بيستنى المستخدم يبطّل كتابة. Escore ماعندوش Bloc، بس عنده التلاتة مكتوبين بالإيد جوه Cubits:
+
+| السلوك | في Escore | في Bloc |
+| --- | --- | --- |
+| تجاهل الضغط وفيه طلب شغال | `if (state is PrizePoolTableLoading) return;` | `droppable()` |
+| النتيجة القديمة ماتكتبش فوق الجديدة | `_fetchSeq` و`_isStale(seq)` في 4 Cubits | `restartable()` |
+| استنى المستخدم يبطّل كتابة | `Timer` بـ 300 و400 و500ms | `debounce` transformer |
+| اجمع أحداث كتير في emit واحد | buffer بـ 120ms في `MatchesListCubit` | transformer مخصوص |
+
+آخر سطر هو الأقوى:
+
+<CodeBlock label="features/matches/presentation/cubit/matches_list/matches_list_cubit.dart">
+
+```dart
+/// Coalesces WS + push score bursts (multiple matches firing simultaneously
+/// can produce 30+ events/sec total) into a single state emit per window.
+/// Per-match overwrite keeps only the latest event for each match — score
+/// payloads are absolute, not deltas, so dropping intermediates is safe.
+/// Match-end events bypass this and emit immediately (terminal state).
+static const Duration _scoreEmitWindow = Duration(milliseconds: 120);
+Timer? _scoreFlushTimer;
+final Map<String, WsScoreUpdateEvent> _pendingWsScoreEvents = {};
+final Map<String, ScoreUpdateNotification> _pendingPushScoreEvents = {};
+```
+
+</CodeBlock>
+
+مصدرين للنتايج (WebSocket وpush notifications)، وأكتر من 30 event في الثانية في وقت الذروة، وكل event بيعمل rebuild لليست كاملة. الحل: كل الأحداث بتدخل map بمفتاح id الماتش (فآخر نتيجة بس هي اللي بتفضل)، وكل 120ms بيحصل emit واحد. وحدث «الماتش خلص» بيتعدّى الـ buffer ويحصل على طول. الكومنت بيشرح ليه رمي الأحداث اللي في النص آمن: لأن النتيجة في كل event هي النتيجة الكاملة مش «+1». ده تحليل صح لازم يتعمل قبل ما ترمي أي event.
+
+### كان المفروض Bloc فين؟
+
+درس «Cubit ولا Bloc» قال: Bloc يستاهل لما الـ events نفسها ليها قواعد (ترتيب، أو إلغاء، أو تجميع)، أو لما محتاج تعرف «إيه اللي حصل» مش بس «الحالة بقت إيه». تعال نطبّق ده على Escore:
+
+| الـ Cubit | السطور | Bloc كان هيفرق؟ |
+| --- | --- | --- |
+| `SearchCubit` | صغير | **آه**: `restartable` + debounce بيحلوا الـ race اللي فيه دلوقتي في سطرين |
+| `MatchesListCubit` | 875 | **آه**: events من 3 مصادر (المستخدم والـ WebSocket والـ push)، وكل نوع ليه قاعدة: تجميع، وتعدّي على طول، وإلغاء لما اليوم يتغير |
+| `DiscoverFeedCubit` | 951 | يمكن: الفلاتر كتير والطلبات بتتداخل، و`restartable` كان هيشيل الـ `_fetchSeq` |
+| `PrizePoolTableCubit` | صغير | لأ: طلب واحد وstates بسيطة |
+| `AdminPreviewCubit` | صغير | لأ خالص |
+
+يعني القرار «Cubit في كل حتة» صح لـ 65 Cubit من 72 تقريبًا. والـ 3 أو 4 الباقيين هما بالظبط أكبر الملفات في الـ presentation، وجزء كبير من حجمهم كود بيعمل اللي Bloc بيعمله ببلاش. القاعدة مش «Cubit أو Bloc للمشروع كله»، القاعدة «Cubit افتراضيًا، وBloc للـ Cubit اللي بدأ يكتب transformers بإيده».
+
+<Note kind="interview" title="سؤال interview: Cubit عنده 900 سطر. تعمل إيه؟">
+
+الأول اعرف الـ 900 سطر فيهم إيه. في `MatchesListCubit` في Escore، الكود متقسم على: إدارة الليست، والـ WebSocket coordinator، والـ widget coordinator، وتجميع النتايج، والـ SWR cache. والحل تلات خطوات. الأولى: الـ coordinators يطلعوا classes ويتحقنوا، فيتستوا لوحدهم. التانية: لو الأحداث ليها قواعد ترتيب وتجميع، حوّل الـ Cubit لـ Bloc والقواعد تبقى transformers بدل timers وmaps. التالتة: الـ cache ينزل للـ repository. والإجابة القوية بتبدأ بـ «هقيس الأول»، مش بـ «هقسمه».
+
+</Note>
+
+### الـ Singletons: 4 من 72
+
+`AuthStatusCubit` و`SettingsCubit` و`TabsCubit` و`AdminPreviewCubit` متسجّلين singletons، والباقي factories. القاعدة في درس «الـ State management في مشروع حقيقي» هي إن الـ state العامة (المستخدم، واللغة، والثيم) بس اللي بتعيش طول عمر الـ app. والأربعة دول بيحققوا القاعدة دي. المشكلة الوحيدة هي `TabsCubit` اللي اتوفّر بـ `BlocProvider(create:)` (اتشرحت في درس Escore في وحدة الـ Presentation).
+
+### لو هنعيدها
+
+1. Cubit افتراضيًا، زي ما Escore عمل.
+2. أول ما Cubit يحتاج `Timer` للـ debounce أو رقم تسلسلي للـ race، يتحوّل لـ Bloc بـ `bloc_concurrency`.
+3. Cubit مايجيبش Cubit تاني من `sl`. التواصل بيحصل عن طريق stream في الـ data أو `BlocListener` في الشاشة.
+4. الـ streams المشتركة (`FollowSyncBus`) تدخل في الـ constructor بدل `.instance`.
+5. لو `PaginatedResourceCubit` اتعمل، كل الـ Cubits اللي بتعمل pagination تتنقل عليه، أو يتمسح.
+
+<Quiz>
+
+<Question id="escore-cubit-bloc-1">
+<Ask>`AdminPreviewCubit` بيقرا قيمته من الـ storage في الـ constructor وبيكتبها مع كل تغيير. ده HydratedCubit؟ وامتى تستخدم المكتبة بدل كده؟</Ask>
+<Answer>
+
+عمليًا آه: HydratedCubit مكتوب بالإيد لقيمة واحدة. ده معقول لـ Cubit واحد بقيمة بسيطة، والميزة إنه بيستخدم الـ `LocalStorage` interface اللي موجود أصلًا. لو كذا Cubit محتاجين نفس الكلام، أو الـ state فيها objects محتاجة serialization، `hydrated_bloc` بيوفّر الكود المكرر ومعاه الـ versioning والـ migration جاهزين.
+
+</Answer>
+</Question>
+
+<Question id="escore-cubit-bloc-2">
+<Ask>`MatchesListCubit` بيجمّع أحداث النتايج 120ms قبل ما يعمل emit. ليه رمي الأحداث اللي في النص آمن هنا، وامتى مايبقاش آمن؟</Ask>
+<Answer>
+
+آمن لأن كل event فيه النتيجة الكاملة (2-1)، مش التغيير (+1). فآخر event لكل ماتش فيه كل المعلومة، واللي قبله مالوش لازمة. لو الأحداث كانت deltas، رمي أي واحد كان هيطلّع نتيجة غلط. وكمان حدث «الماتش خلص» مابيدخلش الـ buffer أصلًا، لأنه حالة نهائية ومينفعش تتأخر ولا تضيع.
+
+</Answer>
+</Question>
+
+<Question id="escore-cubit-bloc-3">
+<Ask>Escore عنده 72 Cubit وصفر Bloc. ده قرار صح ولا غلط؟</Ask>
+<Answer>
+
+صح لأغلب الـ Cubits: طلب، وstates، ومفيش قواعد على ترتيب الأحداث. بس فيه 3 أو 4 Cubits (البحث، وليست الماتشات، والـ discover feed) كتبوا debounce وrace guards وتجميع بالإيد، ودول بالظبط اللي Bloc بيعمله بالـ transformers. يعني الغلط مش «مفيش Bloc»، الغلط إن مفيش قاعدة بتقول امتى الـ Cubit يتحوّل لـ Bloc.
+
+</Answer>
+</Question>
+
+</Quiz>

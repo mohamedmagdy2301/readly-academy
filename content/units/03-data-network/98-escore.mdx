@@ -1,0 +1,310 @@
+---
+title: "في Escore: الـ Data والشبكة والتخزين"
+description: "Models مكتوبة بالإيد بتستحمل API بيتغير، وDio واحد بسلسلة interceptors، وtoken refresh من غير طوابير، وتلات طرق للتخزين فوق نفس الـ SharedPreferences."
+minutes: 20
+draft: true
+---
+
+الوحدة دي بنت الطبقة اللي بتكلّم العالم: الـ DTO والـ mapper والـ repository، وdio بالـ interceptors، والتخزين المحلي. الطبقة دي في Escore أقوى من أي طبقة تانية فيه، لأنها اللي اتضربت أكتر من الـ production. بس فيها كمان أوضح مثال على إن الـ abstraction ممكن تبقى موجودة ومحدش يستخدمها.
+
+### الـ Models: مكتوبة بالإيد وبتستحمل أي حاجة
+
+`pubspec.yaml` فيه `freezed_annotation` و`json_serializable`، بس عدد `@freezed` و`@JsonSerializable` في المشروع صفر. كل `fromJson` مكتوب بالإيد. ده مش كسل: الـ API اتغيّر كذا مرة، وكل model بقى لازم يقبل الشكل القديم والجديد مع بعض.
+
+<CodeBlock label="features/tournaments/data/models/tournament_model.dart">
+
+```dart
+factory TournamentModel.fromJson(Map<String, dynamic> json) {
+  // Handle game/games - new API uses 'game', old API uses 'games'
+  GameModel? game;
+  if (json['game'] is Map<String, dynamic>) {
+    game = GameModel.fromJson(json['game'] as Map<String, dynamic>);
+  } else if (json['games'] is List && (json['games'] as List).isNotEmpty) {
+    game = (json['games'] as List<dynamic>)
+        .map((e) => GameModel.fromJson(e as Map<String, dynamic>))
+        .firstOrNull;
+  }
+
+  // Handle prizePool - detect format by type
+  PrizePoolModel? prizePool;
+  if (json['prizePool'] is Map<String, dynamic>) {
+    prizePool = PrizePoolModel.fromJson(json['prizePool'] as Map<String, dynamic>);
+  } else if (json['prizePool'] is num) {
+    // Legacy format - convert to new structure
+    prizePool = PrizePoolModel(total: (json['prizePool'] as num).toDouble());
+  }
+
+  return TournamentModel(
+    id: json['id'] as String? ?? json['_id'] as String? ?? '',
+    // ...
+  );
+}
+```
+
+</CodeBlock>
+
+ده بالظبط اللي اتقال عن الـ `description` بتاع Open Library، اللي مرة نص ومرة object: الـ DTO هو المكان الوحيد اللي بيعرف إن الـ API وحش، وكل اللي بعده بيشوف شكل واحد نضيف.
+
+<Note kind="warn" title="أربع طرق للـ mapping في مشروع واحد">
+
+فيه 33 ملف `data/mappers/*_mapper.dart` (الطريقة الأساسية)، و7 models فيهم `toEntity()`، وفيه «model» مابيعملش object خالص، زي `PrizePoolTableModel.fromJson` اللي بيرجّع entity على طول، وفي search مفيش model أصلًا والـ mapper بيقرا الـ JSON ويطلّع entity. أي طريقة فيهم لوحدها كانت هتبقى كويسة. الأربعة مع بعض معناها إن كل مطوّر جديد لازم يسأل «أعمل إيه هنا؟».
+
+</Note>
+
+### الـ data source بيتحقق من الشكل قبل ما يعمل cast
+
+أحسن حاجة في طبقة الـ data في Escore هي ميثود صغيرة في data source البطولات:
+
+<CodeBlock label="tournaments_remote_datasource.dart">
+
+```dart
+static Either<Failure, Map<String, dynamic>> _requireMap(
+  dynamic r, {
+  String context = 'response',
+}) {
+  if (r is Map<String, dynamic>) return right(r);
+  return left(
+    ServerFailure(
+      'Unexpected $context shape: expected object, got '
+      '${r?.runtimeType ?? 'null'}',
+    ),
+  );
+}
+```
+
+</CodeBlock>
+
+بدل `r as Map<String, dynamic>` اللي بيرمي `TypeError` ويوقّع الشاشة، الشكل الغلط بيتحوّل لـ Failure عادية. والـ repository بتاع البطولات فيه `_parseList` بيتخطى العناصر البايظة في أي ليست، وبيرجّع `ValidationFailure` بس لو أكتر من نصهم باظ.
+
+بس ده في data source البطولات بس. عدّينا الـ casts المباشرة في الباقيين: more فيها 8، وevents وfollowing وsettings 7 لكل واحدة، وclubs 6، وauth 6، وmatches 5. التطبيق الكويس ماتنقلش لباقي المشروع.
+
+### Dio: client واحد، وكل حاجة في interceptor
+
+<CodeBlock label="core/api/dio_consumer/dio_configurator.dart">
+
+```dart
+static void configure(Dio dio) {
+  // SSL bypass requires BOTH kDebugMode AND the explicit --dart-define flag.
+  if (kDebugMode && _allowSslBypass) {
+    _setUpCertificateBypass(dio);
+  }
+  _addRequestInterceptor(dio);   // headers, timeouts, debug log
+  _addAuthInterceptor(dio);      // token + refresh, before logging
+  final cache = HttpCache.interceptor;
+  if (cache != null) dio.interceptors.add(cache);
+  _addResponseInterceptor(dio);
+  _addErrorInterceptor(dio);
+  if (!kDebugMode) {
+    dio.interceptors.add(FirebasePerfInterceptor());
+  }
+}
+```
+
+</CodeBlock>
+
+ده OCP اللي في درس SOLID بالظبط: الـ caching ومقاييس الأداء دخلوا كـ interceptors جديدة من غير ما حد يفتح الـ client. ولاحظ إن الـ SSL bypass محتاج debug **و**flag صريح، فمستحيل يوصل لـ release بالغلط.
+
+والـ request interceptor بيحط headers مهمة على كل طلب: `X-Language` عشان السيرفر يرجّع البيانات مترجمة، و`X-Device-Id` عشان الـ guests يتعدّوا، و`Accept-Encoding: gzip`، والكومنت جنبه بيقول إن الـ response الكبير نزل من حوالي 63 KB لـ 13 KB.
+
+#### قرار ليه تمن: `validateStatus`
+
+<CodeBlock label="dio_configurator.dart">
+
+```dart
+options
+  ..baseUrl = sl<AppEnvironment>().baseApiUrl
+  ..connectTimeout = _timeout          // 60 seconds
+  ..receiveTimeout = _timeout
+  ..validateStatus = (status) =>
+      status != null && status < StatusCode.internalServerError;
+```
+
+</CodeBlock>
+
+`validateStatus` ده معناه إن أي 4xx بيرجع `Response` عادي مش `DioException`. ده بيسهّل قراية الـ error body، بس ليه تمنين. الأول إن الـ 401 لازم يتعالج مرتين في `AuthInterceptor`، مرة في `onResponse` ومرة في `onError`، والكود متكرر تقريبًا سطر بسطر. التاني إن الـ `baseUrl` والـ timeouts بيتحطوا في interceptor على كل request بدل `BaseOptions` مرة واحدة.
+
+### الـ Token refresh: طلب refresh واحد مهما كان عدد الطلبات
+
+لما شاشة بتبعت 5 طلبات مع بعض والـ token منتهي، الخمسة هيرجعوا 401. لو كل واحد عمل refresh لوحده، أول refresh هيلغي الـ refresh token والأربعة الباقيين هيفشلوا ويطلّعوا المستخدم بره. Escore حل ده بـ `Completer`:
+
+<CodeBlock label="core/api/dio_consumer/auth_interceptor.dart">
+
+```dart
+Future<String?> _refreshToken() async {
+  // If already refreshing, wait for the existing refresh to complete
+  if (_isRefreshing && _refreshCompleter != null) {
+    return _refreshCompleter!.future;
+  }
+  _isRefreshing = true;
+  _refreshCompleter = Completer<String?>();
+  // ... call the refresh endpoint with a separate Dio that has no interceptors
+}
+
+void _completeRefresh(String? token) {
+  _refreshCompleter?.complete(token);
+  _isRefreshing = false;
+  _refreshCompleter = null;
+}
+```
+
+</CodeBlock>
+
+وفوق ده تلات حاجات معمولة صح. الـ refresh بيستخدم `Dio` منفصل من غير interceptors، فمفيش loop. والـ refresh بيحصل بدري لو فاضل أقل من يوم على انتهاء الـ token، قبل ما أي طلب يفشل. وفيه كومنت بيشرح bug قديم: الـ refresh token كان ليه نسخة احتياطي في SharedPreferences، فالـ sessions اللي عملت logout كانت بترجع تاني. دلوقتي الـ refresh token في الـ secure storage بس.
+
+<Note kind="warn" title="اللي ناقص">
+
+الطلب اللي بيتعاد بعد الـ refresh مافيهوش علامة «اتعاد قبل كده»، فلو رجع 401 تاني الـ interceptor ممكن يحاول تاني. في درس dio والشبكة، الـ `AuthInterceptor` بتاع Readly بيحط `extra['retried'] = true` على الطلب المتعاد عشان يمنع ده. وكمان بيعلّم طلبات الـ login بـ `skipAuth`، عشان الباسورد الغلط مايعملش refresh.
+
+</Note>
+
+### الـ Retry: كل الـ methods، حتى الـ POST
+
+الـ retry في Escore مش interceptor، ده جوه `DioConsumer._safeApiCall`: لحد 3 محاولات على الـ timeout والـ connection error والـ 5xx، والانتظار 1 ثم 2 ثم 4 ثواني. وده بيحصل على **كل** الـ methods. الكورس قال إن الـ retry للطلبات الـ idempotent بس، لأن POST اتعاد ممكن يتنفّذ مرتين. Escore معتمد إن السيرفر بيرجّع 409 لو الـ follow متكرر، والـ app بيعتبر 409 نجاح. ده شغال للـ follow، بس مش هيشتغل لتذكرة دعم فني اتبعتت مرتين. ومع timeout 60 ثانية و4 محاولات، طلب واحد ممكن ياخد حوالي 4 دقايق في أسوأ حالة.
+
+### الـ HTTP cache والـ RefreshZone
+
+الـ HTTP cache مقفول افتراضيًا، وكل طلب عايزه بيطلبه بنفسه:
+
+<CodeBlock label="core/api/dio_consumer/http_cache_interceptor.dart">
+
+```dart
+// Default: do NOT cache anything. Requests opt-in via [requestExtra].
+static CacheOptions get _defaultOptions => CacheOptions(
+  store: _store,
+  policy: CachePolicy.noCache,
+  hitCacheOnErrorExcept: const [401, 403],
+  maxStale: const Duration(days: 7),
+  keyBuilder: _keyBuilder,
+);
+
+static Map<String, dynamic> get requestExtra {
+  if (RefreshZone.isRefreshing) return refreshExtra;
+  return CacheOptions(/* honor server Cache-Control + ETag */).toExtra();
+}
+```
+
+</CodeBlock>
+
+الـ key بتاع الـ cache فيه الـ URL واللغة وhash للـ token وبلد الجهاز، فمستخدمين مختلفين أو لغتين مختلفتين مش هيشوفوا نفس الـ response. والماتشات اللايف مش بتطلب cache خالص.
+
+أما `RefreshZone` فدي حيلة تستاهل تتعلّمها:
+
+<CodeBlock label="core/api/dio_consumer/refresh_zone.dart">
+
+```dart
+class RefreshZone {
+  static const _key = #escore.forceRefresh;
+
+  static Future<T> run<T>(Future<T> Function() body) =>
+      runZoned(body, zoneValues: {_key: true});
+
+  static bool get isRefreshing => Zone.current[_key] == true;
+}
+```
+
+</CodeBlock>
+
+الـ pull-to-refresh بيلف الاستدعاء في `RefreshZone.run(() => cubit.refresh())`، وتحت خالص في الـ data source بيتقري `RefreshZone.isRefreshing` ويتعدّى الـ cache. يعني مفيش `forceRefresh: true` بيعدّي في Cubit وuse case وrepository وdata source. الـ Zone بتشيل المعلومة لوحدها في كل الـ async calls.
+
+### الـ Interface اللي اتعمل ومحدش استخدمه
+
+فيه `abstract class ApiConsumer` بـ `get` و`post` و`put` و`patch` و`delete`، و`DioConsumer` بيعمله implement. بس الـ DI بيسجّل الـ class الحقيقي:
+
+```dart
+..registerLazySingleton(() => DioConsumer(client: sl<Dio>()))
+```
+
+و13 data source بياخدوا `DioConsumer` مش `ApiConsumer`. data source البطولات بس بياخد الـ interface، وعلشان كده هو الوحيد اللي ليه تست بـ `_FakeApiConsumer`. الـ interface ماعملش أي فرق إلا في المكان الوحيد اللي اتستخدم فيه.
+
+### التخزين المحلي
+
+#### الـ interfaces معمولة صح
+
+`core/storage/` فيه `LocalStorage` و`SecureStorage` كـ interfaces، ولكل واحد implementation حقيقي وواحد في الـ memory للتستات (`InMemoryStorage` و`InMemorySecureStorage`). والـ secure storage فيه optimization متوثّق كويس:
+
+<CodeBlock label="core/storage/secure_storage.dart">
+
+```dart
+/// Every [read] otherwise hits the platform channel (Android Keystore /
+/// EncryptedSharedPreferences, iOS Keychain). That call is slow and
+/// serializes: when a screen fires several API requests at once, each one's
+/// `Authorization` header + proactive-refresh check triggers a fresh token
+/// read, and under that contention individual reads spiked to 100–700ms on
+/// the main isolate — the dominant cold-start request latency.
+final Map<String, String?> _cache = {};
+
+@override
+Future<String?> read(String key) async {
+  if (_cache.containsKey(key)) return _cache[key];
+  final value = await _storage.read(key: key, /* options */);
+  _cache[key] = value;
+  return value;
+}
+```
+
+</CodeBlock>
+
+الـ cache ده آمن لأن الـ class مسجّل lazy singleton وكل الكتابة بتعدّي عليه، فمستحيل يبقى قديم. ده نوع الكومنتات اللي يستاهل تكتبه: الرقم اللي قِسته، وليه الحل ده آمن.
+
+#### بس فيه تلات طرق فوق نفس الـ SharedPreferences
+
+| الـ API | النوع | بيستخدمه |
+| --- | --- | --- |
+| `LocalStorage` | interface وtyped | الكود الجديد |
+| `CacheManager` | singleton قديم، `setData(key, dynamic)` | settings، و`UserModel`، و`AuthInterceptor` |
+| دوال global في `cache_helper.dart` | `getTokenUser()` و`getIsGuestUser()` | الـ router guards وحوالي 35 ملف |
+
+والأسوأ إن فيه ملفين keys، والاتنين اسمهم `CacheKey`، وبيدّوا قيم مختلفة لنفس المعنى: الثيم `'theme_mode'` في واحد و`'save_theme_mode'` في التاني، واسم المستخدم `'user_username'` في واحد و`'user_user_name'` في التاني. أنهي واحد هيتقري؟ على حسب الـ import اللي في الملف.
+
+#### Hive بدل drift، والـ migrations بالإضافة بس
+
+Escore مش بيستخدم drift. المحتوى المحلي اتنين: صناديق Hive للغات والثيمات، وcache للـ responses كـ JSON (وده موضوع درس الـ offline). الـ migration في الـ Hive models ماشية بقاعدة واحدة: أي field جديد بياخد `defaultValue` أو بيبقى nullable، فالـ records القديمة بتتقري عادي:
+
+```dart
+@HiveField(4, defaultValue: true)
+final bool isActive;
+
+@HiveField(5)
+final String? dictionaryUpdatedAt;
+```
+
+والـ offline cache عنده رقم version لكله (`CacheConfig.cacheVersion`)، ولو اتغير بيتمسح كله ويتبني من الأول. ده مقبول لأنه cache، مش بيانات المستخدم. لو عندك بيانات المستخدم هو اللي كتبها، زي مكتبة Readly، المسح مش حل، ولازم migrations حقيقية زي درس drift.
+
+### لو هنعيدها
+
+1. Model + Mapper class، وطريقة واحدة بس في المشروع كله.
+2. `_requireMap` تبقى في `core` وكل data source يستخدمها، ومفيش `as Map` مباشر.
+3. الـ retry interceptor بيعيد GET وPUT وDELETE بس، والـ POST بس لو معاه `Idempotency-Key`.
+4. يتسجّل `ApiConsumer` في الـ DI مش `DioConsumer`، وساعتها كل data source يتست بـ fake.
+5. API تخزين واحد وملف keys واحد، ولو فيه key قديم بيتنقل مرة واحدة في الـ startup بـ migration صغيرة.
+
+<Quiz>
+
+<Question id="escore-data-1">
+<Ask>شاشة بتبعت 4 طلبات مع بعض والـ access token منتهي. إيه اللي بيحصل في `AuthInterceptor` بتاع Escore؟</Ask>
+<Answer>
+
+أول طلب يرجع 401 بيبدأ الـ refresh: بيعمل `Completer` وبيحط `_isRefreshing = true`. التلاتة الباقيين بيلاقوا refresh شغال، فبيستنوا نفس الـ `future`. لما الـ refresh يخلص، الـ completer بيدّي الـ token الجديد للأربعة، وكل واحد بيعيد طلبه. في الآخر حصل refresh واحد بس، والـ refresh token مااتحرقش.
+
+</Answer>
+</Question>
+
+<Question id="escore-data-2">
+<Ask>`RefreshZone` بيحل مشكلة إيه، وليه أحسن من `forceRefresh: true`؟</Ask>
+<Answer>
+
+الـ pull-to-refresh لازم يتعدّى الـ HTTP cache، والمعلومة دي مكانها الشاشة بس الـ cache تحت خالص في الـ data source. `forceRefresh` كان هيبقى parameter في الـ Cubit والـ use case والـ repository والـ data source، وكل method جديدة لازم تفتكره. الـ Zone بتشيل القيمة لوحدها في كل الاستدعاءات الـ async اللي جوه `run`، والـ data source بيقراها من غير ما حد في النص يعرف عنها حاجة.
+
+</Answer>
+</Question>
+
+<Question id="escore-data-3">
+<Ask>ليه مسح الـ offline cache كله لما الـ version يتغير مقبول في Escore ومش مقبول في مكتبة Readly؟</Ask>
+<Answer>
+
+الـ cache في Escore نسخة من بيانات السيرفر، فلو اتمسح أقصى حاجة إن الـ app هيجيبها تاني. أما مكتبة Readly فممكن يبقى فيها كتب وملاحظات المستخدم ضافها أوفلاين ولسه ماوصلتش للسيرفر. لو مسحتها هتضيع خالص، فلازم migration بتنقل البيانات للشكل الجديد.
+
+</Answer>
+</Question>
+
+</Quiz>

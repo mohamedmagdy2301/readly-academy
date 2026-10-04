@@ -1,0 +1,244 @@
+---
+title: "في Escore: الطبقات من الـ entity للشاشة"
+description: "feature حقيقية في Escore ملف بملف، وفين القاعدة الذهبية اتحرست، وفين اتكسرت ومحدش خد باله."
+minutes: 15
+draft: true
+---
+
+في درس «أول feature ملف بملف» بنيت صفحة تفاصيل الكتاب طبقة طبقة. هنا هنمشي نفس المشوار في Escore على feature البطولات: صفحة البطولة وجدول الجوايز (prize pool) بتاعها. وبعدين هنقيس القاعدة الذهبية على المشروع كله بالأرقام.
+
+### المشوار ملف بملف
+
+| الخطوة | الملف في Escore |
+| --- | --- |
+| الـ Entity | `features/tournaments/domain/entities/tournament_entity.dart` |
+| الـ contract | `features/tournaments/domain/repositories/tournaments_repository.dart` |
+| الـ use case | `features/tournaments/domain/usecases/get_prize_pool_table_usecase.dart` |
+| الـ data source | `features/tournaments/data/data_source/tournaments_remote_datasource.dart` |
+| الـ Model والـ Mapper | `data/models/tournament_model.dart` و`data/mappers/tournament_mapper.dart` |
+| الـ repository impl | `features/tournaments/data/repositories/tournaments_repository_impl.dart` |
+| الـ DI | `core/dependency_injection/tournaments_di.dart` |
+| الـ Cubit والـ state | `presentation/cubit/prize_pool_table/` |
+| الشاشة | `presentation/screens/tournament_details_screen.dart` |
+
+نفس ترتيب Readly بالظبط. وده مش صدفة: لما الترتيب ثابت، أي حد جديد في الفريق بيعرف يلاقي أي حاجة من غير ما يسأل.
+
+#### الـ data source: بيرجّع JSON خام
+
+<CodeBlock label="tournaments_remote_datasource.dart">
+
+```dart
+Future<Either<Failure, Map<String, dynamic>>> getTournamentWithId({
+  required String id,
+}) async {
+  final response = await dioConsumer.get(
+    EndPoints.tournamentById(id),
+    extra: HttpCache.requestExtra,
+  );
+  return response.fold(
+    left,
+    (r) {
+      if (r is Map<String, dynamic>) return right(r);
+      return left(const ServerFailure('Invalid response format'));
+    },
+  );
+}
+```
+
+</CodeBlock>
+
+حاجتين مختلفين عن Readly. الأولى إن الـ data source بيرجّع `Either` على طول بدل ما يرمي exception، لأن الـ HTTP client نفسه بيرجّع `Either` (التفاصيل في درس Escore في وحدة الأخطاء). التانية إنه بيرجّع `Map` مش Model، والتحويل بيحصل في الـ repository.
+
+#### الـ repository: JSON ثم Model ثم Entity
+
+<CodeBlock label="tournaments_repository_impl.dart">
+
+```dart
+@override
+Future<Either<Failure, TournamentEntity>> getTournamentById(String id) {
+  return fetchWithCache(
+    cacheKey: CacheKeyHelper.detail('tournament', id),
+    ttl: CacheConfig.detailsTtl,
+    apiFn: () => _remoteDataSource.getTournamentWithId(id: id),
+    fromJson: (json) {
+      final model = TournamentModel.fromJson(json);
+      return TournamentMapper.toEntity(model);
+    },
+  );
+}
+```
+
+</CodeBlock>
+
+`fetchWithCache` جاية من mixin اسمه `OfflineAwareRepository`، وهو اللي بيقرر يكلّم السيرفر ولا يرجّع من الـ cache. الـ repository نفسه بقى 10 سطور.
+
+#### الـ Cubit: بيكلّم الـ use case بس
+
+<CodeBlock label="prize_pool_table_cubit.dart">
+
+```dart
+class PrizePoolTableCubit extends BaseCubit<PrizePoolTableState> {
+  PrizePoolTableCubit({
+    required GetPrizePoolTableUseCase getPrizePoolTableUseCase,
+  })  : _useCase = getPrizePoolTableUseCase,
+        super(const PrizePoolTableInitial());
+
+  final GetPrizePoolTableUseCase _useCase;
+
+  Future<void> loadPrizePool(String tournamentId) async {
+    if (state is PrizePoolTableLoading) return;
+    safeEmit(const PrizePoolTableLoading());
+
+    final result = await _useCase(tournamentId);
+    result.fold(
+      (failure) => safeEmit(PrizePoolTableError(message: failure.message)),
+      (tables) => safeEmit(PrizePoolTableLoaded(tables: tables)),
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+ده أنضف Cubit في المشروع، وشبه Readly حرفيًا: مايعرفش dio ولا Hive ولا الـ JSON، وكل اللي يعرفه use case وstates.
+
+#### الـ DI: مكان واحد بيعرف الـ implementations
+
+<CodeBlock label="tournaments_di.dart">
+
+```dart
+..registerLazySingleton<TournamentsRemoteDataSource>(
+  () => TournamentsRemoteDataSourceImpl(dioConsumer: sl<DioConsumer>()),
+)
+..registerLazySingleton<TournamentsRepository>(() {
+  return TournamentsRepositoryImpl(
+    remoteDataSource: sl<TournamentsRemoteDataSource>(),
+  );
+})
+..registerLazySingleton<GetTournamentDetailsUseCase>(() {
+  return GetTournamentDetailsUseCase(
+    repository: sl<TournamentsRepository>(),
+  );
+})
+```
+
+</CodeBlock>
+
+#### البداية: `main` تقريبًا فاضية
+
+`main.dart` في Escore 15 سطر: بيظبط الـ system UI والاتجاه، وبعدين `runApp(AppInitializer())`. كل التجهيز (Firebase، وHive، والـ DI، والإعدادات) بيحصل جوه `core/app/app_initializer_screen.dart` وشاشة الـ splash ظاهرة بشريط تقدّم. الفايدة إن المستخدم بيشوف حاجة من أول frame. والتمن إن الـ DI بقى بيتسجّل جوه widget، وده هنرجعله في درس Escore في وحدة الـ DI.
+
+### القاعدة الذهبية: بالأرقام
+
+القاعدة: الاعتماديات بتشاور لجوه بس. الـ domain مايعرفش حاجة، والـ data والـ presentation بيعرفوا الـ domain. فتحنا الـ imports في Escore كله وعدّينا:
+
+| الكسر | العدد | مثال |
+| --- | --- | --- |
+| domain بيعمل import لـ Flutter | 4 ملفات | `bracket_team_navigation_extension.dart` |
+| domain بيعمل import لـ data | ملف واحد | `bracket_entity.dart` بياخد enums من `bracket_model.dart` |
+| presentation بيعمل import لـ data | 14 ملف | أغلبها في settings |
+| presentation بيكلّم الـ HTTP client مباشرة | 8 ملفات | `teams_tournament_body_widget.dart` |
+
+الأرقام دي من مشروع فيه حوالي 1,740 ملف، يعني مش كارثة. بس كل واحد فيهم بيوريك إزاي القاعدة بتتكسر في الحقيقة.
+
+<BeforeAfter>
+
+<Side label="في Escore: navigation جوه الـ domain" kind="before">
+
+```dart
+// domain/entities/bracket_team_navigation_extension.dart
+import 'package:flutter/material.dart';
+
+extension BracketNavigationExtension on BracketTeamEntity {
+  void navigateToDetail(BuildContext context) {
+    if (isPlayer) {
+      context.goToPlayerDetailsById(
+        playerId: id, playerName: displayName);
+    } else {
+      context.goToTeamDetailsById(
+        teamId: id, teamName: displayName);
+    }
+  }
+}
+```
+
+</Side>
+
+<Side label="المكان الصح: الـ presentation" kind="after">
+
+```dart
+// presentation/utils/bracket_navigation.dart
+extension BracketNavigation on BuildContext {
+  void openBracketTeam(BracketTeamEntity team) {
+    team.isPlayer
+        ? goToPlayerDetailsById(
+            playerId: team.id, playerName: team.displayName)
+        : goToTeamDetailsById(
+            teamId: team.id, teamName: team.displayName);
+  }
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+الكود نفسه سليم، والـ doc comment بتاعه بيقول إنه «single source of truth for bracket tap navigation»، وده هدف كويس. المشكلة الوحيدة إنه اتحط في فولدر `domain` عشان بيشتغل على entity. الـ extension بيتحط جنب اللي بيستخدمه، مش جنب النوع اللي بيشتغل عليه.
+
+#### widget بيكلّم السيرفر
+
+<CodeBlock label="teams_tournament_body_widget.dart">
+
+```dart
+// TODO(TRN-M-11): route through TournamentsRepository once a typed
+// TournamentTeamEntity exists. Today the widget consumes a raw map
+// shape, so wrapping it in a repo method without an entity would
+// just shuffle the DioConsumer call to another layer without any
+// typing benefit. Pending entity design + cubit migration.
+final result = await sl<DioConsumer>().get(
+  EndPoints.tournamentTeamsPaginated(widget.tournamentId),
+  queryParameters: {
+    'page': page,
+    'limit': 20,
+    if (_searchQuery.isNotEmpty) 'search': _searchQuery,
+  },
+);
+```
+
+</CodeBlock>
+
+الكسر ده واعي ومتوثّق في TODO، والحجة اللي فيه منطقية: «لو نقلت الطلب للـ repository من غير entity، هتنقل نفس الـ Map لطبقة تانية من غير أي فايدة». بس النتيجة إن الـ widget ده شايل الـ pagination والـ debounce والـ loading والـ error بـ `setState`، ومايتستش من غير GetIt متجهز كامل.
+
+<Note kind="warn" title="ليه الكسور دي دخلت من غير ما حد ياخد باله">
+
+مفيش في Escore أي أداة بتمنع import غلط: لا lint للطبقات، ولا architecture test، ولا CI أصلًا. القاعدة عايشة في الـ code review ودماغ الفريق بس، وده بالظبط اللي درس «حراسة المعمارية» بيحذّر منه. أول import غلط بيعدّي، وبيبقى مثال للي بعده.
+
+</Note>
+
+### لو هنعيدها
+
+1. نفس ترتيب الملفات ونفس الأسماء في كل feature. ده الجزء اللي Escore نجح فيه، ومش محتاج يتغير.
+2. lint بيمنع `package:flutter` و`/data/` جوه أي فولدر `domain` من أول commit. 10 دقايق إعداد بتوفّر الـ 27 ملف اللي فوق.
+3. أي «طلب سريع من الـ widget» بيروح للـ repository حتى لو هيرجّع `Map` مؤقتًا. النقل للـ repository بيقفل الباب على الـ widget، والـ entity تيجي بعدين.
+
+<Quiz>
+
+<Question id="escore-foundations-1">
+<Ask>الـ extension اللي بيعمل navigation على `BracketTeamEntity` اتحط في `domain`. إيه المشكلة لو الكود نفسه شغال صح؟</Ask>
+<Answer>
+
+الـ domain بقى بيعمل import لـ Flutter والـ router، فمابقاش plain Dart: مايتستش بـ `dart test` لوحده، وأي تغيير في الـ routes ممكن يلمس ملف في الـ domain. الـ extension مكانه في الـ presentation جنب الـ widgets اللي بتستخدمه، حتى لو بيشتغل على entity.
+
+</Answer>
+</Question>
+
+<Question id="escore-foundations-2">
+<Ask>الـ TODO في `teams_tournament_body_widget.dart` بيقول إن نقل الطلب للـ repository من غير entity مالوش فايدة. توافق؟</Ask>
+<Answer>
+
+جزئيًا. صح إن الـ typing مش هيتحسن. بس النقل للـ repository بيجيب فوايد تانية على طول: الـ widget مابقاش يعرف dio ولا الـ endpoints، والـ pagination والـ error يدخلوا Cubit يتست بـ fake repository، والـ cache والـ offline يشتغلوا زي باقي الـ app. الـ entity ممكن تيجي في خطوة تانية من غير ما تلمس الشاشة.
+
+</Answer>
+</Question>
+
+</Quiz>

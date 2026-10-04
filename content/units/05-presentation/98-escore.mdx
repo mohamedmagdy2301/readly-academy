@@ -1,0 +1,375 @@
+---
+title: "في Escore: الـ Presentation"
+description: "72 Cubit من غير ولا Bloc، وsealed states في أغلبها، وrouter بـ StatefulShellRoute وdeep links مؤجلة، وترجمة جاية من السيرفر، وأربع طرق مختلفة توفّر بيها Cubit."
+minutes: 25
+draft: true
+---
+
+الطبقة دي في Escore أكبر طبقة في المشروع، وأكتر طبقة فيها «كل واحد عمل بطريقته». الدرس ده ماشي بنفس ترتيب الوحدة: الـ Cubit، وبعدين الـ router، والترجمة، والـ forms، والـ pagination.
+
+### الـ Cubits
+
+#### الـ states: أغلبها sealed، والاستثناءات ليها سبب
+
+من حوالي 70 ملف state: 56 مكتوبين `sealed class` مع `Equatable` (Initial وLoading وLoaded وError)، وده نفس شكل Readly. و5 مكتوبين flat: class واحدة فيها البيانات والـ flags مع بعض. والمهم إن ده متوثّق:
+
+<CodeBlock label="features/news/presentation/cubit/news_comments/news_comments_state.dart">
+
+```dart
+/// State of the comments section on a single article.
+///
+/// One flat state object instead of a sealed hierarchy: the section keeps
+/// showing the thread while a post, delete or page-load runs, so the loading
+/// flags have to coexist with the data rather than replace it.
+class NewsCommentsState extends Equatable {
+  const NewsCommentsState({
+    this.comments = const [],
+    this.isLoading = false,
+    // isPosting, isLoadingMore, message, messageNonce, ...
+  });
+```
+
+</CodeBlock>
+
+ده بالظبط سؤال درس الـ Cubit: لو الـ loading بيستبدل البيانات، sealed. لو الـ loading بيتعرض فوق البيانات، flat أو Loaded فيه flags. التعليقات لازم تفضل ظاهرة وانت بتبعت تعليق جديد، فـ flat هو الصح. وفيه كمان `messageNonce`: رقم بيزيد مع كل رسالة، عشان لو نفس الرسالة ظهرت مرتين ورا بعض، الـ `listenWhen` يشوفهم حدثين مختلفين.
+
+الاستثناء اللي مالوش سبب: 5 states في settings والـ profile مكتوبين `abstract class` من غير `Equatable`، فأي emit بيعمل rebuild حتى لو البيانات ماتغيرتش.
+
+#### الـ BaseCubit: ميثود واحدة اتستخدمت
+
+<CodeBlock label="core/base/base_cubit.dart">
+
+```dart
+abstract class BaseCubit<S> extends Cubit<S> {
+  BaseCubit(super.initialState);
+
+  void safeEmit(S state) {
+    if (!isClosed) {
+      emit(state);
+    }
+  }
+```
+
+</CodeBlock>
+
+`safeEmit` بيمنع الـ crash المشهور «Cannot emit new states after calling close»، لما المستخدم يقفل الشاشة والطلب لسه مارجعش. 66 Cubit بيورّثوا `BaseCubit`. بس نفس الملف فيه `execute` و`safeExecute` و`safeEmitAfterAsync`، و`base_state.dart` جنبه فيه hierarchy كاملة (`GenericLoadingState` و`PaginatedDataState` و4 mixins). عدد مرات استخدامهم بره `core/base` صفر.
+
+#### أربع طرق توفّر بيها Cubit
+
+| الطريقة | العدد تقريبًا | مثال |
+| --- | --- | --- |
+| `BlocProvider` جوه الـ route | 35 | `matches_routes.dart`: `create: (_) => sl<MatchesListCubit>()` |
+| `MultiBlocProvider` في الشاشة | عدة شاشات | `news_screen.dart`: 4 Cubits وواحد بشرط إن المستخدم داخل |
+| `sl<>()` في `initState` و`close()` بالإيد | 34 | `search_screen.dart` |
+| global فوق الـ app | 4 | `SettingsCubit` و`TabsCubit` و`AdminPreviewCubit` |
+
+الطريقة الأولى هي اللي في الكورس، والطريقة التالتة هي اللي بتعمل bugs: لو حد نسي الـ `close()`، الـ Cubit بيفضل عايش ويسمع على streams.
+
+<Note kind="warn" title="singleton اتوفّر بـ create">
+
+```dart
+BlocProvider(create: (_) => di.sl<TabsCubit>()),
+```
+
+`TabsCubit` متسجّل في الـ DI كـ `lazySingleton`. `BlocProvider(create:)` معناه «أنا اللي عملته وأنا اللي هقفله»، فلما الـ subtree ده يتشال الـ singleton هيتقفل، وأي حد هيطلبه من `sl` بعد كده هياخد Cubit مقفول. أي حاجة متسجّلة singleton لازم تتوفّر بـ `BlocProvider.value`.
+
+</Note>
+
+#### الـ race conditions: الحل موجود ومتنسّخ
+
+الكورس قال إن البحث لازم يرمي النتايج القديمة. في Escore فيه حلين مختلفين:
+
+<BeforeAfter>
+
+<Side label="SearchCubit: debounce بس" kind="before">
+
+```dart
+void debouncedSearch(String query, {
+  Duration delay = const Duration(milliseconds: 300),
+}) {
+  _debounceTimer?.cancel();
+  _debounceTimer = Timer(delay, () => search(query));
+}
+
+Future<void> search(String query) async {
+  safeEmit(SearchLoading(query: query));
+  final result = await _searchGlobalUseCase(/* ... */);
+  // emits whatever comes back, even if a newer query started
+  result.fold(/* ... */);
+}
+```
+
+</Side>
+
+<Side label="DiscoverFeedCubit: رقم تسلسلي" kind="after">
+
+```dart
+/// Monotonically-increasing fetch sequence used to discard stale results
+/// when the user fires off multiple overlapping requests (e.g. tapping
+/// 3 game chips in a row).
+int _fetchSeq = 0;
+int _beginFetch() => ++_fetchSeq;
+bool _isStale(int seq) => seq != _fetchSeq;
+
+// usage:
+final seq = _beginFetch();
+final result = await _getFeed(/* ... */);
+if (_isStale(seq)) return;
+```
+
+</Side>
+
+</BeforeAfter>
+
+الـ debounce بيقلّل عدد الطلبات، بس مابيضمنش الترتيب. لو طلب «tea» أخد ثانيتين وطلب «team» أخد نص ثانية، نتيجة «tea» هتوصل الآخر وتظهر. الحل اللي على اليمين هو نفس فكرة Readly، ومتنسّخ في 4 Cubits (discover وgames وplayers وteams). بس `SearchCubit`، أكتر مكان محتاجه، مافيهوش. ووقت الـ debounce نفسه 300ms في مكان و400 في مكان و500 في مكان. الحل: mixin واحد فيه الرقم التسلسلي والـ debounce، وكل Cubit فيه بحث يستخدمه.
+
+#### Cubit مابيعملش emit
+
+<CodeBlock label="features/tournaments/presentation/cubit/tournament_details/tournament_details_cubit.dart">
+
+```dart
+/// Note: this cubit's sealed state machine ... is intentionally
+/// inert — TournamentDetailsScreen coordinates 4 parallel cubits and drives
+/// its own loading/error UI via setState, so the only method the screen uses
+/// is [getTournamentById], which never emits.
+Future<Either<String, TournamentEntity>> getTournamentById(String id) async {
+  final result = await _getTournamentDetailsUseCase(id);
+  return result.fold((failure) => Left(failure.message), Right.new);
+}
+```
+
+</CodeBlock>
+
+الشاشة بتنادي الميثود، وتستنى الـ `Either`، وتعمل `setState(() => _isLoading = false)`. يعني الـ Cubit بقى repository تاني، والشاشة بقت هي الـ Cubit. السبب الحقيقي إن الشاشة دي بتجمع 4 Cubits مع بعض، وماكانش فيه وقت لـ Cubit فوقهم. الحل الصح: Cubit واحد للصفحة بيستنى الأربع مصادر ويطلّع state واحدة، أو كل جزء في الشاشة يعرض حالته لوحده. والكومنت الصريح هنا أحسن من مفيش: على الأقل اللي جاي بعدك هيعرف إن ده مقصود ومش bug.
+
+#### `switch` على الـ sealed states
+
+لما الـ state بتبقى sealed، الشاشة بتستفيد على طول:
+
+<CodeBlock label="features/search/presentation/screens/search_screen.dart">
+
+```dart
+body: BlocBuilder<SearchCubit, SearchState>(
+  builder: (context, state) {
+    return switch (state) {
+      SearchInitial() => const SearchInitialWidget(),
+      SearchLoading() => const Center(child: CustomLoadingWidget()),
+      SearchLoaded(:final results, :final query) =>
+        results.isEmpty ? SearchEmptyWidget(query: query) : _buildResults(context, results),
+      SearchSuggestions() => const SearchInitialWidget(),
+      SearchError(:final message) => _buildError(context, message),
+    };
+  },
+),
+```
+
+</CodeBlock>
+
+لو حد ضاف state جديدة، الشاشة دي مش هتعمل compile لحد ما تتعامل معاها.
+
+### الـ Router
+
+#### التابات: StatefulShellRoute
+
+<CodeBlock label="core/router/app_router.dart">
+
+```dart
+static StatefulShellRoute _buildMainShell() {
+  return StatefulShellRoute.indexedStack(
+    parentNavigatorKey: _rootNavigatorKey,
+    builder: (context, state, navigationShell) =>
+        MainScaffoldUserWithShowcase(navigationShell: navigationShell),
+    branches: [
+      MatchesRoutes.branch,
+      NewsRoutes.branch,
+      TournamentsRoutes.branch,
+      FollowingRoutes.branch,
+      MoreRoutes.branch,
+    ],
+  );
+}
+```
+
+</CodeBlock>
+
+كل feature عندها ملف routes في `presentation/routes/`، والـ router بيجمعهم. ده نفس فكرة الـ DI modules: كل feature بتعرف الـ routes بتاعتها، وملف واحد بيوصّلهم.
+
+#### الـ redirect: بيقرا من الـ storage مش من الـ state
+
+<CodeBlock label="core/router/route_guards.dart">
+
+```dart
+static String? globalRedirectFromCache({
+  required BuildContext context,
+  required GoRouterState state,
+}) {
+  // ignore: deprecated_member_use_from_same_package
+  final token = getTokenUser(); // Sync check for route guarding
+  final isGuest = getIsGuestUser();
+  final isAuthenticated = token != null && token.isNotEmpty;
+  return _globalRedirectInternal(/* ... */);
+}
+```
+
+</CodeBlock>
+
+درس go_router قال: الـ redirect بيقرا حالة الـ auth من مصدر واحد بيتغير، و`refreshListenable` بيخلّي الـ router يعيد الحساب لما الحالة تتغير. Escore بيقرا الـ token من SharedPreferences في كل navigation، ومفيش `refreshListenable` خالص. والـ logout بيحصل بطريقة imperative: الـ root widget سامع على stream ولما يجيله `sessionExpired` بينادي `router.go(RouteNames.login)`. ده شغال، بس معناه إن فيه مصدرين للحقيقة: الـ token في الـ storage والحالة في الـ stream.
+
+وفيه حاجة صغيرة بتبيّن التمن: الـ guest guard بيبعت المستخدم لـ `/login?redirect=/tournament/123`، بس ولا مكان في الـ app بيقرا `redirect`، فبعد الـ login المستخدم بيروح للصفحة الرئيسية بدل الصفحة اللي كان عايزها.
+
+#### الـ Deep links، حتى قبل ما الـ app يتسطّب
+
+Escore بيستقبل `escore://` والـ https links من go_router على طول. ولو الـ link جه والـ router لسه مااتعملش، `DeepLinkHandler` بيحفظه ويشغّله بعد أول frame. والحتة الأحلى هي الـ deferred deep link على Android: حد بيبعتلك link لخبر وانت ماعندكش الـ app، فتنزّله من Play Store، وأول ما تفتحه يفتح على الخبر ده:
+
+<CodeBlock label="core/router/deferred_deep_link_service.dart">
+
+```dart
+Future<void> resolveOnFirstLaunch() async {
+  if (!Platform.isAndroid) return;
+  if (await _cache.containsKey(key: _resolvedKey)) return;
+
+  // Mark as consumed up front: a crash while parsing must not turn into a
+  // referrer lookup on every single cold start.
+  await _cache.setData(key: _resolvedKey, value: true);
+
+  final path = await _readReferrerPath();
+  if (path == null) return;
+  DeepLinkHandler.handleDeepLink(Uri.parse('${DeepLinkHandler.baseUrl}$path'));
+}
+```
+
+</CodeBlock>
+
+لاحظ إن العلامة «اتعمل» بتتحفظ **قبل** القراية. لو القراية وقّعت الـ app، مش هيفضل يحاول ويقع مع كل فتحة.
+
+#### الـ arguments: path param + entity اختياري
+
+صفحة الخبر بتاخد الـ id من الـ path، وممكن كمان تاخد الـ entity كاملة في `extra` لو جاية من ليست، عشان تعرض العنوان والصورة فورًا وهي بتحمّل الباقي. ولو الـ link جه من بره ومفيش `extra`، الصفحة بتشتغل بالـ id بس. ده أحسن من «ابعت الـ object كله في `extra`» لأن الـ deep link بيفضل شغال.
+
+بس `extra` في بعض الـ routes بيتقري بتلات أشكال (model أو entity أو Map) عشان callers قدام، و`shared_routes.dart` بيعمل import لـ models من الـ data. وفيه classes `RouteArgs` متكتوبة في `core/router/route_args/` عشان تحل ده، ومحدش بيستخدمها.
+
+### الترجمة: جاية من السيرفر
+
+Escore مابيستخدمش ARB ولا gen-l10n. الترجمات قاموس بييجي من الـ backend لكل لغة، وبيتخزن في Hive، وبيتعرض بـ extension على `String`:
+
+<CodeBlock label="core/extensions/localization_extansions.dart">
+
+```dart
+String tr(BuildContext context) {
+  try {
+    final state = context.watch<SettingsCubit>().state;
+    if (state is SettingsLoaded) {
+      final translations = state.translations;
+      if (translations.containsKey(this)) {
+        return translations[this].toString();
+      }
+    }
+  } on Exception catch (e) {
+    logger('❌ Error during translation: $e');
+  }
+  // ... fallback
+}
+```
+
+</CodeBlock>
+
+والاستخدام: `LangKeys.login.tr(context)`، مع 616 key في `lang_keys.dart`، وقاموس إنجليزي احتياطي جوه الكود لو السيرفر مارجعش.
+
+| | ARB وgen-l10n (Readly) | قاموس من السيرفر (Escore) |
+| --- | --- | --- |
+| تعديل نص | release جديد | من الـ dashboard فورًا |
+| لغة جديدة | release جديد | من الـ dashboard فورًا (الـ app فيه حوالي 40 locale) |
+| key غلط | compile error | النص بيظهر زي ما هو، أو الإنجليزي الاحتياطي |
+| الـ placeholders والجمع | typed ومتشيّك | بالإيد |
+| أول تشغيل من غير نت | كله موجود | الإنجليزي الاحتياطي بس |
+
+القرار ده منطقي لـ app بيدعم لغات كتير والمحتوى بيتغير. التمن إن الـ compiler مابقاش يساعدك، وفيه حاجة صغيرة: الـ `catch` هنا `on Exception`، بس `context.watch` بره الـ build بيرمي assertion، وده `Error` مش `Exception`، فالـ catch ده مش هيمسكه.
+
+### الـ Forms
+
+الـ form state في الـ widget: `TextEditingController` و`GlobalKey<FormState>`، والـ Cubit بياخد القيم النهائية بس. ده مقبول ونفس اللي في الكورس. الفرق إن الـ validation جوه `CustomTextField` نفسه، وبيختار القاعدة على حسب key الترجمة بتاع الـ label:
+
+<CodeBlock label="core/utils/widgets/custom_text_feild.dart">
+
+```dart
+validator: widget.validator ??
+    (widget.isValidator
+        ? (value) {
+            if (value == null || value.isEmpty) {
+              return LangKeys.fieldRequired.trNoListen(context);
+            } else if (LangKeys.password == widget.labelKey ||
+                LangKeys.newPassword == widget.labelKey) {
+              // Mirrors the backend rule:
+              // /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/
+              if (value.length < 8) {
+                return LangKeys.passwordTooShort.trNoListen(context);
+              }
+              // ...
+```
+
+</CodeBlock>
+
+يعني لو غيّرت نص الـ label، الـ validation ممكن يتغير. وقاعدة الباسورد مكتوبة في widget بدل value object في الـ domain زي `Password` في Readly. والكومنت «Mirrors the backend rule» بيقول إن القاعدة دي متكررة في مكانين، ومحدش هيفتكر يغيّر الاتنين.
+
+### الـ Pagination
+
+pagination بالصفحات (`page` و`limit`) في كل حتة، والـ state جوه الـ Loaded (`currentPage` و`hasMore` و`isLoadingMore`). وفيه `PaginatedResourceCubit` generic كويس في `core/base`، بس 3 Cubits بس بيستخدموه، وفيه 22 `loadMore` مكتوبين بالإيد. وحتى الـ trigger مختلف: `isNearBottom()` على 90% في 6 ملفات، وthreshold مختلف في الماتشات، و800 pixel ثابتين في ملف تالت.
+
+وحاجة تستاهل تتنقل: الـ skeleton loading كله بيستخدم effect واحد، والقرار متوثّق بالسبب:
+
+<CodeBlock label="core/utils/helper/shimmer_effect.dart">
+
+```dart
+/// Returns a [PulseEffect] (a flat two-color cross-fade) rather than the
+/// heavier [ShimmerEffect]. ShimmerEffect drives a moving gradient
+/// `ShaderMask` over the *entire* skeleton subtree every frame; on a screen
+/// full of skeleton cards that re-rasterizes the whole viewport each frame and
+/// saturates the Android surface buffer queue.
+PaintingEffect shimmerEffect(BuildContext context) {
+  return PulseEffect(
+    from: context.isDark ? Colors.grey.shade800 : Colors.grey.shade300,
+    to: context.isDark ? Colors.grey.shade600 : Colors.grey.shade100,
+  );
+}
+```
+
+</CodeBlock>
+
+### لو هنعيدها
+
+1. طريقة واحدة توفّر بيها Cubit: `BlocProvider` في الـ route، و`.value` للـ singletons بس.
+2. mixin للبحث فيه الـ debounce والرقم التسلسلي، وكل Cubit فيه بحث بيستخدمه.
+3. `refreshListenable` على حالة الـ auth، والـ redirect بيقرا منها بس، وقراية `?redirect=` بعد الـ login.
+4. الـ validation في value objects في الـ domain، والـ widget بيعرض الرسالة بس.
+5. `PaginatedResourceCubit` يبقى الطريقة الوحيدة، أو يتمسح. abstraction محدش بيستخدمه بيلخبط اللي جاي.
+
+<Quiz>
+
+<Question id="escore-presentation-1">
+<Ask>`NewsCommentsState` مكتوبة flat مش sealed. إمتى ده القرار الصح؟</Ask>
+<Answer>
+
+لما حالات الـ loading لازم تظهر مع البيانات مش بدلها. التعليقات لازم تفضل ظاهرة وانت بتبعت تعليق أو بتمسح واحد أو بتحمّل صفحة كمان. لو الـ state كانت sealed، `Loading` كانت هتشيل الليست من الشاشة. الحل: state واحدة فيها البيانات والـ flags، أو Loaded فيها flags جواها.
+
+</Answer>
+</Question>
+
+<Question id="escore-presentation-2">
+<Ask>`SearchCubit` في Escore عنده debounce. ليه ده مش كفاية عشان يمنع النتايج الغلط؟</Ask>
+<Answer>
+
+الـ debounce بيقلّل عدد الطلبات بس، مابيضمنش إنهم يرجعوا بالترتيب. لو المستخدم كتب «tea» ووقف 300ms، وبعدين كمّل «team»، فيه طلبين طالعين. لو الأول أبطأ، هيرجع الآخر ويعمل emit فوق نتيجة «team». لازم حاجة زي `_fetchSeq` أو cancel، عشان أي response مش بتاع آخر طلب يترمي.
+
+</Answer>
+</Question>
+
+<Question id="escore-presentation-3">
+<Ask>إيه تمن إن الـ redirect بيقرا الـ token من SharedPreferences ومفيش `refreshListenable`؟</Ask>
+<Answer>
+
+الـ router مابيعرفش إن حالة الـ auth اتغيرت لحد ما يحصل navigation. فالـ logout لازم يتعمل بإيد (حد سامع على stream وبينادي `router.go`)، وبقى فيه مصدرين للحقيقة ممكن يختلفوا. ومع `refreshListenable` على Cubit أو notifier واحد، أي تغيير في الـ auth بيعيد حساب الـ redirect لوحده، والـ guards كلها بتقرا من نفس المكان.
+
+</Answer>
+</Question>
+
+</Quiz>

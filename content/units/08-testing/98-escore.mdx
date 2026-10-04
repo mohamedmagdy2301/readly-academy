@@ -1,0 +1,175 @@
+---
+title: "في Escore: 70 ملف تست ومن غير CI"
+description: "التستات اللي موجودة في Escore، والـ fakes المكتوبة بالإيد، وليه أخطر الطبقات هي اللي مالهاش تست، وتمن الـ service locator لما تيجي تكتب تست."
+minutes: 15
+draft: true
+---
+
+الوحدة دي مشيت معاك من أول `expect` لحد استراتيجية اختبار لفريق. Escore عنده 70 ملف تست، حوالي 11 ألف سطر، وفيهم حوالي 500 test. الرقم مش وحش. المشكلة في مكانهم: التستات بتغطي الحاجات السهلة، والحاجات اللي لو باظت الـ app كله يقع مالهاش ولا تست.
+
+### الخريطة
+
+| النوع (درس الوحدة) | في Escore | ملاحظة |
+| --- | --- | --- |
+| unit tests | أغلب الملفات | الـ entities والـ models والـ helpers في `matches/domain/utils` و`swiss_records` |
+| test doubles | 24 fake مكتوبين بالإيد | مفيش mocktail ولا mockito |
+| تستات الطبقات | 4 ملفات بـ Hive حقيقي على الـ disk | `offline_aware_repository_test` و`tournaments_response_validation_test` |
+| Cubit | 8 ملفات | من غير `bloc_test` |
+| widget | 8 ملفات | كلهم بيقيسوا layout ومقاسات |
+| golden | 0 | |
+| integration | 0 | `integration_test` في الـ pubspec ومفيش فولدر |
+| CI | مفيش | التستات بتتشغّل على جهاز المطوّر بس |
+
+### اللي اتعمل كويس
+
+#### تستات على الـ logic الصعب
+
+أكبر تستات في المشروع على أصعب منطق فيه: `swiss_records_test.dart` (حوالي 300 سطر) بيختبر حساب نتايج نظام Swiss في البطولات، و`match_grouper_test.dart` بيختبر تجميع الماتشات في أيام ومراحل. ده Dart صافي، والتست بتاعه سريع ومش بيتكسر لوحده. وده بالظبط اللي درس «الـ unit tests» قال تبدأ بيه.
+
+#### Humble object: `CrashReporter`
+
+<CodeBlock label="lib/core/services/crash_reporting/crash_reporter.dart">
+
+```dart
+abstract final class CrashReporter {
+  /// Wires Crashlytics into the framework and platform error hooks.
+  static void install() {
+    final crashlytics = FirebaseCrashlytics.instance
+      ..setCrashlyticsCollectionEnabled(!kDebugMode);
+    FlutterError.onError = (details) {
+      final label = classify(details.exception, details.stack);
+      // ...
+    };
+  }
+
+  /// Pure: decides whether an error is a real crash or a recoverable one.
+  static String? classify(Object error, StackTrace? stack) { /* ... */ }
+}
+```
+
+</CodeBlock>
+
+الجزء اللي بيكلّم Firebase (`install`) صغير ومالوش تست. القرار نفسه («الـ error ده crash حقيقي ولا لأ») في function صافية، وعليها تست في `crash_reporter_test.dart`. ده الـ humble object pattern: الكود اللي صعب تختبره بتخليه غبي لدرجة إنه مش محتاج تست، والمنطق بتطلّعه في حتة تقدر تختبرها.
+
+### اللي محتاج يتغير
+
+#### Cubit tests من غير `bloc_test`
+
+<CodeBlock label="test/features/news/presentation/cubit/related_news_cubit_test.dart">
+
+```dart
+test('asks for the block size and emits loading then the articles', () async {
+  repository.result = Right([_article('a'), _article('b')]);
+  final states = <RelatedNewsState>[];
+  final sub = cubit.stream.listen(states.add);
+
+  await cubit.load('news-1');
+  await pumpEventQueue();
+  await sub.cancel();
+
+  expect(states.first, isA<RelatedNewsLoading>());
+  final loaded = states.last as RelatedNewsLoaded;
+  expect(loaded.news.map((n) => n.id), ['a', 'b']);
+});
+```
+
+</CodeBlock>
+
+التست صح، بس كل ملف بيكتب نفس الـ boilerplate (listen، وpumpEventQueue، وcancel). ولاحظ إنه بيشيّك على `states.first` و`states.last` بس: لو الـ Cubit عمل emit لـ state زيادة في النص، التست مش هيلاحظ. `blocTest` بـ `expect: () => [Loading(), Loaded(...)]` بيشيّك على الليست كاملة بالترتيب، ودي حاجة درس «تست الـ Cubit» ركّز عليها.
+
+#### الـ fakes الكبيرة
+
+مفيش mocking package، فكل fake مكتوب بالإيد. ده مش وحش لوحده، ودرس الـ test doubles قال إن الـ fakes غالبًا أحسن من الـ mocks. بس لما الـ interface يبقى 22 method، الـ fake بيضطر يستخدم `noSuchMethod` (14 مرة في 11 ملف):
+
+```dart
+/// Only the reaction calls are exercised; everything else is unreachable.
+class _FakeNewsRepository implements NewsRepository {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+```
+
+ده عرض لمشكلة في الكود مش في التست: الـ interface أوسع من اللي أي حد محتاجه (اتشرح في درس Escore في وحدة الجودة). و`SettingsCubit` مالوش interface خالص، فالتستات بتعمل fake ليه 6 مرات بـ `extends Cubit<SettingsState> implements SettingsCubit`.
+
+#### تمن الـ service locator
+
+أي class بيجيب dependency من `sl` جواه، لازم التست بتاعه يحضّر الـ `sl` الحقيقي:
+
+<CodeBlock label="test/features/discover/discover_feed_clear_filters_test.dart">
+
+```dart
+setUp(() {
+  DiscoverFeedCache.clear();
+  if (sl.isRegistered<ConnectivityController>()) {
+    sl.unregister<ConnectivityController>();
+  }
+  sl.registerSingleton<ConnectivityController>(ConnectivityController());
+  // DiscoverFeedCubit subscribes to the admin inactive-preview toggle.
+  if (sl.isRegistered<AdminPreviewCubit>()) {
+    sl.unregister<AdminPreviewCubit>();
+  }
+  sl.registerSingleton<AdminPreviewCubit>(
+    AdminPreviewCubit(localStorage: _MemoryLocalStorage()),
+  );
+});
+```
+
+</CodeBlock>
+
+التست ده عن «مسح الفلاتر». بس عشان يتكتب، لازم يعرف إن الـ Cubit بيقرا الاتصال من `sl`، وبيسمع على `AdminPreviewCubit` من `sl`، وبيقرا من cache static لازم يتمسح. ولا حاجة من دول ظاهرة في الـ constructor. لو حد ضاف `sl<X>()` جديد جوه الـ Cubit، التست هيقع بـ «X is not registered» من غير أي علاقة بالفلاتر. 7 ملفات تست في Escore بتعمل كده.
+
+ونفس الكلام لـ `OfflineAwareRepository`: الـ mixin بيقرا `sl<OfflineCacheService>()` و`sl<ConnectivityController>()`، فالتست بتاعه محتاج Hive box حقيقي على الـ disk وتسجيل في GetIt. والـ risk register مسجّل تست flaky بسبب الـ box المشترك ده.
+
+### الطبقات اللي مالهاش تست
+
+الـ risk register بتاع المشروع نفسه بيقول: «الطبقات الأخطر عليها صفر تغطية: الـ API، و`AuthInterceptor`، والـ DI، والـ router guards». ويقول كمان إن مفيش تست بيتأكد إن الـ DI graph بيتبني.
+
+| الجزء | لو باظ يحصل إيه | ليه مالوش تست |
+| --- | --- | --- |
+| `AuthInterceptor` | كل المستخدمين يخرجوا، أو loop refresh | بيقرا `sl<SecureStorage>()` جوه، وبيعتمد على Dio |
+| `DioConsumer` والـ retry | كل الطلبات | الـ DI بيسجّل الـ class الحقيقي مش `ApiConsumer` |
+| الـ DI graph | الـ app مايفتحش خالص | محدش كتب التست اللي بيعمل resolve لكل حاجة |
+| الـ router guards | صفحات مقفولة تتفتح، أو المستخدم يتحبس | بيقروا من دوال global فوق SharedPreferences |
+| `MatchWebSocketService` | النتايج اللايف تقف | singleton static، مستحيل تبدّله في تست |
+
+لاحظ العمود الأخير: كل سطر فيه سببه الـ service locator أو singleton أو class حقيقي متسجّل مكان interface. اللي مالوش تست مش «مستهتر بيه». ده ببساطة صعب تتكتبله تستات بالشكل اللي هو عليه.
+
+<Note kind="interview" title="سؤال interview: هتبدأ منين لو استلمت Escore؟">
+
+مش من الـ coverage. هتبدأ من الأخطر وأرخص حاجة تحميه:
+
+1. تست واحد بيعمل `initializeServiceLocator()` وبعدين resolve لكل نوع متسجّل. 20 سطر، وبيمسك أي dependency ناقصة قبل الـ release.
+2. `AuthInterceptor` بـ `Dio` حقيقي و`HttpClientAdapter` fake: 401 ثم refresh ثم retry، وطلبين مع بعض بيعملوا refresh واحد، وrefresh فاشل بيعمل logout.
+3. CI بيشغّل `flutter analyze` و`flutter test` على كل PR. من غيره، الـ 70 ملف دول ممكن يكونوا واقعين دلوقتي ومحدش عارف.
+4. وبعد كده نقل `sl<...>()` اللي جوه الـ classes للـ constructor واحدة واحدة، وكل واحدة بتتنقل بتفتح باب لتستات جديدة.
+
+</Note>
+
+### لو هنعيدها
+
+1. CI من أول يوم. التست اللي مش بيتشغّل أوتوماتيك هيقع ومحدش هياخد باله.
+2. `bloc_test` و`mocktail` في الـ dev_dependencies من الأول، عشان أسهل طريقة تبقى هي الطريقة الصح.
+3. أي class فيه منطق بياخد كل الـ dependencies في الـ constructor، عشان الـ fake يتحط من غير GetIt.
+4. التستات تبدأ من الحاجات اللي لو باظت الـ app كله يقع (auth، والـ DI، والـ network)، مش من أسهل حاجة تتكتبلها تست.
+
+<Quiz>
+
+<Question id="escore-testing-1">
+<Ask>التست في `related_news_cubit_test` بيشيّك على `states.first` و`states.last`. إيه اللي ممكن يفوته؟</Ask>
+<Answer>
+
+أي state في النص. لو الـ Cubit عمل Loading ثم Error ثم Loaded بالغلط (يعني الشاشة رمشت برسالة خطأ)، التست هيعدّي لأن الأولى Loading والأخيرة Loaded. `blocTest` بـ `expect` بيقارن الليست كاملة بالترتيب، فأي state زيادة أو ناقصة بتوقّع التست.
+
+</Answer>
+</Question>
+
+<Question id="escore-testing-2">
+<Ask>ليه `AuthInterceptor` في Escore صعب تكتبله تست، مع إنه أهم class في الـ app؟</Ask>
+<Answer>
+
+لأنه بياخد بعض الـ dependencies في الـ constructor، وبيجيب الـ `SecureStorage` من `sl` جواه في 4 أماكن. فالتست لازم يسجّل fake في الـ `sl` الحقيقي، ويعرف إنه محتاج ده أصلًا من غير ما الـ constructor يقوله. ولو اتنقل الـ `SecureStorage` للـ constructor، التست يبقى `AuthInterceptor(storage: InMemorySecureStorage(), ...)` مع Dio بـ adapter fake، والـ `InMemorySecureStorage` موجود أصلًا في المشروع.
+
+</Answer>
+</Question>
+
+</Quiz>

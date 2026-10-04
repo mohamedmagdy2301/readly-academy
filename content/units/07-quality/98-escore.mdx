@@ -1,0 +1,219 @@
+---
+title: "في Escore: SOLID وحراسة المعمارية والأخطاء الشائعة"
+description: "very_good_analysis من غير أي حارس للطبقات، وأمثلة SOLID من الناحيتين، ومشروع واحد فيه معمارية زيادة ومعمارية ناقصة في نفس الوقت."
+minutes: 20
+draft: true
+---
+
+درس «الأخطاء الشائعة» قال إن فيه نوعين من الغلط: معمارية ناقصة (widget بيكلّم السيرفر) ومعمارية زيادة (طبقات بتعدّي البيانات من غير ما تعمل حاجة). Escore فيه الاتنين في نفس الوقت، وده أهم حاجة في الدرس ده: المشكلة مش «قد إيه طبّقت»، المشكلة إن مفيش قاعدة واحدة بتتطبّق على الكل.
+
+### الـ Lint: صارم في الأسلوب، مش موجود في المعمارية
+
+<CodeBlock label="analysis_options.yaml">
+
+```yaml
+include: package:very_good_analysis/analysis_options.yaml
+analyzer:
+  errors:
+    no_default_cases: ignore
+    discarded_futures: ignore
+    one_member_abstracts: ignore
+    lines_longer_than_80_chars: ignore
+    # ... 6 more rules turned off
+linter:
+  rules:
+    public_member_api_docs: false
+```
+
+</CodeBlock>
+
+`very_good_analysis` من أصرم الـ lint sets، وده كويس. بس خلي بالك من اتنين من القواعد اللي اتقفلت. `discarded_futures` مقفولة، فأي `Future` مش متعمله `await` بيعدّي من غير تحذير، والـ risk register بتاع المشروع مسجّل تست flaky سببه write في الـ cache ماحدش استناه. و`one_member_abstracts` مقفولة عشان `UseCase` (abstract class بميثود واحدة) يعدّي، وده قرار مقبول.
+
+بس الأهم هو اللي **مش موجود**: مفيش أي قاعدة بتقول «الـ domain مايعملش import لـ Flutter»، ولا architecture test، ولا CI بيشغّل `flutter analyze` أصلًا. وسكريبتات الـ build مابتشغّلش analyze ولا test.
+
+#### اللي حارس كان هيمسكه
+
+| الكسر | العدد | lint كان هيمنعه؟ |
+| --- | --- | --- |
+| domain بيعمل import لـ Flutter | 4 ملفات | آه |
+| domain بيعمل import لـ data | ملف واحد | آه |
+| presentation بيعمل import لـ `data/models` | 11 ملف | آه |
+| widget بيكلّم `DioConsumer` | 8 ملفات | آه |
+| `core/` بيعمل import من feature | 24 ملف | آه |
+| matches وtournaments بيعملوا import لبعض | 42 و25 | آه، لو feature مش مسموحلها تعمل import من feature تانية |
+
+كل سطر في الجدول ده كان lint واحد في `custom_lint` أو architecture test بيتشغّل في الـ CI، زي اللي في درس «حراسة المعمارية». المشروع ده بيثبت كلام الدرس: القاعدة اللي عايشة في دماغ الفريق بتتكسر أول ما حد جديد يدخل، أو أول ما الـ deadline يقرّب.
+
+<Note kind="info" title="اللي اتعمل بدل الحارس: risk register">
+
+جوه المشروع فيه `docs/architecture/_inventory/risk-register.md`، وفيه كل المشاكل دي مترقّمة من F-1 لـ F-40 بالسبب والحل. ده أحسن بكتير من مفيش: الفريق عارف الـ debt بتاعه وبيتكلّم عنه بأرقام (الـ TODOs في الكود بتشاور عليها: `TODO(TRN-M-11)`، و`H-16`، و`M-17`). بس الـ register بيوصف المشكلة بعد ما تحصل، والـ lint بيمنعها قبل ما تتكتب.
+
+</Note>
+
+### SOLID: أمثلة من الناحيتين
+
+#### S: المسؤولية الواحدة
+
+**كويس**: `MatchesListCubit` كان بيعمل حاجات كتير: الليست، والـ WebSocket، وwidget الـ iPhone، والـ Live Activities. فاتقسم لـ coordinators:
+
+<CodeBlock label="features/matches/presentation/cubit/matches_list/matches_list_cubit.dart">
+
+```dart
+/// Heavy collaboration with iOS widgets, Live Activities, and the WebSocket
+/// match stream is delegated to three private coordinators (see below) so this
+/// class can stay focused on list-state transitions.
+class MatchesListCubit extends BaseCubit<MatchesListState> {
+  MatchesListCubit({
+    required MatchesRepository matchesRepository,
+    required WidgetDataService widgetDataService,
+    required ConnectivityController connectivityController,
+  }) : /* ... */ {
+    _widgetCoordinator = _WidgetDataCoordinator(widgetDataService);
+    _liveActivityCoordinator = const _LiveActivityCoordinator();
+    _wsCoordinator = _WebSocketCoordinator(
+      onScoreUpdate: _handleWsScoreUpdate,
+      onMatchEnd: _handleWsMatchEnd,
+    );
+  }
+```
+
+</CodeBlock>
+
+الملف لسه 875 سطر، بس كل coordinator ليه سبب تغيير واحد. الخطوة الجاية الطبيعية إن الـ coordinators دول يطلعوا classes عامة ويتحقنوا في الـ constructor، عشان يتستوا لوحدهم.
+
+**وحش**: model بيحفظ نفسه:
+
+<CodeBlock label="features/auth/data/models/user_model.dart">
+
+```dart
+Future<void> saveUserData() async {
+  final prefs = sl<CacheManager>();
+  await Future.wait([
+    prefs.setData(key: CacheKey.keyIdUser, value: id ?? ''),
+    prefs.setData(key: CacheKey.keyEmailUser, value: email ?? ''),
+    // ... 7 more keys
+  ]);
+}
+```
+
+</CodeBlock>
+
+الـ model بقى ليه سببين يتغير: شكل الـ JSON وشكل التخزين. ونفس الكلام لـ `failures.dart`، اللي فيه الـ Failures والترجمة واستخراج رسالة السيرفر في 836 سطر.
+
+#### O: مفتوح للإضافة
+
+**كويس**: سلسلة الـ Dio interceptors (اتشرحت في درس Escore في وحدة الـ Data). ومثال أحلى: الـ WebSocket events:
+
+<CodeBlock label="core/services/websocket/models/ws_event.dart و match_websocket_service.dart">
+
+```dart
+sealed class WsEvent {
+  const WsEvent({required this.event, required this.timestamp});
+  final String event;
+  final DateTime timestamp;
+}
+
+// consumer: exhaustive, no default
+switch (event) {
+  case WsScoreUpdateEvent():
+    _scoreUpdateController.add(event);
+  case WsMatchStartEvent():
+    _matchStartController.add(event);
+  case WsMatchEndEvent():
+    _matchEndController.add(event);
+  // ...
+}
+```
+
+</CodeBlock>
+
+ده الـ trade-off اللي اتشرح في درس SOLID: الـ sealed class عكس OCP عن قصد، لأن أي event جديد بيكسر الـ compile لحد ما يتعالج. Escore عنده 63 sealed class و59 switch expression، وده رقم كويس.
+
+**وحش**: 51 مقارنة بالنص زي `type == 'tournament'` و`status == 'live'` في entities وservices. كل واحدة فيهم enum ناقص.
+
+#### L: الاستبدال
+
+مفيش class في الـ production بيرمي `UnimplementedError`. المشكلة بتظهر في التستات: fakes بتعمل implement لجزء من الـ interface، والباقي بـ `noSuchMethod` (14 مرة) أو بيرمي `UnimplementedError`. ودي علامة على المبدأ اللي جاي.
+
+#### I: interfaces صغيرة
+
+**كويس**: following مقسومة: `GamesRepository` فيه 4 methods، و`PlayersRepository` 5، و`TeamsRepository` 2.
+
+**وحش**: `NewsRepository` فيه 22 method بتغطي 4 حاجات (المقالات، والـ reactions، والتعليقات، والـ transfers)، و`AuthRepository` فيه 21. والتمن بيبان في التستات: `_FakeNewsRepository` اتكتب 3 مرات، وكل مرة بـ `noSuchMethod` عشان يتخطى الـ 19 method اللي التست مش محتاجها:
+
+```dart
+/// Only the reaction calls are exercised; everything else is unreachable.
+class _FakeNewsRepository implements NewsRepository {
+  // ... 3 methods
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+```
+
+لو كان فيه `NewsReactionsRepository` صغير، الـ fake كان هيبقى 3 methods من غير حيل.
+
+#### D: الاعتماد على الـ abstraction
+
+**كويس**: كل الـ repositories وراها contracts في الـ domain، والـ use cases بتاخدهم في الـ constructor.
+
+**وحش**: `ApiConsumer` موجود والـ DI بيسجّل `DioConsumer`، و`sl<ApiConsumer>()` مكتوبة في الـ README بس ومش في الكود. والـ settings: contracts في الـ domain مالهاش implementation، والـ Cubits بتعتمد على class حقيقي في الـ data.
+
+### معمارية زيادة ومعمارية ناقصة في نفس المشروع
+
+| معمارية زيادة | معمارية ناقصة |
+| --- | --- |
+| 77 use case من 79 بيحوّلوا للـ repository وخلاص | 8 widgets بتكلّم الـ HTTP client مباشرة |
+| `BaseState` بـ 4 mixins و4 generic states، ومحدش استخدمها | 5 Cubits في settings بيكلّموا class في الـ data |
+| `SyncUseCase` و`StreamUseCase` و`ValidatableParams`، ومحدش استخدمهم | `UserModel` بيكتب في SharedPreferences |
+| `exceptions.dart` و`ErrorHandler`، صفر استخدام | كل الأخطاء بقت `ServerFailure` بنص |
+| domain كامل لـ settings، صفر استخدام | 22 `loadMore` مكتوبين بالإيد |
+
+العمودين دول بيحكوا نفس القصة. الـ abstractions اللي على اليمين اتكتبت في أول المشروع «عشان نبقى Clean»، قبل ما يبقى فيه احتياج حقيقي ليها. ولما الاحتياج الحقيقي جه (الحاجات اللي على الشمال)، كانت مش مناسبة، فالناس عدّوها وكتبوا الأسرع. الدرس: اكتب الـ abstraction لما تحتاجها مرتين، مش قبل ما تحتاجها خالص.
+
+### الكود المتكرر
+
+- `GameSummary` متعرّفة 4 مرات في 4 features، وكل واحدة بشكل مختلف. وفيه 13 اسم class متعرّف في أكتر من ملف (`TournamentSummary`، و`CountrySummary`، و`SocialLinkModel`، وغيرهم).
+- `OfflineAwareRepository.fetchWithCache` بيحل مشكلة الـ online/offline، بس اتنادى 15 مرة بس. وفي news وevents نفس الـ `if (isOnline) ... else cached ?? OfflineFailure()` مكتوب بالإيد 7 مرات في كل واحد.
+- الـ pull-to-refresh متنسّخ 35 مرة بنفس الـ catch الفاضي ونفس الكومنت: «Error surfaced via cubit state; nothing to do here.».
+
+### أكبر الملفات
+
+| السطور | الملف |
+| --- | --- |
+| 953 | `core/services/websocket/match_websocket_service.dart` |
+| 951 | `features/discover/presentation/cubit/discover_feed/discover_feed_cubit.dart` |
+| 875 | `features/matches/presentation/cubit/matches_list/matches_list_cubit.dart` |
+| 854 | `features/matches/domain/entities/match_entity.dart` |
+| 836 | `core/error/failures.dart` |
+
+لاحظ إن مفيش widget في أكبر 10 ملفات. الـ god classes في Escore هي Cubits وrepositories، يعني الـ UI اتقسم كويس، والمنطق اتكوّم في الطبقة اللي تحت.
+
+### لو هنعيدها
+
+1. CI من أول commit بيشغّل `flutter analyze` و`flutter test`، وlint للطبقات وللـ imports بين الـ features.
+2. `discarded_futures` تفضل شغالة، وأي fire-and-forget يتكتب `unawaited(...)` صريح.
+3. مفيش abstraction من غير اتنين على الأقل بيستخدموها.
+4. repository لكل مجموعة methods بتتغير مع بعض، مش repository لكل feature.
+5. الـ risk register يفضل، بس كل item فيه يبقى ليه lint أو تست بيمنعه يرجع.
+
+<Quiz>
+
+<Question id="escore-quality-1">
+<Ask>Escore فيه 77 use case فاضيين، وفي نفس الوقت widgets بتكلّم السيرفر مباشرة. إزاي الحاجتين دول يحصلوا في نفس المشروع؟</Ask>
+<Answer>
+
+الاتنين سببهم واحد: مفيش قاعدة واحدة متطبّقة على الكل. الـ use cases الفاضية اتكتبت في الأول «عشان المعمارية»، من غير ما يبقى فيه منطق محتاجها. والـ widgets اللي بتكلّم السيرفر اتكتبت تحت ضغط، ومفيش حاجة منعتها. المعمارية الزيادة مابتحميش من المعمارية الناقصة. اللي بيحمي هو قاعدة بسيطة بيحرسها lint.
+
+</Answer>
+</Question>
+
+<Question id="escore-quality-2">
+<Ask>`_FakeNewsRepository` اتكتب 3 مرات بـ `noSuchMethod`. ده بيقول إيه عن `NewsRepository`؟</Ask>
+<Answer>
+
+إن الـ interface أوسع من احتياج أي حد بيستخدمه، وده كسر لـ ISP. كل Cubit بيستخدم 2 أو 3 methods من 22، فكل fake لازم يتحايل على الباقي. لو الـ repository اتقسم حسب الحاجات اللي بتتغير مع بعض (المقالات، والتعليقات، والـ reactions، والـ transfers)، كل fake هيبقى صغير ومن غير حيل، وكل Cubit هيعتمد على اللي محتاجه بس.
+
+</Answer>
+</Question>
+
+</Quiz>

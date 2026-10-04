@@ -1,0 +1,258 @@
+---
+title: "في Escore: الـ DI والـ session والتوسّع"
+description: "get_it يدوي بـ 18 module، وقاعدة factory وsingleton مكتوبة، و254 استدعاء لـ sl بره الـ DI، وsettings بـ domain محدش بيستخدمه، وsession فيها guest mode وlogout مايخليش المستخدم يستنى."
+minutes: 20
+draft: true
+---
+
+الوحدة دي عن إزاي الأجزاء بتتوصل ببعض، وإزاي المشروع يكبر من غير ما يتلخبط. Escore كبر لـ 16 feature و174 ألف سطر، وهو لسه package واحدة ومن غير flavors. الدرس ده بيوريك إيه اللي استحمل الحجم ده، وإيه اللي بدأ يزيّق.
+
+### الـ DI: get_it بالإيد، module لكل feature
+
+مفيش injectable ولا codegen. فيه `final GetIt sl = GetIt.instance;` وملف لكل feature في `core/dependency_injection/`، وملف واحد بيجمعهم:
+
+<CodeBlock label="core/dependency_injection/service_locator.dart">
+
+```dart
+Future<void> initializeServiceLocator() async {
+  /// Core services: Dio, SharedPreferences, Connectivity, etc.
+  setupCoreDI();
+  /// Notification services
+  setupNotificationDI();
+  // Auth services
+  setupAuthDI();
+  // Admin-only cross-cutting services (inactive-entity preview toggle)
+  setupAdminDI();
+  /// News services
+  setupNewsDI();
+  // ... 13 more modules
+}
+```
+
+</CodeBlock>
+
+18 ملف، حوالي 1,470 سطر. ده نفس فكرة الـ composition root في الكورس: مكان واحد بس بيعرف الـ implementations. والفرق إن الـ modules متجمعة في `core/` مش جوه كل feature، فلو حبيت تفصل feature في package لوحدها هتحتاج تنقل الـ module بتاعها معاها.
+
+#### قاعدة factory وsingleton، مكتوبة في الكود
+
+| النوع | العدد | لمين |
+| --- | --- | --- |
+| `registerLazySingleton` | 145 | data sources وrepositories وuse cases وservices |
+| `registerFactory` | 67 | Cubits الشاشات |
+| `registerSingleton` | 0 | |
+
+و4 Cubits بس singleton، وكل واحد فيهم ليه سبب مكتوب. أوضحهم:
+
+<CodeBlock label="features/auth/presentation/cubit/auth_status/auth_status_cubit.dart">
+
+```dart
+/// Registered as a `lazySingleton` (`auth_di.dart`) and resolved directly with
+/// `sl<AuthStatusCubit>()` — deliberately NOT exposed through a root
+/// `BlocProvider`. Its consumer opens a modal bottom sheet on a separate
+/// navigator context, where `context.read` would not reach a root provider
+/// (`more_screen.dart` → `LogoutSheet`).
+class AuthStatusCubit extends BaseCubit<AuthStatusState> {
+```
+
+</CodeBlock>
+
+ده بالظبط نوع الاستثناء اللي يستاهل كومنت: القاعدة «Cubit = factory»، والكسر ليه سبب تقني ومكتوب جنبه.
+
+#### بس `sl` في كل حتة
+
+254 استدعاء `sl<...>()` بره ملفات الـ DI. منهم 51 `BlocProvider(create: (_) => sl<X>())`، ودول تمام. الباقي هو المشكلة:
+
+| المكان | مثال |
+| --- | --- |
+| widget بيكلّم repository | `pairing_rounds_view.dart`: `sl<MatchesRepository>().getPairingMatches(...)` |
+| شاشة بتكلّم use case | `news_details_screen.dart`: `sl<GetNewsByIdUseCase>()(...)` |
+| model بيكلّم الـ storage | `user_model.dart`: `final prefs = sl<CacheManager>();` |
+| حوالي 20 Cubit | `bool get _isOnline => sl<ConnectivityController>().isInternetNotifier.value;` |
+| الـ mixin بتاع كل الـ repositories | `OfflineAwareRepository.isOnline` |
+| extensions على `String` و`DateTime` | بتقرا اللغة من `sl<CacheManager>()` |
+
+والمضحك إن `MatchesListCubit` بياخد `ConnectivityController` في الـ constructor، و20 Cubit تانيين بيجيبوه من `sl`. يعني نفس الـ dependency ليها طريقتين في نفس الـ feature.
+
+درس الـ DI قال إن الـ service locator جوه الـ class بيخبّي الـ dependencies. التمن الحقيقي بيبان في التستات: أي تست لـ repository أو Cubit من دول لازم يسجّل objects في الـ `sl` الحقيقي ويشيلها في الـ tearDown (تفاصيل ده في درس Escore في وحدة الاختبارات).
+
+#### الـ init جوه الـ splash
+
+<CodeBlock label="core/app/app_initializer_screen.dart">
+
+```dart
+_updateProgress(0.05, 'جاري بدء التطبيق...');
+await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+CrashReporter.install();
+
+_updateProgress(0.15, 'تجهيز قاعدة البيانات...');
+await InitializeServices.hiveInit();
+
+_updateProgress(0.30, 'إعداد البيئة...');
+await InitializeServices.environmentInit();   // Bloc.observer + all DI
+
+_updateProgress(0.45, 'تحميل التفضيلات...');
+await InitializeServices.sharedPrefsInit();   // then setupStorageDI()
+// ... offline cache, notifications, widgets, settings, startup gate
+_router = AppRouter.createRouter();
+```
+
+</CodeBlock>
+
+المستخدم بيشوف شريط تقدّم بنص حقيقي بدل شاشة بيضا. بس فيه حاجتين تتعلّم منهم:
+
+- `LocalStorage` بيتسجّل متأخر، بعد ما SharedPreferences تجهز. وفيه modules بتعتمد عليه بتتسجّل قبله، وده شغال بس عشان التسجيل lazy. والكومنت في `admin_di.dart` بيقول «Must run AFTER storage DI»، وده عكس الترتيب الحقيقي. لو حد غيّر واحد منهم لـ `registerSingleton`، الـ app هيقع وقت الفتح.
+- لو أي خطوة فشلت، فيه زرار «حاول تاني» بيشغّل `_initialize()` من الأول، يعني هيسجّل الـ DI والـ Hive adapters تاني. ومفيش أي check بيمنع ده، فالمحاولة التانية غالبًا هتفشل بـ «already registered».
+
+### التوسّع: package واحدة
+
+| الـ feature | الملفات | السطور |
+| --- | --- | --- |
+| tournaments | 381 | 33,589 |
+| matches | 330 | 30,060 |
+| following | 156 | 16,299 |
+| news | 148 | 14,949 |
+| الـ 12 الباقيين | | أقل من 7,500 لكل واحدة |
+
+مفيش melos ولا packages. الهيكل feature-first، بس مفيش حاجة بتمنع feature تعمل import من التانية. ودي النتيجة:
+
+| الـ feature | بتعمل import من | العدد |
+| --- | --- | --- |
+| matches | tournaments | 42 |
+| tournaments | matches | 25 |
+| events | tournaments | 24 |
+| following | matches | 21 |
+| tournaments | following | 20 |
+
+matches وtournaments بيعملوا import لبعض، يعني مستحيل تفصلهم من غير ما تفك الدايرة الأول. وفيه 3 Cubits اسمهم `Tournament...Cubit` قاعدين في `features/matches/`. وفيه 24 ملف في `core/` (من غير الـ DI والـ router) بيعملوا import من features، يعني الـ core نفسه مابقاش core.
+
+درس التوسّع قال إن التقسيم لـ packages بيخلّي الـ compiler نفسه يمنع الـ import الغلط. Escore مثال حي على اللي بيحصل من غيره: الدايرة ماتعملتش في يوم، اتبنت import ورا import، وكل واحد فيهم كان «أسرع حل».
+
+### الـ Config: `.env` واحد ومن غير flavors
+
+مفيش `productFlavors` في Android، ومفيش schemes للـ environments في iOS، ومفيش `main_dev.dart`. فيه ملف `.env` واحد بيتقري بـ `flutter_dotenv`، وتغيير الـ environment معناه إنك تعدّل الملف بإيدك. الـ feature flags compile-time في `core/config/feature_flags.dart`.
+
+<Note kind="warn" title="الـ .env مش مكان للأسرار">
+
+`flutter_dotenv` بيقرا الـ `.env` كـ asset، فالملف بيتحط زي ما هو جوه الـ APK والـ IPA، والكومنتات اللي فيه كمان. أي حد يقدر يفك الـ APK ويقراه. يعني الـ `.env` في app موبايل مش «ملف سري»، ده config عام. أي حاجة مش عايزها تبقى public (باسوردات حسابات، وURLs داخلية، وkeys الـ server) ماينفعش تبقى فيه، حتى لو مكتوبة ككومنت. والـ flavors مع `--dart-define-from-file` بيحطوا كل environment في ملف منفصل ومن غير كومنتات.
+
+</Note>
+
+#### الـ app_config: أحسن feature صغيرة في المشروع
+
+<CodeBlock label="features/app_config/domain/entities/startup_config_entity.dart">
+
+```dart
+/// Result of the backend startup gate (`GET /app-config/startup-check`).
+///
+/// Drives three behaviours on cold start:
+/// - `forced` → blocking force-update screen.
+/// - `maintenance` active → blocking maintenance screen.
+/// - `optional` → non-blocking optional-update sheet.
+///
+/// The whole startup path is **fail-open**: any error/timeout degrades to
+/// `safeDefault` (`upToDate` + maintenance inactive) so boot is never blocked.
+```
+
+</CodeBlock>
+
+feature كاملة بكل الطبقات في 15 ملف: model وmapper وentity وcontract وuse case وCubit. والقرار المهم هو **fail-open**: لو السيرفر وقع أو اتأخر أكتر من 4 ثواني، الـ app بيفتح عادي. مستحيل الـ endpoint اللي بيقول «فيه صيانة» يبقى هو نفسه السبب إن الـ app مايفتحش.
+
+### الـ Settings: domain اتكتب ومحدش استخدمه
+
+درس «Settings: feature من غير domain» قال إن مش كل feature محتاجة التلات طبقات، وإن settings مثال كويس لـ feature من غير domain. Escore عمل حاجة غريبة: كتب الـ domain كامل (entities و`abstract class SettingsRepository` و4 use cases)، وبعدين ماستخدموش.
+
+- ولا class بيعمل `implements SettingsRepository`.
+- الـ 4 use cases محدش بيعملهم import.
+- الـ DI بيوصّل الـ Cubits بـ `SettingRepository`، وده class في `data/` من غير interface، وبيرجّع `Either<String, List<LanguageModel>>`، وبيعرّض صناديق Hive للـ Cubit.
+
+يعني settings دفعت تمن الـ domain (ملفات زيادة لازم حد يفهمها) ومااستفادتش منه. لو settings ماكانتش محتاجة domain، كان المفروض الـ domain يتمسح. ولو كانت محتاجاه، كان المفروض يتوصّل.
+
+### الـ Session
+
+#### اللي معمول صح
+
+**الـ secure storage** للـ tokens، والـ refresh token مالوش أي نسخة بره الـ secure storage. وفيه cache في الـ memory زي ما شفنا في درس Escore في وحدة الـ Data.
+
+**guest mode** كامل: `loginAsGuest()`، و`AuthStatus.guest()`، وguard مخصوص بيبعت الـ guest للـ login لو فتح صفحة محتاجة حساب، والـ `AuthInterceptor` بيرفض طلبات الكتابة من الـ guest قبل ما تطلع.
+
+**logout مايخليش المستخدم يستنى:**
+
+<CodeBlock label="features/auth/data/repositories/auth_repository_impl.dart">
+
+```dart
+Future<Either<Failure, void>> logout() async {
+  // Best-effort remote cleanup. Each of these ignores its own failures, so
+  // run them concurrently (instead of back-to-back) and cap the total wait —
+  // a slow/cold backend must never make the user sit and wait to log out.
+  try {
+    await Future.wait<void>([
+      guarded(_fcmTokenManager.unregisterDevice),
+      guarded(_remoteDataSource.logout),
+      guarded(_googleSignInService.signOut),
+    ]).timeout(const Duration(seconds: 4));
+  } on Object { /* timeout or any error — proceed with local logout */ }
+
+  await _localDataSource.clearAll();
+  _clearIdentityScopedCaches();
+  await HttpCache.clear();
+  return const Right(null);
+}
+```
+
+</CodeBlock>
+
+التلات طلبات للسيرفر بيتبعتوا مع بعض، ولو مارجعوش في 4 ثواني الـ logout المحلي بيكمل. القاعدة: الـ logout المحلي لازم يحصل مهما حصل بره. المستخدم ضغط «خروج»، فلازم يخرج.
+
+#### اللي محتاج يتصلّح
+
+<Note kind="warn" title="طريقين للـ logout بنتايج مختلفة">
+
+الـ logout اللي المستخدم بيضغطه بيمسح الـ tokens والـ caches اللي في الـ memory والـ HTTP cache. أما لما الـ session تنتهي (الـ refresh فشل)، فبيتنادى `clearCachedUserData()` من `cache_helper.dart`، وده بيمسح حاجات تانية: مابيمسحش الـ caches اللي في الـ memory ولا الـ HTTP cache. يعني نفس المعنى «المستخدم ده خرج» ليه كودين، والاتنين مش بيمسحوا نفس الحاجات. الحل: ميثود واحدة `endSession()` في الـ repository، والاتنين بينادوها.
+
+</Note>
+
+وكمان:
+
+- **نسخة من الـ access token مش متشفرة** بتتكتب جنب الـ secure storage، عشان الـ router guard يقدر يقرا الـ token بشكل sync. المشروع نفسه مسجّل ده في الـ risk register كـ debt. الحل إن الـ guard يقرا من حالة الـ auth في الـ memory (اللي اتحمّلت مرة وقت الـ startup) مش من الـ storage.
+- **Firebase Auth مابيعملش sign out**. الـ app بيستخدم Firebase عشان يحوّل Google sign-in لـ credential، وبعد الـ logout المستخدم لسه داخل في Firebase.
+- `AuthStatusCubit.checkStatus()` متكتبة ومحدش بيناديها، وأحداث `loggedOut` و`authenticated` في `AuthStateNotifier` مابتتبعتش أبدًا.
+
+### لو هنعيدها
+
+1. الـ DI زي ما هو، بس الـ module جوه الـ feature بتاعته.
+2. Constructor injection بس، و`sl` مايتكتبش بره ملفات الـ DI والـ routes. ده lint بسيط بيتعمل بـ `custom_lint` أو حتى grep في الـ CI.
+3. packages من أول ما الـ features تعدّي 5 أو 6، أو على الأقل lint بيمنع الـ imports بين الـ features، عشان الدواير ماتتبنيش.
+4. Flavors من أول يوم، والـ `.env` فيه config عام بس.
+5. لو feature مش محتاجة domain، ماتكتبوش. ولو كتبته، وصّله.
+6. `endSession()` واحدة لكل طرق الخروج.
+
+<Quiz>
+
+<Question id="escore-di-1">
+<Ask>`AuthStatusCubit` singleton ومش متوفّر بـ `BlocProvider`. ده بيكسر قاعدة «Cubit = factory»؟ وإمتى الكسر ده مقبول؟</Ask>
+<Answer>
+
+بيكسرها عن قصد، والسبب مكتوب: الـ Cubit بيتقري من bottom sheet على navigator تاني، و`context.read` هناك مش هيوصل لـ provider فوق الـ app. الاستثناء مقبول لما يبقى ليه سبب تقني محدد ومتوثّق جنب الكود. اللي مش مقبول إن الاستثناءات تبقى من غير سبب، أو إن الـ singleton يتوفّر بـ `create:` زي `TabsCubit`.
+
+</Answer>
+</Question>
+
+<Question id="escore-di-2">
+<Ask>ليه الـ startup gate في Escore fail-open، وإيه اللي كان هيحصل لو كان fail-closed؟</Ask>
+<Answer>
+
+الـ endpoint ده بيقول للـ app «فيه تحديث إجباري» أو «فيه صيانة». لو كان fail-closed، أي مشكلة في السيرفر أو نت بطيء كانت هتقفل الـ app على كل المستخدمين، وده بالظبط الوقت اللي محتاجين فيه الـ app يشتغل. fail-open معناه إن أسوأ حالة إن رسالة الصيانة ماتظهرش، والـ requests الحقيقية هتفشل لوحدها لو السيرفر واقع.
+
+</Answer>
+</Question>
+
+<Question id="escore-di-3">
+<Ask>matches بتعمل import من tournaments 42 مرة، وtournaments بتعمل import من matches 25 مرة. إيه المشكلة العملية في ده؟</Ask>
+<Answer>
+
+الاتنين بقوا وحدة واحدة: مستحيل تفصل أي واحد فيهم في package، ولا تبني واحد من غير التاني، وأي تغيير في واحد ممكن يكسر التاني. الحل إن الحاجات المشتركة (الماتش جوه البطولة مثلًا) تتنقل لمكان مشترك صغير، أو إن واحد بس يعرف التاني ويتواصل معاه عن طريق contract صغير.
+
+</Answer>
+</Question>
+
+</Quiz>

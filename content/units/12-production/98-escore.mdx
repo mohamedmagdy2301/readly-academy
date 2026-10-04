@@ -1,0 +1,177 @@
+---
+title: "في Escore: الـ Production والقرار"
+description: "Escore بقى hybrid بين Clean وMVVM من غير ما حد يقرر، وCrashlytics بيفرّق بين الـ crash والخطأ اللي الـ app بيعدّيه، وrelease من جهاز المطوّر بـ Shorebird. وإيه اللي هتعمله من أول يوم في مشروعك."
+minutes: 20
+draft: true
+---
+
+آخر وحدة بتسأل أسئلة الـ senior: أنهي معمارية لأنهي feature، وإزاي تعرف إن الـ app بيقع في الـ production، وإزاي تصلّح كود قديم من غير ما توقّف الشغل، وإزاي تبني وتنزّل من غير ما تعتمد على جهاز واحد. Escore جاوب على كل سؤال فيهم، ساعات بقرار وساعات من غير.
+
+### Clean ولا MVVM: الاتنين، من غير ما حد يقرر
+
+درس «Clean ولا MVVM؟» قال إن القرار بيتاخد لكل feature: CRUD بسيط ياخد MVVM (Cubit بيكلّم repository)، وfeature فيها قواعد تاخد Clean كامل. لو بصيت على Escore هتلاقي القرار ده اتاخد، بس كل feature لوحدها:
+
+| الـ feature | الشكل الفعلي | يناسبها؟ |
+| --- | --- | --- |
+| matches | MVVM: الـ Cubits بتكلّم `MatchesRepository`، وuse case واحد للـ vote | آه: قراية لايف، والقواعد في `domain/utils` مش في use cases |
+| news | Clean كامل: 20 use case | زيادة: أغلبهم pass-through |
+| tournaments | خليط: 7 use cases لـ 11 method | مش واضح |
+| settings | MVVM، وجنبه domain Clean محدش بيستخدمه | MVVM مناسب، والـ domain لازم يتمسح |
+| app_config | Clean كامل في 15 ملف | آه: صغيرة وفيها قاعدة مهمة (fail-open) |
+
+يعني Escore طبّق الـ decision guide بتاع الدرس من غير ما يكتبه. والنتيجة إن أي حد جديد بيفتح feature مش عارف يقلّد أنهي واحدة. قرار H-16 في matches كان الوحيد اللي اتكتب بسببه («only those with real logic»). لو القرار ده كان اتكتب في `docs/` كـ ADR واتطبّق على باقي الـ features، كان الخليط ده بقى سياسة واضحة مش صدفة.
+
+### الـ Observability
+
+#### Crashlytics بيفرّق بين الـ crash والخطأ اللي الـ app بيعدّيه
+
+ده أحسن كود production في المشروع، والسبب مكتوب جواه:
+
+<CodeBlock label="lib/core/services/crash_reporting/crash_reporter.dart">
+
+```dart
+/// Wiring `FlutterError.onError` straight to `recordFlutterFatalError` (the
+/// FlutterFire quick-start default) files the second group as *crashes*. That
+/// is what drove crash-free users to ~97.6% on 1.2.2 while nothing ever
+/// actually died: the top three "crashes" were a `PathNotFoundException` from
+/// `cached_network_image`, a 30s `TimeoutException` from the YouTube iframe
+/// bridge, and offline `SocketException`s from image downloads.
+///
+/// Nothing is silenced here — recoverable failures are still reported, just as
+/// **non-fatal** with a `recoverable:<label>` reason.
+abstract final class CrashReporter {
+  static void install() {
+    final crashlytics = FirebaseCrashlytics.instance
+      ..setCrashlyticsCollectionEnabled(!kDebugMode);
+
+    FlutterError.onError = (details) {
+      final label = classify(details.exception, details.stack);
+      if (label == null) {
+        crashlytics.recordFlutterFatalError(details);
+        return;
+      }
+      FlutterError.presentError(details);
+      crashlytics.recordError(details.exception, details.stack,
+          reason: 'recoverable:$label', printDetails: false);
+    };
+    // PlatformDispatcher.instance.onError: same classification
+  }
+
+  static String? classify(Object error, StackTrace? stack) {
+    if (error is FileSystemException) return 'file-system';
+    if (error is SocketException || error is HttpException ||
+        error is TlsException || error is NetworkImageLoadException) {
+      return 'network';
+    }
+    if (error is TimeoutException) return 'timeout';
+    if (error is IOException) return 'io';
+    // ...
+  }
+}
+```
+
+</CodeBlock>
+
+درس الـ Logging والـ Monitoring قال: الـ metric لازم يقيس الحاجة اللي بتهمك. Escore شاف crash-free بينزل لـ 97.6% مع إن مفيش حاجة كانت بتقع فعلًا: صورة اتمسحت من الـ cache، أو فيديو YouTube مااتحمّلش، أو صورة مانزلتش من غير نت. الحل ماكانش إنهم يخبّوا الأخطاء دي. الأخطاء لسه بتتسجل، بس كـ non-fatal وجنبها label. كده رقم الـ crash-free بقى بيقيس الـ crashes الحقيقية، والضوضاء لسه موجودة لو حد عايز يدوّر فيها. والقرار نفسه في function صافية عليها تست.
+
+وفيه كمان interceptor لـ Firebase Performance بيقيس كل طلب HTTP، وبيشتغل في الـ release بس.
+
+#### اللي ناقص
+
+- مفيش `setUserIdentifier` ولا breadcrumbs (`crashlytics.log`). لما الـ crash يحصل، مش هتعرف المستخدم كان بيعمل إيه قبله.
+- الـ `BlocObserver.onError` بيطبع في الـ debug بس، ومابيبعتش لـ Crashlytics. فأي exception جوه Cubit بيتمسك ويختفي.
+- الـ logs كلها (أكتر من 600 استدعاء لـ `logger()` و`LoggerHelper`) بتتشال في الـ release، ومفيش أي حاجة بتتبعت لأي مكان. ده كويس للخصوصية والأداء، بس معناه إن الـ release مالوش أي log.
+- Firebase بيتعمله init في الـ splash مش في `main()`، فأي error قبل كده مش بيتسجل.
+
+### الـ Refactor: الـ debt متوثّق ومترقّم
+
+درس «Refactor feature قديمة لـ Clean» قال: ماتعملش rewrite، اتحرك خطوة خطوة وكل خطوة لوحدها بتطلع release. Escore بيعمل كده فعلًا، ودي الأدلة اللي في الكود:
+
+- **risk register** في `docs/architecture/_inventory/` فيه 40 مشكلة مترقّمة بالسبب والحل.
+- **TODOs بأرقام**: `TODO(TRN-M-11)` بيقول بالظبط إيه اللي ناقص («route through TournamentsRepository once a typed TournamentTeamEntity exists»)، و`TODO(dark-only)` بيعلّم كل مكان اتقفل فيه الـ light theme مؤقتًا، فلما يرجع هتلاقي كل الأماكن بـ grep واحد.
+- **قرارات مرقّمة في الكومنتات**: `H-16` (شيل الـ use cases الفاضية)، و`M-17` (اكتب النتيجة اللايف في الـ cache).
+- **feature flags compile-time** بتسمح إن الكود القديم والجديد يعيشوا مع بعض: `kUseTournamentFeed` بيقلب بين endpoint الماتشات القديم والجديد، والكومنت بيقول «the old code path is kept intact».
+
+#### بس الـ refactor بيسيب حاجات وراه
+
+```dart
+/// Held at `false` for the store release: the feature is written end to end
+/// but is not finished being reviewed ...
+// TODO(news-comments): flip to true once the feature is signed off
+const bool kNewsCommentsEnabled = true;
+```
+
+الكومنت بيقول `false`، والـ TODO بيقول «اقلبها `true` لما تخلص»، والقيمة `true`. يعني حد قلبها ومحدّثش الكومنت ولا مسح الـ TODO. ونفس الحاجة في 5 ملفات بتشاور على `lib/core/network/api_client.dart`، وده ملف اتشال في refactor قديم. الكومنت اللي بيكدب أسوأ من مفيش كومنت، لأن اللي بيقراه هيصدّقه. أي refactor لازم يدوّر بـ grep على اسم الحاجة اللي اتشالت قبل ما يخلص.
+
+### الـ Release
+
+| | الكورس (درس الـ Flavors والـ release) | Escore |
+| --- | --- | --- |
+| الـ environments | flavors + `--dart-define-from-file` | ملف `.env` واحد بيتعدّل بالإيد |
+| الـ build | CI بيبني من tag | سكريبتات على جهاز المطوّر (`build-release.sh` و`.ps1`) |
+| الـ checks قبل الـ build | analyze + test | مفيش |
+| الـ hotfixes | release جديد | Shorebird: patch للـ Dart من غير ما يعدّي على الـ store |
+| الـ signing | secrets في الـ CI | env vars أو `key.properties` محلي |
+| الـ dependencies | versions متثبّتة | حوالي 65 dependency من غير version، والـ `pubspec.lock` هو اللي ماسكهم |
+| الـ obfuscation | `--obfuscate --split-debug-info` | مفيش |
+
+**Shorebird** هو أهم حاجة هنا: لو فيه bug في Dart، الفريق بيطلّع patch بيوصل للمستخدمين في دقايق من غير review الـ store. ده بيعوّض جزء من غياب الـ CI، لأن الغلطة بتتصلّح بسرعة. بس ماينفعش يبقى بديل عن إن الغلطة ماتوصلش أصلًا.
+
+وفيه حاجات صغيرة بتوضّح ليه الـ CI مهم مش رفاهية:
+
+- `build-release.sh` بيستخدم Flutter `3.44.1`، و`build-appbundle.sh` بيستخدم `3.41.4`. يعني الـ APK والـ AAB ممكن يكونوا مبنيين بنسختين مختلفتين.
+- سكريبت الـ Windows بيزوّد رقم الـ build **قبل** الـ build، وسكريبت الـ Mac بيزوّده **بعد** ما ينجح. لو الـ build فشل على Windows، الرقم بيتحرق.
+- لو مفاتيح الـ release مش موجودة، `build.gradle.kts` بيبني بمفتاح الـ debug من غير أي error. والـ store هيرفضه وقت الرفع، بس بعد ما الوقت ضاع.
+
+```kotlin
+signingConfig = if (hasReleaseSigning) {
+    signingConfigs.getByName("release")
+} else {
+    signingConfigs.getByName("debug")
+}
+```
+
+القاعدة: الـ release build لازم يفشل بصوت عالي لو ناقصه حاجة، مش يكمّل ببديل ساكت.
+
+### لو هنبدأ Escore من جديد
+
+ده ملخص كل دروس «في Escore» في قايمة واحدة، بالترتيب اللي هتعمله بيه في مشروعك:
+
+1. **من أول commit**: CI بيشغّل analyze وtest، وlint بيمنع الـ domain يعمل import لـ Flutter أو data، وفيه feature مش مسموحلها تعمل import من feature تانية.
+2. **قبل أول feature**: `sealed class Failure` بالبيانات بس من غير ترجمة، وmapper واحد من الـ exceptions، و`ApiConsumer` متسجّل كـ interface.
+3. **قاعدة مكتوبة**: use case بس لو فيه قاعدة أو بيجمع أكتر من repository، وBloc بس لو الأحداث ليها قواعد ترتيب. والقواعد دي في `docs/` كـ ADR.
+4. **constructor injection بس**، و`sl` جوه ملفات الـ DI والـ routes بس.
+5. **flavors** من أول يوم، والـ `.env` فيه config عام بس.
+6. **Crashlytics** بالـ classifier بتاع Escore بالظبط، ومعاه user id وbreadcrumbs، والـ BlocObserver بيبعتله.
+7. **خليك على اللي Escore عمله صح**: الهيكل، والـ interceptors، وsingle-flight refresh، و`RefreshZone`، والـ startup gate الـ fail-open، والـ logout اللي مايخليش المستخدم يستنى، والـ risk register.
+
+<Quiz>
+
+<Question id="escore-production-1">
+<Ask>crash-free في Escore كان 97.6% ومفيش حاجة بتقع فعلًا. إيه اللي كان بيحصل، وإيه الحل اللي مايخبيش المشاكل؟</Ask>
+<Answer>
+
+الـ setup الافتراضي بيسجّل أي error مش متمسك كـ fatal crash. فصور اتمسحت من الـ cache، وtimeouts من YouTube iframe، وأخطاء نت وقت ما الجهاز أوفلاين، كلهم اتحسبوا crashes مع إن الـ app كمّل عادي. الحل: function بتصنّف الـ error. الأنواع اللي الـ app بيعدّيها (file system، وnetwork، وtimeout، وIO) بتتسجل non-fatal بـ label، والباقي fatal. الأخطاء لسه بتتسجل وتقدر تدوّر فيها، بس الـ metric بقى بيقيس الـ crashes الحقيقية.
+
+</Answer>
+</Question>
+
+<Question id="escore-production-2">
+<Ask>Shorebird بيسمح بـ patches للـ Dart من غير الـ store. ليه ده مش بديل عن الـ CI؟</Ask>
+<Answer>
+
+Shorebird بيقصّر الوقت من «لقينا الـ bug» لـ «اتصلّح عند المستخدمين»، بس الـ bug لسه وصل لمستخدمين وعمل ضرر. الـ CI بيمنع الـ bug قبل ما يوصل: تست واقع، أو analyze فيه error، أو build بنسخة Flutter مختلفة. والاتنين بيكمّلوا بعض: الـ CI بيقلّل عدد الـ bugs، وShorebird بيقلّل تمن اللي بيعدّي.
+
+</Answer>
+</Question>
+
+<Question id="escore-production-3">
+<Ask>Escore فيه features ماشية MVVM وfeatures ماشية Clean كامل. ده مشكلة؟</Ask>
+<Answer>
+
+الخليط نفسه مش مشكلة، ده اللي درس «Clean ولا MVVM؟» بيوصّي بيه: كل feature تاخد المعمارية اللي تناسبها. المشكلة إن القرار ماتكتبش. فمحدش يعرف ليه news فيها 20 use case وmatches فيها واحد، وأي حد جديد هيقلّد أول feature يفتحها. الحل ADR قصير بيقول إمتى feature تاخد use cases، ومراجعة الـ features الموجودة عليه.
+
+</Answer>
+</Question>
+
+</Quiz>

@@ -1,0 +1,252 @@
+---
+title: "في Escore: الـ Domain والأخطاء"
+description: "entities منفصلة عن الـ models، و79 use case منهم 2 بس فيهم منطق، وFailure بتعرف dio وGetIt. إيه اللي نفع، وإيه اللي هتعمله غير كده."
+minutes: 20
+draft: true
+---
+
+الوحدة دي قالت إن الـ domain هو المكان اللي القواعد بتعيش فيه، وإن الأخطاء لازم تبقى أنواع واضحة بيجبرك الـ compiler تتعامل معاها. في Escore الـ domain موجود في 13 feature، و`Either<Failure, T>` ماشي من الـ HTTP client لحد الـ Cubit. بس لما تبص جوه هتلاقي قصة أعقد شوية.
+
+### الـ Entities: منفصلة ونضيفة
+
+Escore عنده حوالي 86 ملف تحت `domain/entities`، أغلبهم classes عادية بتورّث `Equatable` وفيها `copyWith` مكتوب بالإيد. مفيش ولا entity فيها `fromJson` أو `toJson`، فالـ serialization كله في الـ data. ده بالظبط اللي الكورس بيقوله.
+
+الـ Model في الـ data كل حقوله nullable، والـ Mapper هو اللي بيقرر الـ defaults، فالـ entity بتوصل للـ domain مضمونة:
+
+<CodeBlock label="features/tournaments/data/mappers/tournament_mapper.dart">
+
+```dart
+static TournamentEntity toEntity(TournamentModel model, {bool isSummary = false}) {
+  return TournamentEntity(
+    id: model.id,
+    name: () {
+      if (model.name == null && kDebugMode) {
+        LoggerHelper.warning('TournamentMapper: null name for id=${model.id}');
+      }
+      return model.name ?? 'Unknown Tournament';
+    }(),
+    isFollowing: model.isFollowing ?? false,
+    isFeatured: model.isFeatured ?? false,
+    hasBracket: model.hasBracket ?? false,
+    // ...
+  );
+}
+```
+
+</CodeBlock>
+
+لاحظ الـ warning في الـ debug: لو السيرفر بعت بطولة من غير اسم، الشاشة مش هتقع، بس المطوّر هيعرف. ده تطبيق عملي لفكرة «الـ DTO هو المكان الوحيد اللي بيستحمل الـ JSON الوحش».
+
+#### بس فيه تلات تسريبات
+
+1. **entities شايلة «models»**. `TournamentEntity` فيها `ImageModel? logo`، و`ImageModel` جاي من `core/models` وفيه `fromJson` وmethods بتاخد `BuildContext`. 34 ملف domain بيعملوا import ليه، فالـ domain كله بقى معتمد على Flutter بشكل غير مباشر.
+2. **نصوص عرض جوه الـ domain**. `TournamentEntityX.statusText` بيرجّع `'Live'` و`'Upcoming'` بالإنجليزي متكتوبين في الكود. الترجمة شغلة الـ presentation.
+3. **مفيش value objects**. الـ ids كلها `String`، فممكن تبعت id ماتش مكان id بطولة والـ compiler مش هيقول حاجة. في Readly `BookId` بيمنع ده.
+
+### القواعد بتعيش فين
+
+Escore ماعندوش قواعد كتير في الـ use cases (هنشوف ليه حالًا)، فالقواعد اتوزعت على تلات أماكن:
+
+| المكان | مثال | رأينا |
+| --- | --- | --- |
+| extensions على الـ entity | `TournamentEntityX.isOngoing` و`isMultiParticipant` | كويس: قاعدة صغيرة جنب البيانات بتاعتها |
+| `matches/domain/utils/` | 12 ملف: `match_grouper` و`score_line` و`lineup_sorter` | كويس: Dart صافي، وعليه تستات كتير |
+| `tournaments/logic/` | `swiss_records.dart` | الكود كويس، بس ده فولدر رابع مش في أي feature تانية |
+| الـ repository impl | «409 على follow يعني نجاح» | قاعدة business في الـ data |
+
+### الـ Use Cases: 79 ملف، و2 بس فيهم منطق
+
+Escore عنده base class للـ use cases زي اللي في الكورس:
+
+<CodeBlock label="core/base/base_use_case.dart">
+
+```dart
+abstract class UseCase<T, Params> {
+  Future<Either<Failure, T>> call(Params params);
+}
+
+abstract class UseCaseNoParams<T> {
+  Future<Either<Failure, T>> call();
+}
+```
+
+</CodeBlock>
+
+ولما تعدّ: من 79 ملف use case، **2 بس** فيهم أي `if`. الـ 77 الباقيين سطر واحد بيحوّل للـ repository، زي `GetEventDetailsUseCase` اللي كل اللي بيعمله `return _repository.getEventById(eventId);`. ومن 72 Cubit، 18 بيكلّموا الـ repository على طول من غير use case.
+
+الـ use case اللي فيه قاعدة حقيقية شكله كده:
+
+<CodeBlock label="features/matches/domain/usecases/vote_for_match_usecase.dart">
+
+```dart
+class VoteForMatchUseCase implements UseCase<VoteEntity, VoteParams> {
+  VoteForMatchUseCase({required MatchesRepository repository})
+      : _repository = repository;
+
+  final MatchesRepository _repository;
+
+  @override
+  Future<Either<Failure, VoteEntity>> call(VoteParams params) {
+    final option = VoteOption.tryParse(params.vote);
+    if (option == null) {
+      return Future.value(
+        Left(ValidationFailure('Invalid vote option: ${params.vote}', field: 'vote')),
+      );
+    }
+    return _repository.voteForMatch(matchId: params.matchId, vote: option);
+  }
+}
+```
+
+</CodeBlock>
+
+وأهم حاجة في القصة دي إن فريق الـ matches **شال** الـ use cases الفاضية بقرار مكتوب:
+
+<CodeBlock label="core/dependency_injection/matches_di.dart">
+
+```dart
+// Use Cases — only those with real logic. The four pure pass-through
+// use cases (matches list / details / next / tournament fixtures) were
+// removed in H-16; cubits inject MatchesRepository directly.
+..registerLazySingleton<VoteForMatchUseCase>(
+  () => VoteForMatchUseCase(repository: sl<MatchesRepository>()),
+)
+```
+
+</CodeBlock>
+
+يعني جوه نفس المشروع فيه سياستين: news عندها 20 use case كلهم تقريبًا pass-through، وmatches عندها use case واحد بس لـ 8 Cubits.
+
+<Note kind="info" title="مين فيهم صح؟">
+
+الاتنين مقبولين، والغلط إن الاتنين موجودين مع بعض. الكورس بيقول إن الـ use case يستاهل لما يبقى فيه قاعدة، أو لما يجمع أكتر من repository، أو لما تحتاج تحمي الـ Cubit من شكل الـ repository. قرار matches (H-16) هو نفس الكلام ده. المهم إن القاعدة تتكتب مرة وتتطبّق في كل الـ features، مش كل فريق على مزاجه. وفي Escore كمان 33 ملف use case مش بيستخدموا الـ base class أصلًا، و`SyncUseCase` و`StreamUseCase` و`NoParams` متعرّفين ومحدش استخدمهم ولا مرة.
+
+</Note>
+
+### الأخطاء: `Either` في كل حتة
+
+Escore بيستخدم `Either` من `dartz` مكان الـ `Result` بتاعنا. الفكرة واحدة: الخطأ جزء من الـ return type، والـ Cubit مضطر يتعامل معاه بـ `fold`.
+
+<CodeBlock label="core/error/failures.dart">
+
+```dart
+abstract class Failure extends Equatable {
+  const Failure(this.message);
+
+  final String message;
+
+  @override
+  List<Object?> get props => [message];
+}
+
+class ServerFailure extends Failure {
+  const ServerFailure(super.message, {this.statusCode});
+
+  factory ServerFailure.fromDioException(DioException dioException) { /* ... */ }
+  factory ServerFailure.fromBadResponse(int statusCode, dynamic error) { /* ... */ }
+
+  final int? statusCode;
+}
+```
+
+</CodeBlock>
+
+وفيه كمان `ValidationFailure` بـ `field` و`errors`، و`AuthFailure` بـ `requiresRelogin`، و`NotFoundFailure` بـ `resourceType`، و`OfflineFailure`. على الورق ده نفس اللي الكورس بيطلبه: Failure شايلة البيانات اللي الشاشة محتاجاها.
+
+#### إيه اللي باظ في الحقيقة
+
+**`abstract` مش `sealed`.** فالـ `switch` على الـ Failure مش exhaustive، والـ compiler مش هيقولك لو نسيت نوع. فعمليًا أغلب الـ Cubits بتعمل `failure.message` وخلاص.
+
+**كل حاجة بقت `ServerFailure`.** عدّينا الاستخدامات: `ServerFailure` 144 مرة، و`OfflineFailure` 34، وكل الباقيين أقل من 10. و`CacheFailure` و`TimeoutFailure` و`PermissionFailure` صفر. وفيه repositories بتفرد النوع بإيدها:
+
+<CodeBlock label="tournaments_repository_impl.dart">
+
+```dart
+Failure _mapFailure(Failure failure) {
+  if (failure is ServerFailure) return failure;
+  return ServerFailure(failure.message);
+}
+```
+
+</CodeBlock>
+
+لو جالك `OfflineFailure`، خرج من هنا `ServerFailure` بنفس الرسالة، والشاشة مابقتش تعرف تفرّق.
+
+**ولما النوع يضيع، الناس بتدوّر في النص:**
+
+<CodeBlock label="features/clubs/presentation/cubit/club_details/club_details_cubit.dart">
+
+```dart
+final isNotFound = failure is NotFoundFailure ||
+    (failure is ServerFailure &&
+        (failure.statusCode == 404 ||
+            failure.message.toLowerCase().contains('not found')));
+```
+
+</CodeBlock>
+
+`contains('not found')` هيبوظ أول ما السيرفر يرجّع الرسالة بالعربي، وده بيحصل فعلًا لأن السيرفر بيترجم حسب `X-Language`.
+
+**الـ Failure بتترجم نفسها.** الرسالة بتتبني جوه `failures.dart` بقراية اللغة من الـ storage عن طريق الـ service locator:
+
+<CodeBlock label="core/error/failures.dart">
+
+```dart
+String _getLocalizedMessage(String key) {
+  final locale =
+      di.sl<LocalStorage>().getString(StorageKeys.locale) ?? 'ar';
+  final messages = _getMessages();
+  return messages[locale]?[key] ?? messages['en']![key] ?? key;
+}
+```
+
+</CodeBlock>
+
+ومعاها حوالي 330 سطر جداول ترجمة لـ 9 لغات في نفس الملف. النتيجة إن `failures.dart` بيعمل import لـ dio ولـ GetIt ولـ الـ storage، وأي ملف domain بيعمل import للـ Failure (94 ملف) بقى معتمد عليهم بشكل غير مباشر.
+
+**و28 مكان بيرجّعوا `Either<String, T>`.** في settings والـ social sign-in واتنين Cubits. ده رجوع لـ «الخطأ نص» اللي الوحدة دي كلها بتحاول تخلّصك منه.
+
+<Note kind="warn" title="الكود الصح كان موجود ومحدش وصّله">
+
+جوه `core/error/` فيه `exceptions.dart` بـ `ServerException` و`AuthException` وغيرهم، وفيه `error_handler.dart` بيحوّل 401 لـ `AuthFailure` و404 لـ `NotFoundFailure` و422 لـ `ValidationFailure` بالـ field map. ده بالظبط اللي الكورس بيشرحه. بس عدد مرات الـ `throw` للـ exceptions دي صفر، وعدد مرات بناء `ErrorHandler()` صفر. الـ mapper اللي شغال فعلًا هو `ServerFailure.fromBadResponse`، وهو بيرجّع `ServerFailure` لكل الحالات. الدرس: الـ abstraction اللي محدش بيستخدمه أسوأ من مفيش، لأنه بيخلّي اللي بيقرا الكود يفتكر إن المشكلة اتحلّت.
+
+</Note>
+
+### لو هنعيدها
+
+1. `sealed class Failure`، عشان أي نوع جديد يكسر الـ compile في كل `switch` لحد ما يتعامل معاه.
+2. الـ Failure شايلة بيانات بس (`statusCode`، `field`، `resourceType`)، والترجمة في الـ presentation بـ `switch` على النوع. ساعتها `failures.dart` يبقى plain Dart.
+3. mapper واحد بس من الـ exceptions للـ Failures، واتمسح أي mapper تاني.
+4. قاعدة مكتوبة للـ use cases (زي H-16) وتتطبّق في كل الـ features.
+5. `typedef TournamentId = String` على الأقل، أو extension types، للـ ids اللي بتتلخبط.
+
+<Quiz>
+
+<Question id="escore-domain-1">
+<Ask>فريق الـ matches شال 4 use cases وخلّى الـ Cubits تكلّم `MatchesRepository` على طول. ده بيكسر Clean Architecture؟</Ask>
+<Answer>
+
+لأ. الـ use case اللي بيحوّل للـ repository وخلاص مابيحميش حاجة: الـ Cubit لسه بيعتمد على abstraction من الـ domain، والقاعدة الذهبية سليمة. الكسر الحقيقي هو عدم الاتساق، إن news فيها 20 use case فاضي وmatches فيها واحد، من غير قاعدة مكتوبة تقول امتى نعمل use case.
+
+</Answer>
+</Question>
+
+<Question id="escore-domain-2">
+<Ask>ليه `contains('not found')` على رسالة الـ Failure فكرة خطيرة في Escore بالذات؟</Ask>
+<Answer>
+
+لأن السيرفر بيترجم الرسائل حسب الـ header `X-Language`، والـ Failure نفسها بتترجم الرسائل حسب لغة الجهاز. فنفس الخطأ ممكن يوصل بالعربي أو بأي لغة من التسعة، والـ check هيفشل من غير أي error. الحل إن المعلومة تبقى في النوع (`NotFoundFailure`) أو في `statusCode`، مش في نص معمول للمستخدم.
+
+</Answer>
+</Question>
+
+<Question id="escore-domain-3">
+<Ask>`failures.dart` بيعمل import لـ dio وGetIt. إزاي ده بيأثر على الـ domain مع إن ولا ملف domain بيعمل import لـ dio مباشرة؟</Ask>
+<Answer>
+
+الـ imports في Dart بتتنقل: أي contract في الـ domain بيرجّع `Either<Failure, T>` لازم يعمل import لـ `failures.dart`، و`failures.dart` بيعمل import لـ dio وGetIt والـ storage. فالـ domain بقى ما بيتعملّوش compile من غير الحاجات دي، ولو حبيت تنقله لـ package Dart صافية مش هينفع. الـ Failure جزء من الـ domain، فلازم تبقى plain Dart زيه.
+
+</Answer>
+</Question>
+
+</Quiz>

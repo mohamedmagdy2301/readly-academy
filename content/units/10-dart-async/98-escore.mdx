@@ -1,0 +1,209 @@
+---
+title: "في Escore: الـ Async والـ Streams"
+description: "Completer بيمنع refresh مكرر، وZone بتشيل معلومة في كل الـ calls، وfire-and-forget تقدر تستناه في التست، وstream bus عام، وlistener بيتضاعف مع كل rebuild، ومن غير ولا isolate."
+minutes: 15
+draft: true
+---
+
+الوحدة دي فتحت الصندوق: الـ event loop، والأخطاء اللي بتهرب من الـ try، والـ Stream من الصفر، وعمر الـ subscription، والـ isolates. Escore مابيستخدمش rxdart ولا drift ولا isolates، بس بيستخدم أدوات Dart الأساسية في أماكن شاطرة جدًا. وفيه كمان مكان واحد بيتسرّب فيه listener بالظبط زي ما درس «عمر الـ subscription» حذّر.
+
+### Future: مستني على نفس الحاجة
+
+`Completer` هو الطريقة إنك تعمل `Future` بإيدك وتكمّله امتى ما تحب. في Escore بيحل مشكلة الـ refresh المكرر:
+
+<CodeBlock label="core/api/dio_consumer/auth_interceptor.dart">
+
+```dart
+Future<String?> _refreshToken() async {
+  // If already refreshing, wait for the existing refresh to complete
+  if (_isRefreshing && _refreshCompleter != null) {
+    return _refreshCompleter!.future;
+  }
+  _isRefreshing = true;
+  _refreshCompleter = Completer<String?>();
+  // ... the actual refresh call, then _completeRefresh(token)
+}
+```
+
+</CodeBlock>
+
+خمس طلبات بيرجعوا 401 في نفس اللحظة. الأول بيعمل `Completer` ويبدأ الـ refresh، والأربعة الباقيين بيرجّعوا نفس الـ `future` ويستنوا. ولأن Dart شغالة على thread واحد، مفيش اتنين يقدروا يعدّوا الـ `if` في نفس الوقت، فمش محتاج lock. ده اللي درس الـ event loop قاله: الكود بين أي `await` والتاني بيتنفّذ من غير ما حد يقطعه.
+
+و`Future.wait` بيظهر 20 مرة. أحسن استخدام ليه في الـ logout: تلات طلبات للسيرفر مع بعض، ومعاهم `.timeout(const Duration(seconds: 4))` على الـ `Future.wait` كله، فالمستخدم مش هيستنى أبطأ طلب فيهم.
+
+### الأخطاء: الـ fire-and-forget اللي تقدر تستناه
+
+درس «الأخطاء في الكود الـ async» قال: الـ Future اللي محدش عمله `await`، لو فشل، الخطأ بتاعه بيروح للـ zone ومحدش بيمسكه. Escore عنده `unawaited(` 81 مرة، والـ lint `discarded_futures` مقفول. بس في أهم مكان، اتعمل حل يستاهل تتعلّمه:
+
+<CodeBlock label="core/base/offline_aware_repository.dart">
+
+```dart
+final Set<Future<void>> _pendingCacheWrites = {};
+
+/// Registers a fire-and-forget cache write so it stays awaitable.
+/// A failing background write is logged, never rethrown: it must not
+/// surface as an unhandled async error on a path nobody awaits.
+void trackCacheWrite(Future<void> write) {
+  late final Future<void> tracked;
+  tracked = write.catchError((Object e) {
+    logger('OfflineAwareRepository: background cache write failed: $e');
+  }).whenComplete(() => _pendingCacheWrites.remove(tracked));
+  _pendingCacheWrites.add(tracked);
+  unawaited(tracked);
+}
+
+/// Tests **must** await this before closing Hive (or asserting on cache
+/// contents) instead of sleeping for a fixed duration.
+@visibleForTesting
+Future<void> settleCacheWrites() async {
+  while (_pendingCacheWrites.isNotEmpty) {
+    await Future.wait(_pendingCacheWrites.toList());
+  }
+}
+```
+
+</CodeBlock>
+
+الـ repository بيرجّع البيانات للشاشة على طول، والكتابة في الـ cache بتكمل في الخلفية. وده بيحل تلات مشاكل مع بعض:
+
+1. **الخطأ ليه صاحب**: `catchError` بيمسكه ويسجّله، فمش هيروح للـ zone كـ unhandled error.
+2. **التست يقدر يستنى**: `settleCacheWrites()` بيستنى كل الكتابات اللي لسه شغالة، بدل `Future.delayed(100ms)` اللي «بيتمنى» إن الكتابة خلصت.
+3. **الـ `while`**: لو كتابة خلصت وبدأت كتابة جديدة، اللوب بيستناها هي كمان.
+
+الحل ده اتعمل بعد تست flaky حقيقي، والـ risk register مسجّله (F-40). بس فيه repositories لسه بتنادي `cacheResponse(...)` من غير `trackCacheWrite`، فنفس المشكلة ممكن ترجع هناك. هنا الـ lint كان هيفرق: لو `discarded_futures` شغال، كل `Future` مش متعمله `await` لازم يتكتب `unawaited(...)` صريح، أو يعدّي من `trackCacheWrite`.
+
+<Note kind="warn" title="`on Exception` مش بيمسك كل حاجة">
+
+`DioConsumer._safeApiCall` آخره `on Exception catch (e)`. بس `TypeError` (من `as Map<String, dynamic>` على شكل غلط) ده `Error` مش `Exception`، فمش هيتمسك هنا. وفي الـ auth repository، `AuthResponseModel.fromJson(data)` بيتنادى جوه `fold` من غير try. لو السيرفر رجّع شكل غريب، الـ `TypeError` هيعدّي الـ `Either` كله، والـ `await` في الـ Cubit هيرمي، والـ Cubit هيفضل في Loading. والمكان الوحيد اللي هيشوفه هو `PlatformDispatcher.onError`. القاعدة من درس الأخطاء: الحدود بين الطبقات بتمسك `Object` أو بتحوّل الـ parsing لـ `Either` قبل ما يطلع.
+
+</Note>
+
+### Zone: معلومة بتمشي مع الكود
+
+درس الأخطاء اتكلم عن الـ Zone كمكان الأخطاء الـ unhandled بتروحله. Escore بيستخدمها لحاجة تانية خالص:
+
+<CodeBlock label="core/api/dio_consumer/refresh_zone.dart">
+
+```dart
+class RefreshZone {
+  static const _key = #escore.forceRefresh;
+
+  static Future<T> run<T>(Future<T> Function() body) =>
+      runZoned(body, zoneValues: {_key: true});
+
+  static bool get isRefreshing => Zone.current[_key] == true;
+}
+```
+
+</CodeBlock>
+
+أي `Future` بيتعمل جوه `run`، وأي `await` بعده، وأي function بيناديها، كلهم شغالين جوه نفس الـ Zone. فلما الـ data source اللي تحت خالص يسأل `RefreshZone.isRefreshing`، بيعرف إن الطلب ده جاي من pull-to-refresh، من غير ما حد في النص يعدّي parameter. ده الـ async context: المعلومة بتمشي مع سلسلة الـ async calls زي ما الـ stack trace بيمشي معاها.
+
+### Stream: bus عام
+
+<CodeBlock label="core/services/follow_sync/follow_sync_bus.dart">
+
+```dart
+class FollowSyncBus {
+  FollowSyncBus._();
+  static final FollowSyncBus instance = FollowSyncBus._();
+
+  final StreamController<FollowChange> _controller =
+      StreamController<FollowChange>.broadcast();
+
+  /// Broadcast stream of follow changes. Hot/broadcast: events are not
+  /// buffered, so a listener only receives changes emitted while it's
+  /// subscribed (past changes are reconciled by the caches on next load).
+  Stream<FollowChange> get stream => _controller.stream;
+}
+```
+
+</CodeBlock>
+
+درس «Stream من الصفر» فرّق بين الـ single-subscription والـ broadcast. هنا broadcast لأن كل Cubit فاتح لاعب أو فريق أو ليست بيسمع في نفس الوقت. والكومنت بيقول أهم حاجة في الـ broadcast stream: **مابيخزّنش**. الـ Cubit اللي اتفتح بعد الـ event مش هيشوفه، والـ cache هو اللي بيغطي ده لما الشاشة تحمّل. لو محتاج اللي يشترك متأخر ياخد آخر قيمة، ده شغل `BehaviorSubject` أو `ValueNotifier`، مش broadcast.
+
+والـ WebSocket service بيعمل نفس الحكاية بـ 7 broadcast controllers، واحد لكل نوع event (`scoreUpdates`، و`matchStart`، و`matchEnd`...)، فكل Cubit بيسمع على النوع اللي يهمه بس.
+
+#### الـ operators من غير rxdart
+
+مفيش rxdart ولا `stream_transform` في المشروع. فالـ debounce بيتعمل بـ `Timer`، والتجميع بـ `Timer` و`Map` (التفاصيل في درس Escore في وحدة Cubit وBloc). ده شغال، بس كل Cubit بيكتبه من الأول بطريقته، وكل `Timer` لازم يتلغي في `close()` بالإيد. operator زي `debounceTime` جاهز ومتجرّب كان هيشيل الكود ده كله.
+
+### عمر الـ subscription: اللي اتعمل صح واللي اتسرّب
+
+**صح**: `FollowSyncMixin` بيلغي الـ subscription جوه `close()` بتاعه، فأي Cubit بيستخدم الـ mixin مش محتاج يفتكر. و`MatchDetailsCubit.close()` بيلغي الـ timers ويعمل `unsubscribeFromLiveUpdates()`، اللي بيلغي الـ 5 subscriptions وبيقفل الـ WebSocket.
+
+**تسريب**:
+
+<CodeBlock label="core/utils/helper/build_app_connectivity_controller.dart">
+
+```dart
+Widget setupConnectivityWidget(Widget child) {
+  return GestureDetector(
+    onTap: hideKeyboard,
+    child: Builder(
+      builder: (context) {
+        sl<ConnectivityController>().connectivityControllerInit();
+        return LayoutBuilder(/* ... */);
+      },
+    ),
+  );
+}
+
+// connectivity_controller.dart
+Future<void> connectivityControllerInit() async {
+  final result = await Connectivity().checkConnectivity();
+  isInternetConnected(result);
+  Connectivity().onConnectivityChanged.listen(isInternetConnected);
+}
+```
+
+</CodeBlock>
+
+`setupConnectivityWidget` بيتنادى من `MaterialApp.builder`، وده بيتبني تاني مع كل تغيير في اللغة أو الثيم أو حجم الشاشة. وكل build بينادي `connectivityControllerInit()`، اللي بيعمل `listen` جديد ومابيحفظش الـ subscription. يعني بعد 10 rebuilds هيبقى فيه 10 listeners، وكل تغيير في الاتصال بيشغّل `isInternetConnected` عشر مرات. والـ init أصلًا اتعمل مرة في الـ startup.
+
+ده بالظبط اللي درس «عمر الـ subscription» بيقوله: أي `listen` مالوش متغير بيتحفظ فيه، ومالوش `cancel`، يبقى تسريب. والحل سطرين: `_sub ??= Connectivity().onConnectivityChanged.listen(...)`، وشيل الاستدعاء من الـ `builder`.
+
+### Isolates: مش محتاجينهم، وده صح
+
+مفيش `compute` ولا `Isolate.run` في Escore. ده مش نسيان: أكبر response حوالي 63 KB قبل الضغط، والـ `jsonDecode` لحجم زي ده بياخد ملي ثواني قليلة على الـ main isolate. درس الـ isolates قال: قيس الأول، والـ isolate ليه تمن (نسخ البيانات رايح جاي). لو حد قال «لازم نحط الـ parsing في isolate» من غير قياس، ده تعقيد من غير فايدة.
+
+المكان الوحيد اللي يستاهل يتقاس: قراية ليست كبيرة من الـ Hive cache وقت فتح الـ app، لأن `jsonDecode` ثم mapping لمئات الماتشات بيحصل وانت عايز أول frame يطلع بسرعة. لو الـ profiler بيقول إنه بياخد أكتر من frame، ساعتها `Isolate.run`.
+
+### لو هنعيدها
+
+1. `discarded_futures` شغال، وكل fire-and-forget بيعدّي من `trackCacheWrite` أو `unawaited` صريح.
+2. الحدود بين الطبقات بتمسك `on Object` مش `on Exception`، أو الـ parsing بيرجّع `Either`.
+3. أي `listen` بيتحفظ في متغير وبيتلغي، ومفيش `listen` جوه `build` أو `builder`.
+4. `stream_transform` أو rxdart للـ debounce والـ throttle بدل `Timer` في كل Cubit.
+5. الـ streams المشتركة تدخل في الـ constructor بدل `.instance`، عشان التست يدّي stream fake.
+
+<Quiz>
+
+<Question id="escore-async-1">
+<Ask>ليه `_refreshToken` في Escore مش محتاج lock، مع إن 5 طلبات ممكن ينادوه في نفس الوقت؟</Ask>
+<Answer>
+
+لأن Dart شغالة على isolate واحد بـ event loop: الكود بين أي `await` والتاني بيتنفّذ كله من غير ما حد يقاطعه. فأول طلب بيعدّي الـ `if` ويحط `_isRefreshing = true` ويعمل الـ `Completer` قبل أي `await`. ولما الطلبات التانية تشتغل، بتلاقي الـ refresh شغال وبترجّع نفس الـ `future`. الـ lock بيبقى محتاج لما يبقى فيه threads بتشتغل مع بعض فعلًا، وده مش موجود جوه isolate واحد.
+
+</Answer>
+</Question>
+
+<Question id="escore-async-2">
+<Ask>`trackCacheWrite` بيحل إيه مايحلّهوش `unawaited(write)` لوحده؟</Ask>
+<Answer>
+
+`unawaited` بيقول للـ lint «أنا قاصد مستناش»، بس الـ Future لو فشل الخطأ هيبقى unhandled، والتست مالوش طريقة يستنى الكتابة تخلص. `trackCacheWrite` بيضيف `catchError` فالخطأ بيتسجل بدل ما يهرب، وبيحفظ الـ Future في set عشان `settleCacheWrites()` في التست يستنى كل الكتابات بدل `Future.delayed`.
+
+</Answer>
+</Question>
+
+<Question id="escore-async-3">
+<Ask>إيه اللي بيتسرّب في `setupConnectivityWidget`، وإزاي تعرف إن فيه تسريب من غير ما تقرا الكود كله؟</Ask>
+<Answer>
+
+كل مرة `MaterialApp.builder` بيتبني (تغيير لغة، أو ثيم، أو حجم الشاشة)، بيتعمل `listen` جديد على `onConnectivityChanged` ومحدش بيلغيه. فعدد الـ listeners بيزيد مع الوقت. العلامة اللي تعرفها بيها: `.listen(` من غير ما نتيجتها تتحفظ في متغير، أو `listen` جوه `build` أو `builder`. أي واحدة فيهم معناها subscription مالوش `cancel`.
+
+</Answer>
+</Question>
+
+</Quiz>
