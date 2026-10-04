@@ -4,6 +4,9 @@ import LayersLab from "./LayersLab";
 import TokenRefreshLab from "./TokenRefreshLab";
 import OfflineLab from "./OfflineLab";
 import ErrorPipelineLab from "./ErrorPipelineLab";
+import EventLoopLab from "./EventLoopLab";
+import StreamMarblesLab from "./StreamMarblesLab";
+import SubscriptionLeakLab from "./SubscriptionLeakLab";
 
 /**
  * Registry of interactive labs usable in MDX as <Lab name="..." />.
@@ -15,6 +18,9 @@ const LABS: Record<string, React.ComponentType> = {
   "token-refresh": TokenRefreshLab,
   "offline-sync": OfflineLab,
   "error-pipeline": ErrorPipelineLab,
+  "event-loop": EventLoopLab,
+  "stream-marbles": StreamMarblesLab,
+  "subscription-leak": SubscriptionLeakLab,
 };
 
 export default function Lab({ name }: { name: string }) {

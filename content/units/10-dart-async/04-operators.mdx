@@ -194,7 +194,7 @@ extension ThrottleX<T> on Stream<T> {
 
 ### switchMap وأخواته: الأنماط الأربعة كـ operators
 
-لو قريت [درس Cubit متقدم](/course/cubit-bloc/cubit-advanced/)، الأنماط الأربعة هناك هي نفسها operators:
+لو قريت [درس Cubit متقدم](/course/state-management/cubit-advanced/)، الأنماط الأربعة هناك هي نفسها operators:
 
 | النمط | الـ operator | بيعمل إيه في حدث جديد والقديم لسه شغال |
 | --- | --- | --- |
@@ -205,6 +205,12 @@ extension ThrottleX<T> on Stream<T> {
 | concurrent | `concurrentAsyncMap` (stream_transform) | الاتنين مع بعض |
 
 والـ transformers بتاعة `bloc_concurrency` (`restartable` و`droppable` و`sequential`) مبنية على نفس الفكرة: الـ events stream والـ handler بيتحولوا لـ stream من الـ states بالـ operator المناسب.
+
+### كل ده على خط زمني
+
+اكتب في الخانة وشوف كل operator بيطلّع إيه من نفس الكتابة، وبعدين بدّل بين `asyncMap` و`switchMap` و`exhaustMap` وشوف البحث البطيء بيعمل إيه في الشاشة. أول مشكلة في المستوى الجاي هي اللي هتشوفها مع `asyncMap`.
+
+<Lab name="stream-marbles" />
 
 </Level>
 

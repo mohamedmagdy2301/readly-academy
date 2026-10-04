@@ -114,6 +114,12 @@ void main() {
 
 ليه الطابورين؟ الـ microtask للحاجات اللي «لازم تخلص قبل ما الدنيا تتحرك»: كمالة الـ Future اللي لسه خالص، وتوصيل قيمة الـ stream. والـ event لأي حاجة جاية من بره. والنتيجة المهمة: <b>لو الـ microtasks مابتخلصش، الـ events مش هتيجي خالص</b>، ومن ضمنها الـ frame. loop بيعمل `scheduleMicrotask` لنفسه بيوقّف الـ app زي `while (true)` بالظبط.
 
+### جرّب الترتيب بإيدك
+
+خمّن الترتيب في كل برنامج قبل ما تمشي فيه. البرنامج التاني نفس فكرة الـ `load()` اللي فوق: async function بتطبع قبل وبعد الـ await، والتالت بيوري ليه microtask بتحط microtask ممكن توقف الـ app.
+
+<Lab name="event-loop" />
+
 ### الـ Future بيبدأ لما تعمله، مش لما تستناه
 
 <CodeBlock label="صفحة تفاصيل الكتاب: ورا بعض ولا مع بعض">
@@ -292,7 +298,7 @@ Future<Result<VersionPolicy>> policy() {
 - <b>الـ function مش `async`:</b> لأنها بترجّع Future جاهز. لو كتبتها `async` كانت هتلفه في Future جديد كل مرة، وده شغال بس مالوش لازمة.
 - <b>نفس الفكرة بالتفصيل:</b> الـ in-flight dedupe في [درس الطلبات المتقدمة](/course/api-errors/advanced-requests/) بيعمل كده لأي GET، بـ Map من الـ key للـ Future.
 
-ونفس الفكرة في الـ Cubit: بعد كل `await` اسأل الشاشة لسه موجودة؟ والـ state لسه زي ما هي؟ والطلب ده لسه هو الأحدث؟ ودي الـ 3 أسئلة اللي الطريق كله بتاعها في [درس Cubit متقدم](/course/cubit-bloc/cubit-advanced/).
+ونفس الفكرة في الـ Cubit: بعد كل `await` اسأل الشاشة لسه موجودة؟ والـ state لسه زي ما هي؟ والطلب ده لسه هو الأحدث؟ ودي الـ 3 أسئلة اللي الطريق كله بتاعها في [درس Cubit متقدم](/course/state-management/cubit-advanced/).
 
 ### 20 غلاف بيتحملوا واحد ورا التاني
 

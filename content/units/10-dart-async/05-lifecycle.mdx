@@ -68,7 +68,7 @@ class LibraryCubit extends Cubit<LibraryState> {
 
 </CodeBlock>
 
-- <b>الـ `late final` مش `?`:</b> الـ subscription بتتعمل في الـ constructor ومرة واحدة، فمفيش حالة تبقى فيها null. لو بتتعمل في method زي `watch()` ممكن تتنادى أكتر من مرة (فلتر جديد مثلًا)، يبقى nullable، و`_sub?.cancel()` قبل الـ listen الجديد، زي [درس Cubit متقدم](/course/cubit-bloc/cubit-advanced/).
+- <b>الـ `late final` مش `?`:</b> الـ subscription بتتعمل في الـ constructor ومرة واحدة، فمفيش حالة تبقى فيها null. لو بتتعمل في method زي `watch()` ممكن تتنادى أكتر من مرة (فلتر جديد مثلًا)، يبقى nullable، و`_sub?.cancel()` قبل الـ listen الجديد، زي [درس Cubit متقدم](/course/state-management/cubit-advanced/).
 - <b>الـ cancel قبل `super.close()`:</b> الـ `super.close()` بيقفل الـ stream بتاع الـ Cubit، وبعده أي `emit` بيرمي `StateError: Cannot emit new states after calling close`. فالـ subscription لازم تقف الأول.
 - <b>الـ await:</b> مش عشان الـ events، دي وقفت فورًا. عشان المصدر يخلّص تنضيفه قبل ما الـ close يرجع. في التستات ده بيفرق: `await cubit.close()` بيضمن إن مفيش حاجة لسه شغالة.
 
@@ -137,6 +137,12 @@ progress.listen(print); // Bad state: Stream has already been listened to.
 </CodeBlock>
 
 الـ single stream ليه listen واحد في عمره كله. حتى لو الأول عمل cancel، مفيش listen تاني. لو محتاج تسمع تاني، اطلب stream جديد: نادي `importer.import(rows)` تاني، وده هيبدأ الشغل من الأول. وده سبب إن الـ repository فيه method اسمها `watchLibrary()` مش field اسمه `library`: كل نداء بيرجّع stream جديد لصاحبه.
+
+### شوف التسريب بعينك
+
+افتح كام صفحة واقفلهم والـ `cancel()` في `close()` مقفول، وابعت أحداث: الـ Cubits المقفولة بتفضل تستقبل وترمي StateError. شغّل الـ `isClosed` لوحده الأول: الخطأ هيختفي والتسريب لأ. وبعدين شغّل الـ cancel مع الـ callback اللي فيه await، واقفل صفحة والـ callback لسه مستني، وده أول مشكلة في المستوى الجاي.
+
+<Lab name="subscription-leak" />
 
 </Level>
 
@@ -357,7 +363,7 @@ class BookNotesCubit extends Cubit<BookNotesState> {
 
 </BeforeAfter>
 
-قبل: subscriptionين مش متخزنين، فمحدش هيلغيهم، والـ SyncStatusCubit (عايش طول عمر الـ app) ماسك الـ BookNotesCubit في الذاكرة لحد ما الـ app يتقفل. والـ callback الأول async، فممكن يعمل emit بعد الـ close، وممكن ليستتين يتعرضوا بالعكس. وCubit ماسك Cubit، ودي حاجة [درس Cubit متقدم](/course/cubit-bloc/cubit-advanced/) قال ليه لأ. بعد: subscription واحدة، متخزنة، وبتتلغي في الـ close. الشغل الـ async في الـ pipeline بالترتيب. والـ badge بيقرا من الـ SyncStatusCubit في الـ widget مباشرة.
+قبل: subscriptionين مش متخزنين، فمحدش هيلغيهم، والـ SyncStatusCubit (عايش طول عمر الـ app) ماسك الـ BookNotesCubit في الذاكرة لحد ما الـ app يتقفل. والـ callback الأول async، فممكن يعمل emit بعد الـ close، وممكن ليستتين يتعرضوا بالعكس. وCubit ماسك Cubit، ودي حاجة [درس Cubit متقدم](/course/state-management/cubit-advanced/) قال ليه لأ. بعد: subscription واحدة، متخزنة، وبتتلغي في الـ close. الشغل الـ async في الـ pipeline بالترتيب. والـ badge بيقرا من الـ SyncStatusCubit في الـ widget مباشرة.
 
 </LessonPart>
 
