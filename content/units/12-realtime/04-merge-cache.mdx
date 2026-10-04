@@ -1,0 +1,497 @@
+---
+title: "دمج الأحداث اللايف مع الـ cache"
+description: "الـ events بتوصل متأخرة، ومتكررة، وبالعكس، وفيها صدى تعديلك انت. إزاي drift يفضل المصدر الوحيد للحقيقة: الـ version بيقرر مين أحدث، والـ seq بيقول فاتك إيه، والـ catch-up بيرجّعه، وقاعدة كتابة واحدة لكل حاجة جاية من السيرفر."
+minutes: 40
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="تصحيحات الجرنال اللي بتيجي بالبوستة">
+
+عندك موسوعة في البيت، والدار اللي بتطبعها بتبعتلك تصحيحات بالبوستة. كل تصحيح لمقالة واحدة، ومكتوب عليه «الطبعة 7 من مقالة الأهرامات». والجوابات بتيجي برقم مسلسل: جواب 1051، 1052، 1053.
+
+البوستة مش مضمونة: جواب 1053 ممكن يوصل قبل 1052، وجواب ممكن يوصل مرتين، وجواب ممكن يضيع. علشان كده عندك قاعدتين:
+
+- <b>الطبعة بتقرر:</b> لو عندك الطبعة 7 من مقالة الأهرامات وجالك تصحيح «الطبعة 6»، ترميه. اتأخر في السكة، واللي عندك أحدث. ولو جالك «الطبعة 7» تاني، ترميه برضه: عندك هو.
+- <b>الرقم المسلسل بيكشف الضايع:</b> لو آخر جواب متأكد منه 1051 وجالك 1053، يبقى 1052 لسه ماوصلش. تستنى شوية، ولو ماجاش تتصل بالدار: «ابعتولي كل اللي بعد 1051».
+
+وفي قاعدة تالتة: لو انت كاتب بإيدك تعديل على مقالة ولسه مابعتهوش للدار، التصحيح اللي جاي مايكتبش فوقه. ده تعديلك، والدار هتشوفه وتقرر لما يوصلها.
+
+</Analogy>
+
+الطبعة هي الـ <b>`version`</b> بتاع الكتاب، اللي اتعمل في [درس الـ Conflicts](/course/offline/conflicts/). الرقم المسلسل هو الـ <b>`seq`</b> اللي في كل event. والتليفون للدار هو الـ <b>catch-up</b>. وتعديلك اللي مابعتهوش هو الصف اللي `syncState` بتاعه `pending`. الدرس ده بيحوّل التلات قواعد دول لكود في drift، عشان الـ DB تفضل المصدر الوحيد للحقيقة حتى لو الـ events جاية بأي ترتيب.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### رقمين، لكل واحد شغلة
+
+| | الـ `version` | الـ `seq` |
+| --- | --- | --- |
+| تبع إيه | كتاب واحد | مكتبة المستخدم كلها |
+| بيزيد امتى | مع كل تعديل على الكتاب ده | مع كل event للمستخدم ده |
+| مين بيعمله | السيرفر، مع الكتابة نفسها | السيرفر، مع الـ event |
+| بيجاوب على | «النسخة دي أحدث من اللي عندي؟» | «فاتني event؟» |
+| بيتحفظ فين | عمود في `Books` | صف واحد في `SyncCursors` |
+
+الاتنين أرقام من السيرفر، مش أوقات. الـ `occurredAt` اللي في الـ event للـ logs والـ metrics بس. ترتيب الأحداث بالوقت معناه إنك بتقارن ساعة بساعة، و[درس الـ Conflicts](/course/offline/conflicts/) شرح ليه ده بيبوظ.
+
+### 1. قاعدة كتابة واحدة
+
+في [درس Offline-first](/course/offline/offline/)، الـ `upsertBooks` بتاع الـ refresh كان عنده قاعدة واحدة: مايلمسش صف `pending`. دلوقتي فيه طريقين بيكتبوا نسخة السيرفر: الـ refresh والـ events. ولو كل واحد ليه قاعدته، هيختلفوا. فالقاعدة بتتكتب مرة، والاتنين بيعدّوا عليها:
+
+<CodeBlock label="inside AppDatabase: كل كتابة جاية من السيرفر">
+
+```dart
+/// The server's copy may replace ours only if ours has nothing waiting to sync
+/// and the server's is newer. Duplicates and late events fail the version check.
+Expression<bool> _serverMayOverwrite($BooksTable old, int incoming) =>
+    old.syncState.equals('synced') & old.version.isSmallerThanValue(incoming);
+
+Future<void> _putServerRow(BookRow row) async {
+  final removed = await (select(removedBooks)..where((r) => r.id.equals(row.id))).getSingleOrNull();
+  if (removed != null && removed.version >= row.version) return; // a late copy of a removed book
+  await into(books).insert(
+    row,
+    onConflict: DoUpdate((_) => row, where: (old) => _serverMayOverwrite(old, row.version)),
+  );
+  if (removed != null) {
+    await (delete(removedBooks)..where((r) => r.id.equals(row.id))).go(); // re-added after removal
+  }
+}
+
+Future<void> _removeServerRow(String id, int version) async {
+  await (delete(books)
+        ..where((b) =>
+            b.id.equals(id) & b.syncState.equals('synced') & b.version.isSmallerOrEqualValue(version)))
+      .go();
+  await into(removedBooks).insertOnConflictUpdate(RemovedBooksCompanion.insert(
+      id: id, version: version, removedAt: DateTime.now().toUtc())); // only for pruning: skew costs nothing
+}
+```
+
+</CodeBlock>
+
+ده نفس `applyRemoteBook` و`applyRemoteRemoval` اللي [الدرس اللي فات](/course/realtime/websocket/) نادى عليهم، بعد ما بقى ليهم قاعدة. ولاحظ إن السيرفر بيزوّد الـ version مع الحذف كمان، فالـ `book.removed` شايل version زي أي تعديل (ده مكتوب في الـ AsyncAPI).
+
+| الحالة | الصف عندك | اللي جاي | النتيجة |
+| --- | --- | --- | --- |
+| كتاب جديد | مش موجود | v1 | يتضاف |
+| تعديل عادي | synced v6 | v7 | يتحدث |
+| event مكرر | synced v7 | v7 | ولا حاجة: مش أصغر |
+| event متأخر | synced v7 | v6 | ولا حاجة |
+| تعديلك لسه ماتبعتش | pending v6 | v7 | ولا حاجة: الصف بتاعك لحد ما الـ queue تبعته |
+| كتاب اتمسح وجه بعدها event قديم | مش موجود، و`removedBooks` فيه v8 | v7 | ولا حاجة: مش هيرجع كـ zombie |
+| كتاب اتمسح واتضاف تاني | مش موجود، و`removedBooks` فيه v8 | v9 | يتضاف، والـ tombstone يتشال |
+
+- <b>الـ `DoUpdate` بشرط:</b> نفس اللي `upsertBooks` كان بيعمله، بس الشرط بقى `_serverMayOverwrite`. SQLite بيعمل الـ insert والمقارنة في خطوة واحدة.
+- <b>الـ pending بيستنى، بس مابيضيعش:</b> الـ queue هتبعت تعديلك بالـ version القديم (v6)، والسيرفر عنده v7، فيرد 409 ومعاه النسخة الحالية، والـ `FieldMerge` بتاع [درس الـ Conflicts](/course/offline/conflicts/) بيدمج. يعني تعديل التابلت هيوصل للموبايل من رد الـ 409، مش من الـ event.
+- <b>`removedBooks`:</b> لما الكتاب يتمسح من الـ DB، الـ version بتاعه بيتمسح معاه، فلو event قديم وصل بعدها، مفيش حاجة تقارن بيها، والكتاب يرجع. الجدول ده بيفتكر «الكتاب ده اتمسح عند الـ version ده». ده الـ tombstone بتاع السيرفر، زي الـ `deleted` بتاع [درس Offline-first](/course/offline/offline/) بس في الاتجاه التاني.
+
+<CodeBlock label="الجداول الجديدة">
+
+```dart
+/// Server-side removals we've seen, so a late event can't bring the book back.
+class RemovedBooks extends Table {
+  TextColumn get id => text()();
+  IntColumn get version => integer()();
+  DateTimeColumn get removedAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+/// How far each stream is applied: every seq up to this one is in the DB.
+class SyncCursors extends Table {
+  TextColumn get stream => text()(); // 'library'
+  IntColumn get seq => integer()();
+
+  @override
+  Set<Column> get primaryKey => {stream};
+}
+
+@DriftDatabase(tables: [/* ...the tables you already have, */ RemovedBooks, SyncCursors])
+class AppDatabase extends _$AppDatabase {
+  // schemaVersion + 1, and a migration step: m.createTable(removedBooks), m.createTable(syncCursors)
+}
+```
+
+</CodeBlock>
+
+والاتنين جوه نفس الـ DB، فالـ `wipe()` بتاع [درس الـ Session](/course/di-scale/session/) بيمسحهم مع الباقي (`allTables`). المستخدم الجديد بيبدأ من غير cursor، وده معناه full refresh. ده المطلوب بالظبط.
+
+### 2. العقد بيكبر: catch-up
+
+<CodeBlock label="api/openapi.yaml (إضافات)">
+
+```yaml
+paths:
+  /library:
+    get:
+      responses:
+        '200':
+          headers:
+            X-Library-Seq: { schema: { type: integer } } # new: the snapshot is as of this seq
+  /library/changes:
+    get:
+      operationId: libraryChanges
+      parameters:
+        - { name: since, in: query, required: true, schema: { type: integer } }
+        - { name: limit, in: query, schema: { type: integer, default: 200, maximum: 500 } }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [changes, seq, hasMore]
+                properties:
+                  changes:
+                    type: array
+                    items:
+                      oneOf: # exactly the socket messages
+                        - $ref: 'asyncapi.yaml#/components/messages/BookUpserted/payload'
+                        - $ref: 'asyncapi.yaml#/components/messages/BookRemoved/payload'
+                  seq: { type: integer }   # send this as `since` next time
+                  hasMore: { type: boolean }
+        '410': { $ref: '#/components/responses/Error' } # code: cursor_expired (older than 7 days)
+```
+
+</CodeBlock>
+
+- <b>نفس الـ events:</b> الـ `changes` هي نفس الرسايل اللي بتيجي على الـ socket، بنفس الـ `seq` والـ `data`. فالـ parser واحد (`LibraryEventDto.tryParse`)، والكود اللي بيطبّقهم واحد.
+- <b>الـ 410:</b> السيرفر بيحتفظ بالـ events 7 أيام. مستخدم كان مقفول الـ app أسبوعين، الـ cursor بتاعه أقدم من كده، فبياخد 410 بـ `cursor_expired`، والـ app يعمل full refresh. ده الـ `code` بنفس شكل الـ Error schema اللي في [درس العقد](/course/api-errors/api-contract/).
+- <b>الـ `X-Library-Seq`:</b> header جديد في رد `GET /library`، يعني تغيير additive، والنسخ القديمة بتتجاهله. بيقول «الـ snapshot ده لحد seq كام»، فالـ refresh يقدر يحط الـ cursor في نفس الـ transaction.
+
+### 3. الـ LiveSyncService بيكبر
+
+<CodeBlock label="features/library/data/live_sync_service.dart">
+
+```dart
+class LiveSyncService {
+  LiveSyncService(this._source, this._remote, this._db, this._library, this._clock, this._logger);
+  final LibraryRealtimeSource _source;
+  final LibraryRemoteSource _remote;
+  final AppDatabase _db;
+  final LibraryRepository _library; // refresh(): the full snapshot, when catching up isn't possible
+  final Clock _clock;
+  final AppLogger _logger;
+
+  final _subs = <StreamSubscription<Object?>>[];
+  bool _catchingUp = false;
+  bool _again = false;
+
+  void start() {
+    if (_subs.isNotEmpty) return;
+    _subs
+      ..add(_source.hellos().listen(_onHello))
+      ..add(_source
+          .events()
+          .debounceBuffer(const Duration(milliseconds: 200)) // stream_transform: a burst = one batch
+          .asyncMap(_applyLive)
+          .listen(null));
+  }
+
+  Future<void> _onHello(int latest) async {
+    if (await _db.cursor('library') != latest) unawaited(requestCatchUp());
+  }
+
+  Future<void> _applyLive(List<LibraryEventDto> events) async {
+    final gap = await _db.transaction(() async {
+      final cursor = await _db.cursor('library');
+      final fresh = [for (final e in events) if (cursor != null && e.seq > cursor) e];
+      await _db.applyServerChanges(_collapse(fresh));
+      final seqs = fresh.map((e) => e.seq).toSet();
+      var next = cursor;
+      while (next != null && seqs.contains(next + 1)) {
+        next++; // the cursor only moves over a run with no holes
+      }
+      if (next != cursor) await _db.setCursor('library', next!);
+      return cursor == null || seqs.any((s) => s > next!);
+    });
+    if (gap) unawaited(requestCatchUp());
+  }
+
+  /// Safe to call from anywhere: one catch-up at a time, one more pass if asked mid-way.
+  Future<void> requestCatchUp() async {
+    if (_catchingUp) {
+      _again = true;
+      return;
+    }
+    _catchingUp = true;
+    try {
+      do {
+        _again = false;
+        await _catchUp();
+      } while (_again);
+    } on Object catch (e, st) {
+      _logger.warning('catch-up failed', error: e, stackTrace: st); // the next hello tries again
+    } finally {
+      _catchingUp = false;
+    }
+  }
+
+  Future<void> _catchUp() async {
+    var since = await _db.cursor('library');
+    if (since == null) {
+      await _library.refresh(); // first time on this DB: the snapshot sets the cursor
+      return;
+    }
+    while (true) {
+      final ChangesPage page;
+      try {
+        page = await _remote.fetchChanges(since: since!);
+      } on DioException catch (e) when (e.response?.statusCode == 410) {
+        await _library.refresh(); // cursor_expired: start over from a snapshot
+        return;
+      }
+      await _db.transaction(() async {
+        await _db.applyServerChanges(_collapse(page.changes));
+        await _db.setCursor('library', page.seq); // in the same transaction as the data
+      });
+      if (!page.hasMore) {
+        // nothing older than the server's 7-day log can arrive any more
+        await _db.pruneRemoved(_clock.now().subtract(const Duration(days: 7)));
+        return;
+      }
+      since = page.seq;
+    }
+  }
+
+  /// One write per book: the highest version wins inside the batch too.
+  List<LibraryEventDto> _collapse(List<LibraryEventDto> events) {
+    final byKey = <String, LibraryEventDto>{};
+    for (final e in events) {
+      final current = byKey[e.key];
+      if (current == null || e.version > current.version) byKey[e.key] = e;
+    }
+    return byKey.values.toList();
+  }
+
+  Future<void> stop() async {
+    for (final s in _subs) {
+      await s.cancel();
+    }
+    _subs.clear();
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `requestCatchUp` هو `requestSync` تاني:</b> نفس الـ `_running` والـ `_again` بتوع [درس Offline-first](/course/offline/offline/). الـ hello والـ gap والـ resume ممكن ينادوه مع بعض، ومايبقاش فيه غير catch-up واحد شغال.
+- <b>الـ `debounceBuffer`:</b> من `stream_transform` اللي اخترناه في [درس الـ operators](/course/dart-async/operators/). بيجمّع الـ events لحد ما ييجي 200ms سكوت، ويطلّعهم list. استيراد 800 كتاب بقى transaction واحدة، والـ `watchLibrary()` بيصحى مرة.
+- <b>الـ cursor مابيتحركش فوق فجوة:</b> cursor على 1050 وجالك 1051 و1052 و1054: الـ cursor بيروح لـ 1052، وفيه gap، فالـ catch-up بيطلب «بعد 1052» وبياخد 1053 و1054. والـ 1054 هيتطبق مرتين، والـ version check بيخلّي التانية ولا حاجة.
+- <b>`cursor == null`:</b> مفيش cursor يبقى مانعرفش احنا فين. الـ events بتتجاهل، والـ catch-up بيعمل full refresh.
+- <b>`_collapse`:</b> 3 events لنفس الكتاب في نفس الـ batch بيبقوا كتابة واحدة. والـ `LibraryEventDto` كبر بـ getters: `key` و`version` (في الـ `BookUpsertedDto` بيرجّعوا `book.key` و`book.version`).
+
+والـ refresh بيحط الـ cursor هو كمان، عشان الـ snapshot والـ cursor يبقوا متفقين:
+
+<CodeBlock label="LibraryRepositoryImpl.refresh">
+
+```dart
+@override
+Future<Result<void>> refresh() => guard(() async {
+      final snapshot = await _remote.fetchLibrary(); // books + the X-Library-Seq header
+      await _db.transaction(() async {
+        await _db.upsertBooks(snapshot.books.map((d) =>
+            d.toEntity().toRow(updatedAt: d.updatedAt).copyWith(version: d.version))); // _putServerRow inside
+        await _db.setCursor('library', snapshot.seq);
+      });
+    });
+```
+
+</CodeBlock>
+
+### 4. الصدى بتاع تعديلك
+
+المستخدم غيّر الحالة على الموبايل. اللي بيحصل بالترتيب:
+
+1. الـ repository كتب الصف `pending` وحط عملية في الـ queue ([درس Offline-first](/course/offline/offline/)).
+2. الـ SyncService بعت `PATCH` بـ version 6، ومعاه `X-Installation-Id`.
+3. السيرفر حفظ v7، وطلّع event فيه `origin` بتاع الموبايل، وردّ على الـ PATCH بـ v7.
+
+ودلوقتي فيه سباق: الـ event والرد ممكن أي واحد فيهم يوصل الأول.
+
+| اللي وصل الأول | اللي بيحصل |
+| --- | --- |
+| رد الـ PATCH | الـ `_confirm` بيحط v7 ويعمل `markSynced`. الـ event بيوصل بعدها، v7 مش أصغر من v7، فولا حاجة |
+| الـ event | الصف لسه `pending`، فولا حاجة. الـ cursor بيتحرك عادي. الرد بيوصل، والـ `_confirm` بيعمل شغله |
+
+في الحالتين النتيجة نفس الحاجة، ومن غير ما نبص على الـ `origin` خالص. ده المقصود: الصح جاي من القاعدة، مش من إننا عارفين مين بعت إيه. الـ `origin` بيستخدم في حاجتين: الـ metric بتاع «الوقت لحد ما التعديل يبان على جهاز تاني» بيتحسب بس للـ events اللي جاية من جهاز تاني، وفي الـ logs عشان تعرف الـ event ده سببه مين.
+
+<Diagram name="d-rt-merge-decision">
+
+كل نسخة جاية من السيرفر، من event أو catch-up أو refresh، بتعدّي على نفس الأسئلة بنفس الترتيب. أي «لأ» معناها إن الصف اللي عندك يفضل زي ما هو.
+
+</Diagram>
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### الحالة رجعت لورا ثانية وبعدين اتصلحت
+
+المستخدم داس «خلصته» على الموبايل. في نفس الثانية وصل event قديم من تعديل عمله على التابلت من دقيقة («بقراه»)، كان واقف في السكة بسبب reconnect. أول نسخة من `applyRemoteBook` كانت upsert عادي، فكتبت «بقراه» فوق «خلصته». المستخدم شاف الحالة بترجع. وبعد ثانية الـ SyncService بعت «خلصته» بالـ version القديم، والسيرفر رد 409، والـ policy دمجت، والحالة رجعت «خلصته».
+
+يعني الداتا اتصلحت في الآخر، بس المستخدم شاف حاجة غلط، وأسوأ: الـ `_send` بيقرا الصف وقت الإرسال ([درس Offline-first](/course/offline/offline/))، فلو الـ drain كان اشتغل بعد الكتابة الغلط، كان هيبعت «بقراه» نفسها. شرط الـ `syncState = 'synced'` هو اللي بيمنع ده: الصف الـ pending بتاع المستخدم، لحد ما يتبعت.
+
+### الكتاب اللي اتمسح رجع
+
+المستخدم مسح كتاب من التابلت. على الموبايل، وصل `book.removed` v8 قبل `book.upserted` v7 (اتأخر في الـ reconnect). الـ removed مسح الصف. بعدها الـ upserted وصل، ومفيش صف يقارن بيه، فاتضاف. الكتاب رجع للمكتبة على الموبايل بس، والمستخدم مسحه تاني، والسيرفر رد 404.
+
+الـ version كان هيحلها لو الصف لسه موجود. بس الحذف شال الـ version معاه. ده سبب `removedBooks`: الـ DB لازم تفتكر «اتمسح عند v8» عشان ترفض v7. والـ tombstones دي مش لازم تعيش للأبد: أي event أقدم من 7 أيام مش هييجي (السيرفر مابيحتفظش بيه)، فالـ catch-up بيمسح اللي `removedAt` بتاعه أقدم من كده.
+
+### الـ refresh كتب نسخة قديمة فوق الـ event
+
+الـ `LibraryCubit` عمل `refresh()` عشان المستخدم سحب الشاشة. الطلب أخد 3 ثواني (2000 كتاب). في الـ 3 ثواني دول، event وصل بـ v7 لكتاب. الرد بتاع الـ refresh كان اتجهّز على السيرفر قبل التعديل، فيه v6. لو `upsertBooks` بيقارن بالـ `syncState` بس، الـ v6 هيكتب فوق الـ v7.
+
+ده سبب «قاعدة كتابة واحدة». الـ `upsertBooks` دلوقتي بينادي `_putServerRow` لكل كتاب، فالـ v6 بيقف عند الـ version check. وكمان الـ cursor: الـ snapshot قال `X-Library-Seq: 1050`، والـ event كان 1051 والـ cursor اتحرك له. الـ refresh بيحط 1050؟ لأ:
+
+<CodeBlock label="setCursor مابيرجعش لورا">
+
+```dart
+Future<void> setCursor(String stream, int seq) => customStatement(
+      'INSERT INTO sync_cursors (stream, seq) VALUES (?, ?) '
+      'ON CONFLICT(stream) DO UPDATE SET seq = MAX(seq, excluded.seq)',
+      [stream, seq],
+    );
+```
+
+</CodeBlock>
+
+الـ cursor بيتحرك لقدام بس، زي الـ version. أي قيمة أقدم من اللي عندك معناها إن اللي بيكتب متأخر.
+
+### الـ catch-up كل ثانية
+
+بعد كل reconnect، الـ hello بيقول 1060 والـ cursor 1050، فالـ catch-up بيبدأ. وفي نفس الوقت events لايف بتوصل: 1061، 1062. كل batch لايف شايف فجوة (1051 لـ 1060 لسه ماتطبقوش)، فبينادي `requestCatchUp`. من غير الـ `_catchingUp`، كان هيبقى فيه 5 catch-ups شغالين مع بعض، كل واحد بيجيب نفس الصفحات. مع الـ guard، النداءات دي بتتحول لـ `_again = true`، ولفة واحدة زيادة بعد الأولى. واللفة التانية بتلاقي الـ cursor عند 1062، فبترجع صفحة فاضية.
+
+### الـ app اتقفل في نص الـ catch-up
+
+أول نسخة كانت بتحفظ الـ cursor بعد ما الصفحة كلها تتطبق، بس برّه الـ transaction: `applyServerChanges` وبعدين `setCursor`. الـ OS قتل الـ app بينهم. الـ events اتطبقت والـ cursor لأ، وده مقبول: المرة الجاية هتتطبق تاني ومش هيحصل حاجة (الـ version). بس العكس كان ممكن يحصل في الـ `_applyLive` لو الترتيب اتعكس: cursor اتحفظ والـ events لأ. يبقى فيه events ماتطبقتش والـ cursor بيقول إنها اتطبقت، ومحدش هيطلبها تاني أبدًا.
+
+القاعدة: الـ cursor والداتا في transaction واحدة. ولو مش قادر، الداتا الأول والـ cursor بعدها، عشان أسوأ حاجة تبقى تكرار (الـ version بيحميك منه)، مش فجوة (مفيش حاجة بتحميك منها).
+
+### 800 event وقّفوا الـ scroll
+
+ده اللي [الدرس اللي فات](/course/realtime/websocket/) سابه: كل event كتابة لوحدها، والـ watch بيصحى 800 مرة. الـ `debounceBuffer` بيخليهم batch واحد. بس فيه حاجة لازم تعرفها: الـ debounce بيستنى سكوت. لو السيرفر بيبعت events من غير توقف لمدة دقيقة، مفيش batch هيطلع طول الدقيقة. لـ Readly ده مقبول (مكتبة كتب مش ticker أسعار). ولو مش مقبول عندك، استخدم buffer بحد أقصى للوقت: كل 200ms أو كل 100 event، أيهما أول.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>الـ apply لازم يبقى idempotent ومايهمهوش الترتيب:</b> نفس الـ event مرتين = مرة. والـ events بأي ترتيب = نفس النتيجة. ده بيحصل لما كل كتابة مشروطة بـ version جاي من السيرفر. ولما ده يبقى صح، الشبكة تقدر تعمل اللي هي عايزاه: تكرر، وتأخر، وتعكس. المهم الـ catch-up يغطي اللي ضاع.
+- <b>قاعدة واحدة لكل كتابة جاية من السيرفر:</b> الـ refresh والـ event والـ catch-up ورد الـ 409، كلهم بيعدّوا على `_putServerRow`. لو أي طريق كتب بقاعدة تانية، هو ده الطريق اللي هيبوّظ الداتا، وهتلاقيه بعد أسبوع debugging.
+- <b>الـ cursor جنب الداتا:</b> في نفس الـ DB، وبيتحفظ في نفس الـ transaction، وبيتمسح مع الـ wipe. لو الـ cursor في shared_preferences والداتا في drift، الاتنين هيختلفوا مع أول crash أو أول logout.
+- <b>الـ event إشارة، والـ catch-up هو الضمان:</b> مفيش كود بيعتمد على إن event معين هيوصل. لو شلت الـ socket خالص، الـ catch-up مع كل resume والـ Poller هيوصّلوا لنفس الداتا، بس أبطأ. ده اختبار كويس للتصميم.
+- <b>السيرفر محتاج outbox هو كمان:</b> لو السيرفر بيكتب الكتاب في Mongo وبعدين بيبعت الـ event، والـ process وقع بينهم، الـ event ضاع، والـ seq فيه فجوة مش هتتملي أبدًا. الحل عنده نفس حلنا: الكتابة والـ event (بالـ seq، من counter بيزيد بـ `$inc`) في transaction واحدة، وworker بيبعت الـ events من الجدول. اسأل الـ backend عن ده، لأنه بيحدد إذا كان الـ catch-up بتاعك هيلاقي كل حاجة.
+- <b>مدة الاحتفاظ بالـ events قرار business:</b> 7 أيام معناها إن المستخدم اللي غاب أكتر من أسبوع بياخد full refresh. لو المكتبات كبيرة والـ refresh تقيل، طوّل المدة. والـ `removedBooks` بيتمسح بنفس المدة.
+- <b>الـ CRDTs:</b> اللي عملناه نوع بسيط منها (last-writer-wins register بالـ version)، وده كفاية لأن السيرفر هو اللي بيدّي الـ versions. لو جهازين بيكتبوا وهما الاتنين أوفلاين ومحتاجين يدمجوا من غير سيرفر، ده عالم تاني خالص.
+
+<Note kind="interview" title="سؤال interview">
+
+«الـ events بتوصل من WebSocket، وعندك local DB. إزاي تضمن إن الـ DB صح مع إن الـ events ممكن تتكرر أو تتأخر أو تضيع؟» كل كتابة جاية من السيرفر مشروطة: الصف مايكونش عليه تعديل محلي لسه ماتبعتش، والـ version اللي جاي أكبر من اللي عندك. كده التكرار والتأخير مالهمش أثر، والترتيب مايفرقش. والحذف بيسيب tombstone بالـ version عشان event قديم مايرجّعش الصف. والضايع بيتكشف بـ seq للمستخدم: الـ cursor بيتحرك بس فوق أرقام متصلة، وأي فجوة أو reconnect بيعمل catch-up بـ `?since=cursor`، والـ cursor بيتحفظ في نفس الـ transaction مع الداتا. ولو الـ cursor أقدم من اللي السيرفر محتفظ بيه، full refresh. وكل الطرق (refresh، catch-up، events) بتعدّي على نفس قاعدة الكتابة.
+
+</Note>
+
+</Level>
+
+<LessonPart title="الكود كامل في مكان واحد">
+
+```dart
+// data/app_database.dart (the remote-write part)
+Future<void> applyServerChanges(List<LibraryEventDto> changes) => transaction(() async {
+      for (final change in changes) {
+        switch (change) {
+          case BookUpsertedDto(:final book):
+            await _putServerRow(
+                book.toEntity().toRow(updatedAt: book.updatedAt).copyWith(version: book.version));
+          case BookRemovedDto(:final key, :final version):
+            await _removeServerRow(key, version);
+        }
+      }
+    });
+
+Future<void> upsertBooks(Iterable<BookRow> rows) => transaction(() async {
+      for (final row in rows) {
+        await _putServerRow(row); // the refresh obeys the same rule as the events
+      }
+    });
+
+Future<int?> cursor(String stream) async =>
+    (await (select(syncCursors)..where((c) => c.stream.equals(stream))).getSingleOrNull())?.seq;
+
+Future<void> pruneRemoved(DateTime before) =>
+    (delete(removedBooks)..where((r) => r.removedAt.isSmallerThanValue(before))).go();
+
+// _serverMayOverwrite, _putServerRow, _removeServerRow, setCursor: as in Levels 2 and 3
+
+// data/library_realtime_source.dart: two streams from the same connection
+abstract interface class LibraryRealtimeSource {
+  Stream<LibraryEventDto> events();
+  Stream<int> hellos(); // hello.seq.library on every (re)connect
+}
+
+// data/library_remote_source.dart
+Future<ChangesPage> fetchChanges({required int since, int limit = 200}) async {
+  final res = await _dio.get<Map<String, dynamic>>(
+    '/library/changes',
+    queryParameters: {'since': since, 'limit': limit},
+    options: Options(extra: {'route': 'GET /library/changes'}),
+  );
+  return parseOrThrow('GET /library/changes', () => ChangesPage.fromJson(res.data!));
+}
+```
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="rt-merge-1">
+<Ask>الـ `version` والـ `seq` الاتنين أرقام بتزيد. ليه محتاجين الاتنين؟</Ask>
+<Answer>
+
+الـ version تبع كتاب واحد، وبيجاوب «النسخة دي أحدث من اللي عندي؟»، فبيمنع التكرار والتأخير. الـ seq تبع مكتبة المستخدم كلها، وبيجاوب «فاتني event؟»، فبيكشف الضايع. الـ version مايقدرش يقولك إن event لكتاب تاني ضاع، والـ seq مايقدرش يقولك النسخة دي أحدث ولا لأ لو الـ events جت بالعكس.
+
+</Answer>
+</Question>
+
+<Question id="rt-merge-2">
+<Ask>المستخدم عدّل كتاب على الموبايل والتعديل لسه في الـ queue، ووصل event من التابلت بـ version أحدث. الـ event يتكتب؟ وتعديل التابلت هيوصل للموبايل إزاي؟</Ask>
+<Answer>
+
+لأ، الصف `pending` فبتاع المستخدم لحد ما الـ queue تبعته. لو اتكتب، الـ `_send` هيقرا الصف ويبعت تعديل التابلت بدل تعديل المستخدم. تعديل التابلت بيوصل من رد الـ 409: الـ queue بتبعت بالـ version القديم، والسيرفر بيرد بالنسخة الحالية، والـ ConflictPolicy بتدمج.
+
+</Answer>
+</Question>
+
+<Question id="rt-merge-3">
+<Ask>`book.removed` v8 وصل قبل `book.upserted` v7. من غير `removedBooks`، إيه اللي هيحصل؟</Ask>
+<Answer>
+
+الـ removed هيمسح الصف ومعاه الـ version. الـ upserted v7 هيلاقي مفيش صف يقارن بيه، فهيتضاف، والكتاب اللي اتمسح يرجع على الموبايل بس. الـ `removedBooks` بيفتكر «اتمسح عند v8»، فالـ v7 بيترفض، والـ v9 (إضافة تانية حقيقية) بيعدّي.
+
+</Answer>
+</Question>
+
+<Question id="rt-merge-4">
+<Ask>الـ cursor على 1050، ووصل batch فيه 1051 و1052 و1054. الـ cursor بيروح فين، وإيه اللي بيحصل بعدها؟</Ask>
+<Answer>
+
+لـ 1052، لأنه بيتحرك بس فوق أرقام متصلة. الـ 1054 بيتطبق (الـ version بيحكم)، بس فيه فجوة، فبيتنادى `requestCatchUp` اللي بيطلب «بعد 1052»، وبياخد 1053 و1054. والـ 1054 بيتطبق تاني من غير أي أثر.
+
+</Answer>
+</Question>
+
+<Question id="rt-merge-5">
+<Ask>ليه الـ cursor بيتحفظ في نفس الـ transaction مع الـ events، وفي drift مش shared_preferences؟</Ask>
+<Answer>
+
+لو الـ cursor اتحفظ والـ events لأ (crash بينهم)، فيه events ماتطبقتش والـ cursor بيقول إنها اتطبقت، ومحدش هيطلبها تاني: فجوة دايمة. في نفس الـ transaction الاتنين بيحصلوا أو مابيحصلوش. وفي drift لأن الـ `wipe()` في الـ logout بيمسحه مع الداتا، فالمستخدم الجديد بيبدأ من full refresh مش من cursor المستخدم القديم.
+
+</Answer>
+</Question>
+
+</Quiz>

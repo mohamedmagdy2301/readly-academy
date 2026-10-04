@@ -1,0 +1,593 @@
+---
+title: "تست الـ real-time والـ timers"
+description: "إزاي تتست حاجة كلها شبكة ووقت وعشوائية: fake socket بتلعب فيه دور السيرفر، وfake_async بيقدّم الوقت دقايق في سطر، وساعة واحدة للـ Timers والـ Clock، وdrift في الذاكرة بأحداث بأي ترتيب، وتست واحد على WebSocket حقيقي بيتأكد من العقد."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="جهاز محاكاة الطيران">
+
+الطيار مابيتعلمش يتعامل مع موتور بيولّع وهو في طيارة حقيقية فيها 200 راكب. بيقعد في جهاز محاكاة: المدرّب بيقفل موتور بزرار، ويعمل عاصفة بزرار، ويقدّم الوقت ساعتين بزرار عشان يوصل لمرحلة الهبوط. كل حاجة الطيار ماليش تحكم فيها في الحقيقة، المدرّب ماسكها في إيده.
+
+بس في الآخر، الطيار لازم يطير طيارة حقيقية مرة على الأقل قبل ما ياخد الرخصة، عشان يتأكد إن الجهاز كان بيقلّد الحقيقة صح.
+
+</Analogy>
+
+الكود اللي في الوحدة دي كله حاجات مالكش تحكم فيها: السيرفر بيبعت امتى، والاتصال بيقع امتى، والـ backoff بيستنى قد إيه (عشوائي!)، والساعة كام. التست بيحوّل كل واحدة منهم لزرار في إيدك:
+
+| في الحقيقة | في التست | الزرار |
+| --- | --- | --- |
+| السيرفر | `FakeWebSocketChannel` | `serverSends(...)` و`serverCloses(4401)` و`drop()` |
+| الوقت | `fakeAsync` | `async.elapse(Duration(seconds: 30))` |
+| العشوائية | jitter ثابت | `Backoff(jitter: () => 1.0)` |
+| الساعة | `FakeAsyncClock` | بتمشي مع الـ `elapse` لوحدها |
+| النت | `FakeNetworkStatus` | `goOnline()` |
+| الـ DB | drift في الذاكرة | الـ queries الحقيقية، من غير ملف |
+
+ودي مش حاجة جديدة: كل الـ seams دي اتعملت في الدروس اللي فاتت عن قصد (الـ `ChannelFactory`، والـ jitter، والـ `Clock`، والـ `NetworkStatus`). الدرس ده بيستخدمها. والطيارة الحقيقية هي تست واحد على WebSocket server حقيقي على الـ localhost.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### خريطة التستات
+
+<Diagram name="d-rt-test-seams">
+
+كل class في الوحدة ليه seams جاية من بره. التست بيحط fake في كل seam، فيتحكم في السيرفر والوقت والعشوائية من غير شبكة ولا انتظار.
+
+</Diagram>
+
+| اللي بتتسته | نوع التست | أدواته |
+| --- | --- | --- |
+| `Backoff` | unit عادي | jitter ثابت |
+| `RealtimeClient`: الـ reconnect والـ close codes والـ 4401 | unit بـ `fakeAsync` | `FakeWebSocketChannel`، و`FakeAsyncClock`، و`FakeTokenRefresher` |
+| `LibraryEventDto.tryParse` | contract | fixtures من الـ AsyncAPI |
+| قاعدة الدمج في drift | unit على DB حقيقية في الذاكرة | `NativeDatabase.memory()` |
+| `LiveSyncService`: الفجوة والـ catch-up | unit | fake source وfake remote وdrift في الذاكرة |
+| `DeviceRegistrar` و`PushRouter` | unit | `FakePushMessaging`، و`MockGoRouter` |
+| الـ close codes بتوصل فعلًا | integration صغير | `HttpServer` و`WebSocketTransformer` من `dart:io` |
+
+### 1. fake socket انت فيه السيرفر
+
+الـ `WebSocketChannel` في `web_socket_channel` 3 بقى `abstract interface`، فتقدر تعمل له implement. والـ fake بيمسك الطرفين: الـ stream اللي الـ app بيسمع عليه (انت بتكتب فيه كأنك السيرفر)، والـ sink اللي الـ app بيكتب فيه (انت بتقرا منه).
+
+<CodeBlock label="test/helpers/fake_web_socket_channel.dart">
+
+```dart
+class FakeWebSocketChannel with StreamChannelMixin<dynamic> implements WebSocketChannel {
+  final _fromServer = StreamController<dynamic>();
+  final _ready = Completer<void>();
+  final sent = <dynamic>[]; // everything the app wrote
+
+  @override
+  int? closeCode;
+  @override
+  String? closeReason;
+  @override
+  String? get protocol => null;
+  @override
+  Future<void> get ready => _ready.future;
+  @override
+  Stream<dynamic> get stream => _fromServer.stream;
+  @override
+  late final WebSocketSink sink = _FakeSink(this);
+
+  bool get closedByApp => (sink as _FakeSink).closed;
+
+  // --- the test plays the server ---
+  void accept() => _ready.complete();
+  void reject() => _ready.completeError(WebSocketChannelException('upgrade failed'));
+  void serverSends(Map<String, Object?> json) => _fromServer.add(jsonEncode(json));
+  void hello([int seq = 1]) => serverSends({'type': 'hello', 'seq': {'library': seq}, 'heartbeatSec': 25});
+  void serverCloses(int? code, [String? reason]) {
+    closeCode = code;
+    closeReason = reason;
+    unawaited(_fromServer.close()); // never await: it waits forever if nobody listened
+  }
+  void drop() => serverCloses(null); // the network died: no close frame
+}
+
+class _FakeSink implements WebSocketSink {
+  _FakeSink(this._channel);
+  final FakeWebSocketChannel _channel;
+  final _done = Completer<void>();
+  bool closed = false;
+
+  @override
+  void add(dynamic data) => _channel.sent.add(data);
+  @override
+  void addError(Object error, [StackTrace? stackTrace]) {}
+  @override
+  Future<void> addStream(Stream<dynamic> stream) => stream.forEach(add);
+  @override
+  Future<void> close([int? closeCode, String? closeReason]) async {
+    closed = true;
+    _channel.closeCode ??= closeCode;
+    if (!_done.isCompleted) _done.complete();
+  }
+  @override
+  Future<void> get done => _done.future;
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `unawaited` في `serverCloses`:</b> الـ `close()` على StreamController single-subscription مابيخلصش لحد ما حد يسمع ويستلم الـ done. لو التست بيقفل channel الـ app لسه ماسمعش عليها (زي «stop وهو بيتوصل»)، الـ await هيعلّق التست للأبد.
+- <b>الـ `sent`:</b> في v1 الـ app مابيبعتش حاجة، بس لو الاتجاه التاني جه («اقرا مع صاحبك»)، التستات جاهزة.
+
+والـ factory بتاع التست بيحفظ كل channel اتعملت، ومعاها الـ headers:
+
+<CodeBlock label="في الـ setUp">
+
+```dart
+final channels = <FakeWebSocketChannel>[];
+late Map<String, String> lastHeaders;
+
+WebSocketChannel fakeConnect(Uri uri, Map<String, String> headers) {
+  lastHeaders = headers;
+  return FakeWebSocketChannel().also(channels.add); // also: a tiny extension, returns this
+}
+```
+
+</CodeBlock>
+
+### 2. ساعة واحدة للـ Timers والـ Clock
+
+الـ `RealtimeClient` بيستخدم حاجتين للوقت: `Timer` للـ backoff، و`Clock` عشان يعرف الاتصال عاش قد إيه (الـ reset بعد 30 ثانية). الـ `fakeAsync` بيتحكم في الـ Timers، بس مايعرفش حاجة عن الـ `Clock` بتاعنا. والـ `FixedClock` بتاع [درس الـ test doubles](/course/testing/test-doubles/) بيتحرك بـ `advance`، بس الـ Timers مابتعرفش عنه حاجة. لو استخدمت الاتنين، هتقدّم واحد وتنسى التاني، والتست هيقول حاجة مش حقيقية.
+
+الحل adapter صغير: ساعة بتقرا الوقت من الـ `fakeAsync` نفسه.
+
+<CodeBlock label="test/helpers/fake_async_clock.dart">
+
+```dart
+/// Readly's Clock, driven by fake_async: one elapse() moves the timers and now() together.
+class FakeAsyncClock implements Clock {
+  FakeAsyncClock(this._async, this._start);
+  final FakeAsync _async;
+  final DateTime _start;
+
+  @override
+  DateTime now() => _start.add(_async.elapsed);
+}
+```
+
+</CodeBlock>
+
+(لو الكود بيستخدم `clock.now()` من `package:clock`، الـ `fakeAsync` بيغيّره لوحده. Readly عنده `Clock` interface من أول الكورس، فالـ adapter ده هو الكوبري.)
+
+### 3. تستات الـ RealtimeClient
+
+<CodeBlock label="test/core/realtime/realtime_client_test.dart">
+
+```dart
+void main() {
+  late List<FakeWebSocketChannel> channels;
+  late FakeTokenRefresher refresher;
+  late FakeNetworkStatus network;
+
+  setUp(() {
+    channels = [];
+    refresher = FakeTokenRefresher();
+    network = FakeNetworkStatus();
+  });
+
+  RealtimeClient build(FakeAsync async) => RealtimeClient(
+        Uri.parse('wss://api.test/v1/realtime'),
+        FakeRealtimeHeaders(),
+        refresher,
+        network,
+        clock: FakeAsyncClock(async, DateTime.utc(2026, 10, 5, 10)),
+        backoff: Backoff(jitter: () => 1.0), // 1s, 2s, 4s ... exactly
+        connect: (uri, headers) => FakeWebSocketChannel().also(channels.add),
+      );
+
+  test('a drop waits for the backoff, then reconnects', () {
+    fakeAsync((async) {
+      final client = build(async)..start();
+      async.flushMicrotasks();
+      channels.last..accept()..hello();
+      async.flushMicrotasks();
+
+      channels.last.drop();
+      async.flushMicrotasks();
+      async.elapse(const Duration(milliseconds: 999));
+      expect(channels, hasLength(1)); // still waiting
+
+      async.elapse(const Duration(milliseconds: 1));
+      expect(channels, hasLength(2)); // the second attempt, exactly at 1s
+
+      client.stop();
+      async.flushMicrotasks();
+      expect(async.pendingTimers, isEmpty); // stop() left nothing behind
+    });
+  });
+
+  test('4401: one refresh, then reconnect at once; 4401 again: give up', () {
+    fakeAsync((async) {
+      final client = build(async)..start();
+      final statuses = <RealtimeStatus>[];
+      client.status.listen(statuses.add);
+      async.flushMicrotasks();
+      channels.last..accept()..hello();
+      async.flushMicrotasks();
+
+      channels.last.serverCloses(4401, 'token_expired');
+      async.flushMicrotasks();
+      expect(refresher.calls, 1);
+      expect(channels, hasLength(2)); // no backoff after a good refresh
+
+      channels.last.accept(); // no hello: the server rejects this token too
+      async.flushMicrotasks();
+      channels.last.serverCloses(4401, 'token_expired');
+      async.flushMicrotasks();
+      expect(refresher.calls, 1); // didn't loop
+      expect(statuses.last, RealtimeStatus.stopped);
+      expect(async.pendingTimers, isEmpty);
+    });
+  });
+
+  test('4426: an UpdateRequired alert, and no more attempts', () {
+    fakeAsync((async) {
+      final client = build(async)..start();
+      final alerts = <AppAlert>[];
+      client.alerts.listen(alerts.add);
+      async.flushMicrotasks();
+      channels.last..accept()..hello();
+      async.flushMicrotasks();
+
+      channels.last.serverCloses(4426, 'upgrade_required');
+      async.elapse(const Duration(minutes: 10));
+      expect(alerts, [isA<UpdateRequired>()]);
+      expect(channels, hasLength(1));
+    });
+  });
+
+  test('stop() while connecting closes the late channel with 1000', () {
+    fakeAsync((async) {
+      final client = build(async)..start();
+      async.flushMicrotasks();
+      client.stop(); // the upgrade is still in flight
+      async.flushMicrotasks();
+
+      channels.last.accept(); // ...and only now it succeeds
+      async.flushMicrotasks();
+      expect(channels.last.closedByApp, isTrue);
+      expect(channels.last.closeCode, 1000);
+    });
+  });
+
+  test('onOnline skips the wait but keeps the attempt count', () {
+    fakeAsync((async) {
+      build(async).start();
+      async.flushMicrotasks();
+      channels.last.reject(); // attempt 1 fails: waits 1s
+      async.flushMicrotasks();
+      async.elapse(const Duration(seconds: 1));
+      channels.last.reject(); // attempt 2 fails: waits 2s
+      async.flushMicrotasks();
+
+      network.goOnline();
+      async.flushMicrotasks();
+      expect(channels, hasLength(3)); // right away, not after 2s
+
+      channels.last.reject();
+      async.flushMicrotasks();
+      async.elapse(const Duration(milliseconds: 3999));
+      expect(channels, hasLength(3)); // attempt 3 failed: 4s, the counter wasn't reset
+    });
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>`flushMicrotasks` بعد كل خطوة:</b> الـ `connect` فيه `await _headers.build()` و`await channel.ready`. دول microtasks، والـ `fakeAsync` مابيشغّلهمش غير لما تقوله. الـ `elapse` بيعملها لوحده قبل وبعد كل timer.
+- <b>`pendingTimers` فاضية في الآخر:</b> ده التست اللي بيمسك الـ timer اللي محدش بيلغيه. نفس فكرة [درس تست الـ Cubit](/course/testing/cubit-tests/) مع الـ debounce.
+- <b>التست بيحمي القاعدة، مش التنفيذ:</b> «4401 مرتين = stop» مكتوب بلغة السلوك. لو حد غيّر الـ `_authFailures` لحاجة تانية والسلوك فضل هو هو، التست مش هيتكسر.
+
+<CodeBlock label="test/helpers/realtime_fakes.dart">
+
+```dart
+class FakeTokenRefresher implements TokenRefresher {
+  int calls = 0;
+  String? next = 'fresh-token'; // null = the server rejected the refresh token
+  Object? error;                 // non-null = no verdict (offline)
+
+  @override
+  bool get clearOnReject => true;
+
+  @override
+  Future<String?> refresh() async {
+    calls++;
+    if (error case final e?) throw e;
+    return next;
+  }
+}
+
+class FakeNetworkStatus implements NetworkStatus {
+  final _online = StreamController<void>.broadcast();
+  void goOnline() => _online.add(null);
+
+  @override
+  Stream<void> get onOnline => _online.stream;
+}
+```
+
+</CodeBlock>
+
+الـ `FakeNetworkStatus` ده نفس اللي في [درس الـ integration](/course/testing/integration/)، والـ `goOnline()` نفسها.
+
+### 4. قاعدة الدمج: الترتيب مايفرقش
+
+القاعدة اللي في [درس دمج الأحداث](/course/realtime/merge-cache/) بتقول: نفس الـ events بأي ترتيب = نفس النتيجة. ده كلام يتست حرفيًا:
+
+<CodeBlock label="test/data/apply_server_changes_test.dart">
+
+```dart
+void main() {
+  late AppDatabase db;
+  setUp(() => db = AppDatabase(NativeDatabase.memory()));
+  tearDown(() => db.close());
+
+  final events = <LibraryEventDto>[
+    upserted(seq: 1, key: 'OL1', version: 1, status: BookStatus.reading),
+    upserted(seq: 2, key: 'OL1', version: 2, status: BookStatus.finished),
+    upserted(seq: 3, key: 'OL2', version: 1, status: BookStatus.wantToRead),
+    removed(seq: 4, key: 'OL2', version: 2),
+    upserted(seq: 5, key: 'OL3', version: 1, status: BookStatus.reading),
+  ];
+
+  test('any order, with duplicates, ends in the same library', () async {
+    await db.applyServerChanges(events); // the right order: the expected result
+    final expected = await db.select(db.books).get();
+
+    final random = Random(42); // a fixed seed: a failure can be replayed
+    for (var i = 0; i < 50; i++) {
+      await db.wipe();
+      final shuffled = [...events, ...events.take(2)]..shuffle(random); // + two duplicates
+      for (final e in shuffled) {
+        await db.applyServerChanges([e]); // one at a time, like the socket
+      }
+      expect(await db.select(db.books).get(), expected, reason: 'order: ${shuffled.map((e) => e.seq)}');
+    }
+  });
+
+  test('a pending row keeps the user edit', () async {
+    await db.applyServerChanges([upserted(seq: 1, key: 'OL1', version: 1, status: BookStatus.reading)]);
+    await db.updateStatus('OL1', BookStatus.finished, at: DateTime.utc(2026)); // sets 'pending'
+
+    await db.applyServerChanges([upserted(seq: 2, key: 'OL1', version: 2, status: BookStatus.wantToRead)]);
+
+    final row = await db.bookById('OL1');
+    expect(row!.status, BookStatus.finished);
+    expect(row.version, 1); // the queue sends v1, the server answers 409, the policy merges
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `Random(42)`:</b> الـ shuffle عشوائي، بس الـ seed ثابت. لو التست فشل، الـ `reason` بيطبع الترتيب اللي كسره، وتقدر تعيده بالظبط.
+- <b>50 ترتيب مش كل الترتيبات:</b> 7 events فيهم 5040 ترتيب. الـ 50 بيمسكوا الغلط في الأغلب في ثواني. ده شكل بسيط من الـ property-based testing.
+- <b>drift حقيقي:</b> الـ `DoUpdate` بالشرط والـ tombstones والـ transaction كلهم SQL حقيقي. الـ fake هنا كان هيختبر الـ fake.
+
+### 5. الـ LiveSyncService: الفجوة بتجيب catch-up
+
+<CodeBlock label="test/data/live_sync_service_test.dart (جزء)">
+
+```dart
+test('a gap in seq triggers one catch-up from the cursor', () async {
+  await db.setCursor('library', 10);
+  remote.changePages = [ChangesPage(changes: [upserted(seq: 11, key: 'OL1', version: 3)], seq: 12, hasMore: false)];
+  final live = LiveSyncService(source, remote, db, library, clock, logger, window: Duration.zero)..start();
+
+  source.emit(upserted(seq: 12, key: 'OL2', version: 1)); // 11 never came
+  await pumpEventQueue();
+
+  expect(remote.changesRequests, [10]); // asked for "after 10", once
+  expect(await db.cursor('library'), 12);
+  expect(await db.bookById('OL1'), isNotNull); // the missing event, from the catch-up
+  await live.stop();
+});
+```
+
+</CodeBlock>
+
+الـ `window: Duration.zero` parameter صغير في الـ constructor (الـ default 200ms)، عشان التست مايحتاجش `fakeAsync` مع drift. الـ `pumpEventQueue()` من `package:test` بيشغّل الـ event loop لحد ما يهدى. ولو احتجت drift جوه `fakeAsync`، افتكر الـ `closeStreamsSynchronously: true` بتاع [درس تست الطبقات](/course/testing/layers/).
+
+### 6. الـ Push: من غير Firebase
+
+<CodeBlock label="test/data/device_registrar_test.dart (جزء)">
+
+```dart
+test('no token yet on iOS: registers when tokenRefreshes delivers one', () async {
+  push.token = null;
+  await registrar.register(userId: 'u1', locale: 'ar');
+  expect(remote.registered, isEmpty);
+
+  push.token = 'tok-1';
+  push.refreshes.add('tok-1');
+  await pumpEventQueue();
+  expect(remote.registered.single.fcmToken, 'tok-1');
+});
+
+test('nothing changed: no PUT, until 30 days pass', () async {
+  await registrar.register(userId: 'u1', locale: 'ar');
+  await registrar.register(userId: 'u1', locale: 'ar');
+  expect(remote.registered, hasLength(1));
+
+  clock.advance(const Duration(days: 31)); // FixedClock: no timers involved here
+  await registrar.register(userId: 'u1', locale: 'ar');
+  expect(remote.registered, hasLength(2));
+});
+```
+
+</CodeBlock>
+
+<CodeBlock label="test/app/push_router_test.dart (جزء)">
+
+```dart
+class MockGoRouter extends Mock implements GoRouter {}
+
+test('the same tap twice opens once; a foreign link or user never opens', () async {
+  final pushRouter = PushRouter(router, push, auth);
+  await pushRouter.attach();
+
+  push.opened.add(const PushMessage(id: 'm1', type: 'reading.reminder', link: '/library/books/OL1', uid: 'u1'));
+  push.opened.add(const PushMessage(id: 'm1', type: 'reading.reminder', link: '/library/books/OL1', uid: 'u1'));
+  push.opened.add(const PushMessage(id: 'm2', type: 'x', link: '/settings/delete-account', uid: 'u1'));
+  push.opened.add(const PushMessage(id: 'm3', type: 'reading.reminder', link: '/library/books/OL9', uid: 'u2'));
+  await pumpEventQueue();
+
+  verify(() => router.go('/library/books/OL1')).called(1);
+  verifyNoMoreInteractions(router);
+});
+```
+
+</CodeBlock>
+
+ده اللي الـ `PushMessaging` interface اتعمل عشانه في [درس الـ Push](/course/realtime/push-notifications/): FCM نفسه مش بيتست هنا (ده شغل Google)، اللي بيتست هو قرارات Readly: امتى يسجّل، وامتى يفتح، وامتى لأ.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### التست علّق ومخلصش
+
+التست بتاع «stop وهو بيتوصل» كان بيعدّي على موبايل زميلك ويعلّق في الـ CI لحد الـ timeout. أول نسخة من الـ fake كانت `await _fromServer.close()` في الـ sink. الـ app عمل `sink.close()` على channel ماعملش عليها listen أصلًا (الـ `stop()` جه قبل الـ `ready`)، والـ `close()` على controller محدش سامع عليه مابيخلصش.
+
+القاعدة في أي fake: ماتستناش حاجة الطرف التاني ممكن مايعملهاش. والـ `unawaited` هنا مقصود ومكتوب جنبه ليه.
+
+### «A Timer is still pending even after the widget tree was disposed»
+
+ده بيظهر في widget tests لما الـ `RealtimeSession` بيشغّل الـ client، والتست بيخلص من غير `stop()`. الـ timer بتاع الـ backoff لسه مستني. وفي الـ unit tests بـ `fakeAsync`، نفس المشكلة مابتعملش error لوحدها، بتعدّي في صمت.
+
+- في كل تست: `addTearDown(client.stop)`.
+- في تستات الـ `fakeAsync`: `expect(async.pendingTimers, isEmpty)` في الآخر. لو فشل، `async.pendingTimersDebugString` بيقولك الـ timer ده اتعمل فين.
+
+### التست بيعدّي لوحده ويفشل مع الباقي
+
+`Future.delayed(const Duration(milliseconds: 1100))` عشان «يستنى الـ backoff يخلص». على الـ laptop بيعدّي. في الـ CI والـ machine مشغولة، الـ timer بتاع الـ client اتأخر 150ms، والتست فحص قبله. وكمان الـ jitter كان `Random()` الحقيقي، فالانتظار نفسه كان من 500 لـ 1000ms، والتست كان بيعدّي بالصدفة.
+
+اللي اتغير: `fakeAsync` بدل الانتظار الحقيقي (الوقت بيمشي لما تقوله بالظبط)، والـ jitter ثابت (الانتظار رقم معروف). التست بقى بياخد 5ms ومابيفشلش أبدًا. وأي تست فيه `Future.delayed` بقيمة ثابتة عشان «يستنى حاجة» هو تست flaky مستني يومه.
+
+### الـ reset بعد 30 ثانية مش بيحصل في التست
+
+التست: اتصل، و`elapse(Duration(seconds: 31))`، وقطع، والمفروض المحاولة الجاية بعد ثانية. لقاها بعد 2. السبب إن التست كان بيدّي الـ client `FixedClock`، فالـ `elapse` قدّم الـ Timers والـ `_clock.now()` فضل واقف، والاتصال «عاش» صفر ثانية. ده بالظبط سبب الـ `FakeAsyncClock`: حاجة واحدة بتمشّي الوقت للاتنين.
+
+### الـ fake كان بيكدب
+
+كل التستات خضرا، وفي الـ staging الـ 4401 مش بيعمل refresh. السبب طلع إن الـ load balancer كان بيقطع الـ TCP connection أول ما السيرفر يبدأ يقفل، قبل ما الـ close frame يعدّي، فالـ app شايف `closeCode == null` بدل 4401، وبيعامله كقطع شبكة: backoff من غير refresh. الـ fake بيعمل اللي انت قلته، والحقيقة عملت حاجة تانية.
+
+ده دور التست الحقيقي الواحد: سيرفر WebSocket حقيقي على الـ localhost، بـ `dart:io` من غير أي package، بيتأكد إن الافتراضات اللي العقد مبني عليها صح على الأقل في الـ stack بتاعنا:
+
+<CodeBlock label="test/integration/real_socket_test.dart">
+
+```dart
+test('a 4401 from a real server reaches closeCode, and our headers reach the server', () async {
+  late HttpHeaders seen;
+  final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+  addTearDown(() => server.close(force: true));
+  server.listen((request) async {
+    seen = request.headers;
+    final ws = await WebSocketTransformer.upgrade(request);
+    ws.add(jsonEncode({'type': 'hello', 'seq': {'library': 1}, 'heartbeatSec': 25}));
+    await ws.close(4401, 'token_expired');
+  });
+
+  final channel = ioChannel(Uri.parse('ws://127.0.0.1:${server.port}/v1/realtime'), {
+    'Authorization': 'Bearer t1',
+    'X-App-Build': '131',
+  });
+  await channel.ready;
+  final messages = await channel.stream.toList(); // until the server closes
+
+  expect(messages, hasLength(1));
+  expect(channel.closeCode, 4401);
+  expect(channel.closeReason, 'token_expired');
+  expect(seen.value('authorization'), 'Bearer t1');
+});
+```
+
+</CodeBlock>
+
+التست ده بيستخدم `ioChannel` اللي في الـ app نفسه، فلو حد غيّره بطريقة بتبوّظ الـ headers، التست هيقول. ونفس الفكرة تقدر تعملها على الـ staging في الـ CI بتاع الـ backend، عشان تمسك الـ load balancer اللي بيبلع الأكواد.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>الـ testability قرار تصميم، مش خطوة بعدين:</b> الـ `ChannelFactory` والـ jitter function والـ `Clock` والـ `NetworkStatus` والـ `PushMessaging` اتعملوا وقت كتابة الكود، مش وقت التست. لو الـ class بيعمل `IOWebSocketChannel.connect` و`Random()` و`DateTime.now()` جواه، مفيش طريقة نضيفة تتسته. وده بالظبط اللي [درس Escore في وحدة التستات](/course/testing/escore/) لقاه في `MatchWebSocketService` الـ static singleton.
+- <b>تست السلوك اللي الـ users بيحسوا بيه:</b> «بعد 4401 بيعمل refresh مرة ويرجع»، و«الترتيب مايفرقش»، و«مفيش إشعار بيفتح كتاب حد تاني». مش «الـ `_authFailures` بقى 1».
+- <b>اللي مابيتستش unit:</b> الـ ping الحقيقي، والـ OS وهو بيقتل الـ isolate، وتوصيل FCM. دول بيتجربوا يدوي بـ checklist قبل كل release فيه تغيير في الحتة دي:
+
+| السيناريو | إزاي |
+| --- | --- |
+| الاتصال الـ half-open | proxy زي toxiproxy بيعمل blackhole للـ traffic من غير ما يقفل، وتتأكد إن الـ reconnect حصل في أقل من دقيقة |
+| airplane mode وبعدين نت | الـ catch-up بيجيب اللي اتعمل من التابلت في الوقت ده |
+| إشعار والـ app مقفول | Firebase console بـ test message على الـ token، وتدوس، وتتأكد من الصفحة |
+| الخلفية | Xcode `_simulateLaunchForTaskWithIdentifier`، وBackground Task Inspector في Android Studio |
+| logout والجهاز أوفلاين | login بحساب تاني، وإشعار للحساب الأول مايوصلش |
+
+- <b>الـ permissions والإشعارات في integration tests:</b> الـ `integration_test` العادي مايقدرش يدوس على dialog النظام. `patrol` بيقدر، ولو الـ push feature حرجة عندك، تست واحد بيه بيوفّر checklist يدوي كامل.
+- <b>الـ production هو التست الأخير:</b> الـ metrics اللي في الدروس اللي فاتت (الـ close codes، والـ reconnects، والوقت لحد ما التعديل يبان، والـ background runs) هي اللي بتقولك إن الـ fakes كانت صح. لو رقم منهم اتغير بعد release، ده تست فشل.
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي تتست reconnect logic فيها exponential backoff وjitter؟» أول حاجة إن الـ class ياخد كل حاجة غير deterministic من بره: الـ socket عن طريق factory، والـ jitter كـ function، والساعة كـ interface. في التست: fake channel بيخليني ألعب دور السيرفر (أقبل، أرفض، أبعت، أقفل بأي code، أقطع من غير close frame)، وjitter ثابت فالانتظار رقم معروف، و`fakeAsync` فبقدّم الوقت بـ `elapse` من غير انتظار حقيقي، وساعة مربوطة بالـ `fakeAsync` عشان الـ Timers والـ `now()` يمشوا مع بعض. وبتأكد إن المحاولة الجاية حصلت بالظبط في وقتها مش قبلها بملي ثانية، وإن الـ 4401 بيعمل refresh مرة، وإن مفيش timers فاضلة بعد الـ stop. وفوق ده كله تست واحد على WebSocket server حقيقي على الـ localhost عشان أتأكد إن الـ close codes والـ headers بتوصل زي ما الـ fake بيفترض.
+
+</Note>
+
+</Level>
+
+<Quiz>
+
+<Question id="rt-test-1">
+<Ask>ليه `FakeAsyncClock` بدل `FixedClock` في تستات الـ `RealtimeClient`؟</Ask>
+<Answer>
+
+لأن الـ client بيستخدم الاتنين: `Timer` للـ backoff و`Clock` عشان يعرف الاتصال عاش قد إيه. الـ `fakeAsync.elapse` بيقدّم الـ Timers بس، والـ `FixedClock.advance` بيقدّم الـ Clock بس. لو استخدمت `FixedClock`، الـ elapse هيمشّي الـ timers والـ `now()` واقف، والتست هيقول إن الاتصال عاش صفر ثانية. الـ `FakeAsyncClock` بيقرا الوقت من `async.elapsed`، فحاجة واحدة بتمشّي الاتنين.
+
+</Answer>
+</Question>
+
+<Question id="rt-test-2">
+<Ask>التست بيستنى الـ backoff بـ `Future.delayed(1100ms)` وبيفشل أحيانًا في الـ CI. إيه الغلط، وإيه الصح؟</Ask>
+<Answer>
+
+الانتظار الحقيقي بيعتمد على سرعة الـ machine، والـ jitter العشوائي بيخلّي الانتظار نفسه مش معروف، فالتست بيعدّي بالصدفة. الصح: `fakeAsync` والوقت بيتقدّم بـ `elapse` بالظبط، وjitter ثابت (`() => 1.0`) فالانتظار رقم معروف، وتتأكد إن المحاولة ماحصلتش عند 999ms وحصلت عند 1000ms.
+
+</Answer>
+</Question>
+
+<Question id="rt-test-3">
+<Ask>إزاي تتست إن قاعدة الدمج في drift مش فارق معاها ترتيب الـ events؟</Ask>
+<Answer>
+
+تطبّق الـ events بالترتيب الصح مرة وتحفظ النتيجة، وبعدين تعمل wipe وتطبّقهم بترتيبات عشوائية (بـ seed ثابت) ومعاهم events مكررة، وتتأكد إن النتيجة نفسها كل مرة، وتطبع الترتيب في الـ reason عشان تعيد الفشل. على drift حقيقي في الذاكرة، لأن القاعدة نفسها SQL.
+
+</Answer>
+</Question>
+
+<Question id="rt-test-4">
+<Ask>كل تستات الـ fake خضرا، وفي الـ staging الـ 4401 بيوصل `null`. إزاي كنت تمسكها قبل كده؟</Ask>
+<Answer>
+
+الـ fake بيعمل اللي انت فاكره، مش اللي الحقيقة بتعمله. تست واحد على WebSocket server حقيقي (`HttpServer` و`WebSocketTransformer` من `dart:io`) بالـ `ioChannel` بتاع الـ app بيتأكد إن الـ close code والـ reason والـ headers بتوصل فعلًا. ونفس التست قصاد الـ staging بيمسك الـ infrastructure (زي load balancer بيبلع الأكواد).
+
+</Answer>
+</Question>
+
+<Question id="rt-test-5">
+<Ask>ليه `expect(async.pendingTimers, isEmpty)` في آخر تستات الـ `fakeAsync`؟</Ask>
+<Answer>
+
+عشان يمسك الـ timer اللي محدش بيلغيه: لو الـ `stop()` نسي يلغي timer الـ backoff، الـ client هيحاول يتصل بعد ما الـ app قال «خلاص». في الـ fakeAsync ده مابيعملش error لوحده، بيعدّي في صمت. والـ `pendingTimersDebugString` بيقولك الـ timer اتعمل فين.
+
+</Answer>
+</Question>
+
+</Quiz>

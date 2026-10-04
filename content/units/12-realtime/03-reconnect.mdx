@@ -1,0 +1,650 @@
+---
+title: "الـ reconnect والـ heartbeat والـ auth"
+description: "الاتصال المفتوح بيقع، والسؤال هو بيرجع إزاي: exponential backoff مع jitter، وheartbeat بيكشف الاتصال اللي مات من غير ما حد يقول، والـ connectivity كتلميح، والـ token اللي خلص والاتصال لسه مفتوح، وامتى تبطّل تحاول."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="المكالمة اللي بتقطع في الأسانسير">
+
+بتكلّم صاحبك ودخلت الأسانسير، والمكالمة قطعت. أول ما تطلع بتتصل تاني. لو ماردّش، مش هتفضل تتصل كل ثانية: هتستنى شوية، وبعدين شوية أكتر. ولو شبكة المنطقة كلها وقعت ورجعت، مش عايز ألف واحد يتصلوا في نفس الثانية فالشبكة تقع تاني، فكل واحد بيستنى وقت مختلف شوية.
+
+وأحيانًا المكالمة مابتقطعش، بس الصوت بيختفي. انت لسه شايف «متصل» على الشاشة، وصاحبك مش سامعك. علشان كده بتقول «ألو؟ سامعني؟» كل شوية. لو مفيش رد مرتين، تقفل وتتصل تاني.
+
+ولو شركة الاتصالات قالتلك «رصيدك خلص»، مفيش فايدة إنك تعيد الاتصال: تشحن الأول. ولو قالتلك «الخط ده اتقفل»، تبطّل خالص.
+
+</Analogy>
+
+ده بالظبط شغل الدرس:
+
+- <b>الاستنى اللي بيكبر</b> هو الـ <b>exponential backoff</b>، و«كل واحد وقت مختلف شوية» هو الـ <b>jitter</b>.
+- <b>«ألو؟ سامعني؟»</b> هو الـ <b>heartbeat</b>: ping كل فترة، ولو مفيش pong، الاتصال مات حتى لو محدش قال.
+- <b>«رصيدك خلص»</b> هو الـ close code 4401: refresh للـ token الأول، وبعدين reconnect.
+- <b>«الخط اتقفل»</b> هو 4403 و4426: مفيش reconnect.
+
+وفيه حاجة رابعة: لو انت لسه في الأسانسير، مفيش داعي تحاول. لما تطلع (النت رجع)، حاول على طول. ده الـ <b>connectivity</b>: تلميح بيقولك «جرّب دلوقتي»، مش حكم.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### الحالات
+
+الـ `RealtimeClient` بتاع [الدرس اللي فات](/course/realtime/websocket/) كان بيفتح الاتصال مرة واحدة، والـ `_onClosed` فيه كومنت. دلوقتي بيبقى عنده 4 حالات، وكل حدث بينقله من حالة لحالة:
+
+<Diagram name="d-rt-reconnect-states">
+
+الاتصال بيعدّي على الحالات دي. الـ close code هو اللي بيقرر: يستنى ويحاول (waiting)، ولا يجدد الـ token الأول، ولا يبطّل خالص (stopped). والـ pause والـ logout بيوقفوه من أي حالة.
+
+</Diagram>
+
+<CodeBlock label="core/realtime/realtime_status.dart">
+
+```dart
+enum RealtimeStatus {
+  stopped,    // nobody wants a connection: logged out, in the background, or we gave up
+  connecting, // the upgrade is in flight
+  connected,  // the server said hello
+  waiting,    // dropped: a timer will try again
+}
+```
+
+</CodeBlock>
+
+الفرق المهم بين `stopped` و`waiting`: الـ waiting معناها «عايزين اتصال، وهنحاول تاني». الـ stopped معناها «مش عايزين اتصال»، ومفيش timer. الـ `start()` و`stop()` بيغيّروا الرغبة، والـ close codes والـ timers بيشتغلوا جواها.
+
+### 1. الـ backoff: نفس المعادلة، في مكان واحد
+
+في [درس الـ Conflicts](/course/offline/conflicts/)، الـ `SyncService` كان فيه `_backoff`: الانتظار بيتضاعف مع كل محاولة لحد حد أقصى، ونصه ثابت ونصه عشوائي. الـ socket محتاج نفس المعادلة بأرقام تانية. بدل ما تتنسخ، بتطلع لـ class صغيرة في core، والاتنين بيستخدموها:
+
+<CodeBlock label="core/retry/backoff.dart">
+
+```dart
+class Backoff {
+  Backoff({
+    this.base = const Duration(seconds: 1),
+    this.max = const Duration(seconds: 30),
+    double Function()? jitter,
+  }) : _jitter = jitter ?? Random().nextDouble;
+
+  final Duration base;
+  final Duration max;
+  final double Function() _jitter;
+  int _attempt = 0;
+
+  int get attempt => _attempt;
+
+  /// 1s, 2s, 4s ... up to max. Half fixed, half random ("equal jitter").
+  Duration next() {
+    final cap = min(base.inMilliseconds << min(_attempt, 20), max.inMilliseconds);
+    _attempt++;
+    return Duration(milliseconds: (cap / 2 + cap / 2 * _jitter()).round());
+  }
+
+  void reset() => _attempt = 0;
+}
+```
+
+</CodeBlock>
+
+| المحاولة | من غير jitter | equal jitter (اللي هنا) | full jitter |
+| --- | --- | --- | --- |
+| 1 | 1s | من 0.5 لـ 1s | من 0 لـ 1s |
+| 3 | 4s | من 2 لـ 4s | من 0 لـ 4s |
+| 6 وبعدها | 30s | من 15 لـ 30s | من 0 لـ 30s |
+
+- <b>ليه مش full jitter؟</b> الـ full بيوزّع الناس أحسن على السيرفر، بس ممكن يطلّع 0 فيعيد على طول. الـ equal بيضمن نص الانتظار على الأقل، والنص التاني بيكفي يفرّق الناس عن بعض.
+- <b>الـ jitter function:</b> في التست `() => 1.0`، فالانتظار رقم ثابت. نفس اللي اتعمل في الـ `SyncService`.
+- <b>الـ `<< min(_attempt, 20)`:</b> من غيرها، بعد 60 محاولة الـ shift بيعدّي حجم الـ int والرقم بيبقى سالب أو صفر.
+
+والـ `SyncService` بقى بينادي `Backoff(base: const Duration(seconds: 2), max: const Duration(minutes: 10))`. الفرق إن محاولاته محفوظة في الـ DB (`op.attempts`)، فبيحسب من الرقم ده. الـ socket محاولاته في الذاكرة، لأن الاتصال نفسه مش بيعيش بعد الـ app.
+
+### 2. الـ close code بيقرر
+
+<CodeBlock label="_onClosed">
+
+```dart
+Future<void> _onClosed(WebSocketChannel channel) async {
+  _channel = null;
+  if (!_wanted) return; // we closed it ourselves: stop() or the app went to the background
+
+  final lived = _clock.now().difference(_connectedAt ?? _clock.now());
+  if (lived > const Duration(seconds: 30)) _backoff.reset(); // it was healthy: start over
+
+  switch (channel.closeCode) {
+    case 4401:
+      return _reauth();
+    case 4403:
+      return _giveUp('forbidden');
+    case 4426:
+      _alerts.add(const UpdateRequired()); // the same alert the 426 interceptor sends
+      return _giveUp('upgrade_required');
+    case 4429:
+      return _retryIn(_backoff.next() + const Duration(minutes: 1));
+    default: // 1001 deploy, 1011 server error, null: the network died without a close frame
+      return _retryIn(_backoff.next());
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `_wanted` الأول:</b> لو احنا اللي قفلنا (pause أو logout)، الـ `onDone` برضه بيتنادى. من غير السطر ده، الـ app هيعيد الاتصال وهو في الخلفية.
+- <b>الـ reset بعد 30 ثانية حياة، مش بعد الاتصال:</b> لو السيرفر فيه bug بيقبل الاتصال ويقفله بـ 1011 على طول، والـ reset بيحصل مع كل اتصال ناجح، الـ app هيعيد كل ثانية للأبد. «الاتصال عاش 30 ثانية» هو الدليل إنه كان سليم فعلًا.
+- <b>الـ `null` والـ 1001 زي بعض:</b> الـ null معناها إن الاتصال مات من غير close frame (النت قطع). والـ 1001 ممكن تبقى من السيرفر (deploy)، أو من الـ `pingInterval` نفسه لما الـ pong مايوصلش. الاتنين: استنى وحاول.
+
+### 3. الـ heartbeat: الاتصال اللي مات ومحدش قال
+
+TCP مابيعرفش إن الطرف التاني اختفى غير لما يحاول يبعت. لو الموبايل دخل نفق، أو الـ router بتاع شركة الاتصالات نسي الاتصال بعد 60 ثانية سكوت (وده بيحصل كتير في شبكات الموبايل)، الطرفين فاكرين إن الاتصال مفتوح. السيرفر بيبعت events في الفراغ، والـ app مستني events مش جاية. ده الـ <b>half-open connection</b>.
+
+الحل إن حد يتكلم كل فترة. في `ioChannel` اللي في الدرس اللي فات، كان فيه `pingInterval: const Duration(seconds: 25)`. ده بيخلّي `dart:io` يبعت ping frame كل 25 ثانية، والسيرفر بيرد pong لوحده (ده جزء من الـ protocol، مش كود بتكتبه). ولو الـ pong ماوصلش في خلال الـ interval، `dart:io` بيقفل الاتصال بـ 1001، والـ `_onClosed` بيعمل الباقي.
+
+| الرقم | ليه |
+| --- | --- |
+| 25 ثانية ping | أقل من الـ 30 لـ 60 ثانية اللي routers وproxies كتير بتنسى بعدها الاتصال الساكت |
+| حوالي 50 ثانية | أطول وقت لحد ما الـ app يكتشف إن الاتصال مات: ping ماترد عليه في interval كامل |
+| السيرفر بيعمل ping كمان | عشان يقفل اتصالات الموبايلات اللي اختفت ويحرر الذاكرة |
+
+والـ ping مش ببلاش: كل واحد بيصحّي الـ radio بتاع الموبايل. 25 ثانية والـ app في الـ foreground مقبولة. ده سبب تاني إننا بنقفل الاتصال في الخلفية: ping كل 25 ثانية طول اليوم بيخلّص البطارية.
+
+<Note kind="info" title="الـ pingInterval مش موجود على الـ web">
+
+الـ ping frames في المتصفح بيديرها المتصفح نفسه، ومفيش API تتحكم فيها. لو Readly عمل نسخة web، الـ heartbeat بيبقى رسالة في العقد نفسه: السيرفر يبعت `{"type":"ping"}` كل 25 ثانية، والـ app يعمل timer: لو مفيش أي رسالة في 60 ثانية، يقفل ويعيد. ده اللي Escore عامله بإيده، زي ما هتشوف في [درس Escore](/course/realtime/escore/).
+
+</Note>
+
+### 4. الـ connectivity: «جرّب دلوقتي»
+
+الـ `NetworkStatus.onOnline` بتاع [درس Offline-first](/course/offline/offline/) بيقول «يمكن النت رجع». لو الاتصال في `waiting` ومستني 30 ثانية، مفيش داعي يكمّل الاستنى:
+
+<CodeBlock label="الـ onOnline بيقصّر الانتظار">
+
+```dart
+void _retryNow() {
+  if (_status != RealtimeStatus.waiting) return; // connecting or connected: nothing to do
+  _retry?.cancel();
+  unawaited(_open()); // the attempt counter stays: if it fails, the next wait is still long
+}
+```
+
+</CodeBlock>
+
+- <b>العداد مابيتصفّرش:</b> الـ connectivity ممكن يقول wifi والنت مش شغال (wifi كافيه من غير login). لو صفّرت العداد، كل تغيير في الـ connectivity هيرجّعك لثانية واحدة.
+- <b>مابيمنعش المحاولة:</b> لو الـ connectivity قال `none`، الـ timer بيكمّل عادي. التلميح بيسرّع، عمره ما بيمنع. نفس قاعدة الـ SyncService.
+
+### 5. الـ token خلص والاتصال مفتوح
+
+الـ access token في Readly عمره 15 دقيقة. الاتصال اتفتح بيه، والسيرفر بيتشيك عليه مرة واحدة وقت الـ upgrade. لو سابه مفتوح بعد ما الـ token يخلص، يبقى أي token اتسرق ممكن يفتح اتصال ويعيش عليه للأبد. علشان كده العقد بيقول: <b>السيرفر بيقفل بـ 4401 لما الـ token اللي الاتصال اتفتح بيه يخلص.</b> يعني كل 15 دقيقة تقريبًا، reconnect.
+
+والـ refresh نفسه موجود خلاص في الـ `AuthInterceptor` بتاع [درس الشبكة](/course/data-network/network/): `_refreshOnce` بالـ `Completer`، اللي بيخلّي 5 طلبات بيرجعوا 401 مع بعض يستنوا refresh واحد. الـ socket محتاج نفس الـ refresh بنفس الـ Completer: لو الـ socket عمل refresh لوحده والـ interceptor عمل refresh في نفس اللحظة، والسيرفر بيعمل rotation للـ refresh token، واحد فيهم هياخد 401 والمستخدم هيطلع بره.
+
+فالـ `_refreshOnce` بيطلع من الـ interceptor لـ class في core، بنفس الكود بالظبط:
+
+<CodeBlock label="core/auth/token_refresher.dart">
+
+```dart
+/// One refresh at a time, for everyone: the AuthInterceptor and the RealtimeClient.
+class TokenRefresher {
+  TokenRefresher(this._tokens, this._refreshDio);
+  final TokenStore _tokens;
+  final Dio _refreshDio;
+  Completer<String?>? _refreshing;
+
+  /// The new access token; null if the server rejected the refresh token (tokens are cleared);
+  /// throws if there was no verdict (offline, server down).
+  Future<String?> refresh() {
+    // ...the body of _refreshOnce from the network lesson, unchanged
+  }
+}
+
+// AuthInterceptor: _refreshOnce() becomes _refresher.refresh()
+```
+
+</CodeBlock>
+
+<CodeBlock label="_reauth في الـ RealtimeClient">
+
+```dart
+Future<void> _reauth() async {
+  if (++_authFailures > 1) {
+    return _giveUp('4401 again right after a refresh'); // a server bug, not a reason to loop
+  }
+  try {
+    final token = await _refresher.refresh();
+    if (token == null) return _giveUp('session ended'); // tokens cleared: the AuthCubit takes over
+    unawaited(_open()); // a fresh token: try now, no backoff
+  } on Object {
+    _retryIn(_backoff.next()); // no verdict (offline): the refresh token is still good
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>التلات نتايج هي نفس نتايج الـ interceptor:</b> token جديد يبقى نكمّل. null يبقى السيرفر رفض والـ tokens اتمسحت، والـ `onCleared` هيوصّل الـ AuthCubit لـ `Unauthenticated(sessionExpired: true)` زي [درس الـ Session](/course/di-scale/session/). وexception يبقى مفيش حكم، والـ refresh token لسه سليم.
+- <b>الـ `_authFailures`:</b> بيتصفّر لما الـ `hello` يوصل. لو refresh نجح والسيرفر قفل بـ 4401 تاني على طول، ده مش «token خلص». ده bug (ساعة سيرفر الـ auth مختلفة عن سيرفر الـ realtime مثلًا)، والـ loop هيضرب `/auth/refresh` كل ثانية. فبيقف ويتسجّل.
+- <b>مفيش backoff بعد refresh ناجح:</b> السبب كان معروف واتصلح، فمفيش داعي يستنى.
+
+### 6. مين عايز اتصال؟
+
+الـ `start()` و`stop()` بيتنادوا من حاجة واحدة بتعرف حالتين: المستخدم داخل؟ والـ app في الـ foreground؟
+
+<CodeBlock label="app/realtime_session.dart">
+
+```dart
+/// Connects while the user is signed in and the app is visible. Nothing else calls start/stop.
+class RealtimeSession {
+  RealtimeSession(this._client, this._live, this._library);
+  final RealtimeClient _client;
+  final LiveSyncService _live;
+  final LibraryRepository _library;
+
+  bool _signedIn = false;
+  bool _visible = true;
+  Poller? _poller;
+  late final StreamSubscription<AuthState> _authSub;
+  late final StreamSubscription<RealtimeStatus> _statusSub;
+  late final AppLifecycleListener _lifecycle;
+
+  void attach(AuthCubit auth) {
+    _signedIn = auth.state is Authenticated;
+    _authSub = auth.stream.listen((s) => _set(signedIn: s is Authenticated));
+    _lifecycle = AppLifecycleListener(
+      onResume: () => _set(visible: true),
+      onPause: () => _set(visible: false),
+    );
+    _statusSub = _client.status.listen(_fallback);
+    _apply();
+  }
+
+  void _set({bool? signedIn, bool? visible}) {
+    _signedIn = signedIn ?? _signedIn;
+    _visible = visible ?? _visible;
+    _apply();
+  }
+
+  void _apply() {
+    if (_signedIn && _visible) {
+      _live.start(); // the listener first, then the source
+      _client.start();
+    } else {
+      unawaited(_client.stop());
+    }
+  }
+
+  // the socket can't get through (a hotel wifi that blocks WebSockets): the old Poller takes over
+  void _fallback(RealtimeStatus status) {
+    if (status == RealtimeStatus.connected || status == RealtimeStatus.stopped) {
+      _poller?.dispose();
+      _poller = null;
+    } else if (status == RealtimeStatus.waiting && _client.failedAttempts >= 5) {
+      _poller ??= Poller(_library.refresh)..start();
+    }
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `onPause` مش `onInactive`:</b> الـ inactive بيحصل لما المستخدم ينزّل الـ Control Center في iOS أو يجيله مكالمة: الـ app لسه ظاهر. الـ pause معناها إن الـ app بقى في الخلفية فعلًا.
+- <b>الـ `Poller` نفسه بتاع [درس الطلبات المتقدمة](/course/api-errors/advanced-requests/):</b> بيعمل `refresh()` كل 30 ثانية ويقف في الخلفية. هنا بيشتغل بس لما الـ socket فشل 5 مرات ورا بعض، وبيقف أول ما الـ socket يرجع.
+- <b>مكانه الـ app، مش الـ data layer:</b> بيعرف الـ AuthCubit والـ lifecycle، ودول بتوع الـ app كله. زي الـ `AppLifecycleListener` اللي بيشغّل الـ `requestSync` في `readly_app.dart`.
+
+والـ logout لازم يقفل الاتصال <b>قبل</b> ما الـ DB تتمسح. لو event وصل بين الـ wipe والـ stop، الـ `LiveSyncService` هيكتب كتاب المستخدم القديم في DB المستخدم الجديد:
+
+<CodeBlock label="logout في AuthRepositoryImpl">
+
+```dart
+@override
+Future<void> logout() async {
+  await _realtime.stop(); // no event can land after the wipe
+  final refresh = await _tokens.refreshToken;
+  if (refresh != null) _remote.revoke(refresh).ignore();
+  await _tokens.clear();
+  await _db.wipe();
+}
+```
+
+</CodeBlock>
+
+ده بالظبط اللي [درس الـ Session](/course/di-scale/session/) قاله في سؤال الـ interview: «أي طلب لسه راجع من الـ session القديمة ممكن يكتب في الـ DB بعد المسح». الـ socket طلب مابيخلصش.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### الـ deploy الساعة 3 الفجر وقّع السيرفر مرتين
+
+الـ backend عمل deploy. الـ instance القديم قفل 40 ألف اتصال بـ 1001 في نفس الثانية. نسخة قديمة من الـ app كانت بتعيد بعد ثانية بالظبط، من غير jitter. 40 ألف upgrade في الثانية التانية، وكل upgrade بيقرا الـ token ويروح الـ DB. الـ instance الجديد وقع، والاتصالات اتقفلت تاني، والكل رجع بعد ثانيتين بالظبط. موجة ورا موجة، لحد ما حد قفل الـ realtime من الـ load balancer.
+
+<Diagram name="d-rt-thundering-herd">
+
+من غير jitter، كل الموبايلات بترجع في نفس اللحظة في موجات بتكبر الضغط. مع jitter، نفس العدد بيتوزع على الثواني، والسيرفر الجديد بيستحمله.
+
+</Diagram>
+
+الحل من الناحيتين:
+
+- <b>الـ app:</b> الـ jitter. 40 ألف اتصال على نص ثانية لـ ثانية في المحاولة الأولى، وعلى 15 لـ 30 ثانية في السادسة.
+- <b>السيرفر:</b> مايقفلش الكل مرة واحدة. بيقفل الاتصالات على دفعات على مدار 30 ثانية، أو بيوقف الـ instance القديم عن قبول اتصالات جديدة ويسيب القديمة لحد ما الـ token بتاعها يخلص (4401 الطبيعي).
+
+### الـ app بيضرب `/auth/refresh` كل ثانية
+
+الـ backend عمل rotation لمفتاح توقيع الـ tokens. سيرفر الـ REST خد المفتاح الجديد، وسيرفر الـ realtime لسه بيتشيك بالقديم (الـ config بتاعه بيتقري وقت الـ deploy بس). أي token جديد بيتقفل بـ 4401. الـ app عمل refresh والـ token الجديد سليم، فاتصل، والسيرفر قبل الـ upgrade وقفل بـ 4401 تاني. refresh، وconnect، و4401، وrefresh. من غير أي backoff، لأن الـ refresh كان «ناجح». الـ app اتعمله rate limit على `/auth/refresh`، والطلبات العادية بقت بتفشل كمان.
+
+ده سبب الـ `_authFailures`: 4401 مرتين ورا بعض بعد refresh ناجح معناها إن المشكلة مش في الـ token. الـ client بيبطّل ويسجّل، والـ metrics بتاعة الـ close codes بتبيّن الـ spike في 4401 بعد الـ release. والـ realtime مقفول لحد الـ session الجاية، والـ app شغال بالـ Poller.
+
+### الموبايل نقل من الـ wifi للـ 4G والـ events وقفت
+
+المستخدم خرج من البيت، والموبايل نقل من الـ wifi لـ 4G. الـ TCP connection كان مربوط بالـ wifi، فهو ميت دلوقتي. بس محدش قال: مفيش close frame، ولا error. الـ `onConnectivityChanged` اشتغل، بس الـ `_retryNow` مابيعملش حاجة لأن الحالة `connected`.
+
+الـ ping هيكتشفه في خلال 50 ثانية بالكتير. ولو ده كتير بالنسبة لك، في حل أسرع: لما الـ connectivity يتغير والاتصال `connected`، ابعت ping بنفسك، أو اقفل وافتح على طول. Readly ساب الـ ping يكتشف: الـ 50 ثانية دي الـ catch-up بيغطيها لما الاتصال يرجع، والقفل مع كل تغيير في الـ connectivity بيعمل reconnects كتير على الفاضي في الأماكن اللي الإشارة فيها بتتذبذب.
+
+### stop() وهو بيتوصل
+
+المستخدم فتح الـ app وقفله على طول. الـ `start()` بدأ الـ upgrade، والـ `stop()` اتنادى والـ upgrade لسه شغال. الـ `stop()` مالقاش `_channel` يقفله (لسه null). بعد ثانية الـ upgrade نجح، والكود عمل listen، والـ app في الخلفية ومعاه اتصال مفتوح ومحدش هيقفله.
+
+<CodeBlock label="الحل في _open: اتشيك على الرغبة بعد كل await">
+
+```dart
+final channel = _connect(_uri, await _headers.build());
+await channel.ready;
+if (!_wanted) {
+  await channel.sink.close(status.normalClosure); // stop() came while we were connecting
+  return;
+}
+```
+
+</CodeBlock>
+
+ده نفس سؤال [درس Cubit متقدم](/course/state-management/cubit-advanced/): بعد كل `await`، الدنيا ممكن تكون اتغيرت. اسأل «لسه عايز ده؟» قبل ما تكمّل.
+
+### الـ logout والـ event اللي وصل متأخر
+
+الترتيب القديم: الـ `AuthCubit.logout()` بينادي `_auth.logout()` (يمسح الـ tokens والـ DB)، وبعدين يعمل emit لـ `Unauthenticated`، والـ `RealtimeSession` يسمع ويعمل `stop()`. بين الـ wipe والـ stop فيه async gaps، وevent وصل فيهم، والـ `LiveSyncService` كتب كتاب في الـ DB الفاضية. المستخدم التاني دخل ولقى كتاب مش بتاعه.
+
+الحل اللي فوق: الـ repository يقفل الاتصال قبل المسح. الـ `RealtimeSession` هيعمل `stop()` تاني لما الـ `Unauthenticated` يوصل، وده مالوش أثر.
+
+### المستخدم شايف «غير متصل» طول الوقت
+
+أول نسخة كان فيها شريط أحمر «الاتصال المباشر مقطوع» كل ما الحالة `waiting`. المستخدمين في المترو كانوا شايفينه كل دقيقة، وبيبعتوا للدعم إن «الـ app مش شغال». بس الـ app كان شغال: المكتبة من drift، والتعديلات في الـ SyncQueue.
+
+حالة الـ socket مش حاجة المستخدم محتاج يعرفها. هو محتاج يعرف لو تعديلاته مش بتوصل، وده موجود خلاص في الـ `SyncStatusCubit`. ونفس الفكرة اللي [درس أنواع الـ Cubit](/course/state-management/cubit-types-advanced/) قالها عن الـ `ConnectivityCubit`: الـ connectivity تلميح، والحقيقة هي الـ sync. الـ `RealtimeStatus` بيروح للـ logs والـ metrics وشاشة الـ debug، مش للمستخدم.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>الأرقام مكتوبة ومتفق عليها مع الـ backend:</b>
+
+| الإعداد | Readly | ليه |
+| --- | --- | --- |
+| `connectTimeout` | 10 ثواني | الـ upgrade اللي ماخلصش في 10 ثواني غالبًا مش هيخلص |
+| `pingInterval` | 25 ثانية | أقل من الـ idle timeout بتاع أغلب الـ NATs والـ proxies |
+| الـ backoff | 1s لحد 30s، equal jitter | الموبايل في الـ foreground: المستخدم مستني |
+| الـ reset | بعد 30 ثانية حياة | الاتصال اللي بيقع على طول مايصفّرش العداد |
+| الـ Poller | بعد 5 محاولات فاشلة | شبكة بتقفل الـ WebSocket مش هتتغير بالانتظار |
+| 4429 | backoff + دقيقة | السيرفر قالك «كفاية» |
+| 4401 بعد refresh | وقّف | bug، مش token |
+
+- <b>الـ close code مش تفصيلة:</b> هو الطريقة الوحيدة اللي السيرفر بيقولك بيها «ليه». اكتبه في العقد، وكل كود ليه سلوك واحد في الـ client. والـ codes اللي مش في الجدول بتتعامل زي 1011: backoff وحاول.
+- <b>الـ refresh واحد للـ app كله:</b> الـ socket والـ interceptor بيستخدموا نفس الـ `TokenRefresher`. لو اتنين بيعملوا refresh في نفس الوقت والسيرفر بيعمل rotation، المستخدم بيطلع بره عشوائيًا، ودي من أصعب الـ bugs تلاقيها.
+- <b>مابتحاولش للأبد، بس مابتبطّلش بسهولة:</b> في الـ foreground الـ backoff سقفه 30 ثانية، ومفيش حد أقصى لعدد المحاولات، لأن المستخدم فاتح الـ app والشبكة ممكن ترجع في أي لحظة. اللي بيوقف هو الأكواد اللي معناها «مش هينفع» (4403، 4426، 4401 مكرر)، والخلفية.
+- <b>قيس الاتصال:</b> عدد الـ reconnects في الجلسة، والـ close codes مقسومة بالـ build، والوقت من `start()` لـ `hello`. الـ spike في `null` معناه شبكة، وفي 1011 معناه السيرفر، وفي 4401 معناه الـ tokens أو الساعات. من غير الأرقام دي، «الـ live updates مش شغالة» شكوى مالهاش أول من آخر.
+- <b>التست:</b> كل حاجة في الـ class ده جاية من بره: الـ `ChannelFactory`، والـ `Backoff` بـ jitter ثابت، والـ `Clock`، والـ `NetworkStatus`، والـ `TokenRefresher`. يعني تقدر تقفل الاتصال بـ 4401 وتتأكد إن الـ refresh اتنادى مرة واحدة، وتقدّم الوقت 30 ثانية في سطر. ده [درس تست الـ real-time](/course/realtime/testing-realtime/).
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي تعمل reconnect لـ WebSocket صح؟» الـ close code بيقرر: أكواد الشبكة والسيرفر (null و1001 و1011) بتستنى بـ exponential backoff مع jitter، عشان آلاف الموبايلات مايرجعوش في نفس الثانية بعد deploy، والعداد بيتصفّر بس لما الاتصال يعيش فترة. والـ 4401 معناها token خلص: refresh بنفس الـ single-flight refresher اللي الـ HTTP بيستخدمه، وبعدين reconnect على طول، ولو 4401 اتكرر بعد refresh يبقى bug فبتبطّل. والأكواد اللي معناها «مش هينفع» (حساب مقفول، نسخة قديمة) بتوقف خالص. والـ heartbeat (ping كل 25 ثانية) بيكشف الاتصال اللي مات من غير close frame، والـ connectivity تلميح بيقصّر الانتظار ومابيمنعش المحاولة. والاتصال بيتقفل في الخلفية والـ logout (قبل مسح الـ DB)، وبيرجع مع الـ resume ويعمل catch-up. ولو الشبكة بتقفل الـ WebSocket خالص، polling كـ fallback.
+
+</Note>
+
+</Level>
+
+<LessonPart title="الكود كامل في مكان واحد">
+
+### الـ RealtimeClient بعد الدرس ده
+
+```dart
+class RealtimeClient implements AppAlerts {
+  RealtimeClient(
+    this._uri,
+    this._headers,
+    this._refresher,
+    this._network, {
+    required Clock clock,
+    Backoff? backoff,
+    ChannelFactory connect = ioChannel,
+  })  : _clock = clock,
+        _backoff = backoff ?? Backoff(),
+        _connect = connect;
+
+  final Uri _uri;
+  final RealtimeHeaders _headers;
+  final TokenRefresher _refresher;
+  final NetworkStatus _network;
+  final Clock _clock;
+  final Backoff _backoff;
+  final ChannelFactory _connect;
+
+  final _messages = StreamController<Map<String, dynamic>>.broadcast();
+  final _statusChanges = StreamController<RealtimeStatus>.broadcast();
+  final _alerts = StreamController<AppAlert>.broadcast();
+
+  WebSocketChannel? _channel;
+  StreamSubscription<dynamic>? _sub;
+  StreamSubscription<void>? _netSub;
+  Timer? _retry;
+  DateTime? _connectedAt;
+  RealtimeStatus _status = RealtimeStatus.stopped;
+  bool _wanted = false;
+  bool _opening = false;
+  int _authFailures = 0;
+
+  Stream<Map<String, dynamic>> get messages => _messages.stream;
+  Stream<RealtimeStatus> get status => _statusChanges.stream;
+  int get failedAttempts => _backoff.attempt;
+
+  @override
+  Stream<AppAlert> get alerts => _alerts.stream;
+
+  void start() {
+    if (_wanted) return;
+    _wanted = true;
+    _netSub = _network.onOnline.listen((_) => _retryNow());
+    unawaited(_open());
+  }
+
+  Future<void> _open() async {
+    if (!_wanted || _opening || _channel != null) return;
+    _opening = true;
+    _setStatus(RealtimeStatus.connecting);
+    try {
+      final channel = _connect(_uri, await _headers.build());
+      await channel.ready; // WebSocketChannelException, TimeoutException, SocketException...
+      if (!_wanted) {
+        await channel.sink.close(status.normalClosure);
+        return;
+      }
+      _channel = channel;
+      _connectedAt = _clock.now();
+      _sub = channel.stream.listen(
+        _onFrame,
+        onDone: () => _onClosed(channel),
+        onError: (Object e, StackTrace st) {}, // onDone follows
+      );
+    } on Object {
+      _retryIn(_backoff.next());
+    } finally {
+      _opening = false;
+    }
+  }
+
+  void _onFrame(dynamic frame) {
+    if (frame is! String || frame.length > 64 * 1024) return;
+    final Object? json;
+    try {
+      json = jsonDecode(frame);
+    } on FormatException {
+      return;
+    }
+    if (json is! Map<String, dynamic> || json['type'] is! String) return;
+    if (json['type'] == 'hello') {
+      _authFailures = 0; // the server accepted our token
+      _setStatus(RealtimeStatus.connected);
+    }
+    _messages.add(json);
+  }
+
+  Future<void> _onClosed(WebSocketChannel channel) async {
+    _channel = null;
+    if (!_wanted) return;
+    final lived = _clock.now().difference(_connectedAt ?? _clock.now());
+    if (lived > const Duration(seconds: 30)) _backoff.reset();
+    switch (channel.closeCode) {
+      case 4401:
+        return _reauth();
+      case 4403:
+        return _giveUp('forbidden');
+      case 4426:
+        _alerts.add(const UpdateRequired());
+        return _giveUp('upgrade_required');
+      case 4429:
+        return _retryIn(_backoff.next() + const Duration(minutes: 1));
+      default:
+        return _retryIn(_backoff.next());
+    }
+  }
+
+  Future<void> _reauth() async {
+    if (++_authFailures > 1) return _giveUp('4401 again right after a refresh');
+    try {
+      final token = await _refresher.refresh();
+      if (token == null) return _giveUp('session ended');
+      unawaited(_open());
+    } on Object {
+      _retryIn(_backoff.next());
+    }
+  }
+
+  void _retryIn(Duration wait) {
+    if (!_wanted) return;
+    _setStatus(RealtimeStatus.waiting);
+    _retry?.cancel();
+    _retry = Timer(wait, () => unawaited(_open()));
+  }
+
+  void _retryNow() {
+    if (_status != RealtimeStatus.waiting) return;
+    _retry?.cancel();
+    unawaited(_open());
+  }
+
+  void _giveUp(String why) {
+    // AppLogger: every give-up is a metric worth watching
+    _wanted = false;
+    _retry?.cancel();
+    _setStatus(RealtimeStatus.stopped);
+  }
+
+  void _setStatus(RealtimeStatus next) {
+    if (_status == next) return;
+    _status = next;
+    _statusChanges.add(next);
+  }
+
+  Future<void> stop() async {
+    _wanted = false;
+    _retry?.cancel();
+    await _netSub?.cancel();
+    _netSub = null;
+    await _sub?.cancel();
+    _sub = null;
+    await _channel?.sink.close(status.normalClosure);
+    _channel = null;
+    _backoff.reset();
+    _setStatus(RealtimeStatus.stopped);
+  }
+}
+```
+
+<CodeBlock label="الـ DI: الـ alerts من مكانين">
+
+```dart
+// core/app_alerts.dart: many sources, one stream for the AppStatusCubit
+class MergedAppAlerts implements AppAlerts {
+  MergedAppAlerts(this._sources);
+  final List<AppAlerts> _sources;
+
+  @override
+  Stream<AppAlert> get alerts => StreamGroup.merge([for (final s in _sources) s.alerts]); // package:async
+}
+
+// di/setup.dart
+getIt
+  ..registerLazySingleton<TokenRefresher>(() => TokenRefresher(getIt(), refreshDio))
+  ..registerLazySingleton<RealtimeClient>(
+    () => RealtimeClient(realtimeUri, getIt(), getIt(), getIt(), clock: getIt()),
+    dispose: (c) => c.stop(),
+  )
+  ..registerLazySingleton<AppAlerts>(
+    () => MergedAppAlerts([getIt<AppAlertsInterceptor>(), getIt<RealtimeClient>()]),
+  );
+```
+
+</CodeBlock>
+
+الـ `AppStatusCubit` بتاع [درس الأخطاء في الشاشة](/course/api-errors/errors-ui/) ماتغيرش: لسه بياخد `AppAlerts`، ودلوقتي الـ 4426 من الـ socket بيوصله زي الـ 426 من الـ HTTP بالظبط.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="rt-reconnect-1">
+<Ask>ليه الـ backoff محتاج jitter؟ ما هو بيكبر لوحده.</Ask>
+<Answer>
+
+الـ backoff بيقلل عدد المحاولات من الموبايل الواحد، بس لو كل الموبايلات اتقطعت في نفس اللحظة (deploy)، هيرجعوا كلهم بعد ثانية بالظبط، وبعد اتنين بالظبط، في موجات بتوقّع السيرفر الجديد. الـ jitter بيخلّي كل موبايل يستنى رقم مختلف شوية، فنفس العدد بيتوزع على الوقت.
+
+</Answer>
+</Question>
+
+<Question id="rt-reconnect-2">
+<Ask>الاتصال `connected`، والموبايل دخل نفق. مفيش close frame ولا error. الـ app هيعرف إزاي، وامتى؟</Ask>
+<Answer>
+
+من الـ heartbeat: الـ `pingInterval` بيبعت ping كل 25 ثانية، ولو الـ pong ماوصلش في الـ interval، `dart:io` بيقفل الاتصال بـ 1001، والـ `_onClosed` بيعمل backoff وreconnect. يعني بالكتير حوالي 50 ثانية. من غير الـ ping، الاتصال الـ half-open ممكن يفضل «مفتوح» لحد ما المستخدم يقفل الـ app.
+
+</Answer>
+</Question>
+
+<Question id="rt-reconnect-3">
+<Ask>السيرفر قفل بـ 4401. ليه الـ socket مايعملش refresh للـ token بطلب لوحده بدل `TokenRefresher` المشترك؟</Ask>
+<Answer>
+
+لأن الـ AuthInterceptor ممكن يكون بيعمل refresh في نفس اللحظة، ولو السيرفر بيعمل rotation للـ refresh token، أول refresh هيلغي القديم، والتاني هياخد 401، فالـ tokens تتمسح والمستخدم يطلع بره. الـ `TokenRefresher` بالـ Completer بيخلّي أي حد عايز refresh يستنى نفس الـ refresh.
+
+</Answer>
+</Question>
+
+<Question id="rt-reconnect-4">
+<Ask>الـ connectivity قال إن النت رجع والاتصال في `waiting`. ليه بنحاول على طول، بس مابنصفّرش عداد الـ backoff؟</Ask>
+<Answer>
+
+بنحاول على طول لأن التلميح بيقول «يمكن ينفع دلوقتي»، فمفيش داعي نكمّل استنى 30 ثانية. ومابنصفّرش لأن الـ connectivity ممكن يكون غلطان (wifi من غير internet). لو صفّرنا، كل تذبذب في الـ connectivity هيرجّعنا لمحاولة كل ثانية.
+
+</Answer>
+</Question>
+
+<Question id="rt-reconnect-5">
+<Ask>في الـ logout، ليه الاتصال لازم يتقفل قبل `_db.wipe()` مش بعد ما الـ AuthCubit يعمل emit لـ Unauthenticated؟</Ask>
+<Answer>
+
+لأن بين المسح والـ emit فيه async gaps، وأي event بيوصل فيهم الـ LiveSyncService هيكتبه في الـ DB اللي اتمسحت، فالمستخدم الجاي على نفس الموبايل يلاقي كتاب مش بتاعه. الـ repository بيعمل `stop()` الأول، فمفيش event يقدر يوصل بعد المسح.
+
+</Answer>
+</Question>
+
+</Quiz>

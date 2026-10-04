@@ -1,0 +1,591 @@
+---
+title: "الـ WebSocket كـ RemoteDataSource"
+description: "الـ WebSocket بـ web_socket_channel جوه الـ data layer: العقد بتاع الـ events جنب الـ OpenAPI، واتصال واحد للـ app كله، وdata source بيرجّع Stream من الـ models، وservice بيكتب في drift، والشاشة مابتعرفش إن في socket أصلًا."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="اللاسلكي بتاع أمن المول">
+
+أمن المول عنده لاسلكي واحد في غرفة التحكم، وكل الكاميرات والأفراد بيتكلموا عليه بكلمات سر: «تلاتة اتنين عند البوابة 4». الموظف في غرفة التحكم بيسمع، وبيترجم: «في عربية راكنة غلط عند البوابة 4»، ويكتبها في الدفتر. مدير المول مابيسمعش اللاسلكي خالص: بيقرا الدفتر. ولو اللاسلكي فصل نص ساعة، المدير لسه شايف آخر حاجة اتكتبت، والموظف أول ما اللاسلكي يرجع بيسأل «فاتني إيه؟» ويكمّل الدفتر.
+
+وفي حاجتين مهمين: مفيش غير لاسلكي واحد في الغرفة، مش واحد لكل مدير. والموظف لو سمع كلمة سر مايعرفهاش، بيتجاهلها ويكمّل، مايرميش اللاسلكي من الشباك.
+
+</Analogy>
+
+الـ <b>WebSocket</b> هو اللاسلكي: قناة مفتوحة، والرسايل عليها بكود متفق عليه (JSON بـ `type`). الموظف اللي بيترجم هو الـ <b>RemoteDataSource</b>: بيحوّل الرسايل الخام لـ models. والدفتر هو drift، والمدير هو الـ `LibraryCubit` اللي بيقرا من `watchLibrary()` زي ما كان بيعمل من أول الكورس. الـ WebSocket طريق جديد بيكتب في الدفتر، مش طريق جديد للشاشة.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### العقد الأول، قبل أي كود
+
+في [درس عقد الـ API](/course/api-errors/api-contract/) كتبنا الـ REST في `api/openapi.yaml`. الـ OpenAPI بيوصف request وresponse، ومالوش طريقة كويسة يوصف بيها رسايل بتيجي على اتصال مفتوح. الأداة المعروفة لده <b>AsyncAPI</b>: نفس الفكرة ونفس شكل الـ YAML تقريبًا، بس للـ channels والـ messages. وبيعيش جنب الأول في نفس الـ repo، بنفس قواعد الـ review.
+
+<CodeBlock label="api/asyncapi.yaml (جزء)">
+
+```yaml
+asyncapi: 3.0.0
+info:
+  title: Readly Realtime
+  version: 1.0.0
+servers:
+  production:
+    host: api.readly.app
+    pathname: /v1/realtime
+    protocol: wss
+channels:
+  realtime:
+    address: /v1/realtime
+    messages:
+      hello: { $ref: '#/components/messages/Hello' }
+      bookUpserted: { $ref: '#/components/messages/BookUpserted' }
+      bookRemoved: { $ref: '#/components/messages/BookRemoved' }
+components:
+  messages:
+    BookUpserted:
+      payload:
+        type: object
+        required: [type, seq, occurredAt, data]
+        properties:
+          type: { const: book.upserted }
+          seq: { type: integer }            # per user, per stream (library), only goes up
+          occurredAt: { type: string, format: date-time }
+          origin: { type: string }          # installationId of the device that made the change
+          data:
+            type: object
+            required: [book]
+            properties:
+              book: { $ref: 'openapi.yaml#/components/schemas/LibraryBook' } # the same shape as GET /library
+```
+
+</CodeBlock>
+
+- <b>الـ book نفس شكل الـ REST:</b> الـ `$ref` بيشاور على نفس الـ schema اللي `GET /library` بيرجّعه، بالـ `version` والـ `updatedAt` بتوع [درس الـ Conflicts](/course/offline/conflicts/). يعني نفس الـ `BookDto` ونفس الـ mapper. لو الـ event عنده شكل مختلف للكتاب، هيبقى عندك mapperين لنفس الحاجة، ويختلفوا مع الوقت.
+- <b>الـ seq:</b> رقم بيزيد مع كل تغيير في مكتبة المستخدم ده. كل stream ليه عدّاده (المكتبة النهارده، والملاحظات لو جت)، عشان events الملاحظات ماتعملش «فجوات» في عدّاد المكتبة. هنحتاجه في [درس دمج الأحداث](/course/realtime/merge-cache/) عشان نعرف فاتنا إيه.
+- <b>الـ origin:</b> الـ `installationId` بتاع الجهاز اللي عمل التغيير. الـ app بيعرف منه إن الـ event ده صدى لتعديله هو.
+
+والعقد مش بس الرسايل. الجدول ده هو كمان جزء منه:
+
+| الجزء | في Readly |
+| --- | --- |
+| العنوان | `wss://api.readly.app/v1/realtime`، والـ `v1` زي الـ REST بالظبط |
+| الـ auth | `Authorization: Bearer` في طلب الـ upgrade، نفس الـ access token |
+| الـ headers التانية | `X-App-Build` و`X-Platform` و`X-Request-Id` زي كل طلب HTTP، و`X-Installation-Id` (جديد) |
+| أول رسالة من السيرفر | `hello` فيها آخر `seq` لكل stream و`heartbeatSec` |
+| الرسايل من الـ app | مفيش في v1 |
+| أكبر رسالة | 64 KB |
+| الـ close codes | الجدول اللي تحت |
+
+<CodeBlock label="رسالتين على السلك">
+
+```json
+{"type":"hello","seq":{"library":1050},"heartbeatSec":25}
+{"type":"book.upserted","seq":1051,"occurredAt":"2026-10-05T10:15:03Z","origin":"inst_7d1e",
+ "data":{"book":{"key":"OL45804W","title":"Fantastic Mr Fox","status":"finished","version":7,"updatedAt":"2026-10-05T10:15:03Z"}}}
+```
+
+</CodeBlock>
+
+الـ close code هو الـ status code بتاع الـ WebSocket: لما أي طرف يقفل، بيبعت رقم وسبب قصير. الأرقام من 1000 لـ 2999 بتاعة الـ protocol، ومن 4000 لـ 4999 بتاعتك:
+
+| الكود | الـ reason | معناه | الـ app يعمل إيه |
+| --- | --- | --- | --- |
+| 1000 | | قفل عادي (logout، أو الـ app راح الخلفية) | ولا حاجة |
+| 1001 | `going_away` | السيرفر بيعمل deploy أو بيقفل | reconnect بـ backoff وjitter |
+| 1011 | `internal_error` | السيرفر وقع | reconnect بـ backoff وjitter |
+| 4401 | `token_expired` | الـ token خلص أو مش صالح | refresh للـ token، وبعدين reconnect |
+| 4403 | `forbidden` | الحساب اتقفل | وقّف خالص |
+| 4426 | `upgrade_required` | الـ build أقدم من المسموح | وقّف، والـ AppAlerts تعرض شاشة الـ update |
+| 4429 | `too_many_connections` | المستخدم فاتح اتصالات كتير | reconnect بـ backoff أطول |
+
+الـ 4401 و4426 مقصودين يبقوا نفس أرقام الـ HTTP بعد الـ 4، ونفس الـ `code` بتاع الـ Error schema (`upgrade_required`). ليه السيرفر بيقبل الـ upgrade وبعدين يقفل بـ 4401، بدل ما يرد 401 على طلب الـ upgrade نفسه؟ لأن الـ client لما الـ upgrade يفشل بياخد exception عامة زي «was not upgraded to websocket»، ومش كل platform بيوصّلك الـ status code. الـ close code بيوصل لـ `channel.closeCode` في كل مكان بنفس الشكل. ده اتفاق في العقد، مكتوب عشان الاتنين يعملوه.
+
+### الـ package
+
+<CodeBlock label="pubspec.yaml">
+
+```yaml
+dependencies:
+  web_socket_channel: ^3.0.3
+```
+
+</CodeBlock>
+
+`web_socket_channel` من فريق Dart نفسه. فيه `WebSocketChannel.connect` اللي شغال على كل الـ platforms، و`IOWebSocketChannel.connect` اللي شغال على `dart:io` بس (Android وiOS والـ desktop)، وبيقبل `headers` و`pingInterval` و`connectTimeout`. Readly app موبايل، والـ auth في header، فـ `IOWebSocketChannel`.
+
+### الطبقات
+
+<Diagram name="d-rt-ws-pipeline">
+
+الرسالة بتدخل من الـ RealtimeClient (اتصال واحد للـ app)، والـ LibraryRealtimeSource بيختار الـ events بتاعته ويحوّلها لـ DTOs، والـ LiveSyncService بيكتبها في drift، ومن هناك نفس الـ watchLibrary اللي الشاشة سامعاه من زمان.
+
+</Diagram>
+
+| الـ class | المكان | شغلته |
+| --- | --- | --- |
+| `RealtimeClient` | `core/realtime/` | بيملك الاتصال: يفتحه، ويقفله، ويوزّع الرسايل كـ JSON |
+| `LibraryRealtimeSource` | `features/library/data/` | الـ RemoteDataSource: بياخد رسايل `book.*` ويحوّلها لـ `LibraryEventDto` |
+| `LiveSyncService` | `features/library/data/` | بيسمع على الـ data source ويكتب في drift |
+| `LibraryCubit` | زي ما هو | مايعرفش حاجة |
+
+الـ `LiveSyncService` أخو الـ `SyncService` بتاع [درس Offline-first](/course/offline/offline/): واحد بيطلّع التعديلات من الـ DB للسيرفر، والتاني بيدخّل التعديلات من السيرفر للـ DB. والاتنين في الـ data layer، والاتنين singletons بيبدأوا مع الـ session.
+
+### 1. الـ RealtimeClient: اتصال واحد
+
+<CodeBlock label="core/realtime/realtime_client.dart">
+
+```dart
+typedef ChannelFactory = WebSocketChannel Function(Uri uri, Map<String, String> headers);
+
+WebSocketChannel ioChannel(Uri uri, Map<String, String> headers) => IOWebSocketChannel.connect(
+      uri,
+      headers: headers,
+      connectTimeout: const Duration(seconds: 10),
+      pingInterval: const Duration(seconds: 25), // next lesson
+    );
+
+class RealtimeClient {
+  RealtimeClient(this._uri, this._headers, {ChannelFactory connect = ioChannel}) : _connect = connect;
+
+  final Uri _uri;
+  final RealtimeHeaders _headers; // builds the same headers our dio interceptors add
+  final ChannelFactory _connect;
+
+  final _messages = StreamController<Map<String, dynamic>>.broadcast();
+  WebSocketChannel? _channel;
+  StreamSubscription<dynamic>? _sub;
+
+  /// Every JSON message from the server. A signal stream: nobody listening = nobody needs it.
+  Stream<Map<String, dynamic>> get messages => _messages.stream;
+
+  Future<void> connect() async {
+    final channel = _connect(_uri, await _headers.build());
+    await channel.ready; // throws WebSocketChannelException if the upgrade fails
+    _channel = channel;
+    _sub = channel.stream.listen(
+      _onFrame,
+      onDone: () => _onClosed(channel.closeCode, channel.closeReason),
+      onError: (Object e, StackTrace st) {}, // onDone follows: one place handles the end
+    );
+  }
+
+  void _onFrame(dynamic frame) {
+    if (frame is! String || frame.length > 64 * 1024) return; // the contract: JSON text, 64 KB max
+    final Object? json;
+    try {
+      json = jsonDecode(frame);
+    } on FormatException {
+      return; // a broken frame is the server's bug, not a reason to drop the connection
+    }
+    if (json is Map<String, dynamic> && json['type'] is String) _messages.add(json);
+  }
+
+  void _onClosed(int? code, String? reason) {
+    _channel = null;
+    // next lesson: decide from the code whether to reconnect, refresh the token, or stop
+  }
+
+  Future<void> close() async {
+    await _sub?.cancel();
+    await _channel?.sink.close(status.normalClosure); // 1000: we meant it
+    _channel = null;
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `ready` قبل أي حاجة:</b> الـ `connect` بيرجّع channel على طول، قبل ما الـ upgrade يخلص. لو مستنيتش `ready`، والـ upgrade فشل، الخطأ هيظهر على الـ stream كـ error وبعده done، ومحدش هيعرف إن الاتصال عمره ما اتفتح أصلًا. والـ `ready` بيخلّي الفشل exception في نفس المكان اللي طلبت فيه الاتصال، فتقدر تعمل retry.
+- <b>`channel.stream` single-subscription:</b> listen واحد في عمره، زي ما شفنا في [درس عمر الـ subscription](/course/dart-async/lifecycle/). علشان كده الـ `RealtimeClient` بس اللي بيسمع، وبيوزّع على `_messages`. لو كل feature عملت listen على الـ channel، التانية هتاخد `Bad state: Stream has already been listened to`.
+- <b>`_messages` broadcast:</b> الـ library النهارده، والـ notes بكرة، كلهم على نفس الاتصال. والـ broadcast مابيخزّنش، وده مقبول هنا لأن الـ event إشارة، والـ catch-up هو اللي بيضمن الصح.
+- <b>الـ frame البايظ بيتجاهل:</b> ده الـ tolerant reader بتاع [درس العقد](/course/api-errors/api-contract/) بس للرسايل: اللي مش مفهوم مايوقعش الاتصال.
+- <b>الـ `onError` فاضي عن قصد:</b> الـ stream بتاع الـ channel بيطلّع done بعد أي error. فبدل ما نتعامل مع النهاية في مكانين، الـ `onDone` هو اللي بيقرر، ومعاه الـ `closeCode`.
+
+والـ headers بتيجي من نفس المصادر اللي الـ interceptors بتاعة dio بتقرا منها، لأن الـ socket مش بيعدّي على dio:
+
+<CodeBlock label="core/realtime/realtime_headers.dart">
+
+```dart
+class RealtimeHeaders {
+  RealtimeHeaders(this._tokens, this._installation, this._build, this._platform, [Uuid? uuid])
+      : _uuid = uuid ?? const Uuid();
+  final TokenStore _tokens;
+  final InstallationId _installation;
+  final int _build;        // the same value the AppVersionInterceptor sends
+  final String _platform;
+  final Uuid _uuid;
+
+  Future<Map<String, String>> build() async => {
+        if (await _tokens.accessToken case final token?) 'Authorization': 'Bearer $token',
+        'X-App-Build': '$_build',
+        'X-Platform': _platform,
+        'X-Request-Id': _uuid.v4(), // one per connection attempt: find it in the server logs
+        'X-Installation-Id': _installation.value,
+      };
+}
+```
+
+</CodeBlock>
+
+والـ `X-Installation-Id` header جديد في العقد: id ثابت للتسطيب ده، مش للمستخدم. السيرفر بيحطه في الـ `origin` بتاع أي event سببه طلب من الجهاز ده، وهنستخدمه تاني في [درس الـ Push](/course/realtime/push-notifications/) كمفتاح للجهاز:
+
+<CodeBlock label="core/device/installation_id.dart">
+
+```dart
+/// One id per install. Survives logout (it's the device, not the user), dies with uninstall.
+class InstallationId {
+  InstallationId(this._prefs, [Uuid? uuid]) : _uuid = uuid ?? const Uuid();
+  final SharedPreferencesWithCache _prefs;
+  final Uuid _uuid;
+  static const _key = 'installation_id'; // renaming it after release = every device looks new
+
+  String get value {
+    final saved = _prefs.getString(_key);
+    if (saved != null) return saved;
+    final fresh = 'inst_${_uuid.v4()}';
+    unawaited(_prefs.setString(_key, fresh)); // the cache answers now, the disk write follows
+    return fresh;
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>shared_preferences مش secure storage:</b> مش سر، ده id. والأهم إن الـ Keychain في iOS بيعيش بعد مسح الـ app ([درس الـ Session](/course/di-scale/session/))، فالتسطيب الجديد كان هياخد id التسطيب القديم.
+- <b>مش بيتمسح في الـ logout:</b> الـ `resetOnLogout` مابيلمسهوش. المستخدم الجديد على نفس الموبايل هو نفس الجهاز.
+- <b>الـ REST كمان:</b> الـ `AppVersionInterceptor` بتاع [درس العقد](/course/api-errors/api-contract/) بيضيفه جنب `X-App-Build`، فأي `PATCH` من الـ SyncService بيوصل السيرفر ومعاه الـ id، والـ event اللي بيطلع منه فيه `origin` بتاعنا.
+
+### 2. الـ data source: من JSON لـ models
+
+<CodeBlock label="features/library/data/library_event_dto.dart">
+
+```dart
+sealed class LibraryEventDto {
+  const LibraryEventDto(this.seq, this.origin);
+  final int seq;
+  final String? origin;
+
+  /// null for types this build doesn't know: new event types are an additive change.
+  static LibraryEventDto? tryParse(Map<String, dynamic> json) {
+    final seq = json['seq'] as int;
+    final origin = json['origin'] as String?;
+    final data = json['data'] as Map<String, dynamic>;
+    return switch (json['type']) {
+      'book.upserted' => BookUpsertedDto(seq, origin,
+          BookDto.fromJson(data['book'] as Map<String, dynamic>)),
+      'book.removed' => BookRemovedDto(seq, origin, data['key'] as String, data['version'] as int),
+      _ => null,
+    };
+  }
+}
+
+final class BookUpsertedDto extends LibraryEventDto {
+  const BookUpsertedDto(super.seq, super.origin, this.book);
+  final BookDto book; // the same DTO GET /library returns
+}
+
+final class BookRemovedDto extends LibraryEventDto {
+  const BookRemovedDto(super.seq, super.origin, this.key, this.version);
+  final String key;
+  final int version;
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="features/library/data/library_realtime_source.dart">
+
+```dart
+abstract interface class LibraryRealtimeSource {
+  Stream<LibraryEventDto> events();
+}
+
+class WsLibraryRealtimeSource implements LibraryRealtimeSource {
+  WsLibraryRealtimeSource(this._client, this._logger);
+  final RealtimeClient _client;
+  final AppLogger _logger;
+
+  @override
+  Stream<LibraryEventDto> events() => _client.messages
+      .where((m) => (m['type'] as String).startsWith('book.'))
+      .expand(_parse); // 0 or 1 event per message: a bad one is skipped, not an error
+
+  Iterable<LibraryEventDto> _parse(Map<String, dynamic> json) {
+    try {
+      final event = LibraryEventDto.tryParse(json);
+      return event == null ? const [] : [event];
+    } on Object catch (e, st) { // TypeError from a wrong shape, CheckedFromJsonException...
+      _logger.warning('bad realtime event ${json['type']}', error: e, stackTrace: st);
+      return const [];
+    }
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ interface:</b> نفس سبب الـ `LibraryRemoteSource`: الـ `LiveSyncService` بيتختبر بـ fake بيطلّع events انت اللي بتحددها، من غير socket خالص.
+- <b>الـ `expand` بدل `map`:</b> الـ map لازم يطلّع قيمة لكل رسالة. الـ expand بيطلّع صفر أو واحدة. فالـ type اللي مانعرفهوش والشكل البايظ بيتشالوا من غير ما يبقوا error على الـ stream.
+- <b>ليه مش error على الـ stream؟</b> في الـ REST، الـ `parseOrThrow` بيحوّل الشكل الغلط لـ `bad_response`، والمستخدم بيشوف رسالة لأنه كان مستني إجابة. هنا مفيش حد مستني الـ event ده بالذات. الـ catch-up الجاي هيجيب الكتاب ده صح من الـ REST. فالـ log كفاية، والـ metrics بتعدّه زي الـ `bad_response`.
+- <b>`on Object`:</b> الـ cast الغلط بيرمي `TypeError`، وده `Error` مش `Exception`. ده بالظبط الفخ اللي [درس Escore في وحدة الـ Async](/course/dart-async/escore/) لقاه في `on Exception`.
+
+### 3. الـ LiveSyncService: من الـ models لـ drift
+
+<CodeBlock label="features/library/data/live_sync_service.dart">
+
+```dart
+class LiveSyncService {
+  LiveSyncService(this._source, this._db);
+  final LibraryRealtimeSource _source;
+  final AppDatabase _db;
+  StreamSubscription<LibraryEventDto>? _sub;
+
+  void start() {
+    _sub ??= _source.events().asyncMap(_apply).listen(null); // one event at a time, in order
+  }
+
+  Future<void> _apply(LibraryEventDto event) => switch (event) {
+        BookUpsertedDto(:final book) => _db.applyRemoteBook(
+            book.toEntity().toRow(updatedAt: book.updatedAt).copyWith(version: book.version)),
+        BookRemovedDto(:final key, :final version) => _db.applyRemoteRemoval(key, version),
+      };
+
+  Future<void> stop() async {
+    await _sub?.cancel();
+    _sub = null;
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `asyncMap`:</b> كل event بيستنى اللي قبله يخلص كتابته. من غيره، لو `listen((e) async => ...)`، كتابتين لنفس الكتاب ممكن يخلصوا بالعكس. ده نفس الدرس من [درس عمر الـ subscription](/course/dart-async/lifecycle/): الشغل الـ async مكانه الـ pipeline، مش الـ callback.
+- <b>الـ row زي الـ `_resolveConflict`:</b> نفس السطر اللي [درس الـ Conflicts](/course/offline/conflicts/) بيحوّل بيه نسخة السيرفر لـ row: الـ `updatedAt` والـ `version` بتوع السيرفر.
+- <b>`applyRemoteBook` و`applyRemoteRemoval`:</b> methods في `AppDatabase`. أبسط نسخة منهم هي الـ `upsertBooks` اللي مابيلمسش صف pending. بس فيه 3 مشاكل لسه (الترتيب، والمكرر، والصدى بتاع تعديلك)، ودول [درس دمج الأحداث](/course/realtime/merge-cache/) كله.
+
+### 4. مين بيشغّل مين
+
+<CodeBlock label="di/setup.dart">
+
+```dart
+getIt
+  ..registerLazySingleton<RealtimeClient>(
+    () => RealtimeClient(
+      // https://api.readly.app -> wss://api.readly.app/v1/realtime, per flavor like the REST
+      Uri.parse(getIt<AppConfig>().baseUrl).replace(scheme: 'wss', path: '/v1/realtime'),
+      RealtimeHeaders(
+        getIt(),
+        getIt(),
+        int.parse(getIt<PackageInfo>().buildNumber), // read once in bootstrap
+        Platform.isIOS ? 'ios' : 'android',
+      ),
+    ),
+    dispose: (c) => c.close(),
+  )
+  ..registerLazySingleton<LibraryRealtimeSource>(() => WsLibraryRealtimeSource(getIt(), getIt()))
+  ..registerLazySingleton<LiveSyncService>(
+    () => LiveSyncService(getIt(), getIt()),
+    dispose: (s) => s.stop(),
+  );
+```
+
+</CodeBlock>
+
+الاتصال بيتفتح بس لما المستخدم يبقى `Authenticated` والـ app في الـ foreground، وبيتقفل في الـ logout. ده نفس المكان اللي بيشغّل الـ `requestSync` بعد الـ login في [درس Offline-first](/course/offline/offline/)، والتفاصيل كلها (الـ lifecycle، والـ reconnect، والـ token) في [الدرس الجاي](/course/realtime/reconnect/).
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### الـ Cubit فتح الـ socket بنفسه
+
+أول نسخة اتكتبت كده: الـ `LibraryCubit` بيعمل `IOWebSocketChannel.connect` في الـ constructor، ويعمل `emit` مع كل event.
+
+- <b>اتصال لكل شاشة:</b> المكتبة فاتحة اتصال، وصفحة الكتاب فاتحة اتصال، والـ Home فاتح اتصال. 3 اتصالات لنفس المستخدم، والسيرفر بيبعت كل event 3 مرات، وقفل 4429 لأن الحد 5 اتصالات.
+- <b>الـ DB مابتعرفش:</b> الـ Cubit عمل emit بالكتاب الجديد، بس drift لسه فيه القديم. شاشة الكتاب (بتقرا من drift) بتقول «بقراه»، والمكتبة بتقول «خلصته». ده بالظبط اللي الـ single source of truth موجود عشان يمنعه.
+- <b>الشاشة مقفولة، مفيش تحديث:</b> المستخدم في الإعدادات، والكتاب اتغير. محدش كتب في drift، فلما يرجع للمكتبة هيشوف القديم.
+
+الحل هو اللي فوق: الاتصال في الـ data layer، واحد للـ app، والـ events بتروح لـ drift. والـ Cubit مش هيتغير سطر.
+
+### الاتصال فشل ومحدش عرف
+
+<CodeBlock label="من غير ready">
+
+```dart
+Future<void> connect() async {
+  _channel = IOWebSocketChannel.connect(_uri, headers: await _headers.build());
+  _channel!.stream.listen(_onFrame); // no onError, no onDone
+  _status = RealtimeStatus.connected; // a lie: the upgrade hasn't even started
+}
+```
+
+</CodeBlock>
+
+السيرفر رجّع 503 على الـ upgrade. الـ stream طلّع `WebSocketChannelException` كـ error ومفيش `onError`، فراح للـ zone كـ unhandled error. وبعده done ومفيش `onDone`، فمحدش عرف إن الاتصال مات. والـ status بيقول connected. الـ app فضل ساكت طول الجلسة.
+
+ده كله اتحل بـ 3 حاجات في الكود اللي فوق: `await channel.ready` بيحوّل فشل الـ upgrade لـ exception في `connect()`، و`onError` موجود (حتى لو فاضي) فمفيش unhandled error، و`onDone` بيقرا الـ `closeCode` ويقرر.
+
+### الـ token في الـ URL
+
+الطريقة اللي هتلاقيها في tutorials كتير: `wss://api.readly.app/v1/realtime?token=eyJ...`. ده بيشتغل على كل الـ platforms، حتى الـ web اللي مابيسمحش بـ headers في الـ WebSocket. بس الـ URL بيتكتب في logs الـ load balancer والـ proxy والسيرفر، ومعاه الـ token. أي حد بيقرا الـ logs معاه sessions شغالة.
+
+| الطريقة | بتشتغل على | الخطر |
+| --- | --- | --- |
+| `Authorization` header في الـ upgrade | `dart:io` (موبايل وdesktop) | مفيش جديد: زي أي طلب |
+| `?token=` بالـ access token | كل حاجة | الـ token في الـ logs طول عمره |
+| `?ticket=` من `POST /v1/realtime/ticket` | كل حاجة | ticket عمره 30 ثانية ويتستخدم مرة واحدة، فلو اتكتب في log مالوش قيمة |
+
+Readly موبايل بس، فالـ header. ولو جه Readly web في يوم، الـ ticket: طلب REST عادي (بيعدّي على الـ AuthInterceptor ويعمل refresh لو محتاج) بيرجّع ticket، والـ socket بيتفتح بيه.
+
+### كل الشاشات اتجمدت ثانية لما المستخدم استورد 800 كتاب
+
+المستخدم عمل import من الـ web. السيرفر بعت 800 `book.upserted` في ثانيتين. كل واحد: `jsonDecode`، وكتابة في drift، وwatch بيصحى، و`toEntity` لـ 800 كتاب، وrebuild. 800 مرة. الشاشة على الموبايل قطّعت لحد ما خلصوا.
+
+المشكلة مش في الـ socket، في إن كل event كتابة لوحدها. الحل إن الكتابات تتجمع: كل الـ events اللي جت في 200ms تتكتب في batch واحد، فالـ watch يصحى مرة. ده من ضمن [درس دمج الأحداث](/course/realtime/merge-cache/). ومن ناحية العقد، الأحسن إن السيرفر نفسه مايبعتش 800: عملية زي الـ import بتبعت event واحد `library.bulk_changed`، والـ app يعمل catch-up. ده بيتكتب في الـ AsyncAPI كرسالة جديدة، والنسخ القديمة بتتجاهلها (الـ `_ => null` في الـ `tryParse`) وبتعتمد على الـ catch-up.
+
+### الـ socket شغال في التست ومش شغال على الموبايل
+
+الـ app متوصل على wifi المكتب: كل حاجة تمام. على 4G: الاتصال بيتفتح، ومفيش events خالص. السبب كان proxy عند شركة الاتصالات بيقفل أي اتصال مالوش traffic بعد 60 ثانية من غير ما يبعت close frame. الطرفين فاكرين إن الاتصال مفتوح. ده الـ <b>half-open connection</b>، وحله الـ heartbeat في [الدرس الجاي](/course/realtime/reconnect/). الـ `pingInterval` اللي في `ioChannel` بداية الحل.
+
+### الـ events وصلت قبل ما الـ DB تفتح
+
+بعد الـ login على طول، الـ `RealtimeClient` اتوصل والـ `LiveSyncService` لسه ماعملش `start()`. الـ `hello` وأول event راحوا على `_messages` ومحدش سامع. الـ broadcast بيعمل كده، وده مقبول لأن الـ catch-up بيغطيه. بس الترتيب الصح أوضح: الـ `LiveSyncService.start()` الأول (بيسمع)، وبعدين `RealtimeClient.connect()`. نفس قاعدة الـ SyncService في [درس الـ Stream](/course/dart-async/streams/): المستمع يبقى موجود قبل ما المصدر يبدأ.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>الـ socket في الـ data layer، مش في الـ presentation:</b> هو مصدر بيانات زي dio بالظبط. الـ Cubit اللي بيفتح socket بيكسر الـ single source of truth، وبيعمل اتصال لكل شاشة، وبيتعب في التست. وفي [درس Escore](/course/realtime/escore/) هتشوف Cubitين بيعدّلوا نفس الـ subscriptions على نفس الاتصال، ونتيجة ده.
+- <b>اتصال واحد، ورسايل بأنواع:</b> بدل socket للمكتبة وsocket للملاحظات، اتصال واحد والـ `type` بيفرّق. والـ data source بتاع كل feature بيختار الأنواع بتاعته. ده بيقلّل الاتصالات، والـ heartbeat، والـ reconnect، لحاجة واحدة.
+- <b>العقد مكتوب ومتراجع:</b> الـ AsyncAPI جنب الـ OpenAPI، بنفس الـ PR review. ونفس قواعد [درس العقد](/course/api-errors/api-contract/): الـ event الجديد additive، والحقل الجديد optional، والـ app بيتجاهل اللي مايعرفهوش. وأي تغيير مايتعملش additive يبقى `/v2/realtime`.
+- <b>نفس الـ DTO في الـ REST والـ event:</b> الكتاب في `book.upserted` هو نفس `LibraryBook` اللي في `GET /library`. mapper واحد، وfixtures واحدة، وتست واحد للـ contract.
+- <b>الـ events بتكتب، مش بتعرض:</b> كل event بيعدّي على drift. ده بيخلّي الشاشات اللي مقفولة متحدثة لما تفتح، وبيخلّي «الـ event فات» مشكلة الـ catch-up بس، مش مشكلة كل شاشة.
+- <b>ماتثقش في الـ event للصلاحيات:</b> السيرفر هو اللي بيقرر مين ياخد إيه. الـ app مايفلترش «ده كتاب حد تاني» من الـ event. لو الـ event وصل لمستخدم غلط، ده bug في السيرفر لازم يتصلح هناك.
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي تدخّل WebSocket في Clean Architecture؟» الـ WebSocket مصدر بيانات، فمكانه الـ data layer. client واحد في core بيملك الاتصال (بيفتحه بعد الـ auth ويقفله في الـ logout والخلفية) وبيوزّع الرسايل. والـ RemoteDataSource بتاع كل feature بيختار الأنواع بتاعته ويحوّلها لـ DTOs بنفس الـ mapper بتاع الـ REST، ويتجاهل اللي مايعرفهوش. وservice في الـ data layer بيكتب الـ events في الـ local DB، والشاشة بتقرا من الـ DB زي ما هي. كده مفيش Cubit بيعرف إن في socket، والـ offline والشاشات المقفولة شغالين ببلاش، والتست بيستخدم fake data source. والعقد مكتوب في AsyncAPI جنب الـ OpenAPI.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### الـ event من الـ socket للشاشة
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+class LibraryCubit extends Cubit<LibraryState> {
+  LibraryCubit(this._watchLibrary, this._library) : super(const LibraryLoading()) {
+    _ws = IOWebSocketChannel.connect(Uri.parse('wss://api.readly.app/v1/realtime'));
+    _ws.stream.listen((msg) {
+      final json = jsonDecode(msg as String) as Map<String, dynamic>;
+      if (json['type'] == 'book.upserted') {
+        final book = BookDto.fromJson(json['data']['book']).toEntity();
+        final current = state;
+        if (current is LibraryLoaded) {
+          emit(current.copyWith(books: [
+            for (final b in current.books) b.id == book.id ? book : b,
+          ]));
+        }
+      }
+    });
+  }
+  // ...
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+// data layer: one connection, events written to drift
+class LiveSyncService {
+  LiveSyncService(this._source, this._db);
+  final LibraryRealtimeSource _source;
+  final AppDatabase _db;
+  StreamSubscription<LibraryEventDto>? _sub;
+
+  void start() => _sub ??= _source.events().asyncMap(_apply).listen(null);
+
+  Future<void> _apply(LibraryEventDto event) => switch (event) {
+        BookUpsertedDto(:final book) => _db.applyRemoteBook(
+            book.toEntity().toRow(updatedAt: book.updatedAt).copyWith(version: book.version)),
+        BookRemovedDto(:final key, :final version) =>
+            _db.applyRemoteRemoval(key, version),
+      };
+
+  Future<void> stop() async {
+    await _sub?.cancel();
+    _sub = null;
+  }
+}
+
+// presentation: LibraryCubit doesn't change a single line
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: اتصال لكل Cubit ومن غير headers ولا auth، ومحدش بيقفله (مفيش field للـ subscription ولا close)، وأي رسالة بايظة بترمي جوه الـ callback، والكتاب بيتغير في الـ state بس فـ drift والشاشات التانية لسه على القديم، والكتاب الجديد اللي مش في الليست مش هيظهر. بعد: الاتصال في `RealtimeClient` واحد، والـ parsing في الـ data source بيتجاهل البايظ، والكتابة في drift فكل الشاشات بتتحدث من `watchLibrary()`، والـ Cubit زي ما كان.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="rt-ws-1">
+<Ask>ليه `await channel.ready` قبل ما تعتبر الاتصال اتفتح؟</Ask>
+<Answer>
+
+لأن `connect` بيرجّع الـ channel على طول قبل ما الـ upgrade يخلص. لو الـ upgrade فشل والـ `ready` مش متستني، الفشل هيظهر كـ error على الـ stream وبعده done، والكود هيكون فاكر إنه متوصل. الـ `ready` بيرمي `WebSocketChannelException` في نفس المكان اللي طلبت فيه الاتصال، فتقدر تعمل retry.
+
+</Answer>
+</Question>
+
+<Question id="rt-ws-2">
+<Ask>الـ library والـ notes عايزين يسمعوا على نفس الاتصال. ليه مايعملوش listen على `channel.stream` مباشرة؟</Ask>
+<Answer>
+
+لأن `channel.stream` single-subscription: التاني هياخد `Bad state: Stream has already been listened to`. الـ `RealtimeClient` بيعمل listen واحد ويوزّع على broadcast stream، وكل data source بيختار الأنواع بتاعته منه.
+
+</Answer>
+</Question>
+
+<Question id="rt-ws-3">
+<Ask>وصل event نوعه `book.rated` والـ build ده مايعرفهوش. الـ data source يعمل إيه؟ وليه مش error على الـ stream؟</Ask>
+<Answer>
+
+يتجاهله (`tryParse` بترجّع null والـ `expand` بيطلّع صفر events). الـ event الجديد تغيير additive، والنسخ القديمة لازم تعيش معاه. ومش error لأن مفيش حد مستني الـ event ده بالذات، والـ catch-up من الـ REST هيجيب الحالة الصح. والشكل البايظ لنوع معروف بيتسجّل في الـ logs والـ metrics، ومابيوقفش الاتصال.
+
+</Answer>
+</Question>
+
+<Question id="rt-ws-4">
+<Ask>ليه الـ LiveSyncService بيكتب الـ event في drift بدل ما الـ Cubit يعمل emit بيه على طول؟</Ask>
+<Answer>
+
+عشان drift يفضل المصدر الوحيد للحقيقة: كل الشاشات اللي بتقرا الكتاب ده (المكتبة، وصفحة الكتاب، والـ Home) بتتحدث من `watch()`، والشاشات المقفولة بتلاقيه محدث لما تفتح، والـ offline بيعرض آخر حالة. والـ Cubit مايعرفش إن في socket، فمفيش اتصال لكل شاشة.
+
+</Answer>
+</Question>
+
+<Question id="rt-ws-5">
+<Ask>السيرفر بيقبل الـ upgrade وبعدين يقفل بـ 4401 لو الـ token خلص، بدل ما يرد 401 على الـ upgrade. ليه ده اتكتب في العقد؟</Ask>
+<Answer>
+
+لأن فشل الـ upgrade بيوصل للـ client كـ exception عامة، ومش كل platform بيدّيك الـ status code بتاعها. الـ close code بيوصل لـ `channel.closeCode` بنفس الشكل في كل مكان، فالـ client يقدر يفرّق بين «اعمل refresh للـ token» (4401) و«اعمل update» (4426) و«السيرفر بيعمل deploy» (1001).
+
+</Answer>
+</Question>
+
+</Quiz>

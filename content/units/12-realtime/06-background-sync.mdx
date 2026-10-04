@@ -1,0 +1,457 @@
+---
+title: "الـ sync في الخلفية بـ workmanager"
+description: "الـ outbox بيتبعت والـ app مقفول: تلات triggers (دوري، وone-off لما الـ app يروح الخلفية، وsilent push)، والـ DI جوه isolate فاضي، وdrift في isolateين، والـ refresh token اللي بيتسابق عليه isolateين، وقيود Android وiOS الحقيقية، وإزاي تعرف إن الشغل ده بيحصل أصلًا."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="عامل النظافة بتاع الليل">
+
+الشركة بتقفل الساعة 5. عامل النظافة بييجي بالليل، بس مش هو اللي بيقرر امتى: أمن المبنى هو اللي بيفتحله، لما يكون المبنى فاضي والكهربا مش مضغوطة. ممكن يفتحله الساعة 8، وممكن الساعة 2، وممكن الليلة دي ماييجيش خالص. والأمن بيدّيله نص ساعة بالكتير.
+
+العامل مايعرفش حاجة من اللي الموظفين كانوا عارفينها الصبح. مفيش حد يسأله. معاه مفتاحه، ودفتر المهام اللي على المكتب، وبس. بيفتح الدفتر، يعمل اللي يقدر عليه، ويكتب «خلصت دي» جنب كل حاجة خلصها. ولو الأمن طلّعه في النص، اللي ماخلصش بيفضل في الدفتر للّيلة الجاية.
+
+وفي مشكلة: لو العامل وموظف متأخر الاتنين جم يجددوا كارت الدخول من نفس الشباك في نفس اللحظة، والشباك بيلغي الكارت القديم مع كل تجديد، واحد فيهم هيلاقي كارته اتلغى.
+
+</Analogy>
+
+الأمن هو الـ OS، والعامل هو الـ background isolate، والدفتر هو الـ `SyncQueue` في drift. الـ workmanager هو الطريقة اللي بتقول بيها للـ OS «عندي شغل، شغّلني لما تقدر». وكارت الدخول هو الـ refresh token، والشباك اللي بيلغي القديم هو الـ rotation. والدرس ده عن الحاجات اللي بتبوظ لما العامل والموظف يشتغلوا في نفس الوقت.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### اللي اتعمل قبل كده، واللي ناقص
+
+[درس Offline-first](/course/offline/offline/) عمل أول نسخة: `callbackDispatcher` بـ `@pragma('vm:entry-point')`، بيعمل `setupDependencies()` وبينادي `requestSync()`، و`registerPeriodicTask` كل 15 دقيقة لما يبقى فيه نت. وقال إن الـ workmanager «بونص، مش ضمان»، وإن الـ `claim` و`recoverStuck` بيحموا الـ queue من isolateين بيعملوا drain مع بعض.
+
+الدرس ده بيكمّل من هناك. النسخة دي فيها 5 مشاكل ماتبانش في الديمو:
+
+| المشكلة | بتظهر امتى |
+| --- | --- |
+| `setupDependencies()` بيبني كل حاجة: الـ router والـ Cubits والـ WebSocket | كل تشغيل في الخلفية بيبدأ socket ويستنى timeout |
+| دوري بس | المستخدم ضاف كتاب وقفل الـ app: يستنى لحد 15 دقيقة، أو يوم كامل في iOS |
+| الـ refresh token في isolateين | المستخدم بيطلع بره «لوحده» مرة كل كام أسبوع |
+| drift في isolateين | الشاشة مش شايفة اللي الخلفية كتبته |
+| مفيش أي أثر | مفيش طريقة تعرف إن الشغل ده بيحصل أصلًا |
+
+### 1. DI للخلفية بس
+
+الـ background isolate بيبدأ فاضي: مفيش أي حاجة من `main` موجودة، والـ get_it فاضي. ومحتاج يبني الحاجات اللي الـ sync محتاجها بس. فالـ `setupDependencies` بيتقسم لـ modules:
+
+<CodeBlock label="di/setup.dart">
+
+```dart
+/// Storage, network, auth: everything any entry point needs.
+Future<void> registerCore(GetIt getIt, AppConfig config, {required bool background}) async {
+  final prefs = await SharedPreferencesWithCache.create(
+    cacheOptions: const SharedPreferencesWithCacheOptions(),
+  );
+  getIt
+    ..registerSingleton<AppConfig>(config)
+    ..registerSingleton<SharedPreferencesWithCache>(prefs)
+    ..registerSingleton<TokenStore>(SecureTokenStore(const FlutterSecureStorage(), prefs))
+    ..registerLazySingleton<AppDatabase>(() => AppDatabase(openReadlyDatabase()))
+    ..registerLazySingleton<Clock>(() => getIt<ServerClock>())
+    // the background never decides the session is over: see Level 3
+    ..registerLazySingleton<TokenRefresher>(
+        () => TokenRefresher(getIt(), buildRefreshDio(config), clearOnReject: !background))
+    ..registerLazySingleton<Dio>(() => buildApiDio(config, getIt()));
+  // ... ServerClock, InstallationId, AppLogger
+}
+
+/// What the outbox needs: the queue, the remote source, the SyncService.
+void registerSync(GetIt getIt) {
+  getIt
+    ..registerLazySingleton<SyncQueue>(() => SyncQueue(getIt(), getIt()))
+    ..registerLazySingleton<LibraryRemoteSource>(() => LibraryRemoteSource(getIt()))
+    ..registerLazySingleton<ConflictPolicy>(() => const FieldMerge())
+    ..registerLazySingleton<SyncService>(() => SyncService(
+          getIt(), getIt(), getIt(), getIt(),
+          clock: getIt(),
+          policy: getIt(),
+        ));
+}
+
+/// Screens, Cubits, router, realtime: only when there's a UI.
+void registerApp(GetIt getIt) {
+  // AuthCubit, SyncStatusCubit, RealtimeClient, LiveSyncService, DeviceRegistrar, router ...
+}
+
+Future<void> setupDependencies(AppConfig config) async {
+  await registerCore(getIt, config, background: false);
+  registerSync(getIt);
+  registerApp(getIt);
+}
+
+Future<void> setupBackgroundDependencies(AppConfig config) async {
+  await registerCore(getIt, config, background: true);
+  registerSync(getIt);
+}
+```
+
+</CodeBlock>
+
+- <b>مفيش `registerApp` في الخلفية:</b> مفيش UI، فمفيش Cubits ولا router. ومفيش `RealtimeClient`: الـ socket للـ foreground بس، زي ما [درس الـ Push ولا Pull](/course/realtime/push-vs-pull/) قال.
+- <b>الـ `SyncService` من غير `start()`:</b> الـ `start()` بيعمل listen على `onOnline` و`onEnqueued` ويستنى. في الخلفية مفيش «استنى»: `requestSync()` مرة، والـ isolate يخلص.
+- <b>`registerSync` واحد للاتنين:</b> الـ SyncService اللي في الخلفية هو نفس الـ class بنفس الـ dependencies، مش نسخة «خفيفة» مكتوبة تاني. أي تصليح في واحد بيوصل للتاني.
+
+### 2. function واحدة للشغل، وأكتر من باب
+
+<CodeBlock label="background/background_sync.dart">
+
+```dart
+/// The one thing the background does, whoever woke us: workmanager or a silent push.
+Future<bool> runBackgroundSync(String reason) async {
+  WidgetsFlutterBinding.ensureInitialized();
+  if (!getIt.isRegistered<SyncService>()) { // iOS runs the FCM handler on the main isolate
+    // the --dart-define-from-file values are compile-time constants: the background sees them too
+    await setupBackgroundDependencies(AppConfig.fromEnvironment());
+  }
+  final run = BackgroundRun(reason, getIt<Clock>().now());
+  try {
+    final sent = await getIt<SyncService>()
+        .requestSync()
+        .timeout(const Duration(seconds: 25)); // iOS gives ~30s; leave room to save the log
+    run.finish(ok: true, sent: sent);
+  } on TimeoutException {
+    run.finish(ok: false, note: 'timeout'); // claimed ops go back via recoverStuck
+  } on Object catch (e) {
+    run.finish(ok: false, note: '$e');
+  }
+  await getIt<BackgroundRunLog>().save(run, getIt<Clock>().now());
+  return true; // the queue keeps whatever failed: no need for the OS to retry this run
+}
+
+@pragma('vm:entry-point')
+void callbackDispatcher() {
+  Workmanager().executeTask((task, inputData) => runBackgroundSync(task));
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `isRegistered`:</b> في Android، كل من الـ workmanager والـ FCM handler بيشتغل في isolate جديد، والـ get_it فاضي. بس في iOS، الـ FCM background handler بيشتغل في نفس الـ isolate بتاع الـ app لو الـ app لسه عايش، والـ get_it مليان. من غير الـ check، الـ `registerSingleton` التاني بيرمي.
+- <b>الـ timeout:</b> iOS بيدّي حوالي 30 ثانية. لو الشغل ماخلصش، الـ OS بيقتل الـ process، وآخر سطر (حفظ الـ log) مش هيتنفذ. 25 ثانية بتسيب وقت للتنضيف. والعمليات اللي كانت `syncing` هترجع `failed` بالـ `recoverStuck` في أول تشغيل جاي، زي [درس Offline-first](/course/offline/offline/).
+- <b>الـ `requestSync()` بيرجّع عدد اللي اتبعت:</b> تعديل صغير على الـ SyncService عشان الـ log يبقى فيه رقم.
+- <b>`return true`:</b> الـ `false` بيقول للـ OS «فشل، جرّب تاني» (Android بيعيد بـ backoff). Readly مش محتاجه: الـ queue عارفة إيه اللي فشل وهتعيده هي في الـ trigger الجاي. الـ `false` منطقي لو الشغل نفسه ماقدرش يبدأ (الـ DB مقفولة مثلًا).
+
+والـ silent push بتاع [درس الـ Push](/course/realtime/push-notifications/) بيدخل من نفس الباب:
+
+<CodeBlock label="main.dart">
+
+```dart
+@pragma('vm:entry-point')
+Future<void> onBackgroundPush(RemoteMessage message) async {
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  if (message.data['type'] == 'library.changed') await runBackgroundSync('push');
+}
+```
+
+</CodeBlock>
+
+### 3. تلات triggers
+
+<CodeBlock label="background/background_scheduler.dart">
+
+```dart
+class BackgroundScheduler {
+  BackgroundScheduler(this._workmanager, this._queue);
+  final Workmanager _workmanager;
+  final SyncQueue _queue;
+
+  static const periodic = 'readly-sync';       // also in Info.plist: BGTaskSchedulerPermittedIdentifiers
+  static const flush = 'readly-sync-now';
+
+  Future<void> init() async {
+    await _workmanager.initialize(callbackDispatcher);
+    await _workmanager.registerPeriodicTask(
+      periodic,
+      'sync',
+      frequency: const Duration(minutes: 15), // Android's minimum; iOS ignores it
+      constraints: Constraints(networkType: NetworkType.connected),
+      existingWorkPolicy: ExistingPeriodicWorkPolicy.update,
+    );
+  }
+
+  /// The app just went to the background with unsent ops: ask Android to run as soon as there's a network.
+  Future<void> flushSoon() async {
+    if (!await _queue.hasPending()) return;
+    await _workmanager.registerOneOffTask(
+      flush,
+      'sync',
+      constraints: Constraints(networkType: NetworkType.connected),
+      existingWorkPolicy: ExistingWorkPolicy.keep, // one is enough, don't stack them
+      expedited: true,
+      outOfQuotaPolicy: OutOfQuotaPolicy.runAsNonExpeditedWorkRequest,
+    );
+  }
+}
+
+// app/readly_app.dart: the same AppLifecycleListener that runs requestSync on resume
+_lifecycle = AppLifecycleListener(
+  onResume: getIt<SyncService>().requestSync,
+  onPause: getIt<BackgroundScheduler>().flushSoon,
+);
+```
+
+</CodeBlock>
+
+| الـ trigger | Android | iOS |
+| --- | --- | --- |
+| دوري (`registerPeriodicTask`) | كل 15 دقيقة على الأقل، والـ OS بيأخّر في الـ Doze | `BGAppRefreshTask`: الـ `frequency` مالوش أثر، والنظام بيقرر، وأحيانًا مرة في اليوم |
+| one-off لما الـ app يروح الخلفية | بيشتغل أول ما يبقى في نت، حتى لو المستخدم عمل swipe للـ app | مش بيدّي ميزة على الدوري |
+| silent push | بيوصل للـ handler، بس الـ high priority من غير إشعار بيتخفّض | `apns-priority: 5`، و2 لـ 3 في الساعة، ومتأجل |
+
+الـ one-off هو أهم واحد في Android: المستخدم في المترو ضاف كتاب وقفل الـ app. أول ما الموبايل يلقط شبكة، الـ WorkManager بيشغّل الـ task، من غير ما يستنى الـ 15 دقيقة ومن غير ما المستخدم يفتح الـ app. والـ `expedited` بيطلب إنه يشتغل على طول، ولو الـ app خلّص الـ quota بتاعته، الـ `runAsNonExpeditedWorkRequest` بيخليه يشتغل عادي بدل ما يترفض.
+
+### 4. إعداد iOS
+
+<CodeBlock label="ios/Runner/Info.plist">
+
+```xml
+<key>BGTaskSchedulerPermittedIdentifiers</key>
+<array>
+  <string>readly-sync</string>
+</array>
+<key>UIBackgroundModes</key>
+<array>
+  <string>fetch</string>               <!-- BGAppRefreshTask: registerPeriodicTask -->
+  <string>remote-notification</string> <!-- silent push -->
+</array>
+```
+
+</CodeBlock>
+
+<CodeBlock label="ios/Runner/AppDelegate.swift">
+
+```swift
+import workmanager_apple
+
+// inside application(_:didFinishLaunchingWithOptions:)
+WorkmanagerPlugin.setPluginRegistrantCallback { registry in
+  // the background engine starts with no plugins: secure storage, path_provider, sqlite need this
+  GeneratedPluginRegistrant.register(with: registry)
+}
+```
+
+</CodeBlock>
+
+- <b>الـ identifier هو الـ `uniqueName`:</b> `readly-sync` مش `sync`. ولو مش موجود في الـ plist، الـ registration بيفشل بـ `BGTaskSchedulerErrorDomain Code 3`. وفي iOS، الـ `task` اللي بيوصل للـ `executeTask` هو الـ uniqueName، علشان كده `runBackgroundSync` مابيعملش switch على اسم الـ task.
+- <b>الـ plugin registrant:</b> من غيره، أول ما الـ background engine يحاول يقرا الـ Keychain أو يفتح الـ DB، بيرمي `PlatformException(channel-error...)` أو `MissingPluginException`.
+- <b>الـ Keychain والموبايل مقفول:</b> الـ `first_unlock` اللي في [درس الـ Session](/course/di-scale/session/). من غيره، الـ sync في الخلفية بيفشل في كل مرة الموبايل فيها مقفول، يعني أغلب المرات.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### المستخدم بيطلع بره «لوحده»
+
+بلاغات من مستخدمين: «فتحت الـ app لقيت نفسي برّه، ومعملتش logout». مرة كل كام أسبوع، ومش بتتكرر لما تحاول. الـ logs بتقول إن الـ `/auth/refresh` رجّع 401، والـ tokens اتمسحت.
+
+اللي بيحصل: السيرفر بيعمل <b>rotation</b> للـ refresh token: كل refresh بيرجّع refresh token جديد ويلغي القديم. الـ app في الـ foreground والـ access token لسه خلصان، فبيعمل refresh. في نفس اللحظة، الـ workmanager صحي في isolate تاني، وقرا نفس الـ refresh token القديم من الـ secure storage قبل ما الأول يكتب الجديد، وعمل refresh بيه. أي واحد يوصل التاني بياخد 401: الـ token ده اتلغى. والـ `TokenRefresher` بتاع [درس الـ reconnect](/course/realtime/reconnect/) بيمسح الـ tokens لما الـ refresh يترفض.
+
+<Diagram name="d-rt-refresh-race">
+
+الاتنين قروا R1. الـ app عمل refresh الأول والسيرفر لغى R1، فالخلفية أخدت 401 ومسحت الـ tokens. الـ Completer مابيحميش هنا لأن كل isolate ليه Completer لوحده.
+
+</Diagram>
+
+الـ `Completer` جوه الـ `TokenRefresher` بيمنع refreshين في نفس الـ isolate، بس كل isolate ليه memory لوحده، فكل واحد ليه Completer لوحده. الحماية لازم تبقى في مكان مشترك:
+
+1. <b>السيرفر:</b> فترة سماح. الـ refresh token القديم بيفضل مقبول 60 ثانية بعد الـ rotation، وبيرجّع نفس الـ pair الجديد اللي اتعمل أول مرة. يعني الـ refresh بقى idempotent في الدقيقة دي. ده الحل الأساسي، وده سطر في العقد بتطلبه من الـ backend.
+2. <b>الخلفية مابتحكمش على الـ session:</b> الـ `clearOnReject: !background` اللي في `registerCore`. لو الـ refresh اترفض في الخلفية، الـ `TokenRefresher` بيعامله «مفيش حكم» (زي النت ما يكون قاطع)، ومابيمسحش حاجة. الـ op بتفضل في الـ queue، والـ foreground هو اللي يقرر لما يفتح. وكمان: لو الخلفية مسحت الـ tokens، الـ `onCleared` هيطلع في الـ isolate بتاعها، والـ AuthCubit اللي في الـ foreground مش هيسمعه أصلًا.
+3. <b>اقرا تاني قبل ما تستسلم:</b> قبل ما الـ foreground يمسح، يقرا الـ refresh token من الـ storage تاني. لو اتغير عن اللي بعته، يبقى isolate تاني عمل refresh ناجح، فيجرب بالجديد.
+
+<CodeBlock label="TokenRefresher: الـ rejection مش نهائي في الخلفية">
+
+```dart
+class TokenRefresher {
+  TokenRefresher(this._tokens, this._refreshDio, {this.clearOnReject = true});
+  final bool clearOnReject;
+  // ...
+
+  Future<String?> _refreshWith(String refresh) async {
+    try {
+      final res = await _refreshDio.post('/auth/refresh', data: {'refreshToken': refresh});
+      // ... save, return the access token
+    } on DioException catch (e) {
+      if (e.response?.statusCode != 401) rethrow; // no verdict
+      final current = await _tokens.refreshToken;
+      if (current != null && current != refresh) return _tokens.accessToken; // another isolate already refreshed
+      if (!clearOnReject) throw const RefreshDeferred(); // the background never ends the session
+      await _tokens.clear();
+      return null;
+    }
+  }
+}
+```
+
+</CodeBlock>
+
+### الشاشة مش شايفة اللي الخلفية كتبته
+
+الـ app مفتوح على المكتبة، والـ one-off task اشتغل (الـ app كان راح الخلفية ثانيتين ورجع). الـ task بعت عمليتين، وعمل `markSynced`، وأيقونة السحابة لسه ظاهرة على الكتابين.
+
+[درس Offline-first](/course/offline/offline/) قال إن drift مابيحسّش بالكتابة اللي من isolate تاني، وحلها بـ `markTablesUpdated` مع الـ resume. ده شغال، بس فيه حل أنضف لما الاتنين في نفس الـ process (وده اللي بيحصل لما الـ workmanager يشتغل والـ app عايش):
+
+<CodeBlock label="data/open_database.dart">
+
+```dart
+QueryExecutor openReadlyDatabase() => driftDatabase(
+      name: 'readly',
+      native: const DriftNativeOptions(
+        shareAcrossIsolates: true, // isolates in the same process share one drift instance
+      ),
+    );
+```
+
+</CodeBlock>
+
+مع `shareAcrossIsolates`، الـ isolate التاني بيتوصل بنفس الـ drift instance بدل ما يفتح اتصال لوحده بالملف، فالكتابة منه بتصحّي الـ `watch()` في الـ app. ولو الـ app كان مقفول خالص، الخلفية بتفتح الـ DB لوحدها، ومفيش streams محتاجة تصحى. والـ `markTablesUpdated` مع الـ resume بيفضل موجود كخط احتياطي، لأنه رخيص.
+
+### الـ periodic task مابيشتغلش في iOS
+
+الـ QA قال: «سبت الموبايل يوم كامل والـ task ماشتغلش ولا مرة». ده مش bug. في iOS، `registerPeriodicTask` بيعمل `BGAppRefreshTask`، والـ `frequency` مالوش أي تأثير. النظام بيقرر حسب استخدام الـ app (لو المستخدم بيفتحه الصبح، النظام بيشغّل الـ refresh قبلها شوية)، والبطارية، والشبكة. app لسه متسطب ومحدش بيفتحه ممكن مايتشغلش خالص. ولو المستخدم عمل swipe للـ app، مفيش حاجة هتشتغل لحد ما يفتحه.
+
+للتست، Xcode بيقدر يجبره: وقّف الـ app في الـ debugger، واكتب في الـ console:
+
+```text
+e -l objc -- (void)[[BGTaskScheduler sharedScheduler] _simulateLaunchForTaskWithIdentifier:@"readly-sync"]
+```
+
+وفي Android، تاب App Inspection في Android Studio فيه Background Task Inspector: بيوريك كل الـ workers وحالتهم وامتى هيشتغلوا.
+
+### على موبايلات معينة، مفيش أي sync في الخلفية
+
+الـ metrics (تحت) قالت إن مستخدمي ماركات معينة نسبة الـ background runs عندهم قريبة من صفر. شركات موبايلات كتير بتضيف «توفير بطارية» فوق Android بيقتل أي شغل في الخلفية لـ apps مش في قايمة معينة. ومع Android 13+، أي app المستخدم مالمسهوش 8 أيام بيدخل الـ restricted bucket، وشغله في الخلفية بيتقفل تقريبًا.
+
+مفيش حل من الكود. اللي تقدر تعمله: ماتعتمدش عليه (الـ triggers الخمسة بتاعة الـ foreground هي الضمان)، ولو المستخدم عنده عمليات مستنية من أيام، اعرضله رسالة بتشاور على dontkillmyapp.com لموبايله. ده قرار product، مش engineering.
+
+### الخلفية فتحت WebSocket
+
+أول نسخة كانت بتنادي `setupDependencies()` الكاملة. الـ `registerApp` فيه الـ listener اللي بيعمل `RealtimeSession.attach`، والـ AuthCubit بيعمل `checkSession`، والـ session بقت Authenticated، فالـ socket اتفتح، والـ `hello` ماوصلش في الـ 25 ثانية لأن الـ isolate اتقتل. وفي الـ logs بتاعة السيرفر: آلاف الاتصالات اللي بتعيش 20 ثانية وتموت من غير close frame. ده سبب الـ `registerApp` المنفصل: الخلفية بتبني اللي محتاجاه بس.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>الخلفية بونص، والـ foreground ضمان:</b> كل حاجة لازم تحصل لازم يكون ليها trigger في الـ foreground (الفتح، والـ resume، والنت رجع، والـ login، والـ enqueue). الـ workmanager والـ silent push بيقصّروا الوقت لحد ما تحصل، مش بيضمنوه. لو feature مش شغالة غير لو الخلفية اشتغلت، الـ feature دي مش شغالة على نص الموبايلات.
+- <b>الشغل في الخلفية قصير ومتقطع:</b> كل عملية لوحدها atomic (claim، send، confirm)، والـ isolate ممكن يتقتل بين أي اتنين. ده اللي الـ `claim` والـ `recoverStuck` والـ idempotency key اتعملوا عشانه. ماتعملش شغل في الخلفية مالوش طريقة يكمّل بيها من النص.
+- <b>كل isolate ليه memory:</b> أي «واحد بس في المرة» معمول بـ flag أو Completer بيحمي isolate واحد. الحاجة اللي isolateين بيلمسوها لازم الحماية بتاعتها في حاجة مشتركة: الـ DB (`claim`)، أو السيرفر (فترة سماح للـ refresh)، أو drift واحد (`shareAcrossIsolates`).
+- <b>الخلفية مابتاخدش قرارات المستخدم:</b> مابتعملش logout، ومابتعرضش UI، ومابتغيّرش حاجة المستخدم هيتفاجئ بيها. بتبعت اللي في الـ queue وبس. أي قرار تاني يستنى الـ foreground.
+- <b>اقيس، لأن مفيش حد شايف:</b> الـ `BackgroundRunLog` بيحفظ آخر 20 تشغيل (السبب، والوقت، وعدد اللي اتبعت، والنتيجة) في drift. ومع أول فتح بعدها، الـ app بيبعتهم breadcrumbs ومعاهم metric واحد: «كام عملية اتبعتت في الخلفية لكل مستخدم في اليوم». لو الرقم قريب من صفر على platform معين، انت عارف ليه.
+- <b>قيود الـ platforms بتتغير كل سنة:</b> Android بيشدد على الـ background في كل نسخة تقريبًا، وiOS عمره ما سمح بأكتر من كده. اقرا الـ release notes بتاعة الـ OS، والـ changelog بتاع الـ workmanager (الـ `isInDebugMode` مثلًا بقى deprecated ومالوش أثر، والـ debug بقى بـ hooks).
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي تعمل sync للتعديلات الأوفلاين والـ app مقفول؟» workmanager بيطلب من الـ OS يشغّل callback في isolate جديد: periodic كل 15 دقيقة على Android (وفي iOS `BGAppRefreshTask` والنظام بيقرر)، وone-off بـ network constraint لما الـ app يروح الخلفية وفي عمليات مستنية، وsilent push كإشارة. الـ callback top-level بـ `@pragma('vm:entry-point')`، وبيبني DI خاص بالخلفية (storage وnetwork والـ SyncService، من غير UI ولا sockets)، وبينادي drain واحد بـ timeout أقل من الـ 30 ثانية بتاعة iOS. والمشاكل: drain في isolateين (claim atomic في الـ DB)، وعمليات اتقطعت في النص (recoverStuck والـ idempotency key)، والـ refresh token rotation بين isolateين (فترة سماح على السيرفر، والخلفية ماتمسحش الـ tokens)، وdrift في isolateين (`shareAcrossIsolates`). وفي iOS لازم الـ identifier في Info.plist والـ plugin registrant في الـ AppDelegate والـ Keychain `first_unlock`. وفي الآخر: ده بونص، والضمان triggers الـ foreground.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### الـ callback
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+@pragma('vm:entry-point')
+void callbackDispatcher() {
+  Workmanager().executeTask((task, inputData) async {
+    await setupDependencies();
+    await getIt<SyncService>().requestSync();
+    return true;
+  });
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+@pragma('vm:entry-point')
+void callbackDispatcher() {
+  Workmanager().executeTask((task, inputData) => runBackgroundSync(task));
+}
+
+Future<bool> runBackgroundSync(String reason) async {
+  WidgetsFlutterBinding.ensureInitialized();
+  if (!getIt.isRegistered<SyncService>()) {
+    await setupBackgroundDependencies(AppConfig.fromEnvironment()); // core + sync, no UI, no socket
+  }
+  final run = BackgroundRun(reason, getIt<Clock>().now());
+  try {
+    final sent = await getIt<SyncService>().requestSync().timeout(const Duration(seconds: 25));
+    run.finish(ok: true, sent: sent);
+  } on Object catch (e) {
+    run.finish(ok: false, note: '$e');
+  }
+  await getIt<BackgroundRunLog>().save(run, getIt<Clock>().now());
+  return true;
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: كل تشغيل في الخلفية بيبني الـ app كله (Cubits وrouter وsocket)، ومفيش timeout فالـ OS ممكن يقتله في النص من غير أي أثر، والـ FCM handler على iOS كان هينادي `setupDependencies` تاني على get_it مليان فيرمي، ومفيش أي طريقة تعرف إن ده بيحصل. بعد: DI للخلفية بس، وfunction واحدة لكل الأبواب، وtimeout بيسيب وقت للـ log، والـ log بيوصل لك مع أول فتح.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="rt-bg-1">
+<Ask>ليه الخلفية بتنادي `setupBackgroundDependencies` مش `setupDependencies` الكاملة؟</Ask>
+<Answer>
+
+لأن الـ isolate بيبدأ فاضي ومحتاج يبني كل حاجة، والكاملة بتبني Cubits وrouter والـ RealtimeClient، وبتعمل `checkSession` فالـ socket بيتفتح ويموت مع الـ isolate. الخلفية محتاجة الـ storage والـ network والـ SyncService بس، وبتنادي `requestSync()` مرة من غير `start()`.
+
+</Answer>
+</Question>
+
+<Question id="rt-bg-2">
+<Ask>المستخدم في المترو ضاف كتاب وقفل الـ app. على Android، إيه اللي بيخلّي العملية تتبعت قبل الـ 15 دقيقة بتاعة الـ periodic؟</Ask>
+<Answer>
+
+الـ one-off task اللي بيتسجّل في `onPause` لو فيه عمليات مستنية، بـ `NetworkType.connected`. الـ WorkManager بيشغّله أول ما الموبايل يلقط شبكة، حتى لو المستخدم عمل swipe للـ app. والـ `ExistingWorkPolicy.keep` بيمنع إنها تتكوم.
+
+</Answer>
+</Question>
+
+<Question id="rt-bg-3">
+<Ask>الـ `TokenRefresher` فيه Completer بيمنع refreshين مع بعض. ليه المستخدم لسه بيطلع بره لما الـ workmanager والـ app يعملوا refresh في نفس الوقت؟</Ask>
+<Answer>
+
+لأن كل isolate ليه memory لوحده، فكل واحد ليه Completer لوحده. الاتنين قروا نفس الـ refresh token، والسيرفر بيعمل rotation، فالتاني أخد 401 ومسح الـ tokens. الحل في مكان مشترك: فترة سماح على السيرفر للـ token القديم، والخلفية ماتمسحش الـ tokens لما الـ refresh يترفض، وقبل المسح تقرا الـ token تاني لو isolate تاني جدده.
+
+</Answer>
+</Question>
+
+<Question id="rt-bg-4">
+<Ask>`registerPeriodicTask` بـ `frequency: 15 minutes`، والـ QA بيقول إن الـ task ماشتغلش يوم كامل على iPhone. ده bug؟</Ask>
+<Answer>
+
+لأ. في iOS ده `BGAppRefreshTask`، والـ frequency مالوش أثر: النظام بيقرر حسب استخدام الـ app والبطارية، وممكن مايشغلوش خالص لـ app محدش بيفتحه، ومفيش حاجة بتشتغل بعد swipe. للتست، Xcode بيقدر يجبره بـ `_simulateLaunchForTaskWithIdentifier`. وده سبب إن الخلفية بونص والضمان triggers الـ foreground.
+
+</Answer>
+</Question>
+
+<Question id="rt-bg-5">
+<Ask>الـ background task عمل `markSynced` والـ app مفتوح، وأيقونة السحابة لسه ظاهرة. ليه، والحل؟</Ask>
+<Answer>
+
+الـ isolate التاني فتح اتصال لوحده بملف الـ DB، فـ drift اللي في الـ app ماعرفش إن في كتابة، والـ `watch()` ماصحيش. الحل `shareAcrossIsolates: true` في `driftDatabase`، فالـ isolates اللي في نفس الـ process بتستخدم نفس الـ drift instance والكتابة بتصحّي الـ streams. والـ `markTablesUpdated` مع الـ resume بيفضل كخط احتياطي.
+
+</Answer>
+</Question>
+
+</Quiz>

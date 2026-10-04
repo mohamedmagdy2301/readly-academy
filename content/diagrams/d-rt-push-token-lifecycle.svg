@@ -1,0 +1,37 @@
+<svg viewBox="0 0 760 300" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="الـ token بيتسجّل بعد الـ login ومع كل تجديد وكل شهر، وبيتشال في الـ logout، والـ PUT بالـ installationId بيخلّي الجهاز بتاع آخر حد عمل login">
+<line x1="30" y1="150" x2="740" y2="150" stroke="var(--muted)" stroke-width="1.6" marker-end="url(#mk-mut)"/>
+<text x="740" y="170" text-anchor="end" font-size="11" fill="var(--muted)">time on one phone (installation inst_7d1e)</text>
+
+<rect x="40" y="60" width="120" height="50" rx="10" fill="var(--good-soft)" stroke="var(--good)" stroke-width="1.5"/>
+<text x="100" y="82" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">Ahmed logs in</text>
+<text x="100" y="99" text-anchor="middle" font-size="10" fill="var(--muted)">PUT /devices/inst_7d1e</text>
+<line x1="100" y1="112" x2="100" y2="146" stroke="var(--good)" stroke-width="1.6" marker-end="url(#mk-good)"/>
+
+<rect x="185" y="60" width="120" height="50" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="245" y="82" text-anchor="middle" font-size="12" fill="var(--ink)">onTokenRefresh</text>
+<text x="245" y="99" text-anchor="middle" font-size="10" fill="var(--muted)">PUT, new fcmToken</text>
+<line x1="245" y1="112" x2="245" y2="146" stroke="var(--muted)" stroke-width="1.6" marker-end="url(#mk-mut)"/>
+
+<rect x="330" y="60" width="120" height="50" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="390" y="82" text-anchor="middle" font-size="12" fill="var(--ink)">30 days later</text>
+<text x="390" y="99" text-anchor="middle" font-size="10" fill="var(--muted)">PUT, same values</text>
+<line x1="390" y1="112" x2="390" y2="146" stroke="var(--muted)" stroke-width="1.6" marker-end="url(#mk-mut)"/>
+
+<rect x="475" y="60" width="120" height="50" rx="10" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="1.5"/>
+<text x="535" y="82" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">logout (offline)</text>
+<text x="535" y="99" text-anchor="middle" font-size="10" fill="var(--muted)">DELETE ✕ · deleteToken ✕</text>
+<line x1="535" y1="112" x2="535" y2="146" stroke="var(--warn)" stroke-width="1.6" marker-end="url(#mk-warn)"/>
+
+<rect x="620" y="60" width="125" height="50" rx="10" fill="var(--good-soft)" stroke="var(--good)" stroke-width="1.5"/>
+<text x="682" y="82" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">Sara logs in</text>
+<text x="682" y="99" text-anchor="middle" font-size="10" fill="var(--muted)">PUT /devices/inst_7d1e</text>
+<line x1="682" y1="112" x2="682" y2="146" stroke="var(--good)" stroke-width="1.6" marker-end="url(#mk-good)"/>
+
+<rect x="40" y="190" width="555" height="40" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.2"/>
+<text x="317" y="215" text-anchor="middle" font-size="12" fill="var(--ink)">server: devices[inst_7d1e] = { user: Ahmed, token, updatedAt }</text>
+<rect x="600" y="190" width="145" height="40" rx="8" fill="var(--good-soft)" stroke="var(--good)" stroke-width="1.2"/>
+<text x="672" y="215" text-anchor="middle" font-size="12" fill="var(--ink)">{ user: Sara }</text>
+
+<text x="380" y="262" text-anchor="middle" font-size="11" fill="var(--ink)" class="ar" direction="rtl">الـ DELETE ماوصلش، بس الـ PUT بنفس الـ installationId نقل الجهاز لسارة</text>
+<text x="380" y="282" text-anchor="middle" font-size="11" fill="var(--muted)" class="ar" direction="rtl">وأي رسالة لسه في السكة لأحمد: الـ uid مش هو، فالـ app مابيفتحهاش</text>
+</svg>

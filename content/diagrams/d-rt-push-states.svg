@@ -1,0 +1,45 @@
+<svg viewBox="0 0 760 320" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="نفس الرسالة بتمشي في طريق مختلف حسب حالة الـ app، والضغطة دايمًا بتوصل لنفس الـ PushRouter">
+<rect x="20" y="130" width="130" height="60" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="85" y="156" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">FCM / APNs</text>
+<text x="85" y="174" text-anchor="middle" font-size="10" fill="var(--muted)">notification + data</text>
+
+<rect x="220" y="30" width="170" height="54" rx="10" fill="var(--good-soft)" stroke="var(--good)" stroke-width="1.5"/>
+<text x="305" y="52" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">foreground</text>
+<text x="305" y="70" text-anchor="middle" font-size="10" fill="var(--muted)">onMessage: nothing shown</text>
+
+<rect x="220" y="133" width="170" height="54" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="305" y="155" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">background</text>
+<text x="305" y="173" text-anchor="middle" font-size="10" fill="var(--muted)">OS shows it in the tray</text>
+
+<rect x="220" y="236" width="170" height="54" rx="10" fill="var(--surface)" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="305" y="258" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">terminated</text>
+<text x="305" y="276" text-anchor="middle" font-size="10" fill="var(--muted)">OS shows it in the tray</text>
+
+<line x1="152" y1="150" x2="216" y2="66" stroke="var(--ink)" stroke-width="1.4" marker-end="url(#mk-ink)"/>
+<line x1="152" y1="160" x2="216" y2="160" stroke="var(--ink)" stroke-width="1.4" marker-end="url(#mk-ink)"/>
+<line x1="152" y1="170" x2="216" y2="254" stroke="var(--ink)" stroke-width="1.4" marker-end="url(#mk-ink)"/>
+
+<rect x="450" y="30" width="150" height="54" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="525" y="52" text-anchor="middle" font-size="12" fill="var(--ink)">in-app SnackBar</text>
+<text x="525" y="70" text-anchor="middle" font-size="10" fill="var(--muted)">"open library"</text>
+<line x1="392" y1="57" x2="446" y2="57" stroke="var(--good)" stroke-width="1.6" marker-end="url(#mk-good)"/>
+
+<rect x="450" y="133" width="150" height="54" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="525" y="155" text-anchor="middle" font-size="11" fill="var(--ink)">tap →</text>
+<text x="525" y="173" text-anchor="middle" font-size="10" fill="var(--muted)">onMessageOpenedApp</text>
+<line x1="392" y1="160" x2="446" y2="160" stroke="var(--muted)" stroke-width="1.6" marker-end="url(#mk-mut)"/>
+
+<rect x="450" y="236" width="150" height="54" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="525" y="258" text-anchor="middle" font-size="11" fill="var(--ink)">tap → app starts →</text>
+<text x="525" y="276" text-anchor="middle" font-size="10" fill="var(--muted)">getInitialMessage()</text>
+<line x1="392" y1="263" x2="446" y2="263" stroke="var(--muted)" stroke-width="1.6" marker-end="url(#mk-mut)"/>
+
+<rect x="640" y="160" width="110" height="80" rx="10" fill="var(--accent)"/>
+<text x="695" y="190" text-anchor="middle" font-size="12" fill="#fff" font-weight="600">PushRouter</text>
+<text x="695" y="208" text-anchor="middle" font-size="10" fill="#fff">dedupe · allowlist</text>
+<text x="695" y="224" text-anchor="middle" font-size="10" fill="#fff">uid · router.go</text>
+<line x1="602" y1="160" x2="636" y2="185" stroke="var(--accent)" stroke-width="1.8" marker-end="url(#mk-acc)"/>
+<line x1="602" y1="263" x2="636" y2="220" stroke="var(--accent)" stroke-width="1.8" marker-end="url(#mk-acc)"/>
+<path d="M 600 57 C 690 57, 695 100, 695 156" fill="none" stroke="var(--accent)" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#mk-acc)"/>
+<text x="700" y="100" font-size="10" fill="var(--accent)">tap</text>
+</svg>

@@ -1,0 +1,48 @@
+<svg viewBox="0 0 760 330" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="كل class ليه seams جاية من بره، والتست بيحط fake في كل seam: السيرفر والوقت والعشوائية والنت والـ DB">
+<rect x="250" y="24" width="260" height="56" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.6"/>
+<text x="380" y="48" text-anchor="middle" font-size="13" fill="var(--ink)" font-weight="600">RealtimeClient</text>
+<text x="380" y="66" text-anchor="middle" font-size="10" fill="var(--muted)">reconnect · close codes · 4401</text>
+
+<g font-size="11" fill="var(--ink)">
+<rect x="10" y="110" width="140" height="44" rx="8" fill="var(--surface)" stroke="var(--line)"/>
+<text x="80" y="128" text-anchor="middle">ChannelFactory</text>
+<text x="80" y="145" text-anchor="middle" font-size="10" fill="var(--good)">FakeWebSocketChannel</text>
+<rect x="160" y="110" width="140" height="44" rx="8" fill="var(--surface)" stroke="var(--line)"/>
+<text x="230" y="128" text-anchor="middle">Backoff jitter</text>
+<text x="230" y="145" text-anchor="middle" font-size="10" fill="var(--good)">() =&gt; 1.0</text>
+<rect x="310" y="110" width="140" height="44" rx="8" fill="var(--surface)" stroke="var(--line)"/>
+<text x="380" y="128" text-anchor="middle">Clock + Timer</text>
+<text x="380" y="145" text-anchor="middle" font-size="10" fill="var(--good)">fakeAsync + FakeAsyncClock</text>
+<rect x="460" y="110" width="140" height="44" rx="8" fill="var(--surface)" stroke="var(--line)"/>
+<text x="530" y="128" text-anchor="middle">NetworkStatus</text>
+<text x="530" y="145" text-anchor="middle" font-size="10" fill="var(--good)">FakeNetworkStatus</text>
+<rect x="610" y="110" width="140" height="44" rx="8" fill="var(--surface)" stroke="var(--line)"/>
+<text x="680" y="128" text-anchor="middle">TokenRefresher</text>
+<text x="680" y="145" text-anchor="middle" font-size="10" fill="var(--good)">FakeTokenRefresher</text>
+</g>
+<line x1="80" y1="108" x2="300" y2="82" stroke="var(--muted)" stroke-width="1.2"/>
+<line x1="230" y1="108" x2="340" y2="82" stroke="var(--muted)" stroke-width="1.2"/>
+<line x1="380" y1="108" x2="380" y2="82" stroke="var(--muted)" stroke-width="1.2"/>
+<line x1="530" y1="108" x2="420" y2="82" stroke="var(--muted)" stroke-width="1.2"/>
+<line x1="680" y1="108" x2="460" y2="82" stroke="var(--muted)" stroke-width="1.2"/>
+
+<rect x="250" y="196" width="260" height="56" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.6"/>
+<text x="380" y="220" text-anchor="middle" font-size="13" fill="var(--ink)" font-weight="600">LiveSyncService</text>
+<text x="380" y="238" text-anchor="middle" font-size="10" fill="var(--muted)">merge · cursor · catch-up</text>
+<g font-size="11" fill="var(--ink)">
+<rect x="60" y="272" width="170" height="44" rx="8" fill="var(--surface)" stroke="var(--line)"/>
+<text x="145" y="290" text-anchor="middle">LibraryRealtimeSource</text>
+<text x="145" y="307" text-anchor="middle" font-size="10" fill="var(--good)">fake: emit(event)</text>
+<rect x="295" y="272" width="170" height="44" rx="8" fill="var(--surface)" stroke="var(--line)"/>
+<text x="380" y="290" text-anchor="middle">LibraryRemoteSource</text>
+<text x="380" y="307" text-anchor="middle" font-size="10" fill="var(--good)">fake: changePages</text>
+<rect x="530" y="272" width="170" height="44" rx="8" fill="var(--good-soft)" stroke="var(--good)"/>
+<text x="615" y="290" text-anchor="middle">AppDatabase</text>
+<text x="615" y="307" text-anchor="middle" font-size="10" fill="var(--good)">real, NativeDatabase.memory()</text>
+</g>
+<line x1="145" y1="270" x2="300" y2="254" stroke="var(--muted)" stroke-width="1.2"/>
+<line x1="380" y1="270" x2="380" y2="254" stroke="var(--muted)" stroke-width="1.2"/>
+<line x1="615" y1="270" x2="460" y2="254" stroke="var(--muted)" stroke-width="1.2"/>
+<text x="700" y="215" text-anchor="middle" font-size="11" fill="var(--ink)" class="ar" direction="rtl">الـ DB حقيقية:</text>
+<text x="700" y="232" text-anchor="middle" font-size="11" fill="var(--ink)" class="ar" direction="rtl">القاعدة نفسها SQL</text>
+</svg>

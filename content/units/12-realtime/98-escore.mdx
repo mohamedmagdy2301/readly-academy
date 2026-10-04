@@ -1,0 +1,260 @@
+---
+title: "في Escore: الـ Real-time والـ Background"
+description: "Escore فيه WebSocket حقيقي للنتايج اللايف وFCM للإشعارات، ومفيش أي شغل في الخلفية. reconnect بـ backoff وjitter وping بإيده، وevent بيتعامل كإشارة بـ jitter على الـ REST، وCubitين بيعدّلوا نفس الـ subscriptions، وإشعار الضغطة عليه بتضيع، وقناة Android مش موجودة."
+minutes: 20
+draft: true
+---
+
+الوحدة دي بنت real-time لـ Readly من الأول: الاختيار بين الطرق، وWebSocket في الـ data layer، والـ reconnect، والدمج مع الـ cache، وFCM، والـ sync في الخلفية، والتستات. Escore بيستخدم من دول اتنين بجد: <b>WebSocket</b> للنتايج اللايف (بـ `web_socket_channel` على الموبايل، و`ws` على سيرفر Express)، و<b>FCM</b> للإشعارات (بـ `firebase_messaging` و`flutter_local_notifications`). والتالت مش موجود خالص: <b>مفيش أي شغل في الخلفية</b>، لا workmanager ولا background fetch ولا isolates.
+
+دروس Escore اللي فاتت لمست أجزاء من ده: [رحلة النتيجة اللايف](/course/offline/escore/) من الـ socket للـ Cubit للـ cache، والـ sealed events في [درس الجودة](/course/quality/escore/)، والـ broadcast controllers في [درس الـ Async](/course/dart-async/escore/)، والـ static singleton اللي مابيتستش في [درس التستات](/course/testing/escore/). الدرس ده بيبص على نفس الكود بعين الوحدة دي.
+
+### البيانات بتفضل طازة إزاي
+
+[درس Push ولا Pull](/course/realtime/push-vs-pull/) قال: ابدأ من التأخير المقبول لكل نوع بيانات. Escore عامل كده تقريبًا، حتى لو مش مكتوب:
+
+| البيانات | الطريقة |
+| --- | --- |
+| النتيجة اللايف في ليستة الماتشات | WebSocket، والأحداث بتتجمع كل 120ms وبتتكتب في الـ Hive cache |
+| النتيجة في صفحة الماتش | نفس الـ WebSocket، وكمان re-fetch كامل كل 30 ثانية والماتش لايف |
+| الماتش بدأ (scheduled بقى live) | مش بيوصل للشاشة المفتوحة. بيبان مع الـ resume أو pull-to-refresh |
+| الترتيب والـ brackets | مفيش real-time ولا polling: cache بـ TTL وrevalidate لما الشاشة تفتح |
+| والـ app في الخلفية | FCM، بحد أقصى إشعار نتيجة واحد لكل ماتش في الدقيقة |
+
+والـ 30 ثانية دي جاية من فهم صح لدور الـ socket:
+
+<CodeBlock label="features/matches/presentation/cubit/match_details/match_details_cubit.dart">
+
+```dart
+/// The WebSocket stream only carries live *scores* — it never re-fetches the
+/// detail payload. So detail fields that an admin edits mid-match ... would
+/// otherwise never surface until the user pull-to-refreshes or reopens ...
+static const Duration _liveDetailRefreshInterval = Duration(seconds: 30);
+```
+
+</CodeBlock>
+
+ده بالظبط «الـ event بيوفّر طلب، والحقيقة في الـ API». الـ socket بيوصّل النتيجة بسرعة، والـ REST بيصلّح أي حاجة الـ socket مابيشيلهاش. بس الـ timer ده بيتشيك على النت بس، مش على الـ lifecycle، فعلى Android بيفضل يعمل polling والـ app في الخلفية لحد ما الـ OS يوقفه. ده اللي الـ `Poller` بتاع [درس الطلبات المتقدمة](/course/api-errors/advanced-requests/) بيعمله بـ `AppLifecycleListener`.
+
+والـ push كمان واخد دوره الصح: السيرفر بيحدد إشعار نتيجة واحد لكل ماتش في الدقيقة لكل مستخدم. يعني محدش بيعامل الـ push كـ transport للنتيجة، هو بيقول «حصل جول»، والنتيجة نفسها من الـ socket أو الـ API.
+
+### الـ WebSocket: مين بيملكه؟
+
+`MatchWebSocketService` 953 سطر، وsingleton بإيده (`MatchWebSocketService.instance`)، مش متسجل في get_it، وهو نفسه `WidgetsBindingObserver`. بيحوّل الرسايل لـ sealed events ويوزّعها على 5 broadcast streams. لحد هنا ده قريب من الـ `RealtimeClient` بتاع [درس الـ WebSocket](/course/realtime/websocket/).
+
+الفرق إن اللي بيقرر «اتصل بإيه» هما الـ Cubits. ليستة الماتشات بتعمل `connectMulti` وبتحسب الفرق بين الماتشات اللايف اللي عندها واللي متسجّلة على الاتصال:
+
+<CodeBlock label="matches_list_cubit.dart: _WebSocketCoordinator">
+
+```dart
+if (_service.isConnected) {
+  final current = _service.subscribedMatchIds;
+  final toAdd = liveMatchIds.where((id) => !current.contains(id)).toList();
+  final toRemove = current
+      .where((id) => !liveMatchIds.contains(id))
+      .toList();
+  // ...
+  for (final id in toRemove) {
+    _service.unsubscribeFromMatch(id);
+  }
+```
+
+</CodeBlock>
+
+وصفحة الماتش بتركب على نفس الاتصال لو موجود، ولما تتقفل:
+
+<CodeBlock label="match_details_cubit.dart">
+
+```dart
+Future<void> unsubscribeFromLiveUpdates() async {
+  await _cancelSubscriptions();
+  final matchId = _currentMatchId;
+  if (_webSocketService.isMultiMatchMode && matchId != null) {
+    _webSocketService.unsubscribeFromMatch(matchId);
+  } else {
+    await _webSocketService.disconnect();
+  }
+}
+```
+
+</CodeBlock>
+
+الاتنين بيعدّلوا نفس الـ set على السيرفر، ومحدش عارف مين طلب إيه. المستخدم فاتح الليستة وفيها ماتش لايف، فتح صفحته وقفلها: الصفحة عملت `unsubscribeFromMatch`، والكارت في الليستة وقف يتحدث. والعكس: صفحة ماتش مش في الصفحة الأولى من الليستة، والليستة عملت refresh، والـ diff شاله لأنه «مش في الـ live set بتاعي»، فالصفحة اتجمدت.
+
+ده سبب القاعدة اللي في [درس الـ WebSocket](/course/realtime/websocket/): الاتصال ليه مالك واحد في الـ data layer، واللي فوق بيطلبوا. لو Escore محتاج subscriptions لكل شاشة، الحل reference counting جوه الـ service: كل شاشة بتقول «أنا عايز الماتش ده» و«مابقتش عايزه»، والـ service بيعمل unsubscribe بس لما العداد يبقى صفر.
+
+وفيه مشكلتين أصغر من نفس النوع: الليستة بتعمل listen على `scoreUpdates` بس بعد `connectMulti` ناجح، فلو أول محاولة فشلت والـ reconnect التلقائي نجح بعدها، الليستة ممكن ماتسمعش خالص. والماتشات اللايف اللي في الصفحة التانية من الليستة مابتتسجلش لأن `loadMoreMatches` مابينادهاش.
+
+### الـ reconnect والـ heartbeat
+
+ده أحسن جزء في الـ service، وقريب جدًا من [درس الـ reconnect](/course/realtime/reconnect/):
+
+<CodeBlock label="core/services/websocket/match_websocket_service.dart">
+
+```dart
+int _calculateReconnectDelay() {
+  // Exponential backoff: 1, 2, 4, 8, 16, 32, 60, 60, 60, 60
+  final exponentialDelay = WebSocketConfig.reconnectDelayBase * (1 << _reconnectAttempts);
+  final cappedDelay = exponentialDelay.clamp(base, max);
+  // Add jitter (±20%) to prevent thundering herd
+  final jitter = (cappedDelay * 0.2 * (Random().nextDouble() * 2 - 1)).round();
+  // ...
+}
+```
+
+</CodeBlock>
+
+- <b>الـ heartbeat بإيده:</b> `WebSocketChannel.connect` (مش `IOWebSocketChannel`) مالوش `pingInterval`، فالـ service بيبعت ping كل 25 ثانية في رسالة عادية، ولو مفيش pong في 35 ثانية بيعتبر الاتصال ميت. ده نفس الحل اللي [درس الـ reconnect](/course/realtime/reconnect/) قال إنه لازم على الـ web. وعلى السيرفر، `ws` بيعمل ping كل 30 ثانية ويقفل اللي مابيردش.
+- <b>الـ `ready` بـ timeout:</b> `await _channel!.ready.timeout(30s)`. نفس الدرس: من غير `ready`، فشل الـ upgrade مابيبانش.
+- <b>بيبطّل بعد 10 محاولات:</b> وده حوالي 6 دقايق. Readly مابيحطش حد في الـ foreground، لأن المستخدم فاتح الـ app والشبكة ممكن ترجع. في Escore، بعد 6 دقايق في مترو من غير شبكة، النتايج بتقف لحد ما المستخدم يعمل refresh أو يقفل ويفتح.
+
+واللي محتاج يتصلح:
+
+- <b>بيقفل مع `inactive`:</b> الـ `didChangeAppLifecycleState` بيعامل `paused` و`inactive` زي بعض. الـ inactive بيحصل لما المستخدم ينزّل الـ Control Center أو تجيله مكالمة. يعني نظرة على الإشعارات وسط الماتش = اتصال اتقفل واتفتح. الـ `onPause` لوحده كفاية.
+- <b>`sink.close()` من غير code:</b> السيرفر بيشوف 1005 (no status received)، فمايعرفش ده app راح الخلفية ولا اتصال باظ. `status.normalClosure` بيقول ده صريح.
+- <b>الـ connectivity كحكم مش كتلميح:</b> لما `connectivity_plus` يقول `none`، الـ service بيقفل الاتصال بنفسه. ولما يرجع، بيصفّر عداد المحاولات. ده عكس [درس الـ reconnect](/course/realtime/reconnect/) في الحاجتين: الـ `none` ممكن يبقى غلط، والتصفير مع كل تذبذب بيرجّع المحاولات لثانية واحدة. وكمان الـ reconnect مع رجوع الشبكة شغال في الـ single-match mode بس (`if (_currentMatchId != null ...)`)، وفي الليستة (multi-match) الـ `_currentMatchId` بـ null، فمابيحصلش.
+
+<Note kind="info" title="الـ socket من غير auth">
+
+الـ config بيحط الـ JWT في الـ URL (`?token=`)، ودي الطريقة اللي [درس الـ WebSocket](/course/realtime/websocket/) قال إنها بتكتب الـ token في الـ logs. بس فعليًا، الـ Cubits بتنادي `connectToMatch(matchId)` و`connectMulti(...)` من غير token، فكل الاتصالات anonymous. وده قرار منطقي: النتايج بيانات عامة، ومفيش حاجة خاصة بالمستخدم على الـ socket. بس الكود اللي بيحط الـ token في الـ URL موجود ومستني حد يستخدمه يوم ما يحتاج event خاص بالمستخدم. وقتها الـ header أو ticket قصير العمر.
+
+</Note>
+
+### الـ event كإشارة، بـ jitter
+
+دي حاجة Escore عاملها أحسن من أغلب الـ apps. الـ `scoreboard_update` والـ `maps_update` مش شايلين البيانات: بيقولوا «الـ scoreboard اتغير». الـ Cubit بيعمل re-fetch للـ REST، بس مش على طول:
+
+<CodeBlock label="match_details_cubit.dart">
+
+```dart
+/// Re-fetch the whole detail after a random 0–3 s jitter — the ping fans
+/// out to every viewer of the match at once, and the jitter spreads their
+/// re-fetches instead of spiking the backend.
+///
+/// A ping that lands while one is already pending just resets the timer:
+/// admin edits arrive in bursts (auto-save / score clickers), and one
+/// re-fetch after the burst reads the final state.
+void _handleDetailPing(String eventMatchId) {
+  // ...
+  _detailRefetchTimer?.cancel();
+  _detailRefetchTimer = Timer(
+    Duration(milliseconds: _jitterRandom.nextInt(_detailRefetchJitterMs)),
+    () => _revalidateLiveDetail(matchId),
+  );
+}
+```
+
+</CodeBlock>
+
+كل الموبايلات اللي فاتحة نفس الماتش بتستلم الـ event في نفس الملي ثانية. لو كلهم عملوا re-fetch على طول، السيرفر بياخد آلاف الطلبات في نفس اللحظة مع كل تحديث. الـ jitter من 0 لـ 3 ثواني بيوزّعهم. ده نفس منطق الـ jitter في الـ reconnect، بس على الـ REST. وكمان الـ timer بيتلغي مع كل ping جديد، فدفعة تعديلات من الـ admin بتعمل re-fetch واحد في الآخر. ده debounce بإيده، والكومنت بيشرح الاتنين. ولو Readly عمل event زي `library.bulk_changed` اللي اتكلمنا عنه في [درس الـ WebSocket](/course/realtime/websocket/)، ده بالظبط اللي محتاجه.
+
+والتجميع كل 120ms نسخة يدوية من الـ `debounceBuffer` في [درس دمج الأحداث](/course/realtime/merge-cache/). اللي ناقص هو الـ catch-up: مفيش `seq` في الأحداث، فلو الاتصال وقع ورجع، اللي فات بيتعوّض بالـ `ReconnectionRefreshMixin` اللي بيعمل refresh للشاشة بعد ما النت يرجع بـ 500ms. ده catch-up على مستوى الشاشة: شغال، بس كل شاشة لازم تفتكر تستخدمه، والشاشات المقفولة مش بتتحدث. وموضوع إن الأحداث مش مترتبة اتكلم عنه [درس Escore في الوحدة 4](/course/offline/escore/).
+
+### على السيرفر: الـ push قبل الـ socket
+
+<CodeBlock label="escore-backend: notifications/triggers/match.trigger.ts">
+
+```ts
+const data = this.buildMatchData(match, 'score_update');
+await this.sendLocalized(match, 'score_update', spec, data);
+
+// Broadcast via WebSocket (instant delivery)
+this.broadcastWs(match, 'score_update');
+```
+
+</CodeBlock>
+
+الإرسال للـ socket (اللحظي، وبيروح لكل اللي فاتحين الـ app) مستني الـ push يتحط في الـ queue (Bull على Redis)، والاتنين جوه نفس الـ `try`. لو Redis وقع، الـ `await` بيرمي، والـ socket مابيتبعتش، والنتيجة اللايف بتقف عند الكل، والسبب في سيستم تاني خالص. الترتيب الصح العكس: الـ socket الأول (رخيص ومحلي)، والـ push بعده في `try` لوحده.
+
+ومع إن السيرفر شغال instance واحد بـ pm2، والـ subscriptions في Maps في الـ memory، فأول ما يحتاج instance تاني، الماتش اللي اتحدث على instance مش هيوصل للمتوصلين على التاني. [درس Push ولا Pull](/course/realtime/push-vs-pull/) قال: اسأل عن الـ pub/sub قبل ما تكتب سطر. والجميل إن Redis موجود أصلًا عشان Bull.
+
+### الـ Push: الـ token كويس، والضغطة لأ
+
+#### اللي معمول صح
+
+- <b>مفيش PUT على الفاضي:</b> `FCMTokenManager` بيبعت الـ token بس لو الـ token أو المستخدم أو الـ permission اتغير من آخر مرة نجحت، زي الـ fingerprint بتاع الـ `DeviceRegistrar` في [درس الـ Push](/course/realtime/push-notifications/). ناقصه بس «كل 30 يوم حتى لو ماتغيرش».
+- <b>الـ APNs token:</b> بيستنى الـ APNs token في iOS قبل `getToken()`، وبيعيد مرة بعد ثانيتين.
+- <b>الـ logout مايستناش:</b> الـ DELETE للجهاز جوه `Future.wait` مع الـ logout بتاع السيرفر، و`timeout(4s)` على الكل. ده اللي [درس الـ Session في Escore](/course/di-scale/escore/) شرحه.
+- <b>السيرفر بينقل الجهاز:</b> الـ `UserDevice` عليه unique index على `fcmToken`، والتسجيل بيلاقي الصف وبيغيّر المستخدم لو اختلف (ومعاه الـ topics). ده نفس فكرة الـ PUT بالـ installationId: آخر حد سجّل هو صاحب الجهاز. وشغالة لأن Escore عمره ما بينادي `deleteToken()`، فالـ token بيفضل ثابت.
+
+#### اللي محتاج يتصلح
+
+<Note kind="warn" title="1. الـ session اللي خلصت بتفضل تاخد إشعارات">
+
+لما الـ refresh يفشل، الـ app بينادي `clearCachedUserData()`، وده بيمسح مفاتيح الـ FCM المحلية (ومعاها الـ `deviceId`)، بس مابيكلّمش السيرفر. الجهاز لسه متسجّل باسم المستخدم القديم. ولو اللي ماسك الموبايل كمّل كـ guest (والـ guests مابيتسجلوش أصلًا)، هيفضل ياخد إشعارات الحساب القديم لحد ما حد يعمل login. ده الحالة الرابعة في [درس الـ Push](/course/realtime/push-notifications/): الحل عند السيرفر، يشيل الأجهزة المربوطة بالـ session اللي اتلغت.
+
+</Note>
+
+<Note kind="warn" title="2. الضغطة اللي بتفتح الـ app المقفول بتضيع">
+
+```dart
+final initialMessage = await firebaseMessaging.getInitialMessage();
+if (initialMessage != null) {
+  // تأخير صغير لضمان تهيئة Navigation
+  Future.delayed(const Duration(seconds: 1), () {
+    notificationTapHandler.handleNotificationTap(initialMessage);
+  });
+}
+```
+
+الـ router بيتعمل بعد الـ initialization كلها، وفيها startup check ليه timeout 4 ثواني. لو الـ router لسه ماتعملش بعد ثانية، الـ handler بيلاقي الـ context بـ null، والضغطة بتضيع من غير أي log. ده بالظبط اللي [درس الـ Push](/course/realtime/push-notifications/) قال عليه «بيشتغل على موبايلك وبيفشل على موبايل أبطأ». الحل إن الـ initial message تتقري بعد ما الـ router يتعمل، والـ redirect يحفظ المكان في `from`. ونفس المشكلة في الـ local notifications: `getNotificationAppLaunchDetails()` مش متنادية، فالضغطة على إشعار محلي والـ app مقفول مش بتتعالج خالص.
+
+</Note>
+
+<Note kind="warn" title="3. قناة Android اللي مش موجودة">
+
+الـ `AndroidManifest.xml` بيقول إن الـ default channel اسمها `high_importance_channel`، والـ app بيعمل قناة واحدة اسمها `all_notifications`، والسيرفر مابيبعتش `channel_id`. يعني الإشعارات اللي الـ OS بيعرضها والـ app في الخلفية بتروح لقناة احتياطية من FCM، مش القناة اللي الـ app عاملها بالأهمية العالية. سطر في الـ manifest بيصلّحها، أو `channel_id` من السيرفر.
+
+</Note>
+
+وفي حاجة محتاج تتأكد على جهاز حقيقي قبل ما تتقال كـ bug: كل رسايل Escore فيها `notification`، فالـ OS بيعرضها لوحده في الخلفية. والـ background handler على Android كمان بينادي `handleRemoteMessage` اللي بيعرض local notification. لو الاتنين اشتغلوا، المستخدم هيشوف الإشعار مرتين. والـ `onTokenRefresh` متوصّل في مكانين، واحد منهم عمره ما بيتنادى (dead code)، وده مش bug بس هيلخبط أي حد يقرا الكود.
+
+### الخلفية: ولا حاجة، وده مقبول
+
+مفيش workmanager، ولا background fetch (مع إن الـ `Info.plist` فيه `fetch` في الـ `UIBackgroundModes` ومفيش كود بيستخدمه)، ولا isolates. ده مش نسيان: Escore remote-first ([درس Escore في الوحدة 4](/course/offline/escore/))، والمستخدم بيقرا أغلب الوقت، والكتابة القليلة (follow، تعليق) بتحصل والنت شغال. مفيش outbox يتبعت، فمفيش حاجة تستاهل الـ OS يصحّي الـ app عشانها. [درس الـ sync في الخلفية](/course/realtime/background-sync/) قال إن الخلفية بونص لما في عمليات بتستنى، وهنا مفيش.
+
+بداله، Escore بيعتمد على triggers الـ foreground: refresh مع الـ resume (بـ dedupe في ثانيتين)، وrefresh لما النت يرجع، والـ caches بـ TTL (5 دقايق للايف، و30 للتفاصيل). والشغل الوحيد اللي بيحصل والـ app مش شغال مكتوب native: الـ `AppDelegate` بيستلم الـ push ويكتب النتيجة في App Group عشان widget الشاشة الرئيسية في iOS يتحدث. وده اختيار ذكي: الـ widget محتاج يتحدث من غير ما Flutter يقوم أصلًا. والـ Live Activities متكتبة كلها بس مقفولة بـ `kLiveActivityEnabled = false`.
+
+### التستات
+
+فيه تست واحد للـ WebSocket: `ws_event_test.dart` بيتأكد إن الـ JSON بيتحوّل لـ events صح. ده contract test زي اللي في [درس تست الـ real-time](/course/realtime/testing-realtime/)، وكويس. بس الـ reconnect والـ backoff والـ heartbeat والـ lifecycle مالهمش تستات، ومش ممكن يبقى ليهم بالشكل الحالي: الـ service بيعمل `WebSocketChannel.connect` و`Connectivity()` و`Random()` و`DateTime.now()` جواه، وهو static singleton. ولا seam واحد التست يحط فيه fake. يعني الـ bug بتاع «الـ reconnect مع رجوع الشبكة مش شغال في الـ multi-match» كان هيبان في تست من 15 سطر بـ `fakeAsync`.
+
+### لو هنعيدها
+
+1. الاتصال ليه مالك واحد بيعمل reference counting للـ subscriptions، والـ Cubits بتطلب مش بتعدّل الـ set.
+2. `onPause` بس للقفل، و`status.normalClosure`، والـ connectivity تلميح بيقصّر الانتظار من غير ما يصفّر العداد.
+3. الـ socket على السيرفر قبل الـ push وبرّه الـ `try` بتاعه، وRedis pub/sub قبل أي instance تاني.
+4. `seq` في الأحداث وcatch-up في الـ service، بدل refresh في كل شاشة.
+5. الـ session اللي خلصت بتشيل أجهزتها على السيرفر، والـ initial message بعد ما الـ router يتعمل، وقناة Android واحدة متفق عليها بين الـ manifest والـ app والسيرفر.
+6. الـ service بياخد الـ channel factory والـ connectivity والـ jitter من الـ constructor، ويتسجّل في get_it، عشان الـ reconnect يتست.
+
+<Quiz>
+
+<Question id="escore-rt-1">
+<Ask>صفحة الماتش بتعمل `unsubscribeFromMatch` لما تتقفل، والليستة بتعمل diff على `subscribedMatchIds`. إيه اللي بيبوظ، وإيه الحل؟</Ask>
+<Answer>
+
+الاتنين بيعدّلوا نفس الـ subscriptions على نفس الاتصال ومحدش عارف مين طلب إيه. لو الماتش ظاهر في الليستة والمستخدم فتح صفحته وقفلها، الصفحة بتلغي الـ subscription والكارت في الليستة بيتجمد. والعكس مع الـ diff بتاع الليستة. الحل مالك واحد للاتصال بيعمل reference counting: كل شاشة بتقول «عايز» و«مش عايز»، والـ unsubscribe بيحصل لما مفيش حد عايز.
+
+</Answer>
+</Question>
+
+<Question id="escore-rt-2">
+<Ask>ليه الـ re-fetch بعد `scoreboard_update` بيستنى وقت عشوائي من 0 لـ 3 ثواني؟</Ask>
+<Answer>
+
+لأن كل الموبايلات اللي فاتحة الماتش بتستلم الـ event في نفس اللحظة. لو كلهم عملوا re-fetch على طول، السيرفر بياخد آلاف الطلبات مع بعض مع كل تحديث. الـ jitter بيوزّعهم على 3 ثواني. ده نفس سبب الـ jitter في الـ reconnect، بس على الـ REST لما الـ event إشارة مش بيانات.
+
+</Answer>
+</Question>
+
+<Question id="escore-rt-3">
+<Ask>Escore مافيهوش workmanager ولا أي شغل في الخلفية. ده غلط؟</Ask>
+<Answer>
+
+لأ. الخلفية بتستاهل لما في عمليات بتستنى تتبعت (outbox) والمستخدم بيقفل الـ app قبلها. Escore remote-first، والكتابة قليلة وبتحصل والنت شغال، فمفيش حاجة الـ OS يصحّي الـ app عشانها. بيعتمد على triggers الـ foreground (الـ resume، ورجوع النت، والـ caches بـ TTL)، والـ widget بتاع iOS بيتحدث من الـ push بكود native من غير Flutter. اللي غلط بسيط إن الـ `Info.plist` معلن `fetch` من غير كود بيستخدمه.
+
+</Answer>
+</Question>
+
+</Quiz>

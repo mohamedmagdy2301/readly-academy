@@ -1,0 +1,559 @@
+---
+title: "الـ Push notifications بـ FCM"
+description: "FCM من غير ما تتوه: تطلب الـ permission امتى، والـ token بيتولد ويتجدد ويتربط بالـ session في الـ login والـ logout، والرسالة بتوصل إزاي في الـ foreground والـ background والـ app المقفول، والضغطة بتفتح الشاشة الصح بـ go_router حتى لو الـ app كان مقفول."
+minutes: 40
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="جرس الباب والبواب">
+
+انت نايم، والبواب تحت عنده رقم شقتك. لما حاجة تيجيلك، البواب بيرن الجرس. الجرس مابيقولكش إيه اللي جه، هو بيقولك «في حاجة». ولو الحاجة مكتوب عليها «جواب من البنك»، البواب ممكن يكتبها على ورقة ويزقها تحت الباب، فتعرف من غير ما تفتح.
+
+بس البواب بيعرفك بالرقم اللي على الباب. لو نقلت شقة ونسيت تقوله، هيرن على الشقة القديمة، والساكن الجديد هو اللي هيصحى ويلاقي جواباتك. ولو انت مسافر، البواب بيحتفظ بالحاجة شوية، وبعدها ممكن يرميها.
+
+</Analogy>
+
+الـ <b>FCM</b> (Firebase Cloud Messaging) هو البواب. وفي iOS، الـ FCM نفسه بيسلّم لبواب Apple اللي اسمه <b>APNs</b>. الجرس هو الـ <b>notification</b> اللي بيظهر، والورقة اللي تحت الباب هي الـ <b>data</b> اللي جوه الرسالة. ورقم الشقة هو الـ <b>token</b>: عنوان التسطيب ده على الموبايل ده.
+
+والجزء الصعب في الـ push مش إرسال الرسالة. الصعب هو الحاجتين اللي في الحدوتة: إن السيرفر يعرف الرقم الصح للمستخدم الصح طول الوقت (الـ login والـ logout والـ token اللي بيتغير)، وإن الضغطة على الإشعار توديك للمكان الصح حتى لو الـ app كان مقفول خالص.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### Readly هيبعت إيه؟
+
+| النوع | امتى | شكله | الضغطة بتفتح |
+| --- | --- | --- | --- |
+| `import.finished` | استيراد من الـ web خلص | notification: «اتضاف 812 كتاب لمكتبتك» | `/library` |
+| `reading.reminder` | تذكير المستخدم طلبه لكتاب معين | notification: «بقالك 3 أيام ماقريتش Fantastic Mr Fox» | `/library/books/OL45804W` |
+| `library.changed` | تعديل من جهاز تاني والـ app مش مفتوح | data بس (silent) | مفيش: بيصحّي الـ app يعمل sync |
+
+لاحظ اللي مش في الجدول: «الكتاب ده اتغير على التابلت» مش notification. ده بيوصل بالـ socket لو الـ app مفتوح، وبالـ catch-up لما يفتح. الإشعار للحاجة اللي المستخدم يهمه يعرفها وهو مش فاتح الـ app، مش لكل تغيير في الداتا.
+
+### العقد: الجهاز والرسالة
+
+في [درس الـ WebSocket](/course/realtime/websocket/) عملنا `InstallationId`: id ثابت للتسطيب. هو ده مفتاح الجهاز على السيرفر. الـ token بيتغير، والمستخدم بيتغير، والـ installation هو هو:
+
+<CodeBlock label="api/openapi.yaml (إضافات)">
+
+```yaml
+paths:
+  /devices/{installationId}:
+    put:
+      operationId: registerDevice
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: installationId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fcmToken, platform, appBuild, locale, permission]
+              properties:
+                fcmToken: { type: string }
+                platform: { type: string, enum: [android, ios] }
+                appBuild: { type: integer }
+                locale: { type: string, examples: [ar, en] }
+                permission: { type: string, enum: [authorized, provisional, denied, notDetermined] }
+      responses:
+        '204': { description: Stored. Upsert by installationId; the device now belongs to the caller }
+    delete:
+      operationId: unregisterDevice
+      security: [{ bearer: [] }]
+      responses:
+        '204': { description: Gone (also when it never existed) }
+```
+
+</CodeBlock>
+
+- <b>`PUT` بمفتاح طبيعي:</b> زي ما [درس الـ Conflicts](/course/offline/conflicts/) قال، العملية اللي ليها مفتاح طبيعي تبقى idempotent من غير `Idempotency-Key`. نفس الـ PUT مرتين = نفس النتيجة.
+- <b>«الجهاز بقى بتاع اللي بعت»:</b> لو مستخدم تاني عمل login على نفس الموبايل وبعت PUT بنفس الـ installationId، السيرفر بينقل الجهاز ليه. ده الضمان الحقيقي ضد «إشعارات الحساب القديم»، زي ما هتشوف في Level 3.
+- <b>الـ `locale`:</b> السيرفر هو اللي بيكتب نص الإشعار، فلازم يعرف لغة المستخدم. ولما المستخدم يغيّر اللغة من الإعدادات ([درس الـ Settings](/course/di-scale/settings/))، الـ PUT بيتبعت تاني.
+- <b>الـ `permission`:</b> عشان السيرفر يعرف مين بيشوف الإشعارات فعلًا، ويقيس، ومايحسبش «اتبعت» كـ «اتشاف».
+
+والرسالة نفسها بتتوصف في الـ AsyncAPI جنب رسايل الـ socket، channel تاني اسمه `push`. ومن ناحية السيرفر، ده شكلها في FCM HTTP v1:
+
+<CodeBlock label="POST https://fcm.googleapis.com/v1/projects/readly-prod/messages:send">
+
+```json
+{
+  "message": {
+    "token": "<the fcmToken from PUT /devices>",
+    "notification": { "title": "خلص الاستيراد", "body": "اتضاف 812 كتاب لمكتبتك" },
+    "data": { "type": "import.finished", "link": "/library", "uid": "u_9f2", "count": "812" },
+    "android": { "priority": "high", "notification": { "channel_id": "imports", "tag": "import" } },
+    "apns": { "payload": { "aps": { "thread-id": "imports" } } }
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>`notification` و`data` مع بعض:</b> الـ notification بيعرضه الـ OS لوحده لما الـ app في الخلفية أو مقفول. الـ data بيوصل للـ app لما المستخدم يدوس، أو على طول لو الـ app مفتوح.
+- <b>كل قيم الـ `data` strings:</b> `"count": "812"` مش `812`. ده قيد في FCM.
+- <b>الـ `link` path جوه الـ app، مش URL:</b> والـ app بيتشيك عليه قبل ما يفتحه (Level 3).
+- <b>الـ `uid`:</b> المستخدم اللي الرسالة دي ليه. الـ app بيقارنه بالمستخدم الحالي قبل ما يتصرف.
+- <b>الـ `channel_id`:</b> قناة Android لازم تكون اتعملت على الموبايل قبل كده. لو مش موجودة، الإشعار بيروح لقناة احتياطية من FCM، أو ماتعرفش تتحكم فيه.
+- <b>الحد 4KB:</b> للرسالة كلها. سبب تاني إن الـ push بيشيل «حصل إيه» والـ link، والتفاصيل من الـ API.
+
+### الـ packages
+
+<CodeBlock label="pubspec.yaml">
+
+```yaml
+dependencies:
+  firebase_core: ^4.15.0
+  firebase_messaging: ^16.7.0
+  flutter_local_notifications: ^22.3.1 # Android channels; foreground display if ever needed
+```
+
+</CodeBlock>
+
+والـ setup بتاع الـ platforms (ملف `google-services.json`، و`GoogleService-Info.plist`، ومفتاح APNs `.p8` في Firebase console، وفي Xcode: Push Notifications وBackground Modes فيها Remote notifications) مكتوب خطوة بخطوة في docs بتاعة Firebase، ومش هنكرره. اللي يهمنا هو الكود اللي بعده.
+
+### 1. interface في core، وFirebase وراه
+
+الـ `FirebaseMessaging` كله static وsingletons. لو الـ classes بتاعتنا كلمته مباشرة، مفيش تست. فبيستخبى ورا interface صغير بالحاجات اللي Readly بيستخدمها بس، زي ما الـ `NetworkStatus` بيخبّي connectivity_plus:
+
+<CodeBlock label="core/push/push_messaging.dart">
+
+```dart
+enum PushPermission { authorized, provisional, denied, deniedPermanently, notDetermined }
+
+class PushMessage {
+  const PushMessage({required this.id, required this.type, this.link, this.uid});
+  final String id;    // FCM messageId: used to ignore the same tap twice
+  final String type;  // import.finished, reading.reminder, library.changed
+  final String? link; // a path inside the app, checked before use
+  final String? uid;  // who this message is for
+}
+
+abstract interface class PushMessaging {
+  Future<PushPermission> permission();
+  Future<PushPermission> requestPermission();
+  Future<String?> token(); // null until the platform is ready (iOS: no APNs token yet)
+  Stream<String> get tokenRefreshes;
+  Future<void> deleteToken();
+  Stream<PushMessage> get foreground; // arrived while the app is open
+  Stream<PushMessage> get opened;     // a tap brought the app back from the background
+  Future<PushMessage?> initial();     // a tap launched the app from terminated
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="data/push/firebase_push_messaging.dart">
+
+```dart
+class FirebasePushMessaging implements PushMessaging {
+  FirebasePushMessaging(this._fcm);
+  final FirebaseMessaging _fcm;
+
+  @override
+  Future<PushPermission> permission() async => _map((await _fcm.getNotificationSettings()).authorizationStatus);
+
+  @override
+  Future<PushPermission> requestPermission() async =>
+      _map((await _fcm.requestPermission()).authorizationStatus); // Android 13+: the POST_NOTIFICATIONS dialog
+
+  PushPermission _map(AuthorizationStatus s) => switch (s) {
+        AuthorizationStatus.authorized => PushPermission.authorized,
+        AuthorizationStatus.provisional => PushPermission.provisional, // iOS: quiet, no prompt
+        AuthorizationStatus.denied => PushPermission.denied,
+        AuthorizationStatus.deniedPermanently => PushPermission.deniedPermanently, // Android: settings only
+        AuthorizationStatus.notDetermined => PushPermission.notDetermined,
+      };
+
+  @override
+  Future<String?> token() async {
+    // iOS: getToken() throws 'apns-token-not-set' until APNs hands us its token
+    if (Platform.isIOS && await _fcm.getAPNSToken() == null) return null;
+    return _fcm.getToken();
+  }
+
+  @override
+  Stream<String> get tokenRefreshes => _fcm.onTokenRefresh;
+
+  @override
+  Future<void> deleteToken() => _fcm.deleteToken();
+
+  @override
+  Stream<PushMessage> get foreground => FirebaseMessaging.onMessage.map(_toMessage);
+
+  @override
+  Stream<PushMessage> get opened => FirebaseMessaging.onMessageOpenedApp.map(_toMessage);
+
+  @override
+  Future<PushMessage?> initial() async {
+    final m = await _fcm.getInitialMessage();
+    return m == null ? null : _toMessage(m);
+  }
+
+  PushMessage _toMessage(RemoteMessage m) => PushMessage(
+        id: m.messageId ?? '${m.sentTime?.millisecondsSinceEpoch}',
+        type: m.data['type'] as String? ?? 'unknown',
+        link: m.data['link'] as String?,
+        uid: m.data['uid'] as String?,
+      );
+}
+```
+
+</CodeBlock>
+
+- <b>الـ switch exhaustive:</b> الـ `deniedPermanently` قيمة جديدة في `AuthorizationStatus`. أي switch كان مكتوب على الأربعة القديمة مش هيعمل compile بعد الـ upgrade، وده كويس: الـ compiler بيقولك فين محتاج تفكر.
+- <b>الـ `token()` بيرجّع null بدل ما يرمي:</b> في iOS، الـ FCM token مش موجود لحد ما APNs يدّي الـ app الـ token بتاعه، وده ممكن ياخد ثواني بعد الفتح. «لسه مفيش» حالة عادية، والـ `tokenRefreshes` هيطلّع الـ token لما يجهز.
+
+### 2. الـ token والـ session
+
+<Diagram name="d-rt-push-token-lifecycle">
+
+الـ token بيتسجّل على السيرفر بعد الـ login ومع كل تجديد، وبيتشال في الـ logout. والـ PUT بالـ installationId هو اللي بيضمن إن الجهاز بقى بتاع آخر حد عمل login، حتى لو الـ DELETE ماوصلش.
+
+</Diagram>
+
+<CodeBlock label="data/push/device_registrar.dart">
+
+```dart
+/// Keeps the server's device row in step with the token, the user, and the permission.
+class DeviceRegistrar {
+  DeviceRegistrar(this._push, this._remote, this._installation, this._prefs, this._clock,
+      {required this.build, required this.platform});
+  final PushMessaging _push;
+  final DeviceRemoteSource _remote;
+  final InstallationId _installation;
+  final SharedPreferencesWithCache _prefs;
+  final Clock _clock;
+  final int build;
+  final String platform;
+  StreamSubscription<String>? _refreshSub;
+
+  static const _lastKey = 'device_registration'; // what we last told the server, and when
+
+  /// After login, on every app start while logged in, and when the language changes.
+  Future<void> register({required String userId, required String locale}) async {
+    _refreshSub ??= _push.tokenRefreshes.listen((_) => register(userId: userId, locale: locale));
+    final token = await _push.token();
+    if (token == null) return; // iOS without APNs yet: tokenRefreshes will call us again
+    final permission = await _push.permission();
+    final fingerprint = '$userId|$token|${permission.name}|$build|$locale';
+    final last = _prefs.getString(_lastKey)?.split('@');
+    final sentAt = last == null ? null : DateTime.tryParse(last[1]);
+    final fresh = sentAt != null && _clock.now().difference(sentAt) < const Duration(days: 30);
+    if (last?[0] == fingerprint && fresh) return; // nothing changed, and we told them this month
+
+    await _remote.register(_installation.value,
+        fcmToken: token, platform: platform, appBuild: build, locale: locale, permission: permission.name);
+    await _prefs.setString(_lastKey, '$fingerprint@${_clock.now().toUtc().toIso8601String()}');
+  }
+
+  /// Before the tokens are cleared: the DELETE still needs a valid access token.
+  Future<void> unregister() async {
+    await _refreshSub?.cancel();
+    _refreshSub = null;
+    await _prefs.remove(_lastKey);
+    try {
+      await _remote.unregister(_installation.value).timeout(const Duration(seconds: 3));
+    } on Object { /* offline: the next PUT from this installation moves it anyway */ }
+    try {
+      await _push.deleteToken(); // FCM drops this token: pushes to it fail with UNREGISTERED
+    } on Object { /* same: best effort */ }
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ fingerprint:</b> الـ PUT بيتبعت بس لو حاجة اتغيرت (المستخدم، أو الـ token، أو الـ permission، أو الـ build، أو اللغة). من غيره، كل فتحة للـ app = طلب.
+- <b>كل 30 يوم حتى لو مفيش تغيير:</b> Firebase بتوصي إن الـ app يحدّث الـ token على السيرفر مرة في الشهر تقريبًا، والسيرفر بيعتبر أي token ماتحدّثش من أكتر من شهر stale. وفي Android، الـ registration بيخلص لوحده بعد 270 يوم من غير استخدام. الـ timestamp هو اللي بيخلّي السيرفر يفرّق.
+- <b>الـ unregister قبل مسح الـ tokens:</b> الـ DELETE طلب عادي بيعدّي على الـ AuthInterceptor، والـ interceptor بيقرا الـ access token في `onRequest`. لو الـ `_tokens.clear()` حصل الأول، الطلب هيطلع من غير auth وياخد 401. علشان كده `await` مع timeout، مش `.ignore()` زي الـ revoke.
+- <b>`deleteToken` كمان:</b> لو الـ DELETE ماوصلش (أوفلاين)، الـ token نفسه بقى ميت عند FCM، فأول ما السيرفر يبعتله ياخد `UNREGISTERED` ويمسح الصف. ولو ده كمان فشل (أوفلاين برضه)، فاضل خط دفاع تالت في Level 3.
+
+<CodeBlock label="الربط بالـ session في di/setup.dart وAuthRepositoryImpl">
+
+```dart
+// di/setup.dart, next to resetOnLogout and the requestSync-after-login listener
+getIt<AuthCubit>().stream.where((s) => s is Authenticated).listen((_) async {
+  await getIt<DeviceRegistrar>().register(
+    userId: (await getIt<AuthRepository>().currentUserId())!, // the ownerId the login stored
+    locale: getIt<SettingsStore>().savedLocale?.languageCode ?? 'ar', // the store, not a new SettingsCubit
+  );
+});
+
+// AuthRepositoryImpl.logout: the order matters
+@override
+Future<void> logout() async {
+  await _realtime.stop();          // no event lands after the wipe (the reconnect lesson)
+  await _devices.unregister();     // needs the access token: before clear()
+  final refresh = await _tokens.refreshToken;
+  if (refresh != null) _remote.revoke(refresh).ignore();
+  await _tokens.clear();
+  await _db.wipe();
+}
+```
+
+</CodeBlock>
+
+### 3. الرسالة بتوصل إزاي في كل حالة
+
+| حالة الـ app | رسالة فيها `notification` | رسالة `data` بس |
+| --- | --- | --- |
+| foreground | مابتظهرش لوحدها. بتوصل على `onMessage` | `onMessage` |
+| background | الـ OS بيعرضها. الضغطة بتيجي على `onMessageOpenedApp` | الـ background handler |
+| terminated | الـ OS بيعرضها. الضغطة: `getInitialMessage()` | الـ background handler (Android). في iOS: مش مضمون خالص |
+
+وفي حالتين الرسايل بتقف خالص لحد ما المستخدم يفتح الـ app بنفسه: لو عمل force stop من إعدادات Android، أو عمل swipe للـ app من الـ app switcher في iOS.
+
+<Diagram name="d-rt-push-states">
+
+نفس الرسالة بتمشي في طريق مختلف حسب حالة الـ app. الضغطة دايمًا بتوصل لنفس الـ PushRouter، من `onMessageOpenedApp` أو `getInitialMessage`، والـ foreground بيعرض banner جوه الـ app بدل إشعار النظام.
+
+</Diagram>
+
+<b>في الـ foreground</b>، Readly مابيعرضش إشعار نظام. المستخدم فاتح الـ app أصلًا، فـ `import.finished` بيبقى SnackBar جوه الـ app فيه «افتح المكتبة». وفي iOS، الـ `setForegroundNotificationPresentationOptions` بيتساب على الـ default (مفيش alert). ولاحظ إن الـ options دي بتتحفظ: لو نادتها مرة بـ `alert: true` وشلت السطر بعدين، هتفضل `true` لحد ما تناديها بـ `false`.
+
+<b>قنوات Android</b> لازم تتعمل مرة وقت الفتح، قبل أول إشعار:
+
+<CodeBlock label="app/push_channels.dart">
+
+```dart
+Future<void> createPushChannels(FlutterLocalNotificationsPlugin plugin) async {
+  final android = plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+  await android?.createNotificationChannel(const AndroidNotificationChannel(
+    'imports', 'Imports', // the user sees these names in system settings: use l10n in a real app
+    description: 'When a library import finishes',
+    importance: Importance.defaultImportance,
+  ));
+  await android?.createNotificationChannel(const AndroidNotificationChannel(
+    'reminders', 'Reading reminders',
+    importance: Importance.high, // heads-up: the user asked for this one
+  ));
+}
+```
+
+</CodeBlock>
+
+وفي `AndroidManifest.xml`، الـ `default_notification_channel_id` بيشاور على قناة من دول (`imports`)، عشان أي رسالة من غير `channel_id` تروح لقناة موجودة فعلًا.
+
+<b>الـ background handler</b> function لوحدها برّه أي class، وبتشتغل في isolate تاني في Android:
+
+<CodeBlock label="main.dart">
+
+```dart
+@pragma('vm:entry-point') // without it, release builds tree-shake the function away
+Future<void> onBackgroundPush(RemoteMessage message) async {
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  if (message.data['type'] == 'library.changed') {
+    // a silent "something changed": sync in the background. The next lesson builds this.
+  }
+}
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  FirebaseMessaging.onBackgroundMessage(onBackgroundPush); // top-level, before runApp
+  // ... setupDependencies, createPushChannels, runApp
+}
+```
+
+</CodeBlock>
+
+الـ handler مايقدرش يلمس الـ UI ولا أي حاجة اتعملت في `main`، ولازم يخلص بسرعة: لو عدّى 30 ثانية، الـ OS ممكن يقتل الـ process.
+
+### 4. الضغطة بتفتح الشاشة
+
+<CodeBlock label="app/push_router.dart">
+
+```dart
+/// Every tap, from any app state, ends up here.
+class PushRouter {
+  PushRouter(this._router, this._push, this._auth);
+  final GoRouter _router;
+  final PushMessaging _push;
+  final AuthRepository _auth;
+  final _handled = <String>{};
+  StreamSubscription<PushMessage>? _sub;
+
+  static final _allowed = [RegExp(r'^/library$'), RegExp(r'^/library/books/[\w/%-]+$')];
+
+  static bool isAllowed(String link) => _allowed.any((r) => r.hasMatch(link));
+
+  Future<void> attach() async {
+    _sub = _push.opened.listen(_open);
+    if (await _push.initial() case final message?) await _open(message); // cold start
+  }
+
+  Future<void> _open(PushMessage m) async {
+    if (!_handled.add(m.id)) return; // the same tap reported twice
+    final link = m.link;
+    if (link == null || !isAllowed(link)) return; // anything else: just open the app
+    final me = await _auth.currentUserId();
+    if (me != null && m.uid != null && m.uid != me) return; // a push for a previous account
+    _router.go(link); // the redirect decides if the user may be there yet
+  }
+
+  Future<void> dispose() async => _sub?.cancel();
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `go` مش `push`:</b> الـ `go('/library/books/OL45804W')` بيبني الـ stack كامل من شجرة الـ routes: المكتبة تحت وصفحة الكتاب فوقها، زي الـ deep links في [درس go_router](/course/presentation/router/). فزرار الرجوع بيوديه للمكتبة، مش بيقفل الـ app.
+- <b>من غير context:</b> الـ `GoRouter` اللي بيتعمل في `buildRouter` واحد للـ app، والـ `PushRouter` بياخده من الـ DI. مش محتاج `navigatorKey.currentContext`.
+- <b>الـ `initial()` بعد ما الـ router يتعمل:</b> في `ReadlyApp.initState`، مش بـ `Future.delayed` وأمل.
+- <b>الـ `_handled`:</b> في 16.7.0 الضغطة اللي بتفتح app مقفول في Android بقت بتيجي على `getInitialMessage` بس. في نسخ أقدم كانت بتيجي على الاتنين، فالـ app كان بيفتح الصفحة مرتين. الـ set بيحميك من الحالتين.
+
+بس لو الـ app كان مقفول، أول redirect بيلاقي الـ AuthCubit لسه `AuthUnknown`، فيوديه `/splash`، وبعدها `/library`، والكتاب ضاع. ده اللي [درس الـ Session](/course/di-scale/session/) سماه «الـ deep link اللي الـ splash بيبلعه». الحل إن الـ redirect يحفظ المكان في `from`:
+
+<CodeBlock label="الـ redirect بيفتكر رايح فين">
+
+```dart
+redirect: (context, state) {
+  final at = state.matchedLocation;
+  final here = state.uri.toString();
+  String to(String page) => '$page?from=${Uri.encodeComponent(here)}';
+  String back() {
+    final from = state.uri.queryParameters['from'];
+    return from != null && PushRouter.isAllowed(from) ? from : '/library'; // the same allowlist
+  }
+
+  return switch (auth.state) {
+    AuthUnknown() => at == '/splash' ? null : to('/splash'),
+    Unauthenticated() => at == '/login' ? null : to('/login'),
+    Authenticated() => at == '/splash' || at == '/login' ? back() : null,
+  };
+},
+```
+
+</CodeBlock>
+
+الضغطة بتعمل `go('/library/books/OL45804W')`، والـ redirect بيحوّل لـ `/splash?from=%2Flibrary%2Fbooks%2FOL45804W`. لما الـ session تتأكد، بيرجع لـ `from`. ولو الـ session خلصت، الـ login بياخد نفس الـ `from`، وبعد الدخول المستخدم بيوصل للكتاب.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### إشعارات الحساب القديم
+
+أحمد عمل logout من موبايل العيلة، وأخته عملت login. تاني يوم جالها «بقالك 3 أيام ماقريتش Fantastic Mr Fox»، وده كتاب أحمد. اللي حصل: الـ logout كان والموبايل أوفلاين، فالـ DELETE فشل، والـ `deleteToken` فشل هو كمان. السيرفر لسه شايف الـ token ده بتاع أحمد.
+
+الحماية على 3 مستويات، وكل واحد بيغطي اللي قبله:
+
+1. <b>الـ DELETE والـ `deleteToken` في الـ logout:</b> بيحلوا الحالة العادية.
+2. <b>الـ PUT بالـ installationId في الـ login:</b> أول ما الأخت عملت login، الـ `register` بعت PUT بنفس الـ installationId ومعاه الـ access token بتاعها. السيرفر نقل الجهاز ليها. أي إشعار لأحمد مابقاش ليه token على الموبايل ده. ده الضمان الحقيقي، لأنه مش معتمد على إن الـ logout نجح.
+3. <b>الـ `uid` في الرسالة:</b> لو حاجة لسه وصلت في الثواني ما بين الاتنين، والضغطة جت، الـ `PushRouter` بيقارن `uid` بالمستخدم الحالي ومابيفتحش كتاب حد تاني.
+
+وفيه حالة رابعة: الـ session خلصت (الـ refresh اترفض) والـ tokens اتمسحت. الـ DELETE مستحيل هنا، لأن مفيش token صالح. الحل عند السيرفر: صف الجهاز مربوط بالـ session اللي سجّلته، ولما الـ refresh token يترفض أو يتعمله revoke، الأجهزة بتاعة الـ session دي بتتشال. ده سطر في العقد لازم تطلبه من الـ backend صريح.
+
+### `apns-token-not-set` في Sentry
+
+أول نسخة كانت بتنادي `getToken()` على طول في `main`. في iOS، الـ FCM token محتاج الـ APNs token الأول، وده بييجي من Apple بعد ثواني من الفتح. فالـ `getToken()` كان بيرمي `FirebaseException` بكود `apns-token-not-set` لنسبة كبيرة من المستخدمين، والـ registration ماحصلش، والإشعارات ماوصلتش لحد ما المستخدم يفتح الـ app تاني.
+
+الـ `token()` اللي فوق بيتشيك على `getAPNSToken()` الأول ويرجّع null، والـ `register` بيسيب الموضوع للـ `tokenRefreshes`. والقاعدة الأعم: أي حاجة الـ platform بيجهزها بشكل async، «لسه» حالة طبيعية ليها مكان في الكود، مش exception.
+
+### 60% رفضوا الـ permission
+
+أول نسخة كانت بتطلب الـ permission أول ما الـ app يفتح، قبل حتى الـ login. المستخدم لسه مايعرفش Readly هيبعتله إيه، فداس «Don't Allow». وفي iOS، المرة دي هي المرة الوحيدة: بعدها مفيش dialog تاني، والطريق الوحيد هو الإعدادات. وفي Android 13+، بعد كذا رفض الحالة بتبقى `deniedPermanently`.
+
+| امتى تطلب | ليه |
+| --- | --- |
+| لما المستخدم يفعّل «فكّرني أقرا الكتاب ده» | هو اللي طلب الإشعار، فالـ dialog منطقي |
+| بعد ما يبدأ استيراد من الـ web | «نقولك لما يخلص؟» |
+| مش أول ما الـ app يفتح | مفيش سياق، والرفض غالبًا نهائي |
+
+وقبل الـ dialog بتاع النظام، شاشة صغيرة بتاعتك بتشرح هتبعت إيه، فيها «تمام» و«مش دلوقتي». لو داس «مش دلوقتي»، ماطلبتش من النظام خالص، فالفرصة لسه موجودة. وفي iOS في حل تالت: `provisional`. الإشعارات بتوصل بهدوء في الـ Notification Center من غير dialog، والمستخدم يقرر من هناك يخليها ولا لأ.
+
+ولو الحالة `deniedPermanently` أو `denied` في iOS، زرار في الإعدادات بيفتح إعدادات الإشعارات بتاعة الـ app في النظام (`openAppNotificationSettings()` في flutter_local_notifications)، بدل ما يدوس ومايحصلش حاجة.
+
+### الضغطة فتحت المكتبة مش الكتاب
+
+ده الـ splash اللي بلع الـ link، واتحل بالـ `from` في الـ redirect. وكان فيه نسخة تانية من نفس المشكلة: الـ `initial()` كان بيتنادى في `main` قبل `runApp`، والـ router لسه ماتعملش، فالـ `go` راح على router null. الحل اللي فوق: الـ `PushRouter.attach()` بيتنادى من `ReadlyApp.initState` بعد ما الـ router بقى موجود. ومفيش `Future.delayed(Duration(seconds: 1))`: ده بيشتغل على موبايلك وبيفشل على موبايل أبطأ.
+
+### الإشعار مابيظهرش على Android والـ app في الخلفية
+
+الرسالة بتوصل (الـ logs بتاعة FCM بتقول delivered)، ومفيش حاجة بتظهر على موبايلات معينة. السبب إن الـ `AndroidManifest.xml` كان فيه `default_notification_channel_id` بيشاور على قناة اسمها `high_importance_channel`، والقناة دي عمرها ما اتعملت. ده بالظبط اللي هتلاقيه في [درس Escore](/course/realtime/escore/). القنوات بتتعمل في الكود وقت الفتح (`createPushChannels`)، والـ manifest والسيرفر بيشاوروا على أسامي موجودة فعلًا.
+
+### الـ silent push مابيوصلش على iOS
+
+`library.changed` كان المفروض يصحّي الـ app يعمل sync كل ما حاجة تتغير. على Android شغال كويس. على iOS بيوصل مرة كل كام ساعة، وأحيانًا مابيوصلش خالص. ده مش bug: Apple بتعامل الـ background push (`content-available: 1`) كأولوية منخفضة، والـ data-only لازم يتبعت بـ `apns-priority: 5`، وApple بتقول ماتبعتش أكتر من 2 أو 3 في الساعة، وبتأجلها وبتجمعها حسب البطارية واستخدام الـ app. ولو المستخدم قفل الـ app بالـ swipe، مفيش حاجة هتوصل.
+
+يعني الـ silent push «بونص» زي الـ workmanager بالظبط. الضمان لسه هو الـ catch-up لما الـ app يفتح. وفي Android كمان: لو بتبعت high priority ومش بيطلع منها إشعار ظاهر، FCM بيبدأ يخفّض الـ priority بتاعتك. فالـ `library.changed` بيتبعت normal priority، ومش لكل تعديل: مرة كل ربع ساعة بالكتير لنفس الجهاز.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>الـ push إشارة:</b> بيقول «حصل إيه» والـ link، والبيانات من الـ API. التوصيل مش مضمون، والترتيب مش مضمون، والـ payload 4KB. ولو الإشعار وصل بعد ما الـ app عمل catch-up، مفيش ضرر.
+- <b>notification ولا data؟</b> الإشعار اللي لازم يظهر حتى لو الـ app مقفول: notification + data (الـ OS بيعرضه، والـ data للضغطة). الإشارة اللي مالهاش شكل: data بس، وعارف إنها مش مضمونة على iOS. ماتبعتش data بس وتعرض الإشعار بنفسك من الـ handler عشان «تتحكم أكتر»: الـ handler مش هيشتغل في حالات كتير، والإشعار مش هيظهر.
+- <b>الجهاز مفتاحه الـ installation، مش الـ token:</b> الـ token بيتغير، وFirebase نفسها بتنقل الـ HTTP v1 من `message.token` لـ `message.fid` (الـ Firebase Installation ID)، والـ plugin بتاع Flutter لسه مافيهوش API ليه. لو السيرفر مبني على `installationId` ثابت، النقلة دي بتبقى تغيير في عمود واحد على السيرفر، والـ app مش هيتغير.
+- <b>مفيش بيانات خاصة في الـ payload:</b> نص الإشعار بيظهر على الـ lock screen، والرسالة كلها بتعدّي على Google وApple. «عندك تذكير» أو اسم كتاب مقبول. ملاحظة كتبها المستخدم لأ.
+- <b>الـ link بيتشيك قبل ما يتفتح:</b> allowlist بالـ paths اللي ينفع إشعار يفتحها. لو السيرفر اتخترق أو حد بعت رسالة غلط، مايقدرش يودّي المستخدم لـ `/settings/delete-account` بضغطة. ونفس الـ allowlist على الـ `from` في الـ redirect.
+- <b>اقيس:</b> نسبة اللي عندهم permission، ونسبة الـ registrations اللي بتفشل، والـ `UNREGISTERED` على السيرفر، ونسبة الفتح لكل نوع إشعار. الإشعار اللي محدش بيفتحه بيعلّم المستخدم يقفل الإشعارات كلها.
+- <b>الإعدادات جوه الـ app:</b> المستخدم يقدر يقفل نوع من غير التاني (التذكيرات آه، الاستيراد لأ). ده بيتحفظ على السيرفر، لأن السيرفر هو اللي بيقرر يبعت ولا لأ. وقنوات Android نفسها بتدّي المستخدم نفس التحكم من إعدادات النظام.
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي تدير الـ FCM token مع الـ login والـ logout؟» الـ token بيتسجّل على السيرفر بعد الـ login، ومع كل `onTokenRefresh`، ومرة في الشهر حتى لو ماتغيرش، والسيرفر بيحفظه بـ timestamp ويمسح اللي بيرجع `UNREGISTERED`. ومفتاح الصف هو installation id ثابت، والتسجيل PUT idempotent بيخلّي الجهاز بتاع آخر حد سجّل. في الـ logout: DELETE قبل ما الـ access token يتمسح (بـ timeout، لأن الـ logout لازم يحصل أوفلاين)، و`deleteToken()`. ولو الاتنين فشلوا، الـ PUT في الـ login الجاي بينقل الجهاز، والـ app بيقارن الـ uid اللي في الرسالة بالمستخدم الحالي. ولو الـ session خلصت من السيرفر، السيرفر هو اللي يشيل الأجهزة المربوطة بيها. وفي iOS، الـ token مش موجود قبل الـ APNs token، فالـ app بيستنى `onTokenRefresh` بدل ما يرمي.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«المستخدم داس على إشعار والـ app كان مقفول. إزاي يوصل للشاشة الصح؟» `getInitialMessage()` بعد ما الـ router يتعمل (مش قبل `runApp`، ومش بـ delay ثابت)، و`onMessageOpenedApp` للـ background، والاتنين بيروحوا لـ handler واحد بيتجاهل نفس الـ messageId مرتين. الـ link بيتشيك على allowlist، وبعدين `router.go(link)` عشان الـ stack يتبني صح. والـ redirect بتاع الـ auth بيحفظ المكان في `from` وهو بيحوّل للـ splash أو الـ login، ويرجّعه بعد ما الـ session تتأكد.
+
+</Note>
+
+</Level>
+
+<Quiz>
+
+<Question id="rt-push-1">
+<Ask>ليه الـ `DeviceRegistrar.unregister()` لازم يتنادى بـ `await` قبل `_tokens.clear()`، مش `.ignore()` زي الـ revoke؟</Ask>
+<Answer>
+
+لأن الـ DELETE طلب بيعدّي على الـ AuthInterceptor، والـ interceptor بيقرا الـ access token في `onRequest`. لو الـ clear حصل الأول، الطلب هيطلع من غير auth وياخد 401. الـ revoke مختلف لأنه بيبعت الـ refresh token في الـ body. والـ timeout بيخلّي الـ logout مايستناش أكتر من 3 ثواني لو الشبكة بطيئة.
+
+</Answer>
+</Question>
+
+<Question id="rt-push-2">
+<Ask>الـ logout حصل أوفلاين، والـ DELETE والـ `deleteToken` فشلوا. إيه اللي بيمنع المستخدم الجديد على نفس الموبايل إنه ياخد إشعارات القديم؟</Ask>
+<Answer>
+
+الـ PUT بالـ installationId في الـ login: نفس الـ id الثابت ومعاه access token المستخدم الجديد، والسيرفر بينقل صف الجهاز ليه. وكخط أخير، الـ `uid` اللي في الرسالة: الـ PushRouter مابيفتحش حاجة لو مش بتاعة المستخدم الحالي.
+
+</Answer>
+</Question>
+
+<Question id="rt-push-3">
+<Ask>`getToken()` بيرمي `apns-token-not-set` على iOS لناس كتير. ليه، والحل إيه؟</Ask>
+<Answer>
+
+في iOS، الـ FCM token محتاج الـ APNs token الأول، وده بيوصل من Apple بشكل async بعد الفتح. الحل إنك تتشيك على `getAPNSToken()`، ولو null تعتبرها «لسه» مش error، وتسيب `onTokenRefresh` يكمّل الـ registration لما الـ token يجهز.
+
+</Answer>
+</Question>
+
+<Question id="rt-push-4">
+<Ask>المستخدم داس على تذكير لكتاب والـ app كان مقفول، فاتفتح على المكتبة مش الكتاب. فين المشكلة غالبًا؟</Ask>
+<Answer>
+
+الـ redirect: أول ما الـ app فتح، الـ AuthCubit كان `AuthUnknown`، فالـ redirect حوّل لـ `/splash`، وبعدها لـ `/library`، والـ link ضاع. الحل إن الـ redirect يحفظ المكان (`/splash?from=...`) ويرجع له بعد ما الـ session تتأكد، بعد ما يتشيك عليه بنفس الـ allowlist. ولو `getInitialMessage` بيتنادى قبل ما الـ router يتعمل، دي مشكلة تانية بنفس العرض.
+
+</Answer>
+</Question>
+
+<Question id="rt-push-5">
+<Ask>ليه Readly مابيبنيش الـ sync على `library.changed` كـ silent push، حتى لو شغال كويس على Android؟</Ask>
+<Answer>
+
+لأن على iOS الـ background push أولوية منخفضة، وApple بتأجله وبتجمعه وبتقول 2 لـ 3 في الساعة بالكتير، ومابيوصلش خالص لو المستخدم عمل swipe للـ app. وعلى Android، الـ high priority من غير إشعار ظاهر بيتخفّض. فهو بونص بيسرّع، والضمان لسه الـ catch-up لما الـ app يفتح.
+
+</Answer>
+</Question>
+
+</Quiz>

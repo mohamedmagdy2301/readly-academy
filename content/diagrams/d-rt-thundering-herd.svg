@@ -1,0 +1,42 @@
+<svg viewBox="0 0 760 290" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="من غير jitter كل الموبايلات بترجع في نفس اللحظة في موجات، ومع jitter نفس العدد بيتوزع على الوقت">
+<text x="190" y="24" text-anchor="middle" font-size="13" fill="var(--ink)" font-weight="600">no jitter: 1s, 2s, 4s exactly</text>
+<line x1="30" y1="230" x2="360" y2="230" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#mk-mut)"/>
+<line x1="30" y1="230" x2="30" y2="40" stroke="var(--muted)" stroke-width="1.4"/>
+<text x="356" y="248" text-anchor="end" font-size="10" fill="var(--muted)">seconds after the deploy</text>
+<text x="36" y="50" font-size="10" fill="var(--muted)">reconnects / s</text>
+<line x1="30" y1="80" x2="360" y2="80" stroke="var(--warn)" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="356" y="74" text-anchor="end" font-size="10" fill="var(--warn)">server limit</text>
+<rect x="70" y="60" width="18" height="170" fill="var(--warn)"/>
+<rect x="110" y="66" width="18" height="164" fill="var(--warn)"/>
+<rect x="190" y="72" width="18" height="158" fill="var(--warn)"/>
+<rect x="330" y="78" width="18" height="152" fill="var(--warn)" opacity="0.8"/>
+<text x="79" y="262" text-anchor="middle" font-size="10" fill="var(--ink)">1</text>
+<text x="119" y="262" text-anchor="middle" font-size="10" fill="var(--ink)">2</text>
+<text x="199" y="262" text-anchor="middle" font-size="10" fill="var(--ink)">4</text>
+<text x="339" y="262" text-anchor="middle" font-size="10" fill="var(--ink)">8</text>
+<text x="190" y="282" text-anchor="middle" font-size="11" fill="var(--warn)" class="ar" direction="rtl">كل موجة بتوقّع السيرفر تاني</text>
+
+<line x1="385" y1="20" x2="385" y2="280" stroke="var(--line)" stroke-width="1.2" stroke-dasharray="5 5"/>
+
+<text x="570" y="24" text-anchor="middle" font-size="13" fill="var(--ink)" font-weight="600">equal jitter: half fixed, half random</text>
+<line x1="410" y1="230" x2="740" y2="230" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#mk-mut)"/>
+<line x1="410" y1="230" x2="410" y2="40" stroke="var(--muted)" stroke-width="1.4"/>
+<line x1="410" y1="80" x2="740" y2="80" stroke="var(--warn)" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="736" y="74" text-anchor="end" font-size="10" fill="var(--warn)">server limit</text>
+<rect x="430" y="150" width="14" height="80" fill="var(--accent)"/>
+<rect x="446" y="146" width="14" height="84" fill="var(--accent)"/>
+<rect x="470" y="170" width="14" height="60" fill="var(--accent)"/>
+<rect x="486" y="176" width="14" height="54" fill="var(--accent)"/>
+<rect x="502" y="180" width="14" height="50" fill="var(--accent)"/>
+<rect x="530" y="192" width="14" height="38" fill="var(--accent)"/>
+<rect x="546" y="196" width="14" height="34" fill="var(--accent)"/>
+<rect x="562" y="198" width="14" height="32" fill="var(--accent)"/>
+<rect x="578" y="200" width="14" height="30" fill="var(--accent)"/>
+<rect x="610" y="210" width="14" height="20" fill="var(--accent)"/>
+<rect x="626" y="212" width="14" height="18" fill="var(--accent)"/>
+<rect x="642" y="214" width="14" height="16" fill="var(--accent)"/>
+<rect x="658" y="214" width="14" height="16" fill="var(--accent)"/>
+<rect x="674" y="216" width="14" height="14" fill="var(--accent)"/>
+<rect x="690" y="218" width="14" height="12" fill="var(--accent)"/>
+<text x="570" y="282" text-anchor="middle" font-size="11" fill="var(--good)" class="ar" direction="rtl">نفس العدد، متوزع، وتحت الحد</text>
+</svg>

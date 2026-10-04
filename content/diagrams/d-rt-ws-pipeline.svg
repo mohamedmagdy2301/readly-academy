@@ -1,0 +1,52 @@
+<svg viewBox="0 0 760 330" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="الرسالة من السيرفر بتدخل من RealtimeClient، وLibraryRealtimeSource بيحوّلها لـ DTO، وLiveSyncService بيكتبها في drift، والشاشة بتقرا من watchLibrary زي ما هي">
+<rect x="10" y="20" width="110" height="52" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="65" y="42" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">server</text>
+<text x="65" y="60" text-anchor="middle" font-size="10" fill="var(--muted)">/v1/realtime</text>
+
+<rect x="150" y="20" width="140" height="52" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="220" y="42" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">RealtimeClient</text>
+<text x="220" y="60" text-anchor="middle" font-size="10" fill="var(--muted)">core · one connection</text>
+
+<rect x="320" y="20" width="170" height="52" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="405" y="42" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">LibraryRealtimeSource</text>
+<text x="405" y="60" text-anchor="middle" font-size="10" fill="var(--muted)">book.* → LibraryEventDto</text>
+
+<rect x="520" y="20" width="150" height="52" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="595" y="42" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">LiveSyncService</text>
+<text x="595" y="60" text-anchor="middle" font-size="10" fill="var(--muted)">applyRemoteBook()</text>
+
+<line x1="122" y1="46" x2="146" y2="46" stroke="var(--accent)" stroke-width="1.8" marker-end="url(#mk-acc)"/>
+<text x="134" y="88" text-anchor="middle" font-size="10" fill="var(--muted)">frames</text>
+<line x1="292" y1="46" x2="316" y2="46" stroke="var(--accent)" stroke-width="1.8" marker-end="url(#mk-acc)"/>
+<text x="304" y="88" text-anchor="middle" font-size="10" fill="var(--muted)">JSON</text>
+<line x1="492" y1="46" x2="516" y2="46" stroke="var(--accent)" stroke-width="1.8" marker-end="url(#mk-acc)"/>
+<text x="504" y="88" text-anchor="middle" font-size="10" fill="var(--muted)">DTOs</text>
+
+<rect x="520" y="140" width="150" height="56" rx="10" fill="var(--good-soft)" stroke="var(--good)" stroke-width="1.8"/>
+<text x="595" y="164" text-anchor="middle" font-size="13" fill="var(--ink)" font-weight="600">drift</text>
+<text x="595" y="183" text-anchor="middle" font-size="10" fill="var(--ink)" class="ar" direction="rtl">المصدر الوحيد للحقيقة</text>
+<line x1="595" y1="74" x2="595" y2="136" stroke="var(--accent)" stroke-width="1.8" marker-end="url(#mk-acc)"/>
+
+<rect x="330" y="128" width="150" height="34" rx="8" fill="var(--surface)" stroke="var(--line)" stroke-width="1.4"/>
+<text x="405" y="150" text-anchor="middle" font-size="11" fill="var(--ink)">refresh() / catch-up</text>
+<line x1="482" y1="148" x2="516" y2="158" stroke="var(--muted)" stroke-width="1.6" marker-end="url(#mk-mut)"/>
+<rect x="330" y="176" width="150" height="34" rx="8" fill="var(--surface)" stroke="var(--line)" stroke-width="1.4"/>
+<text x="405" y="198" text-anchor="middle" font-size="11" fill="var(--ink)">user edit + SyncQueue</text>
+<line x1="482" y1="192" x2="516" y2="180" stroke="var(--muted)" stroke-width="1.6" marker-end="url(#mk-mut)"/>
+
+<rect x="520" y="250" width="150" height="44" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="595" y="277" text-anchor="middle" font-size="12" fill="var(--ink)">watchLibrary()</text>
+<line x1="595" y1="198" x2="595" y2="246" stroke="var(--good)" stroke-width="1.8" marker-end="url(#mk-good)"/>
+
+<rect x="330" y="250" width="150" height="44" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="405" y="270" text-anchor="middle" font-size="12" fill="var(--ink)">LibraryCubit</text>
+<text x="405" y="286" text-anchor="middle" font-size="10" fill="var(--muted)">unchanged</text>
+<line x1="518" y1="272" x2="484" y2="272" stroke="var(--good)" stroke-width="1.8" marker-end="url(#mk-good)"/>
+
+<rect x="150" y="250" width="140" height="44" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="220" y="277" text-anchor="middle" font-size="12" fill="var(--ink)">BlocBuilder</text>
+<line x1="328" y1="272" x2="294" y2="272" stroke="var(--good)" stroke-width="1.8" marker-end="url(#mk-good)"/>
+
+<text x="140" y="140" text-anchor="middle" font-size="11" fill="var(--warn)" class="ar" direction="rtl">مفيش سهم من الـ socket للشاشة</text>
+<text x="140" y="158" text-anchor="middle" font-size="11" fill="var(--warn)" class="ar" direction="rtl">كل حاجة بتعدّي على drift</text>
+</svg>

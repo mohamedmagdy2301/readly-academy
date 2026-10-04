@@ -1,0 +1,321 @@
+---
+title: "Push ولا Pull: تختار إزاي"
+description: "الـ polling والـ long polling والـ SSE والـ WebSocket والـ push: كل واحدة بتشتغل إزاي وتمنها إيه، وليه Readly غيّر رأيه بعد ما قال إن الـ polling كفاية، وإزاي تختار من غير ما تقع في «الـ real-time عشان شكله حلو»."
+minutes: 30
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="مستني جواب من البوسطة">
+
+مستني جواب مهم. عندك كذا طريقة تعرف بيها إنه وصل:
+
+1. <b>تعدّي على البوسطة كل ساعة وتسأل</b> «في حاجة ليا؟». أغلب المرات الإجابة «لأ»، والمشوار راح على الفاضي. ولو الجواب وصل بعد ما مشيت بدقيقة، هتعرف بعد ساعة إلا دقيقة.
+2. <b>تروح تقعد في البوسطة</b> وتقول للموظف «أول ما ييجي حاجة ادّيهالي». لو جه جواب بياخده ويمشي ويرجع يقعد تاني. ولو البوسطة قفلت ومفيش حاجة، بيمشي ويرجع تاني الصبح.
+3. <b>تشترك في مندوب</b> بيجيلك البيت كل ما يوصل حاجة باسمك. هو بيكلّمك، وانت مابتكلّموش. ولو غبت يومين، بتقوله «آخر جواب استلمته رقم 47» وهو يجيبلك اللي بعده.
+4. <b>خط تليفون مفتوح</b> بينك وبين البوسطة طول اليوم. هما يقولولك أول ما حاجة توصل، وانت تقولهم «خلّوا الجوابات بتاعة الشغل على جنب». بس الخط ده محتاج حد يتأكد إنه لسه شغال، ولو وقع لازم حد يتصل تاني.
+5. <b>جرس الباب</b>: وانت نايم، الجرس بيصحّيك. مش هيقولك إيه اللي في الجواب، بس هيقولك «في حاجة»، وانت تقوم تشوف.
+
+</Analogy>
+
+الخمسة دول هما بالظبط الطرق اللي الـ app بيعرف بيها إن في جديد على السيرفر:
+
+| التشبيه | الاسم | مين بيبدأ |
+| --- | --- | --- |
+| تعدّي كل ساعة | <b>Polling</b> | الـ app بيسأل |
+| تقعد في البوسطة | <b>Long polling</b> | الـ app بيسأل، والسيرفر بيأخّر الإجابة لحد ما يبقى في حاجة |
+| المندوب | <b>SSE</b> (Server-Sent Events) | السيرفر بيبعت على اتصال مفتوح، في اتجاه واحد |
+| خط التليفون | <b>WebSocket</b> | الاتنين بيبعتوا على اتصال مفتوح، في الاتجاهين |
+| جرس الباب | <b>Push notification</b> (FCM) | السيرفر بيصحّي الـ app حتى لو مقفول |
+
+الأولين اسمهم <b>pull</b>: الـ app بيشد البيانات. والتلاتة اللي بعدهم <b>push</b>: السيرفر بيزق. والدرس ده عن إزاي تختار، لأن كل واحدة ليها تمن، والـ real-time مش ببلاش.
+
+</Level>
+
+<Level n="2" title="الطرق الخمسة بالكود">
+
+### الـ feature اللي بنبنيها
+
+المستخدم بيقرا على التابلت، وغيّر حالة كتاب لـ «خلصته». بعد دقيقة مسك الموبايل، والمكتبة مفتوحة قدامه. لازم الكتاب يبان «خلصته» من غير ما يعمل pull-to-refresh. وكمان لما حاجة تخصه تحصل والـ app مقفول (استيراد 800 كتاب من الـ web خلص)، ييجيله إشعار.
+
+الجزء الأول (الـ app مفتوح) بيتحل بأي طريقة من الأربعة الأولانيين. الجزء التاني (الـ app مقفول) مالوش غير الـ push. خلينا نبص على كل واحدة.
+
+### 1. Polling: اسأل كل فترة
+
+ده الـ `Poller` اللي كتبناه في [درس الطلبات المتقدمة](/course/api-errors/advanced-requests/): كل 30 ثانية `refresh()`، وبيقف لما الـ app يروح الخلفية، وبيبطّأ لما السيرفر يفشل، والـ ETag بيخلّي «مفيش جديد» 304 من غير body. مش هنكرره، بس خلينا نحسب تمنه:
+
+| | كل 30 ثانية | كل 5 ثواني |
+| --- | --- | --- |
+| متوسط التأخير لحد ما التعديل يبان | 15 ثانية | 2.5 ثانية |
+| طلبات لكل مستخدم فاتح الـ app ساعة | 120 | 720 |
+| 50 ألف مستخدم فاتحين في نفس الوقت | حوالي 1,700 طلب في الثانية | 10,000 طلب في الثانية |
+| نسبة الطلبات اللي فيها جديد فعلًا | أقل من 1% | أقل من 0.1% |
+
+كل ما عايز تأخير أقل، بتدفع طلبات أكتر، وأغلبها فاضي. والـ polling مش بيتقدم في الحتة دي: التأخير والتكلفة مربوطين ببعض.
+
+### 2. Long polling: اسأل، والسيرفر يستنى
+
+الطلب نفسه بيستنى على السيرفر لحد ما يبقى في جديد، أو لحد ما مدة معينة تخلص:
+
+<CodeBlock label="long polling بـ dio">
+
+```dart
+Future<void> _longPollLoop() async {
+  while (_active) {
+    try {
+      final res = await _dio.get<Map<String, dynamic>>(
+        '/library/changes',
+        queryParameters: {'since': _cursor, 'wait': 25}, // the server holds it up to 25s
+        options: Options(receiveTimeout: const Duration(seconds: 35)), // longer than the wait
+      );
+      if (res.statusCode == 200) await _apply(res.data!); // something changed
+      // 204: nothing in 25s, ask again right away
+    } on DioException {
+      await Future<void>.delayed(_backoff.next()); // failing: don't hammer the server
+    }
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>التأخير قريب من الصفر:</b> التغيير بيوصل أول ما يحصل، لأن في طلب مستني على السيرفر طول الوقت.
+- <b>بيعدّي من أي حتة:</b> ده HTTP عادي، فأي proxy أو firewall بيعدّي HTTP بيعدّيه.
+- <b>الـ `receiveTimeout` أطول من الـ `wait`:</b> لو العكس، dio هيقفل الطلب قبل ما السيرفر يرد، وكل لفة هتبقى error.
+- <b>التمن:</b> طلب كامل بالـ headers والـ auth مع كل تغيير، وفجوة صغيرة بين ما الرد يوصل والطلب الجاي يطلع. ولو حصل تغييرين ورا بعض في الفجوة دي، الـ `since` هو اللي بيضمن إنك ماتفوّتش حاجة.
+
+### 3. SSE: السيرفر بيكتب، والـ app بيقرا
+
+طلب HTTP واحد، والرد مابيخلصش. السيرفر بيكتب فيه events كل ما يحصل حاجة، بفورمات نص بسيط اسمه `text/event-stream`:
+
+<CodeBlock label="شكل الـ SSE على السلك">
+
+```text
+id: 1043
+event: book.upserted
+data: {"key":"OL45804W","status":"finished","version":7}
+
+id: 1044
+event: book.removed
+data: {"key":"OL27448W","version":3}
+
+```
+
+</CodeBlock>
+
+كل event سطور، وسطر فاضي بيقفله. والـ `id` ده أحلى حاجة في SSE: لو الاتصال وقع، الـ client بيعيد الطلب ومعاه header اسمه `Last-Event-ID: 1044`، والسيرفر يبعت اللي بعده. الـ resume جزء من الـ protocol نفسه.
+
+<CodeBlock label="قراية SSE بـ dio من غير package">
+
+```dart
+Stream<SseEvent> events(int lastId) async* {
+  final res = await _dio.get<ResponseBody>(
+    '/library/events',
+    options: Options(
+      responseType: ResponseType.stream,
+      headers: {'Accept': 'text/event-stream', 'Last-Event-ID': '$lastId'},
+      receiveTimeout: Duration.zero, // no timeout: the response never ends on purpose
+    ),
+  );
+  var id = '';
+  var type = 'message';
+  var data = StringBuffer();
+  final lines = res.data!.stream
+      .cast<List<int>>()
+      .transform(utf8.decoder)
+      .transform(const LineSplitter());
+  await for (final line in lines) {
+    if (line.isEmpty) { // a blank line ends one event
+      if (data.isNotEmpty) yield SseEvent(id, type, data.toString());
+      type = 'message';
+      data = StringBuffer();
+    } else if (line.startsWith('id:')) {
+      id = line.substring(3).trim();
+    } else if (line.startsWith('event:')) {
+      type = line.substring(6).trim();
+    } else if (line.startsWith('data:')) {
+      if (data.isNotEmpty) data.write('\n');
+      data.write(line.substring(5).trimLeft());
+    } // lines starting with ':' are comments the server sends as a keep-alive
+  }
+}
+```
+
+</CodeBlock>
+
+ده `async*` بنفس اللي اتعلمناه في [درس الـ Stream](/course/dart-async/streams/): الشغل بيبدأ مع الـ listen، والـ cancel بيقفل الطلب. والـ parser ده مبسّط (مش بيتعامل مع `retry:` مثلًا)، بس بيوريك إن SSE في الآخر سطور نص على HTTP.
+
+### 4. WebSocket: خط مفتوح في الاتجاهين
+
+بيبدأ كطلب HTTP عادي فيه `Upgrade: websocket`. السيرفر بيرد `101 Switching Protocols`، ومن اللحظة دي الـ TCP connection نفسه بيبقى قناة رسايل في الاتجاهين، من غير HTTP خالص:
+
+<CodeBlock label="أبسط WebSocket">
+
+```dart
+final channel = IOWebSocketChannel.connect(Uri.parse('wss://api.readly.app/v1/realtime'));
+await channel.ready; // the upgrade succeeded
+channel.stream.listen((message) => print('server: $message'));
+channel.sink.add('{"type":"hello"}'); // the app can talk too, on the same connection
+```
+
+</CodeBlock>
+
+التفاصيل كلها في [الدرس الجاي](/course/realtime/websocket/). اللي يهمك دلوقتي: رسالة الـ WebSocket مافيهاش headers ولا cookies، يعني بعد الاتصال الرسالة الواحدة ممكن تبقى bytes قليلة. بس انت اللي هتعمل كل حاجة الـ HTTP كان بيعملهالك: تعرف إن الاتصال مات (heartbeat)، وتعيده (reconnect)، وتتعامل مع الـ token اللي خلص والاتصال لسه مفتوح.
+
+### 5. Push: السيرفر بيصحّي الـ app
+
+الأربع طرق اللي فاتوا محتاجين الـ app شغال. أول ما يروح الخلفية، الـ OS بيعمل suspend للـ app بعد ثواني في iOS، وفي Android الـ Doze والـ App Standby بيقطعوا عنه الشبكة، والاتصال المفتوح بيموت. الطريقة الوحيدة توصل لـ app في الخلفية أو مقفول هي إن الـ OS نفسه يوصّل الرسالة. في Android ده Firebase Cloud Messaging، وفي iOS ده APNs، وFCM بيغطّي الاتنين من ناحيتك. ده [درس الـ Push notifications](/course/realtime/push-notifications/).
+
+### الجدول
+
+| | Polling | Long polling | SSE | WebSocket | Push |
+| --- | --- | --- | --- | --- | --- |
+| الاتجاه | app ← سيرفر، لما يسأل | app ← سيرفر | سيرفر → app | الاتنين | سيرفر → app |
+| التأخير | نص الفترة في المتوسط | قريب من الصفر | قريب من الصفر | قريب من الصفر | ثواني لدقايق، ومش مضمون |
+| الـ app لازم يبقى | مفتوح | مفتوح | مفتوح | مفتوح | أي حالة |
+| الـ resume بعد ما الاتصال يقع | الـ `since` في كل طلب | الـ `since` | `Last-Event-ID` في الـ protocol | انت اللي تعمله | مفيش: الرسالة اللي ضاعت ضاعت |
+| بيعدّي الـ proxies | أيوه | أيوه | غالبًا، لو مابيعملش buffering | أحيانًا لأ | مش مشكلتك |
+| السيرفر | stateless | طلب مستني لكل مستخدم | اتصال مفتوح لكل مستخدم | اتصال مفتوح لكل مستخدم | خدمة بره |
+| في Dart | dio | dio | parsing بإيدك أو package | `web_socket_channel` من فريق Dart | `firebase_messaging` |
+
+<Diagram name="d-rt-transports">
+
+نفس التعديل من التابلت في الخمس طرق. الـ polling بيعرف في اللفة الجاية، والـ long polling والـ SSE والـ WebSocket بيعرفوا على طول، والـ push بيصحّي الـ app اللي مش شغال.
+
+</Diagram>
+
+</Level>
+
+<Level n="3" title="القرار في Readly">
+
+### «الـ polling كفاية»: إيه اللي اتغير؟
+
+في [درس الطلبات المتقدمة](/course/api-errors/advanced-requests/) قلنا: «لـ Readly: polling والشاشة مفتوحة، وrefresh مع كل resume، وده كفاية. مكتبة كتب مش chat». والجملة دي كانت صح وقتها. القرار ماكانش «الـ polling أحسن»، كان «الـ requirement مايستاهلش أكتر».
+
+اللي اتغير هو الـ requirement. Readly نزّل نسخة tablet ونسخة web، والمستخدمين بقوا بيقروا على جهاز ويعلّموا على التاني. والـ analytics قالت إن 40% من الجلسات على الموبايل بتبدأ في أقل من دقيقتين بعد جلسة على جهاز تاني. يعني المستخدم بيقفل التابلت، ويفتح الموبايل، ويلاقي الكتاب لسه «بقراه». الـ refresh مع الـ resume بيحل نص المشكلة: لو الموبايل كان مفتوح أصلًا على المكتبة (مش راجع من الخلفية)، مفيش resume.
+
+والسؤال الصح مش «أنهي تكنولوجيا أحسن؟». السؤال: <b>«المستخدم يستحمل التعديل يتأخر قد إيه؟»</b>
+
+| التأخير المقبول | الحل | مثال |
+| --- | --- | --- |
+| لحد ما يفتح الشاشة تاني | refresh مع الـ resume وpull-to-refresh | إعدادات الحساب |
+| دقيقة أو اتنين | polling والشاشة مفتوحة | الكتالوج، العروض |
+| ثواني، والشاشة مفتوحة | اتصال مفتوح: SSE أو WebSocket | مكتبة على كذا جهاز، نتيجة ماتش |
+| ثواني، والـ app مقفول | push، والبيانات من الـ API | «الاستيراد خلص»، رسالة جديدة |
+
+المكتبة على كذا جهاز وقعت في الصف التالت. والإشعارات في الرابع.
+
+### الـ app مش دايمًا شغال
+
+أي اتصال مفتوح بيعيش طول ما الـ app في الـ foreground. وده بيحدد الـ architecture كلها:
+
+<Diagram name="d-rt-app-states">
+
+كل حالة للـ app ليها طريقة بتوصل بيها التحديثات. في الـ foreground اتصال مفتوح، وفي الخلفية والـ app مقفول الـ push بس، ومعاه workmanager للشغل اللي لازم يحصل. ومع كل رجوع للـ foreground، catch-up من الـ API.
+
+</Diagram>
+
+- <b>الـ foreground:</b> الـ WebSocket مفتوح، والتعديل بيوصل في ثانية.
+- <b>رايح الخلفية:</b> بنقفل الاتصال بنفسنا (`AppLifecycleListener.onPause`). الـ OS كده كده هيقتله، والأحسن نقفله بـ close code مفهوم بدل ما السيرفر يكتشف بعد دقيقة إن الطرف التاني مات.
+- <b>الخلفية والـ app مقفول:</b> مفيش اتصال. الإشعار المهم ييجي push، والتعديلات اللي ملهاش إشعار بتستنى.
+- <b>راجع للـ foreground:</b> الاتصال بيتفتح تاني، وأول حاجة بيعملها <b>catch-up</b>: «إيه اللي حصل من آخر مرة؟». ده بيتعمل بطلب HTTP عادي، مش بالـ socket.
+
+### الاتصال المفتوح بيفوّت حاجات
+
+أي push transport بيضيّع events: الاتصال وقع 3 ثواني في الأسانسير، والسيرفر بعت event في الـ 3 ثواني دول. الـ app مكانش موجود عشان يستلمه. ولو بنينا المكتبة على «كل event هيوصل»، المكتبة هتبعد عن السيرفر بالتدريج ومحدش هياخد باله.
+
+القاعدة هي نفس قاعدة الـ broadcast في [درس الـ Stream](/course/dart-async/streams/) ونفس قاعدة الـ connectivity في [درس Offline-first](/course/offline/offline/): <b>الـ event إشارة، والحقيقة في الـ API.</b> الـ event بيشيل البيانات عشان يوفّر طلب في الحالة العادية، بس الصح مايعتمدش عليه. الصح بيجي من catch-up بـ cursor بيحصل مع كل اتصال جديد، وده [درس دمج الأحداث](/course/realtime/merge-cache/).
+
+### WebSocket ولا SSE؟
+
+الـ feature في اتجاه واحد: السيرفر بيقول للـ app «الكتاب ده اتغير». يعني SSE كفاية تقنيًا، وفيه الـ resume جاهز بـ `Last-Event-ID`، وعلى السيرفر هو HTTP عادي. ده اختيار محترم، ولو الـ backend عندك بيدعمه أسهل، ابدأ بيه.
+
+Readly اختار WebSocket، والأسباب دي خاصة بيه مش قاعدة عامة:
+
+- <b>الأدوات على الموبايل:</b> `web_socket_channel` من فريق Dart نفسه، وعلى `dart:io` فيه `pingInterval` بيكشف الاتصال الميت على مستوى الـ protocol. SSE في Dart يا parsing بإيدك زي اللي فوق، يا package من المجتمع (`eventflux` هو الأنشط دلوقتي، وفيه reconnect).
+- <b>الـ proxies اللي بتعمل buffering:</b> بعض الـ proxies والـ CDNs بيستنوا الرد يكمل قبل ما يبعتوه، فالـ SSE بيوصل متكوّم. الـ load balancer بتاع Readly كان بيعمل كده، والـ WebSocket بيعدّي عليه كاتصال TCP من غير buffering.
+- <b>الاتجاه التاني جاي:</b> الـ product عايز «اقرا مع صاحبك» السنة الجاية، وده محتاج الـ app يبعت. والقرار ده لوحده مايكفيش (ماتبنيش لمستقبل مش متأكد منه)، بس لما الأسباب التانية متساوية، بيرجّح.
+
+والـ resume اللي SSE بيدّيهولك ببلاش، هنعمله بإيدينا بـ `seq` في كل event وcatch-up بالـ HTTP. ده تمن الاختيار، وهو مكتوب.
+
+### الخطة الكاملة
+
+| الحالة | اللي بيحصل | الدرس |
+| --- | --- | --- |
+| الـ app مفتوح | WebSocket واحد للـ app كله، والـ events بتتكتب في drift | [الـ WebSocket](/course/realtime/websocket/) |
+| الاتصال وقع | reconnect بـ backoff وjitter، وheartbeat يكشف الموت، وrefresh للـ token | [الـ reconnect](/course/realtime/reconnect/) |
+| رجع الاتصال | catch-up بالـ cursor، والدمج بالـ version | [دمج الأحداث](/course/realtime/merge-cache/) |
+| الـ socket مش عارف يتوصل خالص | الـ `Poller` القديم كـ fallback | [الـ reconnect](/course/realtime/reconnect/) |
+| حاجة تخص المستخدم والـ app مقفول | push notification بـ FCM، والضغطة بتفتح الشاشة | [الـ Push](/course/realtime/push-notifications/) |
+| تعديلات أوفلاين والـ app اتقفل | workmanager بيشغّل الـ outbox | [الـ sync في الخلفية](/course/realtime/background-sync/) |
+
+ولاحظ اللي ماتغيرش: الشاشة لسه بتقرا من `watchLibrary()` بتاع drift، والكتابة لسه بتروح للـ `SyncQueue`. الـ real-time طريق جديد بيكتب في الـ DB، بالظبط زي الـ `refresh()`. الـ `LibraryCubit` مش هيعرف إنه موجود.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>ابدأ من التأخير المقبول، مش من التكنولوجيا:</b> اكتب في الـ ticket «التعديل يبان على الجهاز التاني في أقل من X ثانية والشاشة مفتوحة». لو X دقيقة، الـ polling بيحلها في 40 سطر وسيرفر stateless. لو ثواني، اتصال مفتوح. ولو «والـ app مقفول»، push. كل خطوة فوق بتضاعف التعقيد.
+- <b>الـ real-time مش بديل للـ refresh:</b> الـ catch-up والـ refresh مع الـ resume والـ pull-to-refresh بيفضلوا موجودين. الاتصال المفتوح بيقلّل التأخير، والطرق القديمة بتضمن الصح. لو شلت الـ refresh عشان «خلاص عندنا WebSocket»، أول اتصال يقع هيخلّي المكتبة غلط لحد ما المستخدم يعيد تسطيب الـ app.
+- <b>السيرفر بقى stateful:</b> كل مستخدم فاتح الـ app اتصال مفتوح على instance معين. الـ deploy بيقطع كل الاتصالات مرة واحدة، فكلهم بيرجعوا في نفس الثانية (ده سبب الـ jitter في [الدرس الجاي بعد الجاي](/course/realtime/reconnect/)). ولو عندك أكتر من instance، التعديل اللي حصل على instance لازم يوصل لاتصالات المستخدم على instances تانية، وده محتاج pub/sub (زي Redis). اسأل الـ backend عن ده قبل ما تكتب سطر.
+- <b>الـ push مش transport للبيانات:</b> التوصيل مش مضمون، والترتيب مش مضمون، والـ payload محدود (4KB في FCM). الـ push بيقول «في جديد» أو «حصل كذا»، والـ app بيجيب التفاصيل من الـ API. ده نفس سبب إن الـ event على الـ socket إشارة.
+- <b>الـ fallback جزء من التصميم:</b> شبكات شركات وفنادق بتقفل الـ WebSocket. الـ app لازم يشتغل كويس من غيره: الـ `Poller` بيشتغل لما الـ socket يفشل كذا مرة ورا بعض، والمستخدم مش هيعرف الفرق غير في التأخير.
+- <b>قيس قبل وبعد:</b> «الوقت من التعديل على جهاز لحد ما يبان على التاني» metric حقيقي: السيرفر بيحط `occurredAt` في الـ event، والـ app بيسجّل الفرق. من غيره مش هتعرف الـ WebSocket فرق ولا لأ.
+
+<Note kind="interview" title="سؤال interview">
+
+«عندك feature محتاجة بيانات تتحدث لحظيًا. polling ولا WebSocket ولا SSE ولا push؟» ابدأ بسؤالين: التأخير المقبول قد إيه، والـ app لازم يبقى مفتوح ولا لأ. دقيقة والشاشة مفتوحة: polling بـ ETag وbackoff، وسيرفر stateless. ثواني والشاشة مفتوحة: اتصال مفتوح. SSE لو اتجاه واحد وفيه resume بـ `Last-Event-ID` جاهز، وWebSocket لو محتاج الاتجاهين أو الـ infrastructure بتعمل buffering للـ SSE. والـ app مقفول: push، بس كإشارة والبيانات من الـ API. وفي كل الحالات: الاتصال المفتوح بيفوّت events، فلازم catch-up بـ cursor مع كل reconnect، والـ refresh العادي يفضل. والتمن: سيرفر stateful، وheartbeat، وreconnect بـ jitter، وauth للاتصال نفسه.
+
+</Note>
+
+</Level>
+
+<Quiz>
+
+<Question id="rt-pvp-1">
+<Ask>الـ polling كل 5 ثواني بدل 30 بيقلّل التأخير لـ 2.5 ثانية. إيه المشكلة؟</Ask>
+<Answer>
+
+التكلفة بتزيد 6 أضعاف وأغلب الطلبات فاضية: 720 طلب في الساعة لكل مستخدم، وأقل من 0.1% فيها جديد. في الـ polling التأخير والتكلفة مربوطين ببعض، فلو محتاج ثواني، اتصال مفتوح (SSE أو WebSocket) بيدّيك التأخير ده من غير طلبات فاضية.
+
+</Answer>
+</Question>
+
+<Question id="rt-pvp-2">
+<Ask>الـ WebSocket مفتوح والمكتبة بتتحدث لحظيًا. ليه لسه محتاج refresh مع الـ resume وcatch-up مع كل reconnect؟</Ask>
+<Answer>
+
+لأن الاتصال المفتوح بيفوّت events: وقع ثواني، أو الـ app كان في الخلفية والاتصال مقفول. أي event اتبعت في الوقت ده ضاع. الـ event إشارة بتوفّر طلب، والصح بيجي من الـ API بـ cursor: «هات اللي حصل من آخر مرة».
+
+</Answer>
+</Question>
+
+<Question id="rt-pvp-3">
+<Ask>الـ feature في اتجاه واحد (السيرفر بيقول للـ app إن كتاب اتغير). ليه SSE اختيار منطقي، وإيه اللي ممكن يخليك تختار WebSocket برضه؟</Ask>
+<Answer>
+
+SSE مناسب للاتجاه الواحد، وهو HTTP عادي على السيرفر، وفيه resume جاهز بـ `Last-Event-ID`. الأسباب اللي ممكن ترجّح WebSocket: proxy أو load balancer بيعمل buffering للرد فالـ SSE يوصل متكوّم، وأدوات Dart (`web_socket_channel` و`pingInterval`)، واتجاه تاني جاي فعلًا. ولو اخترت WebSocket، الـ resume بتعمله بإيدك.
+
+</Answer>
+</Question>
+
+<Question id="rt-pvp-4">
+<Ask>ليه مانبعتش بيانات الكتاب كاملة في الـ push notification ونكتبها في drift على طول؟</Ask>
+<Answer>
+
+الـ push توصيله وترتيبه مش مضمونين، والـ payload محدود. لو المكتبة معتمدة عليه هتبعد عن السيرفر من غير ما حد ياخد باله. الـ push إشارة («في جديد»، «الاستيراد خلص»)، والـ app يجيب البيانات من الـ API.
+
+</Answer>
+</Question>
+
+<Question id="rt-pvp-5">
+<Ask>الـ app راح الخلفية. تسيب الـ WebSocket مفتوح؟</Ask>
+<Answer>
+
+لأ، اقفله بنفسك في `onPause`. الـ OS هيوقف الشبكة بتاعته كده كده، فالاتصال هيموت، والسيرفر مش هيعرف غير لما الـ heartbeat يفشل. القفل بـ close code واضح بيوفّر موارد على السيرفر وبطارية على الموبايل. ولما الـ app يرجع، الاتصال بيتفتح وبيعمل catch-up.
+
+</Answer>
+</Question>
+
+</Quiz>
