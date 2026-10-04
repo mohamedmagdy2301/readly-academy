@@ -2,7 +2,6 @@
 title: "الـ Flavors والـ environments والـ release"
 description: "dev وstaging وprod من نفس الكود: config من ملف لكل environment داخل من الـ DI، وتلات apps جنب بعض على الموبايل، وrelease بيطلع من الـ CI متوقّع ومعاه الـ symbols."
 minutes: 30
-draft: true
 ---
 
 <Level n="1" title="الفكرة بتشبيه">
@@ -604,6 +603,12 @@ jobs:
 - <b>iOS:</b> job تاني على `macos-latest` بنفس الخطوات: الـ certificate والـ profile من الـ secrets، و`flutter build ipa` بنفس الـ flags، ونفس `dart run sentry_dart_plugin` (بيرفع الـ dSYMs كمان)، والرفع لـ TestFlight.
 
 </LessonPart>
+
+<Note kind="info" title="الخطوة الجاية">
+
+كده خلصت دروس الكورس. اعمل مهام الوحدة دي في درس «التطبيق والمهام»، وبعدها راجع كل حاجة من صفحة المراجعة: الكروت اللي علّمتها «راجعها تاني» وأسئلة الـ interviews.
+
+</Note>
 
 <Quiz>
 
