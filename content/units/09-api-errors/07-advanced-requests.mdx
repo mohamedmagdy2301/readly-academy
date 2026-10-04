@@ -1,0 +1,711 @@
+---
+title: "طلبات متقدمة: متوازية وملغية ومتخزنة ومرفوعة"
+description: "إمتى تبعت الطلبات مع بعض وإمتى ورا بعض، وإزاي الصفحة تعيش لو جزء منها فشل، ومنع الطلب المكرر، والإلغاء، والـ HTTP caching، والـ optimistic update، والرفع والتنزيل، والـ polling."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="مطبخ وقت الزحمة">
+
+مطبخ مطعم والطلبات نازلة عليه. الشيف الشاطر مابيعملش طبق ورا طبق: الرز والسلطة بيتعملوا في نفس الوقت لأن مالهمش علاقة ببعض، بس الصوص لازم يستنى اللحمة تتشوي الأول. لو اتنين جرسونات طلبوا نفس الطبق لنفس الترابيزة في نفس الدقيقة، بيعمله مرة واحدة. لو الزبون قام ومشي، بيوقّف طبقه بدل ما يكمّله ويرميه. ولو الحلو خلص، مابيرجّعش الطلب كله: بيقدّم الأكل ويقول «الحلو خلص النهارده». والطبق اللي لسه طالع من شوية ومستني في الـ warmer، بيسأل «لسه زي ما هو؟» قبل ما يطبخه من الأول.
+
+</Analogy>
+
+كل جملة في التشبيه ده مشكلة حقيقية في Readly. صفحة تفاصيل الكتاب محتاجة 3 طلبات: الـ work والمؤلف من Open Library، والملاحظات من الـ API بتاعنا. فيه طلبات لازم تستنى بعض، وطلبات ممكن تخرج مع بعض. وفيه طلبات بتتكرر من غير لازمة، وطلبات بتكمّل بعد ما الشاشة اتقفلت، وبيانات بتتحمّل كل مرة وهي ماتغيرتش.
+
+الدرس ده عن الحاجات دي: الترتيب، والفشل الجزئي، والتكرار، والإلغاء، والكاش، والـ optimistic update، والملفات، والـ polling. كل واحدة فيها فايدة وفيها خطر، وفي Level 4 جدول بيقولك إمتى تستخدم أنهي واحدة.
+
+</Level>
+
+<Level n="2" title="متوازي ولا ورا بعض">
+
+السؤال الوحيد اللي بيحدد: <b>الطلب ده محتاج رد الطلب اللي قبله؟</b>
+
+- <b>المؤلف محتاج الـ work:</b> الـ `GET /authors/OL34184A.json` محتاج الـ key بتاع المؤلف، والـ key ده جوه رد الـ `GET /works/OL45804W.json`. فلازم يستنى.
+- <b>الملاحظات مش محتاجة الـ work:</b> الـ `GET /books/OL45804W/notes` محتاج الـ `BookId` بس، وده معروف من الـ route قبل أي طلب. فممكن يخرج في نفس اللحظة.
+
+أول خطوة إن الـ WorkDto يقرا keys المؤلفين:
+
+<CodeBlock label="WorkDto بيقرا المؤلفين">
+
+```dart
+// "authors": [{"author": {"key": "/authors/OL34184A"}}]  ->  ["OL34184A"]
+authorIds: [
+  for (final a in (json['authors'] as List? ?? const []))
+    if (a case {'author': {'key': final String key}}) key.split('/').last,
+],
+
+// catalog_remote_source.dart
+Future<AuthorDto> fetchAuthor(String authorId) async {
+  final res = await _dio.get<Map<String, dynamic>>('/authors/$authorId.json');
+  return AuthorDto.fromJson(res.data!);
+}
+```
+
+</CodeBlock>
+
+الـ map pattern بيتأكد من الشكل والنوع في سطر واحد، والعنصر اللي شكله غلط بيتشال بدل ما يرمي TypeError، زي ما شفنا في درس الـ Data في الوحدة 3.
+
+<CodeBlock label="الـ repository: ورا بعض لأن التاني محتاج الأول">
+
+```dart
+@override
+Future<Result<BookDetails>> getBookDetails(BookId id) => guard(() async {
+      final work = await _remote.fetchWork(id.value);
+      final authorId = work.authorIds.firstOrNull;
+      // needs the work's answer: this one can't start earlier
+      final author = authorId == null ? null : await _remote.fetchAuthor(authorId);
+      return work.toEntity(author: author?.toEntity());
+    });
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ use case: مع بعض لأنهم مستقلين">
+
+```dart
+// features/catalog/domain/load_book_page.dart
+class BookPage {
+  const BookPage({required this.details, required this.notes});
+  final BookDetails details;
+  final List<Note> notes;
+}
+
+class LoadBookPage {
+  LoadBookPage(this._catalog, this._notes);
+  final CatalogRepository _catalog;
+  final NotesRepository _notes;
+
+  Future<Result<BookPage>> call(BookId id) async {
+    // both start now; we wait for the slower one
+    final (details, notes) =
+        await (_catalog.getBookDetails(id), _notes.getNotes(id.value)).wait;
+    return switch ((details, notes)) {
+      (Success(value: final d), Success(value: final n)) =>
+        Success(BookPage(details: d, notes: n)),
+      (Err(:final failure), _) || (_, Err(:final failure)) => Err(failure),
+    };
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `.wait` على record:</b> اللي شفناه في درس «الأخطاء في Dart من الصفر». الطلبين بيبدأوا لما الـ futures تتعمل، مش لما تستناهم. والنتيجة record بنفس الأنواع، فمفيش `as` ولا `List<dynamic>`.
+- <b>مفيش ParallelWaitError هنا:</b> كل future بيرجّع Result، والـ guard ماسك الـ exceptions جوه. لو `.wait` رمى، يبقى في exception عدّت من الـ guard، يعني bug، ومن الصح إنه يضرب.
+- <b>الـ switch على الـ record:</b> الحالتين مع بعض في سطر، والـ `||` بيمسك أي Err من الاتنين. والـ sealed بيخلي الـ compiler يتأكد إن مفيش حالة ناقصة.
+- <b>الوقت:</b> ورا بعض: 300 للـ work و250 للمؤلف و200 للملاحظات، يعني 750ms. دلوقتي الملاحظات بتخلص وهي مستنية سلسلة الـ work والمؤلف، فالصفحة جاهزة بعد 550ms.
+
+<Diagram name="d-api-parallel-timeline">
+
+الـ author بيستنى الـ work لأنه محتاج رده، والملاحظات بتبدأ معاه من أول لحظة. ولما الـ author يفشل، سطر واحد في الصفحة هو اللي بيختفي.
+
+</Diagram>
+
+| العلاقة بين الطلبات | تبعتهم إزاي | مثال من Readly |
+| --- | --- | --- |
+| التاني محتاج رد الأول | ورا بعض: `await` وبعدين `await` | الـ work ثم المؤلف |
+| مالهمش علاقة ببعض | مع بعض: `(a, b).wait` | الـ work والملاحظات |
+| كتابات لازم توصل بترتيب | ورا بعض، وغالبًا من queue | «ضيف الكتاب» ثم «غيّر حالته» في درس Offline-first |
+
+الـ diagram فيه حاجة الكود ده لسه مابيعملهاش: المؤلف فشل، والصفحة لسه شغالة. في الكود اللي فوق، أي فشل بيوقّع الصفحة كلها. ده أول مشكلة في Level 3.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### صفحة الكتاب كلها error عشان اسم المؤلف فشل
+
+`/authors/OL34184A.json` ضرب `receiveTimeout`. الـ fetchAuthor جوه نفس الـ guard بتاع الـ work، فالـ guard رجّع Err، والمستخدم شاف `ErrorView` مكان صفحة كاملة، وكل اللي ناقص سطر «تأليف Roald Dahl». ونفس الكلام لو الملاحظات فشلت: الكتاب نفسه مش هيظهر.
+
+الحل إنك تقسم الصفحة لأجزاء، وكل جزء تسأل عليه: <b>لو ده ناقص، الصفحة لسه ليها لازمة؟</b>
+
+| الجزء | لو فشل | ليه |
+| --- | --- | --- |
+| الـ work (العنوان والغلاف والوصف) | الصفحة كلها error | من غيره مفيش كتاب نعرضه |
+| المؤلف | السطر يختفي | معلومة زيادة، والصفحة مفيدة من غيرها |
+| الملاحظات | الجزء ده بس عليه error وزرار «حاول تاني» | لو اختفت بهدوء، المستخدم هيفتكر إن ملاحظاته اتمسحت |
+
+في درس «الأخطاء في الشاشة» شفنا الشكل من ناحية الـ state: `BookDetailsLoaded(book, author: null)` والصفحة بتتعرض. هنا هنبنيه من تحت، في الـ repository والـ use case:
+
+<CodeBlock label="المؤلف في guard لوحده، وفشله بيرجّع null">
+
+```dart
+@override
+Future<Result<BookDetails>> getBookDetails(BookId id) async {
+  final work = await guard(() => _remote.fetchWork(id.value));
+  switch (work) {
+    case Err(:final failure):
+      return Err(failure); // no work, no page
+    case Success(value: final dto):
+      final author = await _author(dto.authorIds.firstOrNull);
+      return Success(dto.toEntity(author: author));
+  }
+}
+
+// optional: a failure here hides one line, it never fails the page
+Future<Author?> _author(String? authorId) async {
+  if (authorId == null) return null;
+  final result = await guard(() => _remote.fetchAuthor(authorId));
+  return result.valueOrNull?.toEntity(); // the guard already logged the failure
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الملاحظات Result جوه الصفحة">
+
+```dart
+class BookPage {
+  const BookPage({required this.details, required this.notes});
+  final BookDetails details;          // critical: no details, no page
+  final Result<List<Note>> notes;     // optional: its own error and retry
+}
+
+Future<Result<BookPage>> call(BookId id) async {
+  final (details, notes) =
+      await (_catalog.getBookDetails(id), _notes.getNotes(id.value)).wait;
+  // only the critical part decides if the page fails
+  return details.map((d) => BookPage(details: d, notes: notes));
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `map` بتاع الـ Result:</b> من درس «من الـ Exception للـ Failure». لو الـ details Err، الـ Err بيعدّي زي ما هو، ولو Success بيتحول لـ BookPage.
+- <b>الشاشة بتعمل switch على `page.notes`:</b> الـ Success بيعرض الليست، والـ Err بيعرض `ErrorView` صغير مكان الجزء ده بس، بـ `onRetry: failure.canRetry ? cubit.retryNotes : null`. والـ `retryNotes` بيطلب الملاحظات بس، ويعمل emit لـ BookPage جديدة بنفس الـ details.
+- <b>null ولا نوع؟</b> المؤلف null لأن الشاشة بتعمل حاجة واحدة في الحالتين: تخبّي السطر. الملاحظات Result لأن الشاشة محتاجة تفرّق بين «مفيش ملاحظات» و«ماقدرناش نجيبها». الشكل بييجي من اللي الشاشة محتاجة تعمله.
+- <b>الفشل الجزئي بيتسجل مرة:</b> الـ guard بتاع المؤلف بيسجّله زي أي Failure، والـ `valueOrNull` من درس «من الـ Exception للـ Failure» بيرميه بهدوء. مابنسجّلش تاني في الـ `_author`.
+
+### نفس الطلب اتبعت 3 مرات في نفس الثانية
+
+في الـ logs لقيت `GET /works/OL45804W.json` تلات مرات في 200ms. الكتالوج بيعمل prefetch لتفاصيل الكتاب لما يظهر في الليست، والمستخدم داس عليه في نفس اللحظة فشاشة التفاصيل طلبته، وكارت «كتب مشابهة» تحت طلبه كمان. تلات طلبات لنفس الرد، وتلات أضعاف الـ data، ولو الطلبات كتير كده Open Library هيبدأ يرجّع 429.
+
+الحل <b>request coalescing</b>: لو في طلب GET لنفس الـ URL شغال دلوقتي، الطلب التاني مايخرجش، بيستنى نفس الـ Future:
+
+<CodeBlock label="core/network/in_flight.dart">
+
+```dart
+class InFlight {
+  final _running = <String, Future<Object?>>{};
+
+  Future<T> run<T>(String key, Future<T> Function() request) {
+    final existing = _running[key];
+    if (existing != null) return existing as Future<T>; // join the running one
+
+    final future = request().whenComplete(() => _running.remove(key));
+    _running[key] = future;
+    return future;
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ data source بيستخدمه للقراية بس">
+
+```dart
+class CatalogRemoteSource {
+  CatalogRemoteSource(this._dio, this._inFlight);
+  final Dio _dio;
+  final InFlight _inFlight;
+
+  Future<WorkDto> fetchWork(String workId) => _inFlight.run(
+        'GET /works/$workId',
+        () async {
+          final res = await _dio.get<Map<String, dynamic>>('/works/$workId.json');
+          return WorkDto.fromJson(res.data!);
+        },
+      );
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `whenComplete`:</b> بيشيل الـ key لما الطلب يخلص، نجح أو فشل. من غيره، أول فشل هيفضل محفوظ، وكل طلب بعده هياخد نفس الـ error للأبد.
+- <b>ده مش كاش:</b> أول ما الطلب يخلص بيتشال. الطلب اللي بييجي بعدها بثانية بيخرج للشبكة عادي. الكاش موضوع تاني تحت.
+- <b>الـ key:</b> الـ method والـ path والـ query parameters كلهم. `search.json?q=dahl&page=1` و`page=2` طلبين مختلفين. ولو الرد بيختلف حسب المستخدم، الـ key لازم يفرّق، أو الأبسط ماتعملش coalescing للطلبات دي.
+- <b>الكل بياخد نفس الـ object:</b> الـ DTO هنا immutable (freezed)، فمفيش مشكلة. لو حد بيعدّل في الرد اللي رجعله، التانيين هيشوفوا التعديل.
+
+إمتى يبقى غلط:
+
+- <b>الكتابة:</b> اتنين POST لـ `/books/OL45804W/notes` جايين من ضغطتين يعني ملاحظتين، أو ضغطة مكررة. الضغطة المكررة مكانها الـ Cubit (منع الضغط المتكرر في درس الـ Cubit)، والتكرار على السيرفر مكانه الـ Idempotency-Key. الـ coalescing للقراية بس.
+- <b>مع الإلغاء:</b> لو شاشة لغت الطلب المشترك، كل اللي مستنيينه هياخدوا `cancel`. فالطلب اللي ممكن يتلغي مايدخلش الـ InFlight، أو مايتلغيش. ده بيوصلنا للمشكلة الجاية.
+
+### الشاشة اتقفلت والطلب لسه شغال
+
+المستخدم فتح صفحة الكتاب وقفلها بعد نص ثانية. الـ `if (isClosed) return;` في الـ Cubit بيحمي الـ state، بس الطلبات لسه بتحمّل. للطلبات الصغيرة ده مش مهم. بس لو الصفحة بتطلب 5 حاجات، والمستخدم بيقلّب بين 20 كتاب بسرعة، فده 100 طلب محدش هيشوف ردهم، على نت المستخدم وبطاريته.
+
+في درس dio في الوحدة 3، الـ CatalogRemoteSource كان بيلغي البحث القديم بـ `CancelToken`، والقرار كان جوه الـ data source لأنه عارف إن «بحث جديد يلغي القديم». هنا القرار مختلف: الشاشة هي اللي عارفة إمتى اتقفلت. والـ Cubit مايعرفش dio. الحل abstraction صغيرة في core:
+
+<CodeBlock label="core/cancel_scope.dart: مفيش dio هنا">
+
+```dart
+class CancelScope {
+  final _callbacks = <void Function()>[];
+  bool _cancelled = false;
+
+  bool get isCancelled => _cancelled;
+
+  void onCancel(void Function() callback) {
+    if (_cancelled) return callback();
+    _callbacks.add(callback);
+  }
+
+  void cancel() {
+    if (_cancelled) return;
+    _cancelled = true;
+    for (final callback in _callbacks) {
+      callback();
+    }
+    _callbacks.clear();
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ data layer بس اللي بيحوّله لـ CancelToken">
+
+```dart
+// data/network/cancel_scope_dio.dart
+extension CancelScopeDio on CancelScope? {
+  CancelToken? toCancelToken() {
+    final scope = this;
+    if (scope == null) return null;
+    final token = CancelToken();
+    scope.onCancel(() => token.cancel('screen closed'));
+    return token;
+  }
+}
+
+// catalog_remote_source.dart: fetchAuthor(authorId, {CancelScope? scope})
+//   _dio.get('/authors/$authorId.json', cancelToken: scope.toCancelToken())
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ Cubit بيقفل الـ scope مع نفسه">
+
+```dart
+class BookDetailsCubit extends Cubit<BookDetailsState> {
+  BookDetailsCubit(this._loadBookPage) : super(const BookDetailsLoading());
+  final LoadBookPage _loadBookPage;
+  final _scope = CancelScope();
+
+  Future<void> load(BookId id) async {
+    final result = await _loadBookPage(id, scope: _scope);
+    if (isClosed) return; // still needed: a reply can land right before the cancel
+    emit(switch (result) {
+      Success(:final value) => BookDetailsLoaded(value),
+      Err(:final failure) => BookDetailsError(failure),
+    });
+  }
+
+  @override
+  Future<void> close() {
+    _scope.cancel();
+    return super.close();
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ scope بيعدّي من كل طبقة:</b> الـ use case والـ repository بياخدوا `{CancelScope? scope}` ويبعتوه لتحت. ده التمن: parameter زيادة في كل signature. بس مفيش طبقة فوق الـ data بتعرف dio.
+- <b>الطلب الملغي بيرجع Failure:</b> الـ `_mapDio` بيحوّل الـ `cancel` لـ `ServerFailure(code: 'cancelled')` اللي مابتتعرضش ومابتتبلّغش، والـ Cubit اتقفل أصلًا، فمحدش بيشوفها.
+- <b>الكتابة مابتتلغيش مع الشاشة:</b> المستخدم كتب ملاحظة وداس «حفظ» وقفل الشاشة على طول. هو متوقع إنها اتحفظت. والإلغاء كمان مابيرجّعش اللي السيرفر عمله: ممكن الطلب يكون وصل. الإلغاء للقراية.
+- <b>مش مع الـ coalescing:</b> لو `fetchWork` مشترك بين شاشتين، الإلغاء من واحدة هيلغيه للتانية. الطلبات المشتركة مابتاخدش scope.
+
+والبديل الأبسط: ماتلغيش، واكتفي بالـ `isClosed`. لو الطلبات صغيرة وقليلة، ده كفاية تمامًا، والـ CancelScope يستاهل لما القياس يقول إن في طلبات كتير بتضيع: صفحة فيها طلبات كتير، أو ملفات كبيرة.
+
+### بنحمّل نفس الكتالوج كل مرة
+
+المستخدم فتح «Fantastic Mr Fox» الصبح، وفتحه تاني بالليل. الـ work ماتغيرش، بس الـ app نزّل الـ JSON كله تاني. ونفس الكلام لـ `GET /library` لما الـ poller (تحت) بيسأل كل دقيقة. HTTP نفسه عنده حل للموضوع ده من زمان:
+
+| الـ header | مين بيبعته | معناه |
+| --- | --- | --- |
+| `ETag: "a1b2"` | السيرفر مع الرد | بصمة للنسخة دي من البيانات |
+| `If-None-Match: "a1b2"` | الـ app مع الطلب التاني | «عندي النسخة a1b2، لو هي هي ماتبعتهاش» |
+| `304 Not Modified` | السيرفر | «هي هي»، من غير body |
+| `Cache-Control: max-age=3600` | السيرفر مع الرد | «الرد ده صالح ساعة، ماتسألنيش قبلها» |
+
+يعني بدل ما الرد ييجي كامل، بييجي 304 فاضي، والـ app يستخدم النسخة اللي عنده. والـ backend بتاعنا على Express بيعمل `ETag` لكل `res.json` لوحده، وبيرد 304 لو الـ `If-None-Match` مطابق، من غير ما تكتب سطر.
+
+<CodeBlock label="EtagInterceptor مبسّط">
+
+```dart
+class EtagInterceptor extends Interceptor {
+  EtagInterceptor(this._store);
+  final EtagStore _store; // url -> (etag, body), a small drift table
+
+  @override
+  void onRequest(RequestOptions options, RequestInterceptorHandler handler) async {
+    if (options.method == 'GET') {
+      final cached = await _store.read(options.uri.toString());
+      if (cached != null) {
+        options.headers['If-None-Match'] = cached.etag;
+        options.extra['cachedBody'] = cached.body; // read once, used on 304
+      }
+    }
+    handler.next(options);
+  }
+
+  @override
+  void onResponse(Response<dynamic> response, ResponseInterceptorHandler handler) async {
+    final options = response.requestOptions;
+    if (response.statusCode == 304) {
+      response
+        ..statusCode = 200 // the layers above never see 304
+        ..data = options.extra['cachedBody'];
+    } else if (options.method == 'GET') {
+      final etag = response.headers.value('etag');
+      if (etag != null) await _store.write(options.uri.toString(), etag, response.data);
+    }
+    handler.next(response);
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ validateStatus:</b> dio بيعتبر أي حاجة برا 2xx error. من غير `validateStatus: (s) => s != null && (s < 300 || s == 304)` في الـ BaseOptions، الـ 304 هيدخل `onError` والـ guard هيحوّله ServerFailure.
+- <b>الـ body بيتقري مرة:</b> في `onRequest` وبيتحط في الـ `extra`. لو قريته تاني في `onResponse`، ممكن يكون اتمسح في النص (logout مثلًا)، فيبقى عندك 304 من غير body.
+- <b>الـ max-age:</b> المبسّط ده بيسأل السيرفر كل مرة، بس السؤال تمنه header. عشان تحترم `max-age` وماتسألش خالص، احفظ وقت الانتهاء، ولو لسه صالح اعمل `handler.resolve` بالنسخة المحفوظة من غير شبكة. وفي الـ production، `dio_cache_interceptor` بيعمل كل ده وأكتر. الكود اللي فوق عشان تفهم اللي بيحصل جوه.
+- <b>الكاش والـ logout:</b> `GET /library` ليه نفس الـ URL لكل المستخدمين. لو مستخدم خرج ودخل مستخدم تاني والكاش لسه موجود، ممكن الـ app يعرض مكتبة الأول. الـ EtagStore بيتمسح مع الـ logout، جنب الـ reset بتاع درس الـ Session.
+
+طب ده غير الكاش اللي في درس Offline-first في الوحدة 4؟ أيوه:
+
+| | HTTP cache (ETag) | الـ DB المحلية (drift) |
+| --- | --- | --- |
+| مين بيقرر البيانات لسه صالحة | السيرفر | الـ app والـ sync |
+| من غير نت | مش بيشتغل (إلا لو max-age لسه صالح) | شغال، ده الهدف منه |
+| تقدر تعمل query عليها | لأ، ده رد خام | أيوه: فلتر وترتيب وstream |
+| مناسب لـ | بيانات قراية بس بتتغير نادرًا: الـ work، المؤلف | بيانات المستخدم اللي بيكتب فيها: المكتبة |
+
+ماتحطش الاتنين على نفس البيانات. لو المكتبة في drift والـ ETag كمان، هيبقى عندك مصدرين للحقيقة ممكن يختلفوا. اللي ممكن هو إن الـ refresh بتاع المكتبة يستخدم ETag عشان يعرف إن مفيش جديد من غير ما ينزّل كل حاجة.
+
+### الملاحظة اتمسحت من الشاشة ورجعت تاني
+
+المستخدم داس «امسح» على ملاحظة. الـ Cubit بيستنى السيرفر وبعدين يشيلها، فالمستخدم شايف spinner ثانية على حاجة المفروض تبقى فورية. فحد في الفريق غيّرها: الملاحظة بتتشال فورًا، والطلب يخرج بعدها. ده الـ <b>optimistic update</b>. بس لما الطلب فشل، الـ Cubit عمل emit للـ state القديمة كلها. الملاحظة رجعت من غير ولا كلمة، والملاحظة الجديدة اللي المستخدم ضافها في الثانية دي اختفت.
+
+<CodeBlock label="الـ rollback على الـ state الحالية">
+
+```dart
+// NotesCubit, with the NotesState from the errors-in-the-UI lesson
+Future<void> remove(NoteId noteId) async {
+  final index = state.notes.indexWhere((n) => n.id == noteId);
+  if (index == -1) return; // already gone: a double tap
+  final note = state.notes[index];
+
+  emit(state.copyWith(notes: [...state.notes]..removeAt(index))); // gone right now
+
+  final result = await _repository.deleteNote(_bookId, noteId);
+  if (isClosed) return;
+  if (result case Err(:final failure)) {
+    // put it back into the CURRENT list: the user may have added a note meanwhile
+    final notes = [...state.notes]..insert(min(index, state.notes.length), note);
+    emit(state.copyWith(notes: notes, failure: failure, failureId: state.failureId + 1));
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ repository: 404 معناها اتمسحت خلاص">
+
+```dart
+@override
+Future<Result<void>> deleteNote(String bookId, NoteId noteId) async {
+  // DELETE /books/:bookId/notes/:noteId
+  final result = await guard(() => _remote.deleteNote(bookId, noteId.value));
+  return switch (result) {
+    // deleted from another device, or a retry after a lost reply: what the user wanted
+    Err(failure: ServerFailure(statusCode: 404)) => const Success(null),
+    _ => result,
+  };
+}
+```
+
+</CodeBlock>
+
+- <b>الـ rollback على الـ state الحالية:</b> مش على الـ snapshot اللي اتاخدت قبل الطلب. بين الـ emit والرد ممكن حاجات تانية تتغير، والـ snapshot هيمسحها.
+- <b>في نفس المكان:</b> الـ `index` محفوظ، والملاحظة بترجع مكانها. لو رجعت في الآخر، المستخدم هيفتكر إنها ملاحظة تانية.
+- <b>الـ SnackBar لازم:</b> «ماقدرناش نمسح الملاحظة: مفيش نت». من غيرها، الملاحظة اللي رجعت بتبان كأنها bug. الـ `failureId` والـ BlocListener والـ `context.showFailure` هما بتوع درس «الأخطاء في الشاشة»، مفيش حاجة جديدة في الـ UI.
+- <b>الـ 404 نجاح:</b> المسح idempotent في معناه. لو الطلب الأول وصل والرد ضاع والمستخدم جرّب تاني، الـ 404 معناه إن اللي هو عايزه حصل.
+
+إمتى ماتعملش optimistic:
+
+- <b>لما الفشل متوقع:</b> إضافة ملاحظة ممكن ترجع 422 `too_long`. لو عرضتها وبعدين شلتها، المستخدم هيبقى كتب نص طويل واختفى. الـ validation المحلية الأول، أو استنى الرد.
+- <b>لما الرد فيه حاجة محتاجها أو الغلطة مكلفة:</b> الـ id اللي السيرفر بيعمله للملاحظة الجديدة (ممكن id مؤقت، بس ده تعقيد)، أو دفع، أو حذف حساب. هنا الـ spinner أصدق.
+- <b>لما المستخدم ممكن يمشي قبل الرد:</b> لو الفشل وصل والشاشة مقفولة، محدش هيشوف الـ SnackBar، والمستخدم فاكر إنها اتمسحت. لو العملية لازم توصل، مكانها queue زي المكتبة في درس Offline-first، وده optimistic بشكل كامل: الـ DB بتتغير فورًا والـ queue بتضمن الإرسال.
+
+### رفع صورة الغلاف بيقف عند 90%
+
+Readly بيسمح للمستخدم يرفع غلاف بتاعه لكتاب مالوش غلاف في Open Library: `POST /library/:bookId/cover`. على نت 4G ضعيف، الـ progress bar بيمشي لحد 90% ويقف، وبعد شوية error. السبب إن الـ Dio بتاع الـ API عليه `sendTimeout` قصير مناسب لـ JSON، مش لصورة 4MB. وحتى لو الرفع خلص، الـ bar بيفضل واقف على 100% والسيرفر لسه بيصغّر الصورة، فالمستخدم يفتكر إن الـ app علّق.
+
+<CodeBlock label="الرفع بـ FormData">
+
+```dart
+Future<CoverDto> uploadCover(
+  String bookId,
+  String filePath, {
+  required String idempotencyKey,
+  void Function(double progress)? onProgress,
+  CancelScope? scope,
+}) async {
+  // a FormData can be sent once: build it inside, so a retry builds a new one
+  final form = FormData.fromMap({
+    'cover': await MultipartFile.fromFile(
+      filePath,
+      filename: 'cover.jpg',
+      contentType: DioMediaType('image', 'jpeg'),
+    ),
+  });
+  final res = await _dio.post<Map<String, dynamic>>(
+    '/library/$bookId/cover',
+    data: form,
+    cancelToken: scope.toCancelToken(),
+    options: Options(
+      sendTimeout: const Duration(minutes: 2), // this request only
+      headers: {'Idempotency-Key': idempotencyKey},
+    ),
+    onSendProgress: (sent, total) {
+      if (total > 0) onProgress?.call(sent / total);
+    },
+  );
+  return CoverDto.fromJson(res.data!);
+}
+```
+
+</CodeBlock>
+
+- <b>صغّر الصورة قبل الرفع:</b> `image_picker` بياخد `maxWidth: 1200` و`imageQuality: 85`. الغلاف مش محتاج صورة 12 ميجابكسل، وصورة أصغر بتحل نص المشكلة قبل أي timeout.
+- <b>الـ sendTimeout للطلب ده بس:</b> زي `receiveTimeout` بتاع الـ export في درس dio. باقي الطلبات تفضل بالـ timeout القصير.
+- <b>بعد الـ 100%:</b> الـ progress بيقيس الـ bytes اللي خرجت، مش رد السيرفر. لما يوصل 1.0، غيّر النص لـ «بنجهّز الصورة» مع indicator من غير رقم، لحد ما الرد ييجي.
+- <b>ماتعملش emit مع كل callback:</b> الـ onSendProgress بيتنادى مئات المرات. الـ Cubit يعمل emit لما النسبة تتغير 1% على الأقل، وإلا الشاشة هتتبني مئات المرات على الفاضي.
+- <b>الإلغاء:</b> زرار «إلغاء» جنب الـ bar بينادي `scope.cancel()` على scope خاص بالرفع ده، مش الـ scope بتاع الشاشة. والـ data source بس اللي بيحوّله لـ CancelToken، زي ما شفنا فوق.
+
+والـ retry محتاج انتباه. الـ RetryInterceptor بتاع درس dio بيعيد بـ `_dio.fetch(options)`، يعني نفس الـ options ونفس الـ FormData. والـ FormData اللي اتبعتت مرة ماينفعش تتبعت تاني، فـ dio هيرمي error. فالـ RetryInterceptor لازم يسيب الرفع يعدّي (`if (options.data is FormData) return handler.next(err);`)، والإعادة بتبقى إنك تنادي `uploadCover` من الأول بنفس الـ `idempotencyKey`. والمفتاح بيتعمل مرة واحدة لما المستخدم يختار الصورة، مش مع كل محاولة. لو الرفع الأول وصل والرد ضاع، السيرفر يشوف نفس المفتاح ومايحفظش الغلاف مرتين.
+
+والتنزيل نفس الفكرة بالعكس. Readly بيسمح بتصدير المكتبة كملف:
+
+<CodeBlock label="التنزيل لملف مؤقت، والاسم الحقيقي بعد ما يكمل">
+
+```dart
+Future<void> exportLibrary(String savePath, {
+  void Function(double progress)? onProgress,
+  CancelToken? cancelToken,
+}) async {
+  final partial = '$savePath.part';
+  try {
+    await _dio.download(
+      '/library/export',
+      partial,
+      cancelToken: cancelToken,
+      options: Options(receiveTimeout: const Duration(seconds: 60)),
+      onReceiveProgress: (received, total) {
+        if (total > 0) onProgress?.call(received / total); // -1: no Content-Length
+      },
+    );
+    await File(partial).rename(savePath); // only a complete file gets the real name
+  } finally {
+    final leftover = File(partial);
+    if (await leftover.exists()) await leftover.delete();
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `.part`:</b> لو الـ app اتقفل في النص، الملف اللي فاضل اسمه واضح إنه ناقص، ومحدش هيفتحه كأنه كامل. والـ `deleteOnError` بتاع dio (افتراضيًا true) بيمسحه لو الطلب فشل، والـ `finally` بيغطي الباقي. ولو الـ app اتقتل قبل الـ `finally`، امسح أي `*.part` في فولدر الـ temp مع أول تشغيل.
+- <b>الـ total ممكن يبقى -1:</b> لو السيرفر بيولّد الملف وهو بيبعته، مفيش `Content-Length`. ساعتها اعرض الـ MB اللي نزلت بدل النسبة.
+
+### البيانات بتتغير على السيرفر والشاشة قديمة
+
+المستخدم ضاف كتاب من التابلت، والموبايل مفتوح على المكتبة ومش شايفه. الموبايل بيعمل refresh لما الـ app يفتح أو يرجع من الخلفية (درس Offline-first)، بس لو الشاشة مفتوحة قدامه، مفيش حاجة بتقوله إن في جديد.
+
+أبسط حل <b>polling</b>: اسأل كل فترة. بس بشرطين: مايسألش والـ app في الخلفية، ولما السيرفر بيفشل يبطّأ بدل ما يضربه كل 30 ثانية.
+
+<CodeBlock label="Poller بـ backoff وبيقف في الخلفية">
+
+```dart
+class Poller {
+  Poller(this._task);
+  final Future<Result<void>> Function() _task; // e.g. libraryRepository.refresh
+
+  static const _min = Duration(seconds: 30);
+  static const _max = Duration(minutes: 5);
+  Duration _interval = _min;
+  Timer? _timer;
+  AppLifecycleListener? _lifecycle;
+  bool _active = false;
+
+  void start() {
+    _lifecycle = AppLifecycleListener(onPause: _stop, onResume: _resume);
+    _active = true;
+    _schedule();
+  }
+
+  void _schedule() {
+    _timer?.cancel();
+    _timer = Timer(_interval, _tick);
+  }
+
+  Future<void> _tick() async {
+    final ok = (await _task()) is Success;
+    if (!_active) return; // paused while the request was running
+    final slower = _interval * 2;
+    _interval = ok ? _min : (slower > _max ? _max : slower); // failing: back off
+    _schedule();
+  }
+
+  void _stop() {
+    _active = false; // background: no requests, no battery
+    _timer?.cancel();
+  }
+
+  void _resume() {
+    _active = true;
+    _interval = _min;
+    _tick(); // back in front: check now
+  }
+
+  void dispose() {
+    _stop();
+    _lifecycle?.dispose();
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ LibraryCubit هو اللي بيملكه:</b> بيعمل `start()` لما الشاشة تفتح و`dispose()` في الـ `close`. الـ polling بيحصل والمستخدم شايف المكتبة بس.
+- <b>الـ ETag بيخلّي الـ poll رخيص:</b> أغلب الأسئلة إجابتها «مفيش جديد»، ومع الـ EtagInterceptor اللي فوق، دي بتبقى 304 من غير body.
+- <b>الـ refresh بيكتب في الـ DB:</b> زي درس Offline-first، والشاشة بتتحدث من الـ stream. الـ Poller مابيعرفش حاجة عن الـ UI.
+
+| الطريقة | بتشتغل إزاي | مناسبة لـ | تمنها |
+| --- | --- | --- | --- |
+| Polling | الـ app بيسأل كل فترة | تغييرات نادرة، وتأخير دقيقة مقبول | طلبات أغلبها فاضية |
+| SSE | اتصال مفتوح، والسيرفر بيبعت events في اتجاه واحد | حالة عملية طويلة، feed بيتحدث | اتصال مفتوح بيقع مع تغيير الشبكة، ومحتاج reconnect |
+| WebSocket | اتصال مفتوح في الاتجاهين | chat، تعديل مع حد في نفس اللحظة | سيرفر stateful، وheartbeat، وreconnect، وauth للاتصال نفسه |
+| Push (FCM) | السيرفر بيصحّي الـ app | «في جديد» والـ app مقفول | التوصيل والتوقيت مش مضمونين |
+
+لـ Readly: polling والشاشة مفتوحة، وrefresh مع كل resume، وده كفاية. مكتبة كتب مش chat. ولو احتجت «في جديد» والـ app مقفول، silent push بيقول للـ app يعمل refresh، والبيانات نفسها بتيجي من الـ API العادي.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+| الأداة | بتساعد لما | خطرها |
+| --- | --- | --- |
+| Parallel | طلبات مستقلة عن بعض | جزء يفشل والتاني ينجح، فلازم تقرر مين critical |
+| Sequential | الطلب محتاج رد اللي قبله | الوقت بيتجمع: كل حلقة في السلسلة بتطوّل الصفحة |
+| Coalescing | نفس الـ GET من كذا مكان في نفس اللحظة | الإلغاء بيوصل للكل، وغلط تمامًا مع الكتابة |
+| HTTP cache | بيانات بتتغير نادرًا والسيرفر بيبعت ETag | بيانات قديمة، أو بيانات مستخدم تاني لو الكاش ماتمسحش مع الـ logout |
+| Optimistic | عملية بتنجح غالبًا وسهل ترجع فيها | الـ rollback الغلط بيمسح حاجات تانية، والفشل ممكن مايوصلش للمستخدم |
+
+- <b>ماتطلقش 50 طلب مرة واحدة:</b> مكتبة فيها 200 كتاب، وكل tile عايز اسم المؤلف من Open Library. لو كل الطلبات خرجت مع بعض، السيرفر هيرجّع 429، والطلبات المهمة (اللي المستخدم داس عليها) هتقف في الطابور ورا الباقي. حط حد أقصى:
+
+<CodeBlock label="RequestPool: 4 في نفس الوقت بالكتير">
+
+```dart
+class RequestPool {
+  RequestPool(this.maxConcurrent);
+  final int maxConcurrent;
+  int _running = 0;
+  final _waiting = Queue<Completer<void>>();
+
+  Future<T> run<T>(Future<T> Function() task) async {
+    if (_running < maxConcurrent) {
+      _running++;
+    } else {
+      final turn = Completer<void>();
+      _waiting.add(turn);
+      await turn.future; // the slot is handed to us, _running stays the same
+    }
+    try {
+      return await task();
+    } finally {
+      if (_waiting.isNotEmpty) {
+        _waiting.removeFirst().complete(); // pass the slot on
+      } else {
+        _running--;
+      }
+    }
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ slot بيتسلّم مش بيتساب:</b> لو الـ finally عمل `_running--` وبعدين صحّى اللي مستني، ممكن طلب جديد يدخل في النص، ويبقى عندك 5 شغالين. التسليم المباشر بيمنع ده.
+- <b>وأحسن من الـ pool إنك ماتطلبش:</b> `ListView.builder` بيبني اللي ظاهر بس، فاطلب المؤلف لما الـ tile يظهر، مش للـ 200 مرة واحدة. والـ coalescing والكاش بيشيلوا الباقي.
+- <b>البطارية والباقة:</b> كل طلب بيصحّي الـ radio بتاع الموبايل، وبيفضل صاحي ثواني بعده. 10 طلبات متفرقة على دقيقة أغلى من 10 مع بعض. اجمع الطلبات (الـ polling مع الـ resume مش لوحده)، وماتعملش prefetch لصور كبيرة على باقة موبايل، وخلّي الـ polling يقف في الخلفية دايمًا.
+- <b>كل الأدوات دي في الـ data layer:</b> الـ Cubit بيعرف `CancelScope` بس، ومابيعرفش لا InFlight ولا ETag ولا Pool. لو بكرة غيّرت الكاش لـ `dio_cache_interceptor`، مفيش Cubit هيتغير.
+- <b>قيس قبل ما تزوّد:</b> كل أداة هنا بتزوّد كود وحالات. ابدأ بـ parallel والفشل الجزئي، لأنهم بيغيّروا اللي المستخدم شايفه. والباقي لما الـ logs أو الـ metrics (الدرس الجاي) تقولك إن في طلبات مكررة أو بيانات بتتحمّل على الفاضي.
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي تبعت طلبين مع بعض وتتعامل لو واحد فشل؟» الأول أتأكد إنهم مستقلين: لو التاني محتاج رد الأول، يبقوا ورا بعض. لو مستقلين، `(a, b).wait` على record، وكل واحد بيرجّع Result من الـ guard، فمفيش exception ولا ParallelWaitError. وبعدين أقسم الصفحة: الجزء اللي من غيره الشاشة مالهاش لازمة هو اللي يفشّلها، والباقي يتدهور لوحده: المؤلف يختفي، والملاحظات يبقى عليها error وretry خاص بيها. والقرار ده بيبان في الأنواع: `BookDetails` عادي، و`Result<List<Note>>` جوه الصفحة.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«إمتى تعمل optimistic update؟» لما العملية بتنجح في الغالب، وسهل ترجع فيها، والمستخدم هيلاحظ الانتظار، زي مسح ملاحظة. والـ rollback بيتعمل على الـ state الحالية مش على snapshot قديمة، وبيرجّع العنصر مكانه، ومعاه رسالة بتقول اللي حصل. وماعملوش لما الفشل متوقع (validation)، أو الرد فيه حاجة محتاجها (id)، أو الغلطة مكلفة (دفع). ولو العملية لازم توصل حتى لو المستخدم قفل الـ app، مكانها queue محفوظة زي offline-first، مش optimistic في الذاكرة.
+
+</Note>
+
+</Level>
+
+<Quiz>
+
+<Question id="advreq-1">
+<Ask>صفحة الكتاب بتطلب الـ work والمؤلف والملاحظات. أنهي طلبات تخرج مع بعض، وأنهي ورا بعض، وليه؟</Ask>
+<Answer>
+
+المؤلف لازم يستنى الـ work، لأن الـ key بتاعه جوه رد الـ work. الملاحظات محتاجة الـ `BookId` بس، فتخرج مع الـ work بـ `(a, b).wait`. والصفحة بتبقى جاهزة بعد أطول سلسلة (الـ work ثم المؤلف) مش بعد مجموع التلاتة.
+
+</Answer>
+</Question>
+
+<Question id="advreq-2">
+<Ask>طلب المؤلف ضرب timeout، والمستخدم شاف شاشة error بدل الكتاب. إيه الحل؟</Ask>
+<Answer>
+
+المؤلف جزء optional، فيتطلب في guard لوحده وفشله يرجّع null والسطر يختفي. الـ work بس هو اللي يفشّل الصفحة. والملاحظات تبقى `Result<List<Note>>` جوه الصفحة، عشان يبقى ليها error وretry خاص بيها بدل ما تختفي بهدوء.
+
+</Answer>
+</Question>
+
+<Question id="advreq-3">
+<Ask>عملت `InFlight` بيشارك الطلبات المتشابهة. ليه الـ `whenComplete`، وليه مايتستخدمش مع `POST /books/:bookId/notes`؟</Ask>
+<Answer>
+
+الـ `whenComplete` بيشيل الطلب من الـ map لما يخلص، نجح أو فشل. من غيره، أول error هيفضل محفوظ ويرجع لكل اللي بعده، ويبقى كاش من غير قصد. والـ POST مالوش coalescing لأن كل ضغطة عملية لوحدها. الضغطة المكررة مكانها الـ Cubit، والتكرار على السيرفر مكانه الـ Idempotency-Key.
+
+</Answer>
+</Question>
+
+<Question id="advreq-4">
+<Ask>ضفت `If-None-Match` للطلبات، بس كل 304 بيوصل الـ Cubit كـ ServerFailure. ليه؟ وإيه اللي لازم يتمسح مع الـ logout؟</Ask>
+<Answer>
+
+الـ `validateStatus` الافتراضي بتاع dio بيقبل 2xx بس، فالـ 304 بيبقى DioException من نوع `badResponse`. لازم تقبل 304 في الـ BaseOptions، والـ interceptor يحوّله لـ 200 بالـ body المحفوظ. والـ EtagStore بيتمسح مع الـ logout، لأن `GET /library` ليه نفس الـ URL لكل المستخدمين.
+
+</Answer>
+</Question>
+
+<Question id="advreq-5">
+<Ask>المستخدم مسح ملاحظة (optimistic)، وضاف ملاحظة جديدة، وبعدين طلب المسح فشل. الـ Cubit عمل emit للـ state اللي كانت قبل المسح. إيه اللي بقى غلط؟</Ask>
+<Answer>
+
+الـ snapshot القديمة مافيهاش الملاحظة الجديدة، فاختفت من الشاشة. الـ rollback لازم يتعمل على الـ state الحالية: تاخد الليست اللي موجودة دلوقتي وترجّع الملاحظة المحذوفة في نفس الـ index، ومعاها SnackBar بتقول إن المسح فشل.
+
+</Answer>
+</Question>
+
+</Quiz>

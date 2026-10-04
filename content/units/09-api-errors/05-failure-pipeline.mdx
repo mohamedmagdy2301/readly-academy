@@ -1,0 +1,767 @@
+---
+title: "من الـ Exception للـ Failure: الطريق كامل"
+description: "الـ DioException بيتولد في الـ data layer، وبيتترجم مرة واحدة عند الـ guard، وبيوصل للشاشة كـ Failure مفهومة. الطريق كله بالكود اللي هيروح production."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="الجمارك على الحدود">
+
+شحنة جاية من بره البلد: الورق بتاعها بلغة تانية، والتغليف بشكل مختلف، وساعات بتوصل ناقصة أو متكسرة. على <b>الحدود بس</b> في موظف جمارك بيفتح الشحنة مرة واحدة، ويلزق عليها بطاقة بالعربي بنظام البلد: «أجهزة، سليمة»، «ناقصة كرتونة»، «مرفوضة: الورق مش مكتمل». وبيكتبها في دفتر الحدود. جوه البلد محدش بيفتح الشحنة تاني ولا يقرا الورق الأجنبي، الكل بيقرا البطاقة. ولو الموظف لقى حاجة مستحيل تكون في شحنة أصلًا، مابيلزقش عليها بطاقة ويعدّيها: بيوقف الخط ويبلّغ.
+
+</Analogy>
+
+في الـ app: رد السيرفر هو الشحنة، والـ `DioException` هو الورق الأجنبي، والـ guard هو موظف الجمارك، والـ `Failure` هي البطاقة. من الـ repository ولفوق، محدش بيشوف `DioException` ولا status code ولا JSON. والـ bug الحقيقي (null في كودنا) هو الحاجة اللي مستحيل تكون في الشحنة: مابيتحولش لـ Failure، بيوقف الخط.
+
+في درس الأخطاء في الوحدة 2 شفنا الفكرة: Result وFailure وguard وجزء من `_mapDio`. وفي درس "خريطة أخطاء الـ API" عرفنا كل حاجة ممكن تبوظ. الدرس ده بيوصّل الاتنين: الخريطة كلها بتتحول لكود، والكود ده هو اللي بيروح production.
+
+</Level>
+
+<Level n="2" title="الطريق كله في مثال واحد">
+
+المستخدم فاتح «Fantastic Mr Fox» وكتب ملاحظة طويلة جدًا، 2500 حرف، وداس «حفظ». السيرفر بيقبل لحد 2000 حرف، فبيرد بـ 422. خلينا نمشي ورا الرد ده من أول ما يخرج من السيرفر لحد ما يبقى سطر أحمر تحت الخانة.
+
+<Diagram name="d-api-failure-pipeline">
+
+الـ 422 بيعدّي في الـ data layer كـ exception، والـ guard هو الحدود: بيحوّله لـ Failure ويسجّله مرة واحدة. من عنده ولفوق كل حاجة Result، لحد ما الشاشة تختار النص من الترجمة.
+
+</Diagram>
+
+### 1. الـ data source: الحتة الوحيدة اللي تعرف dio
+
+<CodeBlock label="feature_notes/data/notes_remote_source.dart">
+
+```dart
+class NotesRemoteSource {
+  NotesRemoteSource(this._dio);
+  final Dio _dio; // the 'api' instance from get_it
+
+  Future<NoteDto> addNote(String bookId, String text) async {
+    final res = await _dio.post<Map<String, dynamic>>(
+      '/books/$bookId/notes',
+      data: {'text': text},
+    );
+    final data = res.data; // a 422 never gets here: dio threw already
+    if (data == null) throw ParseException('empty body', url: res.realUri);
+    return NoteDto.fromJson(data);
+  }
+}
+```
+
+</CodeBlock>
+
+الـ data source مابيمسكش أي حاجة، والـ `ParseException` هو بتاع درس "الأخطاء في Dart من الصفر". dio بيعتبر أي status برّه الـ 2xx فشل (ده الـ `validateStatus` الافتراضي)، فالـ 422 بيطلع من `post` على طول كـ exception شكله كده:
+
+<CodeBlock label="اللي dio رماه">
+
+```text
+DioException [bad response]
+  type:               DioExceptionType.badResponse
+  response.statusCode: 422
+  x-request-id:       req_7f3a91c2
+  response.data:      {code: validation_failed, message: Invalid note,
+                       fields: {text: too_long}}
+```
+
+</CodeBlock>
+
+### 2. الـ repository: الـ guard هو الحدود
+
+<CodeBlock label="feature_notes/data/notes_repository_impl.dart">
+
+```dart
+class NotesRepositoryImpl implements NotesRepository {
+  NotesRepositoryImpl(this._remote);
+  final NotesRemoteSource _remote;
+
+  @override
+  Future<Result<Note>> addNote(BookId bookId, String text) => guard(() async {
+        final dto = await _remote.addNote(bookId.value, text);
+        return dto.toEntity();
+      });
+}
+```
+
+</CodeBlock>
+
+الـ guard مسك الـ DioException، والـ `_mapDio` قرا الـ status والـ body والـ header، ورجّع:
+
+```dart
+Err(ServerFailure(
+  'HTTP 422 validation_failed',
+  statusCode: 422,
+  code: 'validation_failed',
+  fieldErrors: {'text': 'too_long'},
+  requestId: 'req_7f3a91c2',
+))
+```
+
+### 3. الـ use case: بيعدّي الـ Result زي ما هو
+
+<CodeBlock label="feature_notes/domain/add_note.dart">
+
+```dart
+class AddNote {
+  AddNote(this._notes);
+  final NotesRepository _notes;
+
+  @useResult
+  Future<Result<Note>> call(AddNoteParams params) =>
+      _notes.addNote(params.bookId, params.text);
+}
+```
+
+</CodeBlock>
+
+دلوقتي فاضي تقريبًا. في Level 3 هيبدأ يرفض قبل ما يكلّم السيرفر، ويربط أكتر من خطوة.
+
+### 4. الـ Cubit: بيوزّع الـ Failure على الـ state
+
+<CodeBlock label="feature_notes/presentation/notes_cubit.dart">
+
+```dart
+final class NotesState {
+  const NotesState({
+    this.notes = const [],
+    this.saving = false,
+    this.fieldErrors = const {},
+    this.failure,
+  });
+  final List<Note> notes;
+  final bool saving;
+  final Map<String, String> fieldErrors; // 'text' -> 'too_long'
+  final Failure? failure;                // anything that isn't about a field
+}
+
+class NotesCubit extends Cubit<NotesState> {
+  NotesCubit(this._addNote, this._bookId) : super(const NotesState());
+  final AddNote _addNote;
+  final BookId _bookId;
+
+  Future<void> add(String text) async {
+    if (state.saving) return;
+    emit(NotesState(notes: state.notes, saving: true));
+    final result = await _addNote(AddNoteParams(bookId: _bookId, text: text));
+    if (isClosed) return;
+    emit(switch (result) {
+      Success(:final value) => NotesState(notes: [value, ...state.notes]),
+      Err(failure: ServerFailure(:final fieldErrors)) when fieldErrors.isNotEmpty =>
+        NotesState(notes: state.notes, fieldErrors: fieldErrors),
+      Err(:final failure) => NotesState(notes: state.notes, failure: failure),
+    });
+  }
+}
+```
+
+</CodeBlock>
+
+### 5. الـ UI: بتختار النص من الترجمة
+
+<CodeBlock label="الخانة بتختار رسالتها حسب الـ code">
+
+```dart
+extension NotesStateL10n on NotesState {
+  String? textError(AppLocalizations l10n) => switch (fieldErrors['text']) {
+        null => null,
+        'too_long' => l10n.errorNoteTooLong, // "الملاحظة طويلة، الحد 2000 حرف"
+        _ => l10n.errorInvalidInput,         // a code this version doesn't know
+      };
+}
+
+TextField(
+  onSubmitted: context.read<NotesCubit>().add,
+  decoration: InputDecoration(errorText: state.textError(l10n)),
+)
+```
+
+</CodeBlock>
+
+| الطبقة | بتشوف إيه | ماتعرفش حاجة عن |
+| --- | --- | --- |
+| `NotesRemoteSource` | الـ URL والـ JSON والـ DioException | الـ Failure، والشاشة |
+| الـ guard و`_mapDio` | الـ exception الأصلي والـ stack، والـ status، والـ headers | الشاشة، والترجمة |
+| `AddNote` | `Result<Note>` | dio، والـ HTTP كله |
+| `NotesCubit` | نوع الـ Failure وبياناتها | dio، والنصوص المترجمة |
+| الـ UI | الـ state والـ code | dio، والـ status codes |
+
+كل طبقة بتشوف اللي يخصها بس. ولو بكرة غيّرت dio بـ http، الـ Cubit والـ UI مش هيتغير فيهم سطر.
+
+</Level>
+
+<Level n="3" title="الطريق في الـ production">
+
+### الـ _mapDio مابيغطيش كل الحالات
+
+الـ `_mapDio` بتاع الوحدة 2 كان بيغطي حالتين ويرمي الباقي في `_`. وفي درس dio اكتشفنا إن الـ `receiveTimeout` كان بيطلع «مشكلة في السيرفر». الـ `_` ده بيخبّي قرارات. في درس "خريطة أخطاء الـ API" عملنا جدول Readly وصنّفنا كل رد بالأسئلة التلاتة (غلطة مين، الإعادة هتفيد، حد محتاج يصلّح كود)، وكتبنا الأدوات: `isNetworkLevel` و`looksLikeClockOrProxy` و`readApiError` و`parseRetryAfter`، والـ `JsonOnlyInterceptor`. هنا الجدول بيبقى كود:
+
+| اللي وصل | بيبقى |
+| --- | --- |
+| `cancel` | `ServerFailure(code: 'cancelled')`، ومحدش بيعرضه |
+| `UnexpectedBodyException` (2xx بـ HTML: captive portal) | `NetworkFailure(hint: captivePortal)` |
+| `HandshakeException` بـ `CERTIFICATE_VERIFY_FAILED` | `NetworkFailure(hint: clockOrProxy)` |
+| أي حاجة `isNetworkLevel`، أو `sendTimeout` أو `receiveTimeout` | `NetworkFailure` |
+| `badCertificate` (الـ pinning رفض) | `ServerFailure(code: 'bad_certificate')` ويتبلّغ |
+| `badResponse` | حسب الـ status والـ code |
+| أي حاجة تانية (exception من interceptor مثلًا) | `ServerFailure(code: 'unknown')` ويتبلّغ |
+
+الـ `NetworkFailure` بيكبر بـ field واحد: كلهم نفس التصرف (مش ذنب حد، والإعادة هتفيد بعد ما المستخدم يصلّح حاجة عنده)، والفرق بس في الجملة اللي هيقراها. وده قانون الوحدة 2: field مش type.
+
+<CodeBlock label="NetworkFailure بـ hint">
+
+```dart
+enum NetworkHint { none, captivePortal, clockOrProxy }
+
+final class NetworkFailure extends Failure {
+  const NetworkFailure({this.hint = NetworkHint.none}) : super('No internet');
+  final NetworkHint hint; // changes the text the user reads, nothing else
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="core/network/map_dio.dart">
+
+```dart
+Failure _mapDio(DioException e) => switch (e) {
+      DioException(type: DioExceptionType.cancel) =>
+        const ServerFailure('Cancelled', code: 'cancelled'),
+      // JsonOnlyInterceptor: a 2xx that isn't JSON is the Wi-Fi, not our API
+      DioException(error: UnexpectedBodyException()) =>
+        const NetworkFailure(hint: NetworkHint.captivePortal),
+      _ when looksLikeClockOrProxy(e) => const NetworkFailure(hint: NetworkHint.clockOrProxy),
+      _ when isNetworkLevel(e) => const NetworkFailure(),
+      DioException(type: DioExceptionType.sendTimeout || DioExceptionType.receiveTimeout) =>
+        const NetworkFailure(),
+      DioException(type: DioExceptionType.badCertificate) =>
+        const ServerFailure('Bad certificate', code: 'bad_certificate'),
+      DioException(type: DioExceptionType.badResponse, :final response?) =>
+        _fromResponse(response),
+      _ => ServerFailure('Unexpected ${e.type.name}: ${e.error.runtimeType}', code: 'unknown'),
+    };
+
+Failure _fromResponse(Response<dynamic> res) {
+  final body = readApiError(res); // Readly body or RFC 9457, plus X-Request-Id
+  return switch (body.status) {
+    401 => const UnauthorizedFailure(), // the refresh already failed
+    final status => ServerFailure(
+        'HTTP $status${body.code == null ? '' : ' ${body.code}'}',
+        statusCode: status,
+        code: body.code,
+        fieldErrors: body.fields,
+        retryAfter: status == 429 || status == 503
+            ? parseRetryAfter(res.headers.value('retry-after'), DateTime.now()) // Clock in the app
+            : null,
+        requestId: body.requestId,
+      ),
+  };
+}
+```
+
+</CodeBlock>
+
+الـ switch على الـ `DioException` نفسها مش على الـ `type` بس، لأن نص القرارات محتاج الـ `error` اللي جواها. والترتيب هو القرار: أول case يطابق بيكسب. علشان كده الـ `UnexpectedBodyException` قبل الـ `badResponse` (الـ interceptor بيرميها بالنوع ده)، والساعة الغلط قبل `isNetworkLevel` (الـ `HandshakeException` هي كمان `IOException`).
+
+- <b>الـ 401 هنا معناها إن الـ refresh فشل خلاص:</b> الـ AuthInterceptor بتاع درس dio بيعمل refresh ويعيد الطلب قبل ما الخطأ يوصل للـ guard. يعني لو 401 وصلت، يا السيرفر رفض الـ refresh token، يا الطلب معلّم `skipAuth` زي الـ login، وساعتها الـ LoginCubit هو اللي بيفهمها «باسورد غلط» زي درس الـ Forms.
+- <b>الـ cancel مالوش نوع لوحده:</b> مش جاي من السيرفر، بس مفيش شاشة بتعرضه: الـ Cubit بيتجاهل الرد القديم بالـ request id زي درس الـ Cubit. ونوع جديد هيكسر كل switch في المشروع عشان حاجة محدش بيتصرف معاها.
+- <b>الـ badCertificate مش NetworkFailure:</b> ده الـ pinning بتاعنا اللي رفض. «جرّب تاني» مش هيفيد، والسبب يا حد بيتجسس على الشبكة، يا الشهادة بتاعتنا اتغيرت والـ pin ماتحدّثش. الاتنين لازم الفريق يعرفهم النهارده.
+- <b>الـ `_` الأخير مش «مفيش نت»:</b> لو وصلنا هنا، يبقى exception اترمى من جوه السلسلة نفسها ومش `IOException`، غالبًا interceptor عندنا فيه bug. ده لازم يتبلّغ، مش يتعرض للمستخدم إن النت فاصل.
+- <b>الـ requestId بيتقرا هنا:</b> الـ `readApiError` بيجيبه من الـ header حتى لو الـ body HTML. وهو اللي هيخلّي الدعم يلاقي الطلب ده بالظبط في logs السيرفر، وهنعرضه للمستخدم في درس "الأخطاء في الشاشة".
+
+### السيرفر غيّر شكل الـ JSON والـ app وقع
+
+الـ backend غيّر `updatedAt` من string لـ number في `GET /library`. الـ content-type لسه JSON، فالـ `JsonOnlyInterceptor` عدّاه. بس النسخة اللي على الـ store من الـ app فيها `DateTime.parse(json['updatedAt'] as String)` جوه الـ fromJson، فبيترمي `TypeError`. والـ guard بيمسك `DioException` و`ParseException` و`CacheException` بس، فالـ TypeError بيعدّي. الشاشة واقفة على loading، والمستخدم شايف الـ app بايظ، وكل اللي حصل إن السيرفر بعت شكل مختلف.
+
+في درس الـ Data في الوحدة 3 قلنا لو شكل الرد كله غلط، الـ crash هو اللي هيعرّفك. الجزء الأول صح: لازم تعرف. بس مش لازم المستخدم يدفع التمن. الـ `TypeError` ده مش bug تقدر تصلحه على الموبايل: السيرفر هو اللي اتغير، والكود بتاعك قال الحقيقة عن الـ API القديم. ده فشل في <b>العقد</b>، ومكانه Failure وتقرير، مش crash.
+
+بس ماتمسكش `TypeError` في الـ guard كله، لأنك كده هتبلع الـ null bugs بتاعتك انت كمان. امسكه في الحتة الوحيدة اللي بتقرا كلام السيرفر: الـ fromJson. وحوّله لنفس الـ `ParseException` بتاع درس "الأخطاء في Dart من الصفر":
+
+<CodeBlock label="core/network/parse_or_throw.dart">
+
+```dart
+T parseOrThrow<T>(Uri url, T Function() parse) {
+  try {
+    return parse();
+    // the one place in the app allowed to catch an Error: server data only
+    // ignore: avoid_catching_errors
+  } on TypeError catch (e, st) {
+    Error.throwWithStackTrace(ParseException('unexpected shape', url: url, cause: e), st);
+  } on FormatException catch (e, st) {
+    Error.throwWithStackTrace(ParseException('bad value', url: url, cause: e), st);
+  } on CheckedFromJsonException catch (e, st) { // json_serializable with checked: true
+    Error.throwWithStackTrace(
+        ParseException('bad field', url: url, field: e.key, cause: e), st);
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ data source بيلف الـ fromJson بس">
+
+```dart
+Future<LibraryPageDto> fetchLibrary({String? after}) async {
+  final res = await _dio.get<Map<String, dynamic>>(
+    '/library',
+    queryParameters: {if (after != null) 'after': after},
+  );
+  final data = res.data;
+  if (data == null) throw ParseException('empty body', url: res.realUri);
+  return parseOrThrow(res.realUri, () => LibraryPageDto.fromJson(data));
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ guard بيعرف ParseException">
+
+```dart
+Future<Result<T>> guard<T>(Future<T> Function() run) async {
+  try {
+    return Success(await run());
+  } on DioException catch (e) {
+    return Err(_mapDio(e));
+  } on ParseException catch (e) {
+    // the server broke the contract: a Failure for the user, a report for us
+    return Err(ServerFailure('Bad response from ${e.url?.path}', code: 'bad_response'));
+  } on CacheException catch (e) {
+    return Err(CacheFailure(e.message));
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>`avoid_catching_errors` ماتشالش:</b> الـ lint اللي فعّلناه في درس "الأخطاء في Dart من الصفر" بيفضل شغال في المشروع كله. الـ `parseOrThrow` هو الاستثناء الوحيد، ومكتوب جنبه السبب، فأي `on TypeError` تاني في review يبان على طول.
+- <b>الـ `Error.throwWithStackTrace`:</b> الـ stack بيفضل بتاع الـ fromJson، يعني بيشاور على السطر، يعني على الحقل اللي اتغير. والـ body نفسه عمره ما بيدخل الـ exception: فيه ملاحظات المستخدم ومكتبته.
+- <b>الـ path مش الـ URL كله في الـ message:</b> الـ query ممكن يبقى فيها كلام المستخدم، زي اللي بيدوّر عليه في الـ catalog.
+- <b>الـ HTML مش هنا:</b> الـ captive portal بيطلع `UnexpectedBodyException` من الـ `JsonOnlyInterceptor` قبل أي parse، وبيبقى `NetworkFailure`. الـ `ParseException` للـ JSON اللي شكله اتغير بس، أو الـ body الفاضي.
+- <b>يتبلّغ كـ non-fatal:</b> المستخدم شاف رسالة عادية، بس الفريق لازم يعرف النهارده إن نسخة الـ app دي مابقتش فاهمة السيرفر. علشان كده `bad_response` من الـ Failures اللي بتتبعت لـ Sentry، زي ما هنشوف في درس الـ Observability في الوحدة 10.
+
+والفرق بينه وبين الـ bug الحقيقي:
+
+<CodeBlock label="ده bug، ولازم يضرب">
+
+```dart
+extension NoteDtoMapper on NoteDto {
+  Note toEntity() => Note(
+        id: NoteId(id),
+        text: text,
+        createdAt: createdAt,
+        bookTitle: _titles[bookKey]!, // our own lookup: null here is our mistake
+      );
+}
+```
+
+</CodeBlock>
+
+الـ mapper ده بيشتغل <b>بعد</b> الـ `parseOrThrow`، فالـ `!` ده لو ضرب بيعدّي من الـ guard ويوصل للـ global handlers اللي شفناها في درس "الأخطاء في Dart من الصفر"، ومنها لـ Sentry كـ crash. وده الصح: السيرفر بعت رد سليم، والغلط في كودنا. الحد بين الاتنين مش نوع الـ exception، الحد هو <b>مين اللي كتب البيانات اللي باظت</b>.
+
+### جرّب الطريق بإيدك
+
+اختار سيناريو (النت فاصل، timeout، 401، 422، 429، 500، HTML بدل JSON، cancel) وشوف الـ DioException بيتحول لأنهي Failure، وبتظهر إزاي في الشاشة، وقارن بالـ `_mapDio` البسيط بتاع الوحدة 2.
+
+<Lab name="error-pipeline" />
+
+### نفس الخطأ اتسجل 3 مرات
+
+فتحت Sentry لقيت `POST /books/:bookId/notes` فشل 3000 مرة امبارح. بعد ساعة اكتشفت إنهم 1000 بس:
+
+<CodeBlock label="3 أماكن بتسجّل نفس الفشل">
+
+```dart
+// 1. an interceptor
+void onError(DioException err, ErrorInterceptorHandler handler) {
+  report('API error ${err.response?.statusCode}', err); // logged as an error
+  handler.next(err);
+}
+
+// 2. the repository, around the guard
+final result = await guard(() => _remote.addNote(id, text).then((d) => d.toEntity()));
+if (result case Err(:final failure)) report('addNote failed', failure);
+
+// 3. the Cubit
+if (result case Err(:final failure)) report('NotesCubit: ${failure.message}', failure);
+```
+
+</CodeBlock>
+
+كل فشل بقى 3 entries بـ 3 stack traces مختلفة، فـ Sentry بيقسمهم 3 issues. الأرقام مضروبة في 3، والـ alerts بتضرب على حاجة مش حقيقية. والأسوأ: التاني والتالت معاهم Failure بس، من غير الـ exception الأصلي ولا الـ stack بتاعه، يعني مفيش فيهم معلومة زيادة أصلًا.
+
+القاعدة: <b>الـ log مكانه الـ guard وبس</b>، لأنه الحتة الوحيدة اللي شايفة الـ exception الأصلي والـ stack trace بتاعه، وشايفة الـ Failure اللي اتحول ليها، في نفس اللحظة.
+
+- <b>الـ interceptor:</b> يسجّل breadcrumb بس («الطلب ده رجع 422 في 340ms»)، كسياق، مش error. هو مايعرفش إذا كان الـ 422 ده متوقع ولا لأ.
+- <b>الـ guard:</b> هو اللي بيقرر: ده warning (نت، 422 متوقع) ولا error لازم حد يصلحه (`bad_response`، `bad_certificate`، `unknown`).
+- <b>الـ Cubit:</b> مابيسجّلش. الـ Failure اللي وصلته اتسجلت خلاص. لو محتاج تعرف المستخدم شاف إيه، ده analytics event، مش log، وهنشوفه في درس "الأخطاء في الشاشة".
+
+درس الـ Observability في الوحدة 10 بيضيف للـ guard الـ `logger` والـ `operation` والـ `expected`، ويقرر بالظبط إيه اللي يبقى issue في Sentry وإيه اللي يبقى breadcrumb. المهم دلوقتي إن المكان واحد.
+
+### المستخدم كتب ملاحظة فاضية والطلب راح للسيرفر
+
+المستخدم داس «حفظ» والخانة فاضية. الـ app بعت الطلب، واستنى ثانية على نت ضعيف، والسيرفر رد 422 `empty`. ثانية وطلب وبطارية، عشان قاعدة الـ app كان عارفها من الأول. القواعد اللي ثابتة ومعروفة (فاضية، أطول من 2000 حرف) مكانها الـ domain، زي `Email` و`Password` في درس الـ Forms:
+
+<CodeBlock label="feature_notes/domain/note_text.dart">
+
+```dart
+extension type const NoteText._(String value) {
+  static const maxLength = 2000; // the same limit the server enforces
+
+  static Result<NoteText> create(String input) {
+    final text = input.trim();
+    if (text.isEmpty) {
+      return const Err(ValidationFailure('Empty note', fieldErrors: {'text': 'empty'}));
+    }
+    if (text.length > maxLength) {
+      return const Err(ValidationFailure('Note too long', fieldErrors: {'text': 'too_long'}));
+    }
+    return Success(NoteText._(text));
+  }
+}
+```
+
+</CodeBlock>
+
+الـ `ValidationFailure` كبر بـ field واحد، بنفس شكل اللي في `ServerFailure`:
+
+```dart
+final class ValidationFailure extends Failure {
+  const ValidationFailure(super.message, {this.fieldErrors = const {}});
+  final Map<String, String> fieldErrors; // same codes as the backend
+}
+```
+
+لاحظ الـ codes: `empty` و`too_long`، نفس اللي الـ backend بيبعتهم في `fields`. ده مش صدفة. الـ Cubit بيقرا الحقول من النوعين بنفس الطريقة، والـ UI عندها `textError` واحدة:
+
+<CodeBlock label="طريق واحد للحقول، أيًا كان مين اللي رفض">
+
+```dart
+emit(switch (result) {
+  Success(:final value) => NotesState(notes: [value, ...state.notes]),
+  Err(failure: ServerFailure(:final fieldErrors) || ValidationFailure(:final fieldErrors))
+      when fieldErrors.isNotEmpty =>
+    NotesState(notes: state.notes, fieldErrors: fieldErrors),
+  Err(:final failure) => NotesState(notes: state.notes, failure: failure),
+});
+```
+
+</CodeBlock>
+
+الـ `||` pattern بيطابق النوعين، والاتنين بيطلّعوا متغير بنفس الاسم والنوع. يعني الـ 2500 حرف بيترفضوا على الجهاز من غير طلب، ولو حد عدّى الـ app ووصل للسيرفر بأي طريقة، نفس الرسالة على نفس الخانة. والـ repository بقى ياخد `NoteText` بدل `String`، فمستحيل يوصله نص ماعدّاش على القاعدة.
+
+### الـ use case بيتعامل مع 3 Results ورا بعض
+
+المستخدم فاتح كتاب من الـ catalog، مش من مكتبته، وكتب ملاحظة. الـ backend بيقبل ملاحظات على كتب في مكتبتك بس، فالـ use case لازم يعمل 3 خطوات: يتأكد من النص، ويضيف الكتاب للمكتبة لو مش موجود، وبعدين يضيف الملاحظة. وكل خطوة ممكن تفشل.
+
+<CodeBlock label="الأسلوب الأول: early return">
+
+```dart
+@useResult
+Future<Result<Note>> call(AddNoteParams params) async {
+  final NoteText text;
+  switch (NoteText.create(params.text)) {
+    case Err(:final failure):
+      return Err(failure);
+    case Success(:final value):
+      text = value;
+  }
+
+  final added = await _library.ensureInLibrary(params.bookId);
+  if (added case Err(:final failure)) return Err(failure);
+
+  return _notes.addNote(params.bookId, text);
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `if (added case Err(:final failure))`:</b> لما مش محتاج القيمة، سطر واحد بيطلع لو فشل.
+- <b>الـ switch مع `final NoteText text;`:</b> لما محتاج القيمة. الـ switch على sealed type exhaustive، فالـ compiler عارف إن `text` اتملت في كل طريق بيكمّل.
+
+الأسلوب التاني إنك تبني أدوات على الـ Result نفسه:
+
+<CodeBlock label="core/result_ops.dart">
+
+```dart
+extension ResultOps<T> on Result<T> {
+  Result<R> map<R>(R Function(T value) transform) => switch (this) {
+        Success(:final value) => Success(transform(value)),
+        Err(:final failure) => Err(failure),
+      };
+
+  Result<R> flatMap<R>(Result<R> Function(T value) next) => switch (this) {
+        Success(:final value) => next(value),
+        Err(:final failure) => Err(failure),
+      };
+
+  R fold<R>({required R Function(Failure) onErr, required R Function(T) onSuccess}) =>
+      switch (this) {
+        Success(:final value) => onSuccess(value),
+        Err(:final failure) => onErr(failure),
+      };
+
+  T? get valueOrNull => switch (this) {
+        Success(:final value) => value,
+        Err() => null,
+      };
+}
+
+extension FutureResultOps<T> on Future<Result<T>> {
+  // not named "then": Future already has one
+  Future<Result<R>> andThen<R>(Future<Result<R>> Function(T value) next) async =>
+      switch (await this) {
+        Success(:final value) => await next(value),
+        Err(:final failure) => Err(failure),
+      };
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="نفس الـ use case بالـ chain">
+
+```dart
+@useResult
+Future<Result<Note>> call(AddNoteParams params) =>
+    Future.value(NoteText.create(params.text)).andThen(
+      (text) => _library
+          .ensureInLibrary(params.bookId)
+          .andThen((_) => _notes.addNote(params.bookId, text)),
+    );
+```
+
+</CodeBlock>
+
+الاتنين صح. بس لاحظ إن الخطوة التالتة محتاجة `text` من الخطوة الأولى، فالـ chain اضطر يتداخل جوه بعضه. أي خطوة رابعة هتزود مستوى كمان، والـ debugger مش هيقف على سطر واضح لكل خطوة.
+
+| | early return | chain |
+| --- | --- | --- |
+| القراية | من فوق لتحت، خطوة في كل سطر | سطر واحد لو الخطوات بسيطة |
+| خطوة محتاجة قيمة من خطوتين قبلها | عادي، القيمة متغير | بيتداخل |
+| الـ debugger | breakpoint على كل خطوة | صعب |
+| حد جديد في الفريق | يفهمه من غير شرح | محتاج يعرف `andThen` |
+
+في Readly القاعدة: <b>early return في الـ use cases</b>، و`map` و`valueOrNull` للتحويلات الصغيرة، زي `result.map((page) => page.books)` أو `cached.valueOrNull ?? const []`. والـ `fold` موجود لو محتاج expression، بس الـ switch على الـ Result بيعمل نفس الشغل ومقروء أكتر في الـ Cubit.
+
+وفي سؤال واحد لازم الـ use case يجاوبه: لو الكتاب اتضاف للمكتبة والملاحظة فشلت، نرجع الكتاب؟ هنا لأ: الكتاب في المكتبة مش ضرر، والمستخدم كان عايزه هناك أصلًا. بس في عمليات تانية (دفع، حجز) الخطوة النص دي محتاجة تتلغي، ودي قرار business مش تفصيلة كود.
+
+### اتأكد إن الخريطة صح
+
+الـ `_mapDio` أهم function في الطريق كله، وأسهل حاجة تتستّ: input ثابت وoutput ثابت. وبدل تست لكل حالة، جدول واحد:
+
+<CodeBlock label="test/core/network/map_dio_test.dart">
+
+```dart
+DioException _bad(int status, {Object? data, Map<String, List<String>> headers = const {}}) {
+  final options = RequestOptions(path: '/books/OL45804W/notes');
+  return DioException.badResponse(
+    statusCode: status,
+    requestOptions: options,
+    response: Response(
+      requestOptions: options,
+      statusCode: status,
+      data: data,
+      headers: Headers.fromMap(headers),
+    ),
+  );
+}
+
+DioException _ofType(DioExceptionType type, {Object? error}) =>
+    DioException(requestOptions: RequestOptions(), type: type, error: error);
+
+void main() {
+  final cases = <(DioException, Matcher)>[
+    (_ofType(DioExceptionType.receiveTimeout), isA<NetworkFailure>()),
+    (_ofType(DioExceptionType.unknown, error: const SocketException('down')), isA<NetworkFailure>()),
+    (
+      _ofType(
+        DioExceptionType.badResponse,
+        error: UnexpectedBodyException(url: Uri.parse('https://api.readly.app/library'), status: 200),
+      ),
+      isA<NetworkFailure>().having((f) => f.hint, 'hint', NetworkHint.captivePortal),
+    ),
+    (_bad(401), isA<UnauthorizedFailure>()),
+    (
+      _bad(422, data: {'code': 'validation_failed', 'fields': {'text': 'too_long'}}),
+      isA<ServerFailure>().having((f) => f.fieldErrors, 'fieldErrors', {'text': 'too_long'}),
+    ),
+    (
+      _bad(429, headers: {'retry-after': ['60']}),
+      isA<ServerFailure>().having((f) => f.retryAfter, 'retryAfter', const Duration(seconds: 60)),
+    ),
+    (
+      _bad(500, headers: {'x-request-id': ['req_7f3a91c2']}),
+      isA<ServerFailure>().having((f) => f.requestId, 'requestId', 'req_7f3a91c2'),
+    ),
+    (
+      _bad(502, data: '<html>Bad Gateway</html>'),
+      isA<ServerFailure>().having((f) => f.code, 'code', isNull),
+    ),
+  ];
+
+  for (final (exception, expected) in cases) {
+    test('${exception.type.name} ${exception.response?.statusCode ?? ''}', () async {
+      final result = await guard<void>(() => Future.error(exception));
+      expect(result, isA<Err<void>>().having((r) => r.failure, 'failure', expected));
+    });
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>من الـ guard مش من `_mapDio`:</b> الـ `_mapDio` private، والـ guard هو الـ API الحقيقي. كده التست بيتأكد من الـ try/catch كمان.
+- <b>`Matcher` مش `Failure`:</b> الـ Failures مابتعملش override لـ `==`، فـ `isA<...>().having(...)` بيقارن الحقل اللي يهمك بس.
+- <b>حالة جديدة = سطر جديد:</b> أول ما تلاقي حالة في الـ production ماكانتش متغطية، ضيفها للجدول قبل ما تصلحها. وتست الـ `parseOrThrow` بنفس الشكل: `guard(() async => parseOrThrow(Uri.parse('/x'), () => throw TypeError()))` لازم يرجّع `bad_response`. الاختبارات بالتفصيل في الوحدة 8.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+<b>`ServerFailure(code)` ولا نوع خاص بالـ feature؟</b> شاشة إنشاء الحساب ليها نتايج business كتير: الإيميل مستخدم، الباسورد ضعيف، الإيميل من دومين ممنوع، لازم تأكيد. لو كلهم `ServerFailure(code: '...')`، الـ Cubit هيبقى switch على strings، ولو الـ backend زوّد واحدة الـ compiler مش هيقولك. البديل نوع sealed <b>جوه الـ feature</b>:
+
+<CodeBlock label="feature_auth/domain/register_outcome.dart">
+
+```dart
+sealed class RegisterOutcome {
+  const RegisterOutcome();
+}
+final class Registered extends RegisterOutcome {
+  const Registered();
+}
+final class EmailTaken extends RegisterOutcome {
+  const EmailTaken();
+}
+final class WeakPassword extends RegisterOutcome {
+  const WeakPassword();
+}
+
+// the repository turns business answers into values, the rest stays a Failure
+Future<Result<RegisterOutcome>> register(Email email, Password password) async {
+  final result = await guard(() => _remote.register(email.value, password.value));
+  return switch (result) {
+    Success() => Success(const Registered()),
+    Err(failure: ServerFailure(code: 'email_taken')) => Success(const EmailTaken()),
+    Err(failure: ServerFailure(code: 'weak_password')) => Success(const WeakPassword()),
+    Err(:final failure) => Err(failure), // network, 5xx, bad_response
+  };
+}
+```
+
+</CodeBlock>
+
+الفكرة إن «الإيميل مستخدم» مش فشل، ده <b>إجابة</b>. فبيبقى قيمة جوه Success، والـ Err يفضل للحاجات اللي أي شاشة بتتعامل معاها بنفس الطريقة. وده مايكسرش قانون الوحدة 2: الـ Failure في core مالمسناهوش، والنوع الجديد عايش في الـ feature، فبيكسر الـ switches بتاعة الـ feature دي بس. التمن: نوع وmapping لكل flow. يستاهل لما الـ flow فيه 3 نتايج business أو أكتر كل واحدة ليها UI مختلفة. لو نتيجة أو اتنين، `code` على `ServerFailure` مع `_` في الآخر كفاية.
+
+- <b>كل خطوة في طبقتها:</b> الـ data layer فيها الـ DioException و`_mapDio` و`parseOrThrow` والـ guard والـ log. الـ domain فيه أنواع الـ Failure والـ Result والقواعد اللي بترجّع `ValidationFailure`، والـ use cases اللي بتربط الخطوات. الـ presentation فيها `localized` و`canRetry` واختيار الـ widget. والـ Cubit عمره ما يعمل `import 'package:dio/dio.dart'`: لو عمل، يبقى بيقرر على status codes، وأي تغيير في الشبكة هيوصل للشاشة. التست بتاع درس "حراس المعمارية" في الوحدة 7 يقدر يمنع الـ import ده في الـ CI.
+- <b>اللي مايتحولش لـ Failure:</b> الـ `StateError` والـ `RangeError` والـ `LateInitializationError` والـ `AssertionError`، وأي `TypeError` من كودنا بعد الـ fromJson. دول bugs، والـ guard مابيمسكهمش عن قصد. لو `catch (e)` بلعهم، هتعرض «حصلت مشكلة» للمستخدم وتعيش سنة مش عارف إن عندك bug.
+- <b>الـ message للـ logs:</b> `'HTTP 422 validation_failed'` و`'Bad response from GET /library'` بيساعدوك تفهم من الـ log في ثانية. المستخدم عمره ما يشوفهم، النص بتاعه من الـ ARB حسب النوع والـ code.
+- <b>الـ X-Request-Id من الـ app؟</b> الـ backend بتاعنا بيولّده، فالـ timeout مالوش reference لأن الرد ماوصلش. لو الدعم محتاجه في كل حالة، خلي interceptor يولّد UUID ويبعته في الـ header، والسيرفر يستخدمه بدل ما يولّد واحد. ده اتفاق مع الـ backend، ومكانه درس "عقد الـ API والـ production".
+
+<Note kind="interview" title="سؤال interview">
+
+«فين بتحوّل الـ exceptions لـ Failures، وليه هناك بس؟» في الـ guard في الـ repository، وبس. هو آخر مكان شايف الـ DioException والـ response والـ headers، فهو الوحيد اللي يقدر يقرا الـ code والـ fieldErrors والـ Retry-After والـ X-Request-Id. وهو الوحيد اللي شايف الـ exception الأصلي بالـ stack، فهو مكان الـ log الوحيد. لو التحويل اتعمل في الـ Cubit، الـ Cubit هيعرف dio وأي تغيير في الشبكة يوصل للشاشة. ولو اتعمل في أكتر من مكان، نفس الفشل هيتسجل أكتر من مرة وهيتترجم بطرق مختلفة. والـ guard بيمسك أنواع معينة بس، عشان الـ bugs تضرب وتوصل Sentry.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«السيرفر بعت JSON شكله غلط: crash ولا Failure؟» Failure، بشرط إن الغلط في كلام السيرفر مش في كودنا. الـ fromJson بس بيتلف بـ `parseOrThrow` اللي بيحوّل `TypeError` و`FormatException` لـ `ParseException`، والـ guard بيرجّعها `ServerFailure(code: 'bad_response')` وبيبلّغها non-fatal بالـ endpoint والـ stack من غير الـ body (فيه بيانات المستخدم). المستخدم بيشوف رسالة عادية بدل app واقف، والفريق بيعرف في نفس اليوم إن العقد اتكسر. أما `!` في الـ mapper أو الـ Cubit فده bug عندنا، ولازم يفضل crash.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### الـ Cubit بيقرا الـ DioException
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+Future<void> add(String text) async {
+  try {
+    final note = await _remote.addNote(_bookId.value, text);
+    emit(NotesState(notes: [note.toEntity(), ...state.notes]));
+  } on DioException catch (e) {
+    final msg = e.response?.data['message'] ?? e.toString();
+    emit(NotesState(notes: state.notes, error: msg));
+  }
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+Future<void> add(String text) async {
+  final result = await _addNote(AddNoteParams(bookId: _bookId, text: text));
+  if (isClosed) return;
+  emit(switch (result) {
+    Success(:final value) => NotesState(notes: [value, ...state.notes]),
+    Err(failure: ServerFailure(:final fieldErrors) || ValidationFailure(:final fieldErrors))
+        when fieldErrors.isNotEmpty =>
+      NotesState(notes: state.notes, fieldErrors: fieldErrors),
+    Err(:final failure) => NotesState(notes: state.notes, failure: failure),
+  });
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: الـ Cubit بيكلّم الـ data source مباشرة وبيعرف dio. لو الـ body كان HTML، `data['message']` بيرمي TypeError جوه الـ catch نفسه. والمستخدم بيشوف `Invalid note` بالإنجليزي أو `DioException [bad response]...`. والـ timeout والـ TypeError من الـ fromJson مش متغطيين خالص. بعد: الـ Cubit مابيشوفش غير Failure، والحقل بياخد خطأه سواء الـ domain رفض أو السيرفر، والنص من الترجمة.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="pipeline-1">
+<Ask>ليه تحويل الـ DioException لـ Failure بيحصل في الـ guard، مش في الـ Cubit؟</Ask>
+<Answer>
+
+لأن الـ guard هو آخر مكان شايف الـ response والـ headers والـ exception الأصلي بالـ stack، فهو اللي يقدر يقرا الـ code والـ fieldErrors والـ Retry-After والـ X-Request-Id، ويسجّل مرة واحدة. ولو الـ Cubit عمل التحويل هيعرف dio، وأي تغيير في الشبكة هيوصل للشاشة، والتحويل هيتكرر في كل Cubit.
+
+</Answer>
+</Question>
+
+<Question id="pipeline-2">
+<Ask>السيرفر بعت `updatedAt` كـ number والـ fromJson رمى `TypeError`. وفي شاشة تانية، `!` في الـ mapper بتاعنا رمى `TypeError` برضه. الاتنين بيحصل فيهم إيه؟</Ask>
+<Answer>
+
+الأول جوه `parseOrThrow`، فبيبقى `ParseException`، والـ guard بيرجّعه `ServerFailure(code: 'bad_response')` وبيتبلّغ non-fatal: السيرفر كسر العقد، والمستخدم بيشوف رسالة عادية. التاني بعد الـ parse، يعني bug في كودنا، فبيعدّي من الـ guard ويوصل للـ global handlers وSentry كـ crash. الحد هو مين اللي كتب البيانات اللي باظت، مش نوع الـ exception.
+
+</Answer>
+</Question>
+
+<Question id="pipeline-3">
+<Ask>الـ interceptor والـ repository والـ Cubit كلهم بيسجّلوا الفشل. إيه المشكلة، وفين المكان الصح؟</Ask>
+<Answer>
+
+كل فشل بيبقى 3 entries بـ 3 stack traces، فـ Sentry بيقسمهم 3 issues والأرقام بتتضرب في 3، واتنين منهم مفيهمش الـ exception الأصلي أصلًا. المكان الصح الـ guard بس، لأنه شايف الـ exception والـ stack والـ Failure مع بعض. الـ interceptor يسجّل breadcrumb للسياق، والـ Cubit مابيسجّلش.
+
+</Answer>
+</Question>
+
+<Question id="pipeline-4">
+<Ask>`NoteText.create` بيرجّع `ValidationFailure` لما الملاحظة أطول من 2000 حرف، والسيرفر بيرجّع 422 `too_long` لنفس الحالة. ليه الاتنين بنفس الـ code في `fieldErrors`؟</Ask>
+<Answer>
+
+عشان الطريق يبقى واحد: الـ Cubit بيقرا `fieldErrors` من النوعين بـ `||` pattern واحد، والخانة عندها function ترجمة واحدة. الـ domain بيرفض على الجهاز من غير طلب، ولو حاجة عدّت ووصلت للسيرفر، المستخدم بيشوف نفس الرسالة على نفس الخانة.
+
+</Answer>
+</Question>
+
+<Question id="pipeline-5">
+<Ask>جالك `DioExceptionType.unknown` مرة جواه `SocketException` ومرة جواه `StateError`. يتحولوا لإيه؟</Ask>
+<Answer>
+
+الأول `NetworkFailure`: الـ `SocketException` بتعمل implements `IOException`، فـ `isNetworkLevel` بيقول إنها الشبكة مهما كان الـ `type`. التاني غالبًا exception اترمى من interceptor عندنا، يعني bug، فبيبقى `ServerFailure(code: 'unknown')` ويتبلّغ للفريق بدل ما يتعرض للمستخدم «مفيش نت».
+
+</Answer>
+</Question>
+
+</Quiz>

@@ -8,7 +8,7 @@ export default function HomePage() {
       <section className="home-hero">
         <p className="kicker">Flutter Clean Path</p>
         <h1>من الأساس للاحتراف، خطوة بخطوة</h1>
-        <p className="lede">9 وحدات بترتيب المذاكرة. كل درس فيه الشرح والكود والمعمل والأسئلة في مكان واحد، وآخر كل وحدة مهام تطبّقها في مشروع حقيقي. التقدم بيتحفظ على المتصفح ده.</p>
+        <p className="lede">10 وحدات بترتيب المذاكرة. كل درس فيه الشرح والكود والمعمل والأسئلة في مكان واحد، وآخر كل وحدة مهام تطبّقها في مشروع حقيقي. التقدم بيتحفظ على المتصفح ده.</p>
       </section>
       <HomeDashboard manifest={getManifest()} />
       <section className="home-links">

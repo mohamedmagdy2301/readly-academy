@@ -3,6 +3,7 @@ import DebounceLab from "./DebounceLab";
 import LayersLab from "./LayersLab";
 import TokenRefreshLab from "./TokenRefreshLab";
 import OfflineLab from "./OfflineLab";
+import ErrorPipelineLab from "./ErrorPipelineLab";
 
 /**
  * Registry of interactive labs usable in MDX as <Lab name="..." />.
@@ -13,6 +14,7 @@ const LABS: Record<string, React.ComponentType> = {
   layers: LayersLab,
   "token-refresh": TokenRefreshLab,
   "offline-sync": OfflineLab,
+  "error-pipeline": ErrorPipelineLab,
 };
 
 export default function Lab({ name }: { name: string }) {

@@ -1,0 +1,35 @@
+<svg viewBox="0 0 760 350" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="الـ DioException بتطلع في الـ call stack لحد الـ guard اللي بيمسكها، والـ TypeError بتعدّي لحد PlatformDispatcher.onError">
+<rect x="280" y="20" width="240" height="44" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="400" y="39" text-anchor="middle" font-size="13" fill="var(--ink)" font-weight="600">NotesPage</text>
+<text x="400" y="55" text-anchor="middle" font-size="10" fill="var(--muted)">onPressed: cubit.save(text)</text>
+<rect x="280" y="88" width="240" height="44" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="400" y="115" text-anchor="middle" font-size="13" fill="var(--ink)" font-weight="600">NotesCubit.save()</text>
+<rect x="280" y="156" width="240" height="44" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="400" y="175" text-anchor="middle" font-size="13" fill="var(--ink)" font-weight="600">NotesRepository</text>
+<text x="400" y="191" text-anchor="middle" font-size="10" fill="var(--muted)">guard(() =&gt; ...)</text>
+<rect x="280" y="224" width="240" height="44" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="400" y="251" text-anchor="middle" font-size="13" fill="var(--ink)" font-weight="600">NotesRemoteSource.addNote()</text>
+<rect x="280" y="292" width="240" height="44" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="400" y="311" text-anchor="middle" font-size="13" fill="var(--ink)" font-weight="600">dio.post()</text>
+<text x="400" y="327" text-anchor="middle" font-size="10" fill="var(--muted)">/books/OL45804W/notes</text>
+<line x1="350" y1="66" x2="350" y2="86" stroke="var(--muted)" stroke-width="1.6" marker-end="url(#mk-mut)"/>
+<line x1="350" y1="134" x2="350" y2="154" stroke="var(--muted)" stroke-width="1.6" marker-end="url(#mk-mut)"/>
+<line x1="350" y1="202" x2="350" y2="222" stroke="var(--muted)" stroke-width="1.6" marker-end="url(#mk-mut)"/>
+<line x1="350" y1="270" x2="350" y2="290" stroke="var(--muted)" stroke-width="1.6" marker-end="url(#mk-mut)"/>
+<text x="340" y="80" text-anchor="end" font-size="10" fill="var(--muted)">calls</text>
+<line x1="450" y1="290" x2="450" y2="270" stroke="var(--warn)" stroke-width="1.8" marker-end="url(#mk-warn)"/>
+<line x1="450" y1="222" x2="450" y2="202" stroke="var(--warn)" stroke-width="1.8" marker-end="url(#mk-warn)"/>
+<line x1="450" y1="154" x2="450" y2="134" stroke="var(--accent)" stroke-width="1.8" marker-end="url(#mk-acc)"/>
+<text x="536" y="284" text-anchor="start" font-size="11" fill="var(--warn)" font-weight="600">DioException thrown</text>
+<text x="536" y="216" text-anchor="start" font-size="11" fill="var(--warn)">unwinds: addNote stops here too</text>
+<text x="536" y="174" text-anchor="start" font-size="11" fill="var(--good)" font-weight="600">on DioException catch</text>
+<text x="536" y="190" text-anchor="start" font-size="11" fill="var(--good)">returns Err(NetworkFailure)</text>
+<text x="536" y="148" text-anchor="start" font-size="11" fill="var(--accent)">a Result, no exception above</text>
+<rect x="20" y="20" width="220" height="48" rx="10" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="1.5"/>
+<text x="130" y="40" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">PlatformDispatcher.onError</text>
+<text x="130" y="57" text-anchor="middle" font-size="10" fill="var(--muted)">uncaught: reported as a bug</text>
+<polyline points="278,246 130,246 130,72" fill="none" stroke="var(--warn)" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#mk-warn)"/>
+<text x="140" y="150" text-anchor="start" font-size="11" fill="var(--warn)" font-weight="600">TypeError (a bug)</text>
+<text x="140" y="166" text-anchor="start" font-size="10" fill="var(--muted)">no on clause matches,</text>
+<text x="140" y="180" text-anchor="start" font-size="10" fill="var(--muted)">so it passes guard and Cubit</text>
+</svg>

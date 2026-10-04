@@ -1,0 +1,36 @@
+<svg viewBox="0 0 760 330" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="الـ work والـ author ورا بعض، والـ work والـ notes مع بعض، وفشل الـ author بيخفي سطر واحد بس من الصفحة">
+<text x="145" y="54" text-anchor="middle" font-size="11" fill="var(--muted)">Open Library</text>
+<rect x="40" y="60" width="210" height="36" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="145" y="83" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">GET /works/:id</text>
+<line x1="250" y1="78" x2="276" y2="78" stroke="var(--ink)" stroke-width="1.6" marker-end="url(#mk-ink)"/>
+<rect x="280" y="60" width="180" height="36" rx="8" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="1.5"/>
+<text x="370" y="83" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">GET /authors/:id</text>
+<text x="370" y="114" text-anchor="middle" font-size="11" fill="var(--warn)" font-weight="600">failed: timeout</text>
+<text x="135" y="144" text-anchor="middle" font-size="11" fill="var(--muted)">Readly API</text>
+<rect x="40" y="150" width="190" height="36" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="135" y="173" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">GET /books/:id/notes</text>
+<line x1="40" y1="44" x2="40" y2="196" stroke="var(--accent)" stroke-width="1.4" stroke-dasharray="4 4"/>
+<text x="145" y="214" text-anchor="middle" font-size="11" fill="var(--accent)" font-weight="600">(work, notes).wait: start together</text>
+<line x1="40" y1="240" x2="470" y2="240" stroke="var(--line)" stroke-width="1.4"/>
+<line x1="40" y1="234" x2="40" y2="246" stroke="var(--muted)" stroke-width="1.4"/>
+<line x1="250" y1="234" x2="250" y2="246" stroke="var(--muted)" stroke-width="1.4"/>
+<line x1="460" y1="234" x2="460" y2="246" stroke="var(--muted)" stroke-width="1.4"/>
+<text x="40" y="262" text-anchor="middle" font-size="11" fill="var(--muted)">0</text>
+<text x="250" y="262" text-anchor="middle" font-size="11" fill="var(--muted)">300ms</text>
+<text x="460" y="262" text-anchor="middle" font-size="11" fill="var(--muted)">550ms</text>
+<text x="255" y="296" text-anchor="middle" font-size="12" fill="var(--ink)" class="ar" direction="rtl" unicode-bidi="embed">الصفحة جاهزة بعد أطول سلسلة، مش بعد مجموع الطلبات</text>
+<path d="M 200 60 L 200 40 L 510 40 L 552 92" fill="none" stroke="var(--good)" stroke-width="1.5" marker-end="url(#mk-good)"/>
+<line x1="460" y1="88" x2="552" y2="164" stroke="var(--warn)" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#mk-warn)"/>
+<line x1="230" y1="170" x2="552" y2="236" stroke="var(--good)" stroke-width="1.5" marker-end="url(#mk-good)"/>
+<rect x="540" y="30" width="196" height="270" rx="14" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="638" y="52" text-anchor="middle" font-size="12" fill="var(--muted)">BookDetailsPage</text>
+<rect x="556" y="66" width="164" height="64" rx="8" fill="var(--surface)" stroke="var(--good)" stroke-width="1.5"/>
+<text x="638" y="94" text-anchor="middle" font-size="12" fill="var(--ink)" class="ar" direction="rtl" unicode-bidi="embed">الغلاف والعنوان والوصف</text>
+<text x="638" y="116" text-anchor="middle" font-size="11" fill="var(--good)" font-weight="600">critical</text>
+<rect x="556" y="144" width="164" height="50" rx="8" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="1.3" stroke-dasharray="5 4"/>
+<text x="638" y="166" text-anchor="middle" font-size="12" fill="var(--ink)" class="ar" direction="rtl" unicode-bidi="embed">سطر المؤلف مخفي</text>
+<text x="638" y="184" text-anchor="middle" font-size="11" fill="var(--warn)">optional</text>
+<rect x="556" y="208" width="164" height="76" rx="8" fill="var(--surface)" stroke="var(--good)" stroke-width="1.5"/>
+<text x="638" y="238" text-anchor="middle" font-size="12" fill="var(--ink)" class="ar" direction="rtl" unicode-bidi="embed">الملاحظات</text>
+<text x="638" y="262" text-anchor="middle" font-size="11" fill="var(--muted)">optional, own retry</text>
+</svg>

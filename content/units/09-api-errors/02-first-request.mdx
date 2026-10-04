@@ -1,0 +1,819 @@
+---
+title: "أول طلب من Dart: من http لـ dio"
+description: "تبعت أول request من Dart بـ package:http وتقرا الـ status والـ JSON بإيدك، وبعدين نفس الطلب بـ dio، والفرق بينهم بالكود في كل حاجة، ومكانه الصح في Readly، وأشهر المشاكل من أول يوم."
+minutes: 40
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="طلب الدليفري والإيصال">
+
+طلبت أكل بالتليفون. المطعم مابيقولكش «خليك ماسك السماعة لحد ما الأكل يوصل». بياخد الطلب ويديك <b>رقم أوردر</b>، وانت تقفل وتكمّل يومك: تتفرج، ترد على رسايل. لما الدليفري يخبّط، بتسيب اللي في إيدك وتستلم. وساعات بيتصلوا يقولوا «الصنف خلص»، وده كمان رد، بس مش اللي كنت مستنيه.
+
+</Analogy>
+
+الـ request للسيرفر هو الطلب ده. ممكن ياخد 50 ملي ثانية، وممكن 10 ثواني على نت ضعيف. لو الـ app «مسك السماعة» واستنى، الشاشة هتتجمد: لا scroll ولا animation ولا زرار بيرد. عشان كده أي دالة بتكلّم النت بترجّع <b>Future</b>، ورقم الأوردر ده بيتحول لقيمة (الرد) أو لـ error (الصنف خلص). والـ `await` معناها «كمّل الدالة دي لما الأوردر يوصل»، والـ app في الوقت ده بيرسم ويرد على المستخدم عادي.
+
+لو الـ Future والـ `async` و`await` مش واضحين، ارجع لجزء Future وStream في درس Dart في الوحدة 1، الدرس ده مبني عليه. وفي الدرس اللي فات شفت الـ request والـ response بعينك بـ curl. دلوقتي هنعمل نفس الطلب من Dart.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### 1. ضيف package:http
+
+```bash
+flutter pub add http
+```
+
+`package:http` هو الـ HTTP client الرسمي من فريق Dart: صغير، ومن غير إضافات. وده بالظبط اللي يخليه أحسن حاجة تتعلم عليها، لأنه مش بيعمل حاجة من وراك.
+
+### 2. ابعت الطلب واقرا الـ status بنفسك
+
+<CodeBlock label="أول طلب: البحث في Open Library">
+
+```dart
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+
+Future<List<SearchDoc>> searchBooks(String query) async {
+  final uri = Uri.https('openlibrary.org', '/search.json', {
+    'q': query,
+    'limit': '20', // Uri.https wants strings, not ints
+  });
+
+  final res = await http.get(uri, headers: {
+    'Accept': 'application/json',
+    'User-Agent': 'Readly/1.0 (support@readly.app)',
+  });
+
+  // http does NOT throw on 404 or 500: checking is your job
+  if (res.statusCode != 200) {
+    throw HttpStatusException(res.statusCode, res.body);
+  }
+
+  final json = jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
+  final docs = json['docs'] as List<dynamic>;
+  return docs.map((e) => SearchDoc.fromJson(e as Map<String, dynamic>)).toList();
+}
+
+class HttpStatusException implements Exception {
+  const HttpStatusException(this.statusCode, this.body);
+  final int statusCode;
+  final String body;
+
+  @override
+  String toString() => 'HttpStatusException($statusCode)';
+}
+```
+
+</CodeBlock>
+
+خطوة خطوة:
+
+1. <b>الـ `Uri.https`:</b> بيبني الـ URL ويعمل encoding لكل قيمة، زي ما شفنا في درس «HTTP والـ API من الصفر». وقيم الـ query لازم تبقى `String`: لو حطيت `20` من غير quotes، هيرمي error وقت التشغيل.
+2. <b>الـ `await http.get`:</b> بيرجّع `Response` فيه `statusCode` و`headers` و`body`. الـ `await` بيوقف الدالة دي بس، مش الـ app.
+3. <b>الـ `statusCode`:</b> أهم سطر في الكود. `package:http` شايف إن الطلب «نجح» طول ما السيرفر رد، حتى لو الرد 404 أو 500. لو نسيت الـ if، هتعمل `jsonDecode` لصفحة error وتقع في مكان تاني خالص.
+4. <b>الـ `utf8.decode(res.bodyBytes)`:</b> الـ `res.body` بيفك الـ bytes بالـ charset اللي في الـ `Content-Type`. لو السيرفر ماقالش charset، نسخ http القديمة بتفترض latin1، فالعناوين العربي بتطلع حروف غريبة. الـ JSON دايمًا UTF-8، فافكه انت.
+5. <b>الـ `jsonDecode`:</b> بيرجّع `dynamic`، وانت بتقول لـ Dart «أنا متأكد إنه Map» بـ `as`. لو طلع مش Map، الـ `as` هيرمي `TypeError` هنا، قريب من السبب.
+
+| اللي ممكن يترمي | امتى |
+| --- | --- |
+| `ClientException` | مفيش نت، أو السيرفر مش بيرد، أو الاتصال اتقطع |
+| `HttpStatusException` (بتاعتنا) | السيرفر رد بغير 200 |
+| `FormatException` | الـ body مش JSON أصلًا (صفحة HTML مثلًا) |
+| `TypeError` | الـ JSON شكله غير اللي الـ `as` متوقعه |
+
+الفرق بين الـ Exception والـ Error في Dart، وليه الـ `TypeError` مش زي الباقيين، هو موضوع الدرس الجاي «الأخطاء في Dart من الصفر».
+
+### 3. الـ fromJson بإيدك
+
+<CodeBlock label="SearchDoc: كل cast مقصود">
+
+```dart
+class SearchDoc {
+  const SearchDoc({
+    required this.key,
+    required this.title,
+    required this.authors,
+    this.year,
+    this.coverId,
+  });
+
+  final String key;          // "/works/OL893415W"
+  final String title;
+  final List<String> authors;
+  final int? year;
+  final int? coverId;
+
+  factory SearchDoc.fromJson(Map<String, dynamic> json) => SearchDoc(
+        key: json['key'] as String,                     // required: missing = broken contract
+        title: json['title'] as String? ?? 'Untitled',  // optional, with a fallback
+        authors: [
+          for (final a in json['author_name'] as List<dynamic>? ?? const [])
+            if (a is String) a,                         // skip anything that is not a name
+        ],
+        year: (json['first_publish_year'] as num?)?.toInt(),
+        coverId: (json['cover_i'] as num?)?.toInt(),
+      );
+}
+```
+
+</CodeBlock>
+
+- <b>`as String` من غير `?`:</b> للحقل اللي من غيره الكتاب مالوش معنى. لو مش موجود، الـ cast يرمي، وده الصح: العقد اتكسر ولازم يبان.
+- <b>`as String?` و`??`:</b> للحقل اللي ممكن ييجي أو مايجيش. Open Library فيه كتب كتير من غير مؤلف ولا سنة.
+- <b>الـ `as num?`:</b> الأرقام في JSON ممكن تيجي `int` أو `double`، والـ `num` بيقبل الاتنين. التفاصيل في Level 3.
+
+ده الـ DTO اللي في درس الـ Pagination اسمه `BookDto` جوه `SearchPageDto`، واتكتب هناك بـ freezed وjson_serializable زي درس الـ Data في الوحدة 3. بس قبل ما الـ codegen يكتبه عنك، لازم تعرف تكتبه بإيدك، لأن الـ errors اللي بتطلع منه هي نفس الـ casts دي.
+
+### 4. نفس الطلب بـ dio
+
+```bash
+flutter pub add dio
+```
+
+<CodeBlock label="البحث بـ dio">
+
+```dart
+final dio = Dio(BaseOptions(
+  baseUrl: 'https://openlibrary.org',
+  connectTimeout: const Duration(seconds: 10),
+  receiveTimeout: const Duration(seconds: 20),
+  headers: {'User-Agent': 'Readly/1.0 (support@readly.app)'},
+));
+
+Future<List<SearchDoc>> searchBooks(String query) async {
+  final res = await dio.get<Map<String, dynamic>>(
+    '/search.json',
+    queryParameters: {'q': query, 'limit': 20}, // ints are fine here
+  );
+  final docs = res.data!['docs'] as List<dynamic>;
+  return docs.map((e) => SearchDoc.fromJson(e as Map<String, dynamic>)).toList();
+}
+```
+
+</CodeBlock>
+
+شوف اللي اختفى: مفيش `if (statusCode != 200)`، لأن dio بيرمي `DioException` نوعه `badResponse` لأي status برّه الـ 2xx. ومفيش `jsonDecode`، لأن dio بيفك الـ JSON لوحده لما الـ `Content-Type` يبقى JSON. والـ headers والـ base URL والـ timeouts اتكتبوا مرة واحدة في الـ `BaseOptions`، مش مع كل طلب.
+
+| | package:http | dio |
+| --- | --- | --- |
+| status برّه الـ 2xx | بيرجّع عادي، وانت تشيّك | بيرمي `DioException` (بيتغير بـ `validateStatus`) |
+| فك الـ JSON | `jsonDecode` بإيدك | لوحده حسب الـ `Content-Type` |
+| الـ timeouts | مفيش by default | connect وsend وreceive في الـ options |
+| الـ interceptors | مفيش، تلف الـ `BaseClient` بنفسك | جزء أساسي منه |
+| إلغاء الطلب | `AbortableRequest` في النسخ الحديثة بس | `CancelToken` |
+| الـ progress | تقرا الـ stream بنفسك | `onSendProgress` و`onReceiveProgress` |
+| رفع ملفات | `MultipartRequest` | `FormData` |
+| الـ base URL والـ headers المشتركة | تكرّرهم أو تلف الـ client | `BaseOptions` |
+| بعت JSON | `jsonEncode` والـ `Content-Type` بإيدك (والـ Map لوحده بيتبعت form) | الـ Map بيتبعت JSON لوحده |
+| الـ retry | `RetryClient` من `package:http/retry.dart` | interceptor تكتبه أو من package |
+| تنزيل ملف | تكتب الـ stream في ملف بنفسك | `dio.download` |
+| التستات | `MockClient` جاهز | adapter مزيف |
+| الحجم | صغير جدًا، من فريق Dart | أكبر، ومليان features |
+
+كل سطر في الجدول ده هتلاقيه بالكود، الاتنين جنب بعض، في جزء «dio وhttp جنب بعض» في آخر الدرس.
+
+### 5. الكود ده مكانه فين في Readly
+
+الكود اللي فوق كان في دالة لوحدها عشان تشوف الطلب صافي. في Readly ليه بيت واحد: الـ <b>CatalogRemoteSource</b> في الـ data layer. هو الحتة الوحيدة اللي تعرف إن في dio وفي Open Library:
+
+<CodeBlock label="features/catalog/data/catalog_remote_source.dart">
+
+```dart
+class CatalogRemoteSource {
+  CatalogRemoteSource(this._dio); // the 'openLibrary' Dio from get_it
+  final Dio _dio;
+
+  static const pageSize = 20;
+
+  Future<SearchPageDto> search(String query, {required int page}) async {
+    final res = await _dio.get<Map<String, dynamic>>(
+      '/search.json',
+      queryParameters: {'q': query, 'page': page, 'limit': pageSize},
+    );
+    return SearchPageDto.fromJson(res.data!); // a DTO goes up, never the Response
+  }
+}
+```
+
+</CodeBlock>
+
+<Diagram name="d-api-search-journey">
+
+رحلة بحث واحد: الطلب نازل من الشاشة لحد Open Library، والرد طالع JSON ثم DTO ثم Result. الـ exceptions عايشة في الـ remote source وdio بس، والـ repository بيحوّلها بالـ guard.
+
+</Diagram>
+
+- <b>الـ widget:</b> بيبلّغ الـ Cubit إن المستخدم كتب، وبس. مايعرفش يعني إيه HTTP.
+- <b>الـ CatalogSearchCubit:</b> بيعمل debounce وبينادي الـ use case، زي درس الـ Cubit في الوحدة 5.
+- <b>الـ repository:</b> بينادي الـ remote source جوه الـ `guard`، فأي `DioException` بتبقى Failure، والـ DTO بيبقى entity بالـ mapper.
+- <b>الـ CatalogRemoteSource:</b> بيبعت ويرجّع DTO، أو يرمي. مش شغلته يمسك.
+- <b>الـ Dio:</b> واحد لـ Open Library بالـ base URL والـ User-Agent بتوعه، متسجّل في get_it بـ `instanceName: 'openLibrary'`، زي درس dio في الوحدة 3.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### الـ app علّق على loading للأبد
+
+المستخدم في الأسانسير، والنت بقى شرطة واحدة. الطلب طلع، والسيرفر مابيردش، والـ spinner شغال دقيقتين. `package:http` مالوش timeout by default، فالـ Future ممكن يفضل مستني لحد ما نظام التشغيل نفسه يزهق، وده ممكن ياخد دقايق.
+
+<CodeBlock label="timeout على الـ Future">
+
+```dart
+// throws TimeoutException (dart:async) after 15 seconds
+final res = await http
+    .get(uri, headers: headers)
+    .timeout(const Duration(seconds: 15));
+```
+
+</CodeBlock>
+
+الـ `.timeout()` بيرمي `TimeoutException` بعد 15 ثانية، والشاشة تقدر تعرض «النت بطيء، حاول تاني». بس خلي بالك من حاجة: الـ timeout ده على <b>استنّاك انت</b>، مش على الطلب. الطلب نفسه لسه شغال تحت، والـ socket مفتوح، ولو الرد وصل بعد كده هيتحمّل ويترمي. لو المستخدم داس «حاول تاني» 5 مرات، ممكن يبقى في 5 طلبات شغالين على نفس النت الضعيف.
+
+dio بيحل ده بطريقة تانية: الـ `connectTimeout` والـ `receiveTimeout` بيقفلوا الاتصال فعلًا، والـ `CancelToken` بيلغي الطلب نفسه. والفرق بين التلات timeouts، وإن مفيش timeout للطلب كله، في درس dio في الوحدة 3.
+
+### الـ FutureBuilder بيبعت الطلب مع كل rebuild
+
+فتحت الـ Network tab في DevTools، ولقيت `search.json` اتبعت 6 مرات وانت فتحت الشاشة مرة واحدة. ولقيت الـ spinner بيرجع كل ما الكيبورد يفتح.
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+class BookDetailsPage extends StatelessWidget {
+  const BookDetailsPage({super.key, required this.id});
+  final String id;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder(
+      // a NEW request on every build
+      future: CatalogApi().fetchWork(id),
+      builder: (context, snap) {
+        if (!snap.hasData) return const CircularProgressIndicator();
+        return Text(snap.data!.title);
+      },
+    );
+  }
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+class BookDetailsPage extends StatelessWidget {
+  const BookDetailsPage({super.key, required this.id});
+  final String id;
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocProvider(
+      // created once, loads once
+      create: (_) => getIt<BookDetailsCubit>()..load(id),
+      child: const BookDetailsView(),
+    );
+  }
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+الـ `build` مش «اعرض الشاشة مرة». Flutter بيناديه كل ما حاجة فوقه تتغير: الكيبورد فتح، الثيم اتغير، الأب عمل `setState`. وكل نداء بيعمل `Future` جديد، والـ FutureBuilder لما يلاقي Future جديد بيرجع لـ loading ويستنى الجديد. يعني الطلب بيتبعت تاني، والشاشة بترمش.
+
+القاعدة: الطلب يبدأ في حاجة بتعيش أطول من الـ build. في Readly ده الـ Cubit: الـ `BlocProvider` بيعمله مرة، و`load` بيتنادى مرة. ولو انت في widget لوحده من غير Cubit، الـ Future يتعمل في `initState` ويتحفظ في الـ State، ومايتعملش في الـ `build` أبدًا.
+
+### `type 'List<dynamic>' is not a subtype of type 'List<String>'`
+
+أشهر error في الـ parsing. عايز الـ subjects بتاعة الكتاب من `/works/OL45804W.json`:
+
+```dart
+final subjects = json['subjects'] as List<String>; // throws, even if every item is a string
+```
+
+الـ `jsonDecode` مايعرفش انت عايز إيه، فبيعمل كل array `List<dynamic>`. والـ `as` مابيحوّلش، بيسأل بس «الحاجة دي من النوع ده؟»، والإجابة لأ: دي `List<dynamic>` حتى لو كل اللي جواها نصوص. عندك 3 طرق، وكل واحدة بتتصرف بشكل مختلف لو لقت عنصر مش نص:
+
+| الطريقة | بتعمل إيه | لو في عنصر مش String |
+| --- | --- | --- |
+| `(x as List).cast<String>()` | view كسلان فوق نفس الليست، بيشيّك وقت القراية | بيرمي بعدين، لما حد يوصل للعنصر ده، ممكن في الـ UI |
+| `List<String>.from(x as List)` | بينسخ ويشيّك كل العناصر دلوقتي | بيرمي دلوقتي، جوه الـ fromJson |
+| `[for (final e in x as List) if (e is String) e]` | بينسخ ويفلتر | بيتجاهله |
+
+ماتستخدمش `.cast` في الـ DTO: الـ error بيأجّل لحد ما يطلع في مكان مالوش علاقة بالـ JSON، وبرّه الـ guard. اختار بين التانيين حسب الحقل: لو الليست جزء أساسي من العقد، `List<String>.from` يكسر بصوت عالي جوه الـ data layer. ولو حقل ثانوي زي الـ subjects، الفلتر أحسن: subject واحد غريب مايستاهلش يضيّع صفحة التفاصيل كلها. ونفس المنطق على مستوى الكتب كلها هو «كتاب واحد بايظ ضيّع الصفحة كلها» في درس الـ Data في الوحدة 3.
+
+### int ولا double؟
+
+```dart
+final rating = json['ratings_average'] as double; // fine for 4.2, throws for 4
+```
+
+الكتاب الأول تقييمه `4.2`، والتاني `4`. الـ JSON مافيهوش فرق بين int وdouble، بس `jsonDecode` بيحوّل الرقم اللي من غير علامة عشرية لـ `int`، و`int` مش `double` في Dart. فالكود ده بيشتغل مع معظم الكتب، ويقع مع كتاب تقييمه رقم صحيح. والعكس كمان: سيرفر بيبعت `"pages": 320.0` يوقّع `as int`.
+
+```dart
+final rating = (json['ratings_average'] as num?)?.toDouble(); // 4 -> 4.0
+final pages = (json['number_of_pages'] as num?)?.toInt();     // 320.0 -> 320
+```
+
+اقرا أي رقم كـ `num`، وبعدين حوّله للنوع اللي انت عايزه. وخلي بالك إن الـ bug ده مش هيبان على Flutter web: هناك كل الأرقام JavaScript numbers، فـ `4 is double` بترجع true. التستات اللي على الـ VM هي اللي بتمسكه.
+
+### الشاشة بتهنّج وقت الـ parsing
+
+الـ export بتاع المكتبة رجّع JSON حجمه 4MB فيه 3000 كتاب. الـ spinner وقف يلف ثانية كاملة. الـ `jsonDecode` والـ `fromJson` لـ 3000 عنصر شغالين على نفس الـ isolate اللي بيرسم الشاشة، والـ frame عنده 16 ملي ثانية بس.
+
+<CodeBlock label="الـ parsing في isolate تاني">
+
+```dart
+// top-level: the closure must not capture `this` (a Dio, a Cubit...)
+Future<List<BookDto>> parseLibraryExport(Uint8List bytes) => Isolate.run(() {
+      final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+      return [
+        for (final e in json['books'] as List<dynamic>)
+          BookDto.fromJson(e as Map<String, dynamic>),
+      ];
+    });
+
+// data source: ask dio for the raw bytes, parse off the UI isolate
+final res = await _dio.get<List<int>>(
+  '/library/export',
+  options: Options(responseType: ResponseType.bytes),
+);
+final books = await parseLibraryExport(Uint8List.fromList(res.data!));
+```
+
+</CodeBlock>
+
+- <b>الـ `Isolate.run`:</b> بيشغّل الدالة في isolate جديد وبيرجّع النتيجة. والـ `compute` بتاع Flutter نفس الفكرة بشكل أقدم.
+- <b>الـ closure بياخد معاه كل اللي بيلمسه:</b> لو جواها `this` أو `_dio`، Dart هيحاول ينسخ الـ object ده كله للـ isolate التاني، وغالبًا هيرمي `Illegal argument in isolate message`. عشان كده الدالة top-level وبتاخد الـ bytes بس.
+- <b>مش كل parsing يستاهل:</b> فتح isolate ونسخ النتيجة راجعة ليهم تمن. لصفحة بحث فيها 20 كتاب، الـ isolate أبطأ من الـ parsing نفسه. قيس الأول في DevTools بـ profile mode، ولو الـ frames بتتأخر، انقله.
+- <b>على الـ web مفيش isolates:</b> الـ `compute` بيشتغل على نفس الـ thread، فمش هتكسب حاجة هناك.
+
+dio بيفك الـ JSON الكبير في الخلفية لوحده (زي ما اتقال في Level 4 في درس الـ Data)، بس الـ `fromJson` بتاعك بيفضل على الـ UI isolate. وده السبب إننا طلبنا الـ bytes وعملنا الاتنين في الـ isolate.
+
+### `dio.get<Map<String, dynamic>>` وقع والكود صح
+
+المستخدم في كافيه، ومتوصل على WiFi لسه عايز login. أي طلب بيرجعله صفحة HTML «سجّل دخولك» بـ status 200. ولا dio بيرمي `badResponse` (لأنها 200)، ولا الـ JSON بيتفك (لأن الـ `Content-Type` HTML)، فالـ `res.data` بيبقى `String`. والـ `<Map<String, dynamic>>` في الـ `get` مش تحويل، هو cast بيفشل وقت التشغيل، فبيوصلك غالبًا `DioException` نوعه `unknown` وجواه `TypeError`. ونفس الحكاية لو السيرفر رجّع `[]` بدل object في حالة ماحدش حسبها.
+
+الـ generic في `get<T>` وعد انت بتديه لنفسك، مش ضمان من السيرفر. اللي جاي من برّه افحص شكله قبل ما تثق فيه:
+
+<CodeBlock label="افحص الشكل في الـ data source">
+
+```dart
+Future<SearchPageDto> search(String query, {required int page}) async {
+  final res = await _dio.get<Object?>(
+    '/search.json',
+    queryParameters: {'q': query, 'page': page, 'limit': pageSize},
+  );
+  final body = res.data;
+  if (body is! Map<String, dynamic> || body['docs'] is! List) {
+    // a captive portal page, an empty list, a proxy error...
+    throw FormatException('search.json: unexpected ${body.runtimeType}');
+  }
+  return SearchPageDto.fromJson(body);
+}
+```
+
+</CodeBlock>
+
+كده الفشل بيبقى `FormatException` واضح بيقول اللي حصل، مش `TypeError` غامض. وتحويله لـ `ServerFailure(code: 'bad_response')` يتبلّغ كـ non-fatal بدل ما يبقى crash، ده في درس «من الـ Exception للـ Failure: الطريق كامل».
+
+### Open Library بقى بيرد ببطء أو بيرفض
+
+Open Library API مجاني ومن غير key، وبيطلب من الـ apps اللي بتكلّمه كتير إنها تعرّف نفسها. طلبات كتير من غير `User-Agent` واضح ممكن تتبطّأ أو تترفض بـ 403 أو 429. الأدب هنا مش مجاملة، ده اللي بيخلي الـ catalog شغال:
+
+- <b>الـ `User-Agent` فيه اسم الـ app ووسيلة تواصل:</b> في `BaseOptions(headers: ...)` على الـ Dio بتاع Open Library بس، مش على الـ API بتاعنا. وعلى Flutter web المتصفح مابيسمحش تغيّر الـ `User-Agent` أصلًا، فبيتجاهله.
+- <b>اطلب الحقول اللي محتاجها:</b> `/search.json` بيقبل `fields=key,title,author_name,cover_i,first_publish_year`. الرد بيصغر جدًا، والـ parsing كمان.
+- <b>ماتبعتش طلبات مالهاش لازمة:</b> الـ debounce بتاع الـ CatalogSearchCubit بيخلي «flutter» طلب واحد بدل 7. وصفحة التفاصيل ماتجيبش المؤلفين كلهم لو هتعرض واحد.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>http ولا dio؟</b> `package:http` لما تكتب package غيرك هيستخدمها (dependency صغيرة من فريق Dart، ومابتفرضش حاجة على الـ app)، أو لطلب أو اتنين في app بسيط. dio لـ app زي Readly: token refresh وretry وlogs وإلغاء ورفع صور، وكل ده interceptors جاهزة بدل ما تبنيها فوق `BaseClient`. والاتنين يقدروا يستخدموا الـ network stack بتاع النظام (`cupertino_http` و`cronet_http` لـ http، و`native_dio_adapter` لـ dio) لو محتاج HTTP/3 أو إعدادات الـ VPN والـ proxy بتاعة الموبايل.
+- <b>client واحد لكل backend:</b> مش `Dio()` جديد في كل data source، ومش `http.get` في loop. الـ instance الواحد بيعيد استخدام الاتصال المفتوح (keep-alive)، فالطلب التاني مايدفعش تمن فتح اتصال وHTTPS handshake من الأول. وواحد لكل backend مش للمشروع كله، عشان الـ token مايروحش لـ Open Library، زي درس dio في الوحدة 3.
+- <b>اقفل اللي فتحته:</b> الـ `http.get` اللي على مستوى الـ package بيعمل client ويقفله مع كل طلب، فمفيش reuse. لو عملت `http.Client()` بنفسك، اقفله بـ `close()` لما اللي عامله يموت. وdio نفس الكلام بـ `dio.close()`، بس في Readly الـ Dio singleton عايش طول عمر الـ app.
+- <b>عمرك ما تكلّم API من widget:</b> الـ widget اللي بينادي `http.get` بيخلط 3 شغلانات: العرض، وتوقيت الطلب، وشكل الـ API. فالطلب بيتكرر مع الـ rebuild، ومش هتعرف تختبره من غير نت، وأي تغيير في الـ API بيلف على الشاشات. الطلب مكانه الـ remote data source، ومين يطلبه وامتى ده الـ Cubit.
+- <b>الـ data source بيرجّع DTO، مش `Response`:</b> لو الـ repository استلم `Response<dynamic>`، يبقى عرف dio، وأي تغيير في الـ client بيلف على كل الـ repositories. ولو محتاج حاجة من الـ headers (الـ `X-Request-Id` أو `Retry-After`)، الـ data source يطلّعها في الـ DTO أو في الـ exception.
+- <b>الـ URL دايمًا `Uri` أو `queryParameters`:</b> ولا مرة string interpolation في الـ query، حتى لو «القيمة دي أرقام بس». النهارده أرقام، وبكرة حد يغيّرها لاسم.
+- <b>اعرف تختبره من غير نت:</b> `package:http` فيه `MockClient` في `package:http/testing.dart`، وdio بيتختبر بـ adapter مزيف بيرجّع ردود جاهزة. ده الأساس لتستات الـ data sources في وحدة التستات (الوحدة 8).
+
+<Note kind="interview" title="سؤال interview">
+
+«ليه `package:http` مش بيرمي exception على 404؟ وده كويس ولا وحش؟» لأنه شايف الـ HTTP كنقل: لو السيرفر رد، النقل نجح، والـ status جزء من الرد زي الـ body. الـ exception بيبقى بس لو الرد ماوصلش أصلًا (`ClientException`). الحلو إن انت اللي بتقرر إيه الفشل لكل endpoint: الـ 404 في «الكتاب ده في مكتبتي؟» ممكن تبقى إجابة «لأ» عادية، والـ 304 مش error. والوحش إن نسيان سطر الـ if بيخلي صفحة الـ error تتقري كأنها data، والمشكلة تطلع بعيد عن سببها. dio اختار العكس by default (`validateStatus` بيرمي برّه الـ 2xx)، وتقدر تغيّره لطلب معين. في app كبير، الرمي by default أأمن، لأن الحالة اللي محدش فكّر فيها بتبقى error مش data غلط.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«شاشة فيها FutureBuilder بتبعت نفس الطلب كذا مرة. ليه، وتصلحه إزاي؟» لأن الـ Future اتعمل جوه `build`، والـ build بيتنادى كل ما حاجة فوقه تتغير (كيبورد، ثيم، setState في الأب)، فكل مرة Future جديد، والـ FutureBuilder يرجع لـ loading ويبعت تاني. الحل إن الطلب يبدأ في حاجة بتعيش أطول من الـ build: في `initState` ويتحفظ في الـ State، أو أحسن، في Cubit بيتعمل مرة في `BlocProvider`. وفي المعمارية النضيفة الـ widget أصلًا مايعرفش إن في طلب، بيعرض state بس.
+
+</Note>
+
+</Level>
+
+<LessonPart title="dio وhttp جنب بعض">
+
+الجدول اللي في Level 2 بيقولك الفرق، والجزء ده بيوريهولك. كل حتة هنا هي نفس الشغلانة في Readly، مكتوبة مرة بـ `package:http` ومرة بـ dio، عشان تشوف بالظبط انت بتكتب إيه بإيدك في واحد، وبيتعمل عنك في التاني.
+
+### 1. بعت JSON في POST
+
+دي أول مطب لأي حد جاي من dio لـ http:
+
+<CodeBlock label="package:http: الـ Map لوحده بيتبعت form">
+
+```dart
+final _api = Uri.https('api.readly.app'); // http has no base URL
+
+// WRONG: a Map body is sent as application/x-www-form-urlencoded
+await http.post(_api.resolve('/library'), body: {'key': 'OL45804W'});
+
+// right: encode it and say it's JSON
+await http.post(
+  _api.resolve('/library'),
+  headers: {'Content-Type': 'application/json'},
+  body: jsonEncode({'key': 'OL45804W'}),
+);
+```
+
+</CodeBlock>
+
+<CodeBlock label="dio: الـ Map بيتبعت JSON">
+
+```dart
+await _dio.post('/library', data: {'key': 'OL45804W'});
+```
+
+</CodeBlock>
+
+في http، لو اديت الـ `body` Map، بيبعته زي فورم HTML: `key=OL45804W`. والـ backend بتاع Readly بيقرا JSON، فهيشوف body فاضي ويرجّع 422 «الـ key مطلوب»، وانت متأكد إنك باعته. dio بيعتبر الـ JSON هو الأصل: أي Map أو List في `data` بيتعمله `jsonEncode`، والـ `Content-Type` بيبقى `application/json` لوحده. ولو عايز form فعلًا، بتقولها صراحة: `Options(contentType: Headers.formUrlEncodedContentType)`.
+
+### 2. الإعدادات المشتركة والـ token
+
+كل طلب للـ API بتاعنا محتاج نفس الـ base URL، ونفس الـ `Accept`، والـ `Authorization`.
+
+<CodeBlock label="package:http: client بيلف client">
+
+```dart
+class ReadlyClient extends http.BaseClient {
+  ReadlyClient(this._inner, this._tokens);
+  final http.Client _inner;
+  final TokenStore _tokens;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    request.headers['Accept'] = 'application/json';
+    final token = await _tokens.accessToken;
+    if (token != null) request.headers['Authorization'] = 'Bearer $token';
+    return _inner.send(request);
+  }
+}
+
+// no base URL in http: every call builds its own Uri
+final _api = Uri.https('api.readly.app');
+final res = await client.get(_api.resolve('/library'));
+```
+
+</CodeBlock>
+
+<CodeBlock label="dio: BaseOptions وinterceptor">
+
+```dart
+final dio = Dio(BaseOptions(
+  baseUrl: 'https://api.readly.app',
+  headers: {'Accept': 'application/json'},
+))
+  ..interceptors.add(AuthInterceptor(tokens, refreshDio, dio)); // unit 3
+
+final res = await dio.get('/library');
+```
+
+</CodeBlock>
+
+الإضافة بسيطة في الاتنين. الفرق بيبان في الـ 401: الـ `AuthInterceptor` بتاع درس dio في الوحدة 3 بيعمل refresh ويعيد نفس الطلب بـ `_dio.fetch(options)`. في http الموضوع أصعب، لأن الـ `BaseRequest` بيتبعت مرة واحدة بس (بيبقى finalized)، فعشان تعيده لازم تنسخه بإيدك: الـ method والـ URL والـ headers والـ body. ولو الـ body كان stream (رفع ملف)، مش هتعرف تنسخه أصلًا. وعشان كده أغلب اللي بيبنوا auth كامل فوق http بيلاقوا نفسهم بيكتبوا نسخة صغيرة من dio.
+
+### 3. كل حالة فشل بترمي إيه
+
+ده أهم فرق، لأنه هو اللي الـ guard هيمسكه بعدين:
+
+| اللي حصل | package:http | dio |
+| --- | --- | --- |
+| مفيش نت، أو الـ DNS فشل | `ClientException` (وعلى الموبايل هو كمان `SocketException`) | `DioException` نوعه `connectionError` |
+| السيرفر مابيردش | مفيش حاجة: بيستنى، إلا لو حطيت `.timeout()` فترمي `TimeoutException` | `connectionTimeout` أو `receiveTimeout` |
+| 404 أو 500 | مفيش exception خالص: `Response` عادي والـ status جواه | `badResponse`، والـ `response` جوه الـ exception |
+| الـ body مش JSON | `FormatException` من الـ `jsonDecode` بتاعك | مفيش exception: الـ `res.data` بيبقى `String`، والـ cast بتاع `get<Map>` هو اللي بيفشل |
+| الطلب اتلغى | `RequestAbortedException` (لو استخدمت `AbortableRequest`) | `cancel` |
+
+الفرق ده مش تفصيلة. في http الأخطاء متفرقة على 4 أنواع مالهمش أب واحد، وأهمها (الـ 4xx والـ 5xx) مش exception أصلًا، فلازم تحوّلها انت لـ exception بتاعك زي `HttpStatusException`. في dio كل حاجة بتعدّي من نوع واحد، `DioException`، ومعاه `type` بيقول إيه اللي حصل. وده اللي بيخلي الـ `_mapDio` switch واحد في درس «من الـ Exception للـ Failure».
+
+### 4. الـ timeout والإلغاء
+
+<CodeBlock label="package:http: AbortableRequest">
+
+```dart
+// a real timeout: when the trigger completes, the request itself is aborted
+final req = http.AbortableRequest(
+  'GET',
+  uri,
+  abortTrigger: Future.delayed(const Duration(seconds: 15)),
+);
+final res = await http.Response.fromStream(await _client.send(req));
+```
+
+</CodeBlock>
+
+<CodeBlock label="dio: timeouts في الـ options وCancelToken">
+
+```dart
+final token = CancelToken();
+final res = await _dio.get<Object?>(
+  '/search.json',
+  queryParameters: {'q': query},
+  cancelToken: token, // token.cancel() from anywhere stops it
+);
+```
+
+</CodeBlock>
+
+الـ `.timeout()` اللي في Level 3 بيوقف استنّاك انت بس، والطلب بيكمّل تحت. الـ `AbortableRequest` (وأخواته `AbortableStreamedRequest` و`AbortableMultipartRequest`) بيقفل الطلب نفسه، بس موجود من http 1.5 بس، فلو الـ package عندك أقدم مش هتلاقيه. في dio الاتنين موجودين من زمان: الـ timeouts بتقفل الاتصال، والـ `CancelToken` تديه لأي حد يلغي بيه، زي البحث القديم في درس dio.
+
+### 5. الـ retry
+
+<CodeBlock label="package:http: RetryClient">
+
+```dart
+import 'package:http/retry.dart';
+
+final client = RetryClient(
+  http.Client(),
+  retries: 3,
+  when: (res) => res.statusCode == 502 || res.statusCode == 503 || res.statusCode == 504,
+  whenError: (e, _) => e is http.ClientException, // network errors
+);
+```
+
+</CodeBlock>
+
+<CodeBlock label="dio: RetryInterceptor">
+
+```dart
+dio.interceptors.add(RetryInterceptor(dio)); // unit 3: backoff, jitter, Retry-After
+```
+
+</CodeBlock>
+
+هنا http عنده حاجة جاهزة فعلًا، والـ `RetryClient` بيعمل backoff لوحده. بس خلي بالك إنه بيعيد أي method، حتى الـ POST، فالشرط بتاع «GET أو معاه Idempotency-Key» لازم تكتبه انت جوه `when` و`whenError`. والـ `RetryInterceptor` بتاعنا في درس dio في الوحدة 3 بيعمل ده، وبيحترم الـ `Retry-After` كمان.
+
+### 6. رفع صورة بـ progress
+
+<CodeBlock label="package:http: MultipartRequest من غير progress">
+
+```dart
+final req = http.MultipartRequest('POST', _api.resolve('/library/$bookId/cover'))
+  ..files.add(await http.MultipartFile.fromPath('cover', file.path));
+final res = await http.Response.fromStream(await _client.send(req));
+// progress? wrap the file stream and count the bytes yourself
+```
+
+</CodeBlock>
+
+<CodeBlock label="dio: FormData وonSendProgress">
+
+```dart
+await _dio.post<void>(
+  '/library/$bookId/cover',
+  data: FormData.fromMap({'cover': await MultipartFile.fromFile(file.path)}),
+  onSendProgress: (sent, total) {
+    if (total > 0) onProgress(sent / total); // total is -1 when unknown
+  },
+);
+```
+
+</CodeBlock>
+
+الرفع نفسه سهل في الاتنين. الـ progress bar هو الفرق: في http مفيش callback، فلازم تلف الـ stream بتاع الملف بـ stream بيعد الـ bytes وهي خارجة. وفي dio سطر واحد. ونفس الحكاية في التنزيل: `dio.download(url, path, onReceiveProgress: ...)` مقابل إنك تفتح `IOSink` وتكتب فيه الـ stream بنفسك.
+
+### 7. التستات من غير نت
+
+<CodeBlock label="package:http: MockClient">
+
+```dart
+import 'package:http/testing.dart';
+
+final client = MockClient((req) async {
+  expect(req.url.path, '/search.json');
+  return http.Response(fixture('search_dune.json'), 200,
+      headers: {'content-type': 'application/json; charset=utf-8'});
+});
+```
+
+</CodeBlock>
+
+<CodeBlock label="dio: adapter مزيف">
+
+```dart
+final dio = Dio(BaseOptions(baseUrl: 'https://openlibrary.org'))
+  ..httpClientAdapter = FakeAdapter((options) => ResponseBody.fromString(
+        fixture('search_dune.json'),
+        200,
+        headers: {Headers.contentTypeHeader: [Headers.jsonContentType]},
+      ));
+```
+
+</CodeBlock>
+
+الـ `MockClient` جاهز في http نفسه، وده من أحلى حاجاته. في dio بتعمل class بيعمل implement لـ `HttpClientAdapter` (زي `FakeApiAdapter` في درس «عقد الـ API والـ production»)، أو تستخدم package زي http_mock_adapter. الميزة في dio إن الـ adapter المزيف بيقعد تحت الـ interceptors، فالتست بيجرّب الـ `AuthInterceptor` والـ `RetryInterceptor` الحقيقيين مع الطلب.
+
+### 8. التغيير من واحد للتاني
+
+بفضل الطبقات، التبديل مايلمسش غير مكانين: الـ remote data sources (هي اللي بتعرف الـ client)، والـ guard (هو اللي بيعرف أنواع الـ exceptions). الـ repository contract، والـ use cases، والـ Cubits، والشاشات، مايتغيرش فيهم ولا سطر:
+
+<CodeBlock label="نفس الـ data source بالـ client التاني">
+
+```dart
+class CatalogRemoteSource {
+  CatalogRemoteSource(this._client);
+  final http.Client _client;
+
+  Future<SearchPageDto> search(String query, {required int page}) async {
+    final uri = Uri.https('openlibrary.org', '/search.json',
+        {'q': query, 'page': '$page', 'limit': '$pageSize'});
+    final res = await _client.get(uri).timeout(const Duration(seconds: 20));
+    if (res.statusCode != 200) throw HttpStatusException(res.statusCode, res.body);
+    final body = jsonDecode(utf8.decode(res.bodyBytes));
+    if (body is! Map<String, dynamic> || body['docs'] is! List) {
+      throw FormatException('search.json: unexpected ${body.runtimeType}');
+    }
+    return SearchPageDto.fromJson(body); // same DTO goes up
+  }
+}
+```
+
+</CodeBlock>
+
+قارنه بالـ `CatalogRemoteSource` اللي في آخر الدرس: نفس الـ signature، ونفس الـ DTO طالع. اللي اتغير هو اللي جوه، والـ guard اللي بيمسك `ClientException` و`HttpStatusException` بدل `DioException`. لو الـ Cubit كان بيعمل import لـ dio، التبديل كان هيلف على كل شاشة. وده بالظبط الكلام اللي في درس الطبقات في الوحدة 1، بس بمثال حقيقي.
+
+### تختار إيه؟
+
+| الموقف | الأنسب | ليه |
+| --- | --- | --- |
+| package هتنشرها على pub.dev | http | dependency صغيرة، والـ app اللي بيستخدمها يقدر يدّيها أي `http.Client` |
+| app صغير، كام GET من غير login | http | مش محتاج أكتر، و`MockClient` جاهز للتستات |
+| app فيه login وtoken refresh وretry | dio | الـ interceptors بتعيد الطلب بسهولة، وفي http هتبنيها بإيدك |
+| رفع أو تنزيل ملفات بـ progress | dio | `onSendProgress` و`download` جاهزين |
+| محتاج network stack بتاع النظام (HTTP/3، الـ VPN، الـ proxy) | الاتنين | `cupertino_http` و`cronet_http` لـ http، و`native_dio_adapter` لـ dio |
+| مشروع موجود ماشي بواحد فيهم | اللي موجود | التبديل ممكن بعدين، ومكانه الـ data sources والـ guard بس |
+
+Readly اختار dio عشان الـ token refresh والـ retry والإلغاء ورفع صورة الغلاف. بس المهم مش الاختيار نفسه، المهم إن الاختيار يفضل جوه الـ data layer، فلو اتغير بعد سنة، يتغير في يوم مش في شهر.
+
+</LessonPart>
+
+<LessonPart title="قبل وبعد والكود">
+
+### الشاشة اللي بتكلّم Open Library بنفسها
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+class _SearchPageState extends State<SearchPage> {
+  List<dynamic> _docs = [];
+
+  Future<void> _search(String q) async {
+    final res = await http.get(Uri.parse(
+        'https://openlibrary.org/search.json?q=$q'));
+    final json = jsonDecode(res.body);
+    setState(() => _docs = json['docs']);
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(children: [
+        TextField(onChanged: _search),
+        for (final d in _docs) Text(d['title']),
+      ]);
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+class SearchPage extends StatelessWidget {
+  const SearchPage({super.key});
+
+  @override
+  Widget build(BuildContext context) => BlocProvider(
+        create: (_) => getIt<CatalogSearchCubit>(),
+        child: Column(children: [
+          Builder(
+            builder: (context) => TextField(
+              onChanged: context.read<CatalogSearchCubit>().queryChanged,
+            ),
+          ),
+          const Expanded(child: SearchResults()),
+        ]),
+      );
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: 8 مشاكل في widget واحد. طلب مع كل حرف، والنتيجة القديمة ممكن توصل بعد الجديدة وتغطي عليها. الـ URL بالـ interpolation، فـ «Tom & Jerry» بيتكسر. مفيش شيك على الـ status، فالـ 503 بيتقري كـ JSON. `res.body` ممكن يبوّظ العربي. مفيش timeout، فالـ loading ممكن يفضل للأبد. ولو حصل أي exception، مفيش حد ماسكه. والـ `d['title']` بـ `dynamic`، فأي كتاب من غير عنوان بيوقّع الـ build.
+
+بعد: الشاشة بتبلّغ وبتعرض. الـ debounce وتجاهل النتايج القديمة في الـ CatalogSearchCubit، والـ `Uri` والـ timeouts والـ User-Agent في الـ Dio بتاع Open Library، والشيك على الشكل في الـ CatalogRemoteSource، والـ casts في الـ DTO، وتحويل أي exception لـ Failure في الـ guard. كل مشكلة من التمانية ليها مكان واحد يتصلح فيه.
+
+### الـ CatalogRemoteSource كامل لحد دلوقتي
+
+```dart
+// di/network.dart
+Dio buildOpenLibraryDio() => Dio(BaseOptions(
+      baseUrl: 'https://openlibrary.org',
+      connectTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 20),
+      headers: {'User-Agent': 'Readly/1.0 (support@readly.app)'},
+    ));
+
+// features/catalog/data/catalog_remote_source.dart
+class CatalogRemoteSource {
+  CatalogRemoteSource(this._dio);
+  final Dio _dio;
+
+  static const pageSize = 20;
+  static const _fields = 'key,title,author_name,cover_i,first_publish_year';
+
+  Future<SearchPageDto> search(String query, {required int page}) async {
+    final res = await _dio.get<Object?>(
+      '/search.json',
+      queryParameters: {'q': query, 'page': page, 'limit': pageSize, 'fields': _fields},
+    );
+    final body = res.data;
+    if (body is! Map<String, dynamic> || body['docs'] is! List) {
+      throw FormatException('search.json: unexpected ${body.runtimeType}');
+    }
+    return SearchPageDto.fromJson(body);
+  }
+}
+```
+
+الـ `RetryInterceptor` والـ `CancelToken` للبحث القديم بيتضافوا على ده في درس dio في الوحدة 3. والـ `FormatException` ده، ومعاه كل exception تاني ممكن يطلع من هنا، هو موضوع الدروس الجاية في الوحدة دي.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="first-req-1">
+<Ask>`http.get` رجّع 500. الكود بيعمل `jsonDecode(res.body)` على طول. إيه اللي هيحصل؟ وليه dio مش هيوصل للسطر ده أصلًا؟</Ask>
+<Answer>
+
+`package:http` مابيرميش على 4xx ولا 5xx، فالكود هيكمّل ويحاول يفك صفحة الـ error كـ JSON: يا `FormatException` لو HTML، يا data غلط لو JSON مختلف، والمشكلة تطلع بعيد عن سببها. لازم تشيّك `res.statusCode` بنفسك. dio بيرمي `DioException` نوعه `badResponse` لأي status برّه الـ 2xx بسبب الـ `validateStatus` الافتراضي.
+
+</Answer>
+</Question>
+
+<Question id="first-req-2">
+<Ask>عملت `.timeout(Duration(seconds: 15))` على `http.get`، وضرب. الطلب اتلغى؟</Ask>
+<Answer>
+
+لأ. الـ `TimeoutException` معناها إن الـ Future بتاعك بطّل يستنى، بس الطلب لسه شغال تحت والـ socket مفتوح، ولو الرد وصل هيتحمّل ويترمي. مع كل «حاول تاني» ممكن يبقى في طلب زيادة شغال. dio بيقفل الاتصال فعلًا مع الـ `connectTimeout` والـ `receiveTimeout`، وبيلغي بالـ `CancelToken`.
+
+</Answer>
+</Question>
+
+<Question id="first-req-3">
+<Ask>`json['subjects'] as List<String>` بيرمي، مع إن كل العناصر نصوص. ليه؟ وتكتبه إزاي؟</Ask>
+<Answer>
+
+`jsonDecode` بيعمل كل array `List<dynamic>`، والـ `as` بيسأل عن النوع ومابيحوّلش، و`List<dynamic>` مش `List<String>`. لو الحقل أساسي: `List<String>.from(json['subjects'] as List)` بيشيّك كل العناصر دلوقتي جوه الـ fromJson. لو ثانوي: `[for (final e in list) if (e is String) e]` بيتجاهل الغريب. ومش `.cast<String>()`، لأنه بيأجّل الـ error لحد ما حد يقرا العنصر، ممكن في الـ UI.
+
+</Answer>
+</Question>
+
+<Question id="first-req-4">
+<Ask>`json['ratings_average'] as double` شغال مع كل الكتب اللي جربتها، ووقع عند مستخدم. إيه السبب الأرجح؟</Ask>
+<Answer>
+
+الكتاب ده تقييمه رقم صحيح زي `4`، و`jsonDecode` بيحوّله `int`، و`int` مش `double`. اقرا الأرقام كـ `num` وحوّل: `(json['ratings_average'] as num?)?.toDouble()`.
+
+</Answer>
+</Question>
+
+<Question id="first-req-5">
+<Ask>شاشة التفاصيل فيها `FutureBuilder(future: api.fetchWork(id), ...)` جوه الـ `build`. إيه المشكلة، والحل في Readly؟</Ask>
+<Answer>
+
+كل rebuild (الكيبورد، الثيم، setState في الأب) بيعمل Future جديد، فالطلب بيتبعت تاني والشاشة ترجع لـ loading. الطلب يبدأ في حاجة بتعيش أطول من الـ build: `BookDetailsCubit` بيتعمل مرة في `BlocProvider` وبينادي `load(id)` مرة، والطلب نفسه في الـ CatalogRemoteSource مش في الـ widget.
+
+</Answer>
+</Question>
+
+</Quiz>

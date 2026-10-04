@@ -293,3 +293,86 @@ Sentry أو Crashlytics مربوطين بـ FlutterError.onError وPlatformDispa
 
 </Answer>
 </Question>
+
+### الـ API والأخطاء
+
+<Question id="interview-37">
+<Ask>إيه الفرق بين 401 و403؟ والـ app يتصرف إزاي في كل واحدة؟</Ask>
+<Answer>
+
+الـ 401 معناها السيرفر مش عارف انت مين: مفيش token، أو انتهى، أو الباسورد غلط. فالـ AuthInterceptor بيعمل refresh مرة ويعيد الطلب، ولو الـ refresh اترفض تبقى UnauthorizedFailure والـ router يرجّع لصفحة الدخول. الـ 403 معناها عارفك بس مش مسموحلك، فالـ refresh مش هيغيّر حاجة: مفيش retry ولا logout، رسالة مناسبة بس، زي «أكّد إيميلك» في الـ login بتاع Readly. ولو الـ backend بيخلط بينهم، ده بيتصلح في العقد مش بـ if في الـ app.
+
+</Answer>
+</Question>
+
+<Question id="interview-38">
+<Ask>إزاي تمسك كل الأخطاء اللي ماتمسكتش في Flutter؟</Ask>
+<Answer>
+
+`FlutterError.onError` للأخطاء اللي الـ framework بيمسكها وهو بيرسم أو في callback، و`PlatformDispatcher.instance.onError` (وبيرجّع `true`) لأي خطأ async محدش عمله await. الاتنين بيبعتوا للـ logger أو Sentry. و`ErrorWidget.builder` بيغيّر الشاشة الرمادي في الـ release. والـ `runZonedGuarded` مابقاش لازم في أغلب الحالات، و`Isolate.spawn` محتاج `onError` port، أما `Isolate.run` فبيرمي الخطأ عند الـ await.
+
+</Answer>
+</Question>
+
+<Question id="interview-39">
+<Ask>ليه الـ HTTP status لوحده مش كفاية عشان تقرر تعمل إيه؟</Ask>
+<Answer>
+
+لأنه فئة مش تفصيلة. الـ 409 في Readly ممكن تبقى `email_taken` (خطأ على حقل) أو `VERSION_CONFLICT` (الـ ConflictPolicy تقرر). والـ 404 ممكن تبقى route مش موجود (bug يروح Sentry) أو `book_not_in_library` (حالة عادية). القرار بالـ status والـ `code` من الـ body مع بعض، وأي code مش معروف بيرجع لتصرف الفئة، والـ message بتاع السيرفر عمره ما بيدخل في القرار.
+
+</Answer>
+</Question>
+
+<Question id="interview-40">
+<Ask>الـ refresh فشل. إزاي تعرض الخطأ من غير ما تضيّع البيانات اللي على الشاشة؟</Ask>
+<Answer>
+
+الـ failure حقل في الـ state جنب البيانات، والـ Error state الكاملة بس لما مفيش بيانات خالص. الـ refresh مابيعملش emit لـ Loading، والـ UI بتعرض banner «بنعرض آخر نسخة» فوق الليستة، وبيختفي لما الـ refresh ينجح. ونفس الفكرة جوه الصفحة: الجزء الإضافي اللي فشل (زي اسم المؤلف) بيبقى nullable، والصفحة تتعرض.
+
+</Answer>
+</Question>
+
+<Question id="interview-41">
+<Ask>إزاي تبعت طلبين مع بعض وتتعامل لو واحد فشل؟</Ask>
+<Answer>
+
+لو التاني محتاج رد الأول يبقوا ورا بعض. لو مستقلين، `(a, b).wait` على record، وكل واحد بيرجّع Result من الـ guard فمفيش ParallelWaitError. وبعدين تقسم الصفحة: الجزء الأساسي بس هو اللي يفشّلها، والباقي يتعرض من غيره أو بـ error وretry خاصين بيه.
+
+</Answer>
+</Question>
+
+<Question id="interview-42">
+<Ask>إمتى تعمل optimistic update؟ وإمتى لأ؟</Ask>
+<Answer>
+
+لما العملية بتنجح في الغالب، وسهل ترجع فيها، والانتظار ملحوظ، زي مسح ملاحظة. الـ rollback على الـ state الحالية مش snapshot قديمة، والعنصر يرجع في نفس مكانه، ومعاه SnackBar. وماتعملوش لو الفشل متوقع (validation)، أو محتاج حاجة من الرد زي الـ id، أو الغلطة مكلفة. ولو العملية لازم توصل حتى لو الـ app اتقفل، مكانها queue محفوظة.
+
+</Answer>
+</Question>
+
+<Question id="interview-43">
+<Ask>إزاي الـ backend يغيّر الـ API من غير ما يكسر النسخ القديمة من الـ app؟</Ask>
+<Answer>
+
+كل نسخة نزلت عايشة على موبايلات الناس لفترة طويلة، فالتغيير additive بس: حقل أو endpoint جديد optional. الـ rename على مراحل: السيرفر يبعت الحقلين، والـ app الجديد يقرا الجديد، والقديم يتشال بعد ما الـ `minSupportedBuild` يعدّيه. والـ breaking change ليه `/v2` والـ v1 يفضل شغال. ومن ناحية الـ app: tolerant reader، والـ CI بيقارن الـ OpenAPI ويقرا الـ fixtures في التستات.
+
+</Answer>
+</Question>
+
+<Question id="interview-44">
+<Ask>إزاي تجبر المستخدمين على update؟</Ask>
+<Answer>
+
+`GET /app-config` فيه `minSupportedBuild`، والـ app بيقارنه بالـ build number وهو بيفتح، ولو الطلب فشل يكمّل عادي (fail open). وكشبكة أمان، كل طلب فيه `X-App-Build`، والسيرفر يرد 426، وinterceptor واحد بيفتح شاشة الـ update للـ app كله. والاتنين لازم يبقوا موجودين من أول release، لأن النسخة اللي مافيهاش الآلية دي مش هتعرف تتجبر.
+
+</Answer>
+</Question>
+
+<Question id="interview-45">
+<Ask>http ولا dio؟ وإيه الفرق الحقيقي بينهم؟</Ask>
+<Answer>
+
+الفرق الأهم في الأخطاء: http مابيرميش على 4xx و5xx، وأخطاؤه متفرقة (`ClientException` و`TimeoutException` و`FormatException`)، وdio بيعدّي كل حاجة من `DioException` واحد بـ `type`. وبعدين الـ interceptors: إعادة الطلب بعد الـ token refresh في dio سطر، وفي http لازم تنسخ الـ request بإيدك لأنه بيتبعت مرة واحدة. وdio فيه الـ timeouts والإلغاء والـ progress وبعت الـ JSON جاهزين. http أحسن لـ package هتنشرها أو app صغير، وفيه `MockClient` و`RetryClient` جاهزين. والأهم إن الاختيار يفضل في الـ data sources والـ guard، فالتبديل مايلمسش الـ Cubits ولا الشاشات.
+
+</Answer>
+</Question>

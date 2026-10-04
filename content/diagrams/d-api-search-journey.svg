@@ -1,0 +1,50 @@
+<svg viewBox="0 0 760 340" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="رحلة بحث واحد: من الشاشة للـ Cubit للـ repository للـ CatalogRemoteSource لـ dio لـ Open Library، والرد راجع JSON ثم DTO ثم entity">
+<text x="137" y="16" text-anchor="middle" font-size="11" fill="var(--muted)" font-weight="600">Presentation</text>
+<text x="323" y="16" text-anchor="middle" font-size="11" fill="var(--muted)" font-weight="600">Data: returns Result</text>
+<text x="509" y="16" text-anchor="middle" font-size="11" fill="var(--muted)" font-weight="600">Data: throws</text>
+<text x="695" y="16" text-anchor="middle" font-size="11" fill="var(--muted)" font-weight="600">Internet</text>
+<rect x="20" y="24" width="110" height="54" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="75" y="47" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">SearchPage</text>
+<text x="75" y="66" text-anchor="middle" font-size="11" fill="var(--muted)">widget</text>
+<rect x="144" y="24" width="110" height="54" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="199" y="47" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">CatalogSearch</text>
+<text x="199" y="66" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">Cubit</text>
+<rect x="268" y="24" width="110" height="54" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="323" y="47" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">CatalogRepo</text>
+<text x="323" y="66" text-anchor="middle" font-size="11" fill="var(--muted)">guard + mapper</text>
+<rect x="392" y="24" width="110" height="54" rx="10" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="1.5"/>
+<text x="447" y="47" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">CatalogRemote</text>
+<text x="447" y="66" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">Source</text>
+<rect x="516" y="24" width="110" height="54" rx="10" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="1.5"/>
+<text x="571" y="47" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">Dio</text>
+<text x="571" y="66" text-anchor="middle" font-size="11" fill="var(--muted)">'openLibrary'</text>
+<rect x="640" y="24" width="110" height="54" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="695" y="47" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">Open Library</text>
+<text x="695" y="66" text-anchor="middle" font-size="11" fill="var(--muted)">/search.json</text>
+<line x1="75" y1="78" x2="75" y2="328" stroke="var(--line)" stroke-width="1.3" stroke-dasharray="5 5"/>
+<line x1="199" y1="78" x2="199" y2="328" stroke="var(--line)" stroke-width="1.3" stroke-dasharray="5 5"/>
+<line x1="323" y1="78" x2="323" y2="328" stroke="var(--line)" stroke-width="1.3" stroke-dasharray="5 5"/>
+<line x1="447" y1="78" x2="447" y2="328" stroke="var(--line)" stroke-width="1.3" stroke-dasharray="5 5"/>
+<line x1="571" y1="78" x2="571" y2="328" stroke="var(--line)" stroke-width="1.3" stroke-dasharray="5 5"/>
+<line x1="695" y1="78" x2="695" y2="328" stroke="var(--line)" stroke-width="1.3" stroke-dasharray="5 5"/>
+<text x="137" y="99" text-anchor="middle" font-size="10.5" fill="var(--ink)">queryChanged('dune')</text>
+<line x1="75" y1="105" x2="195" y2="105" stroke="var(--accent)" stroke-width="1.6" marker-end="url(#mk-acc)"/>
+<text x="261" y="121" text-anchor="middle" font-size="10.5" fill="var(--ink)">SearchBooks(q)</text>
+<line x1="199" y1="127" x2="319" y2="127" stroke="var(--accent)" stroke-width="1.6" marker-end="url(#mk-acc)"/>
+<text x="385" y="143" text-anchor="middle" font-size="10.5" fill="var(--ink)">search(q, page: 1)</text>
+<line x1="323" y1="149" x2="443" y2="149" stroke="var(--accent)" stroke-width="1.6" marker-end="url(#mk-acc)"/>
+<text x="509" y="165" text-anchor="middle" font-size="10.5" fill="var(--ink)">get('/search.json')</text>
+<line x1="447" y1="171" x2="567" y2="171" stroke="var(--accent)" stroke-width="1.6" marker-end="url(#mk-acc)"/>
+<text x="633" y="187" text-anchor="middle" font-size="10.5" fill="var(--ink)">GET ?q=dune&amp;page=1</text>
+<line x1="571" y1="193" x2="691" y2="193" stroke="var(--accent)" stroke-width="1.6" marker-end="url(#mk-acc)"/>
+<text x="633" y="217" text-anchor="middle" font-size="10.5" fill="var(--good)" font-weight="600">200 + JSON text</text>
+<line x1="695" y1="223" x2="575" y2="223" stroke="var(--good)" stroke-width="1.6" marker-end="url(#mk-good)"/>
+<text x="509" y="239" text-anchor="middle" font-size="10.5" fill="var(--good)" font-weight="600">Map&lt;String, dynamic&gt;</text>
+<line x1="571" y1="245" x2="451" y2="245" stroke="var(--good)" stroke-width="1.6" marker-end="url(#mk-good)"/>
+<text x="385" y="261" text-anchor="middle" font-size="10.5" fill="var(--good)" font-weight="600">SearchPageDto</text>
+<line x1="447" y1="267" x2="327" y2="267" stroke="var(--good)" stroke-width="1.6" marker-end="url(#mk-good)"/>
+<text x="261" y="283" text-anchor="middle" font-size="10.5" fill="var(--good)" font-weight="600">Success(PagedResult)</text>
+<line x1="323" y1="289" x2="203" y2="289" stroke="var(--good)" stroke-width="1.6" marker-end="url(#mk-good)"/>
+<text x="137" y="305" text-anchor="middle" font-size="10.5" fill="var(--good)" font-weight="600">SearchLoaded(books)</text>
+<line x1="199" y1="311" x2="79" y2="311" stroke="var(--good)" stroke-width="1.6" marker-end="url(#mk-good)"/>
+</svg>

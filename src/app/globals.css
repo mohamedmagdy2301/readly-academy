@@ -360,6 +360,15 @@ pre.mini{margin:6px 0 10px;font-size:13.5px}
 .chip.syncing{background:var(--accent-soft);color:var(--accent)}
 .chip.synced{background:var(--good-soft);color:var(--good)}
 .chip.failed{background:var(--warn-soft);color:var(--warn)}
+.pipe{list-style:none;padding:0;margin:14px 0;display:grid;gap:8px;counter-reset:pipe}
+.pipe li{background:var(--bg);border:1px solid var(--line);border-inline-start:4px solid var(--line);border-radius:10px;padding:8px 14px;transition:border-color .2s}
+.pipe li.ok{border-inline-start-color:var(--good)}
+.pipe li.bad{border-inline-start-color:var(--warn);background:var(--warn-soft)}
+.pipe li.mute{border-inline-start-color:var(--muted)}
+.pipe li.wait{opacity:.55}
+.pipe small{display:block;color:var(--muted);font-size:13px}
+.pipe code{display:block;width:fit-content;max-width:100%;overflow-wrap:anywhere;margin:2px 0}
+.pipe p{margin:2px 0 0;font-size:15px}
 .book-list{list-style:none;padding:0;margin:10px 0;max-width:none}
 .book-list li{display:flex;justify-content:space-between;align-items:center;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:8px 14px;margin-bottom:6px;animation:fadein .3s}
 .book-list li.empty{color:var(--muted);justify-content:center}

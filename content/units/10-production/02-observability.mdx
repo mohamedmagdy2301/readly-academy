@@ -296,6 +296,7 @@ class SentryLogger implements AppLogger {
 | `ValidationFailure` | لأ | input المستخدم، والـ UI بتقوله يصلحه |
 | `ServerFailure` بـ 4xx متوقع من الـ endpoint | لأ، warning | رد business ليه رسالة، زي 403 «الإيميل ماتأكدش» في الـ login، و409 «الإيميل مستخدم» في إنشاء الحساب |
 | `ServerFailure` بأي 4xx تاني | أيوه | الـ app بعت request السيرفر رافضه: يا bug عندنا يا الـ API اتغير |
+| `ServerFailure` بـ code `bad_response` أو `bad_certificate` أو `unknown` | أيوه | العقد مع السيرفر اتكسر، أو الـ pinning رفض، أو حاجة ماتوقعناهاش: محتاجة حد يبص (درس «من الـ Exception للـ Failure» في الوحدة 9) |
 | `ServerFailure` بـ 5xx أو من غير status | لأ، warning | مشكلة في السيرفر، والـ backend عنده الـ monitoring بتاعه |
 | `CacheFailure` | أيوه | الـ DB المحلية فيها مشكلة، والمستخدم مايقدرش يعمل حاجة |
 
@@ -308,6 +309,7 @@ extension FailureReporting on Failure {
   // only failures a developer must fix go to Sentry
   bool get isReportable => switch (this) {
         NetworkFailure() || UnauthorizedFailure() || ValidationFailure() => false,
+        ServerFailure(code: 'bad_response' || 'bad_certificate' || 'unknown') => true,
         ServerFailure(:final statusCode) =>
           statusCode != null && statusCode >= 400 && statusCode < 500,
         CacheFailure() => true,
@@ -330,6 +332,9 @@ Future<Result<T>> guard<T>(
     return Success(await run());
   } on DioException catch (e, st) {
     return Err(_logged(_mapDio(e), e, st, logger, operation, expected));
+  } on ParseException catch (e, st) {
+    final failure = ServerFailure('Bad response from ${e.url?.path}', code: 'bad_response');
+    return Err(_logged(failure, e, st, logger, operation, expected));
   } on CacheException catch (e, st) {
     return Err(_logged(CacheFailure(e.message), e, st, logger, operation, expected));
   }

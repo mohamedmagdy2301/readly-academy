@@ -51,3 +51,15 @@ description: "كل مصطلح بمعناه ومثال من Readly."
 | StatefulShellRoute | تابات كل واحد فيها ليه Navigator، وبيفضل عايش لما تروح تاب تاني | المكتبة والكتالوج والإعدادات |
 | HttpClientAdapter | الجزء في dio اللي بيبعت الطلب فعلًا، وبيتبدل بـ fake في التست | `FakeApi` في تست الـ AuthInterceptor |
 | BlocSelector | بيعيد الرسم بس لما قيمة واحدة من الـ state تتغير | زرار الـ refresh في الـ AppBar بيسمع على `isRefreshing` |
+| Endpoint | شباك واحد في الـ API: method وpath مع بعض | `GET /library` و`POST /library` اتنين endpoints مختلفين |
+| Percent-encoding | تحويل أي حرف مش مسموح في الـ URL لـ `%` ورقمين لكل byte، وبيعمله `Uri` لوحده | البحث عن «رواية» بيتبعت `q=%D8%B1%D9%88...` |
+| Stack unwinding | الـ exception بتطلع من الـ function للي نادتها، وكل function في الطريق بتقف، لحد ما try يمسكها أو توصل للـ handler العام | الـ DioException بتطلع من dio للـ NotesRemoteSource للـ guard |
+| Captive portal | WiFi بيرجّع صفحة login بـ HTML و200 لأي طلب لحد ما المستخدم يسجّل | `JsonOnlyInterceptor` بيحوّلها لـ `NetworkFailure(hint: captivePortal)` |
+| Problem Details (RFC 9457) | شكل standard لـ error body بـ `application/problem+json`: `type` و`title` و`status` و`detail` | `"type": ".../problems/email-taken"` بدل `"code": "email_taken"` |
+| Guard | الحد الوحيد اللي بيحوّل الـ exceptions لـ Failures، والمكان الوحيد للـ log | `guard(() async => ...)` في `NotesRepositoryImpl.addNote` |
+| رقم المرجع (Request id) | الـ `X-Request-Id` بيتعرض للمستخدم مع أخطاء السيرفر، عشان الدعم يلاقي الطلب في الـ logs | «رقم المرجع: req_7f3a91c2» تحت رسالة الـ 500 |
+| Request coalescing | لو نفس الـ GET لسه شغال، الطلب التاني بيستنى نفس الـ Future بدل ما يخرج للشبكة | `InFlight` حوالين `CatalogRemoteSource.fetchWork` |
+| ETag و304 | بصمة لنسخة الرد، والـ app بيبعتها في `If-None-Match`، فالسيرفر يرد 304 من غير body لو ماتغيرتش | `EtagInterceptor` على `GET /library` |
+| Optimistic update | الشاشة بتتغير قبل رد السيرفر، ولو فشل بترجع ومعاها رسالة | مسح ملاحظة في `NotesCubit.remove` |
+| Tolerant reader | الـ app بيقرا اللي محتاجه بس، ويتجاهل الحقول الجديدة، وdefault للناقص وfallback للـ enum الجديد | الـ DTOs بحقول nullable و`unknownEnumValue` |
+| Additive change | تغيير في الـ API مابيكسرش النسخ القديمة: حقل أو endpoint جديد optional | إضافة `coverUrl` في `/v1/library` |

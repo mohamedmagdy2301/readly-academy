@@ -1,0 +1,35 @@
+<svg viewBox="0 0 760 330" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="الأخطاء اللي محدش مسكها بتروح فين: FlutterError.onError وPlatformDispatcher.onError والـ onError port بتاع الـ isolate">
+<rect x="500" y="20" width="240" height="36" rx="9" fill="var(--surface)" stroke="var(--line)" stroke-width="1.4"/>
+<text x="620" y="43" text-anchor="middle" font-size="12" fill="var(--ink)">build / layout / paint</text>
+<rect x="500" y="66" width="240" height="36" rx="9" fill="var(--surface)" stroke="var(--line)" stroke-width="1.4"/>
+<text x="620" y="89" text-anchor="middle" font-size="12" fill="var(--ink)">sync onPressed callback</text>
+<rect x="500" y="112" width="240" height="36" rx="9" fill="var(--surface)" stroke="var(--line)" stroke-width="1.4"/>
+<text x="620" y="135" text-anchor="middle" font-size="12" fill="var(--ink)">Future with no await</text>
+<rect x="500" y="158" width="240" height="36" rx="9" fill="var(--surface)" stroke="var(--line)" stroke-width="1.4"/>
+<text x="620" y="181" text-anchor="middle" font-size="12" fill="var(--ink)">listen() with no onError</text>
+<rect x="500" y="204" width="240" height="36" rx="9" fill="var(--surface)" stroke="var(--line)" stroke-width="1.4"/>
+<text x="620" y="227" text-anchor="middle" font-size="12" fill="var(--ink)">async onPressed, after await</text>
+<rect x="500" y="250" width="240" height="36" rx="9" fill="var(--surface)" stroke="var(--line)" stroke-width="1.4"/>
+<text x="620" y="273" text-anchor="middle" font-size="12" fill="var(--ink)">Isolate.spawn body</text>
+<rect x="260" y="34" width="200" height="44" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="360" y="61" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">FlutterError.onError</text>
+<text x="360" y="96" text-anchor="middle" font-size="10" fill="var(--muted)">+ ErrorWidget replaces the widget</text>
+<rect x="260" y="140" width="200" height="44" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="360" y="167" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">PlatformDispatcher.onError</text>
+<rect x="260" y="246" width="200" height="44" rx="10" fill="var(--surface)" stroke="var(--muted)" stroke-width="1.4" stroke-dasharray="5 4"/>
+<text x="360" y="265" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">onError port</text>
+<text x="360" y="281" text-anchor="middle" font-size="10" fill="var(--muted)">only if you passed one</text>
+<line x1="498" y1="38" x2="464" y2="50" stroke="var(--ink)" stroke-width="1.5" marker-end="url(#mk-ink)"/>
+<line x1="498" y1="84" x2="464" y2="66" stroke="var(--ink)" stroke-width="1.5" marker-end="url(#mk-ink)"/>
+<line x1="498" y1="130" x2="464" y2="152" stroke="var(--ink)" stroke-width="1.5" marker-end="url(#mk-ink)"/>
+<line x1="498" y1="176" x2="464" y2="162" stroke="var(--ink)" stroke-width="1.5" marker-end="url(#mk-ink)"/>
+<line x1="498" y1="222" x2="464" y2="174" stroke="var(--ink)" stroke-width="1.5" marker-end="url(#mk-ink)"/>
+<line x1="498" y1="268" x2="464" y2="268" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#mk-mut)"/>
+<rect x="40" y="130" width="160" height="44" rx="10" fill="var(--accent)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="120" y="157" text-anchor="middle" font-size="13" fill="#fff" font-weight="600">AppLogger</text>
+<text x="120" y="196" text-anchor="middle" font-size="11" fill="var(--muted)" class="ar" direction="rtl" unicode-bidi="embed">بيسجّل، والـ app بيكمّل</text>
+<line x1="258" y1="62" x2="202" y2="138" stroke="var(--ink)" stroke-width="1.5" marker-end="url(#mk-ink)"/>
+<line x1="258" y1="162" x2="202" y2="154" stroke="var(--ink)" stroke-width="1.5" marker-end="url(#mk-ink)"/>
+<line x1="258" y1="268" x2="202" y2="168" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#mk-mut)"/>
+<text x="380" y="318" text-anchor="middle" font-size="11" fill="var(--muted)">Isolate.run is different: the error comes back to your await, so a plain try works</text>
+</svg>

@@ -1,0 +1,34 @@
+<svg viewBox="0 0 760 330" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="الـ request بيطلع من الـ app بسطر وheaders وbody، والسيرفر بيرد بـ status وheaders وbody">
+<rect x="16" y="122" width="124" height="76" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="78" y="152" text-anchor="middle" font-size="13" fill="var(--ink)" font-weight="600">Readly app</text>
+<text x="78" y="174" text-anchor="middle" font-size="12" fill="var(--muted)" class="ar" direction="rtl" unicode-bidi="embed">الـ client</text>
+<rect x="620" y="122" width="124" height="76" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="682" y="152" text-anchor="middle" font-size="13" fill="var(--ink)" font-weight="600">openlibrary.org</text>
+<text x="682" y="174" text-anchor="middle" font-size="12" fill="var(--muted)" class="ar" direction="rtl" unicode-bidi="embed">الـ server</text>
+<rect x="164" y="12" width="432" height="124" rx="10" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="380" y="30" text-anchor="middle" font-size="12" fill="var(--accent)" font-weight="700">Request</text>
+<rect x="176" y="38" width="408" height="24" rx="6" fill="var(--accent-soft)"/>
+<text x="186" y="54" font-size="11" fill="var(--muted)">line</text>
+<text x="250" y="54" font-size="12" fill="var(--ink)" font-weight="600">GET /search.json?q=dune&amp;limit=2</text>
+<rect x="176" y="68" width="408" height="40" rx="6" fill="none" stroke="var(--line)"/>
+<text x="186" y="84" font-size="11" fill="var(--muted)">headers</text>
+<text x="250" y="84" font-size="11.5" fill="var(--ink)">Accept: application/json</text>
+<text x="250" y="101" font-size="11.5" fill="var(--ink)">User-Agent: Readly/1.0 (support@readly.app)</text>
+<rect x="176" y="112" width="408" height="18" rx="6" fill="none" stroke="var(--line)" stroke-dasharray="4 3"/>
+<text x="186" y="125" font-size="11" fill="var(--muted)">body</text>
+<text x="250" y="125" font-size="11" fill="var(--muted)">(empty: a GET only asks)</text>
+<line x1="140" y1="148" x2="616" y2="148" stroke="var(--accent)" stroke-width="1.8" marker-end="url(#mk-acc)"/>
+<line x1="620" y1="172" x2="144" y2="172" stroke="var(--good)" stroke-width="1.8" marker-end="url(#mk-good)"/>
+<rect x="164" y="186" width="432" height="134" rx="10" fill="var(--surface)" stroke="var(--good)" stroke-width="1.5"/>
+<text x="380" y="204" text-anchor="middle" font-size="12" fill="var(--good)" font-weight="700">Response</text>
+<rect x="176" y="212" width="408" height="24" rx="6" fill="var(--accent-soft)"/>
+<text x="186" y="228" font-size="11" fill="var(--muted)">status</text>
+<text x="250" y="228" font-size="12" fill="var(--ink)" font-weight="600">HTTP/2 200  (OK)</text>
+<rect x="176" y="242" width="408" height="40" rx="6" fill="none" stroke="var(--line)"/>
+<text x="186" y="258" font-size="11" fill="var(--muted)">headers</text>
+<text x="250" y="258" font-size="11.5" fill="var(--ink)">content-type: application/json</text>
+<text x="250" y="275" font-size="11.5" fill="var(--ink)">date: Sun, 04 Oct 2026 10:12:03 GMT</text>
+<rect x="176" y="288" width="408" height="24" rx="6" fill="none" stroke="var(--line)"/>
+<text x="186" y="304" font-size="11" fill="var(--muted)">body</text>
+<text x="250" y="304" font-size="11.5" fill="var(--ink)">{ "numFound": 312, "start": 0, "docs": [ ... ] }</text>
+</svg>

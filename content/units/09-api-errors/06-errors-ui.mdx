@@ -1,0 +1,646 @@
+---
+title: "الأخطاء في الشاشة"
+description: "الـ Failure وصلت للـ Cubit. تظهر فين وبأنهي شكل وبأنهي كلام، من غير ما تمسح البيانات اللي قدام المستخدم، ومن غير ما تتكرر، ومن غير ما قارئ الشاشة يفوّتها."
+minutes: 30
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="الجرسون الشاطر">
+
+طلبت 3 أطباق، والمطبخ خلص منه واحد. الجرسون الوحش يرجع يقولك «في مشكلة في المطبخ» ويشيل الطلب كله من على الترابيزة. الجرسون الشاطر بيجيب الطبقين الجاهزين، وبيقولك بهدوء: «المكرونة خلصت النهارده، تحب الرز بدالها؟». بيقولك <b>إيه اللي حصل</b> بكلام تفهمه، و<b>تقدر تعمل إيه</b>، و<b>مابيرميش طلبك</b> عشان طبق واحد ناقص. ومش بيجي يقولك نفس الخبر 3 مرات، ولا بيصرّخ بيه من آخر الصالة.
+
+</Analogy>
+
+في درس "من الـ Exception للـ Failure" وصّلنا الـ Failure لحد الـ Cubit. الدرس ده عن آخر خطوة: الشاشة. نفس الـ `NetworkFailure` ممكن تبقى شاشة كاملة، أو شريط صغير فوق الليستة، أو SnackBar، أو ولا حاجة خالص. الفرق مش في نوع الـ Failure، الفرق في <b>الموقف</b>: في بيانات على الشاشة؟ المستخدم كان بيعمل حاجة؟ الخطأ ده يخص الشاشة دي أصلًا؟
+
+</Level>
+
+<Level n="2" title="الخطأ يظهر فين">
+
+| الموقف | يظهر فين | مثال من Readly |
+| --- | --- | --- |
+| أول تحميل فشل، ومفيش حاجة تتعرض | `ErrorView` شاشة كاملة | فتح المكتبة أول مرة والنت فاصل |
+| التحديث فشل، والبيانات القديمة موجودة | banner فوق البيانات | سحب المكتبة لتحت في المترو |
+| action فشل | SnackBar | «شيل من المكتبة» رجع 500 |
+| خطأ يخص حقل | تحت الحقل نفسه | ملاحظة أطول من 2000 حرف (422) |
+| قرار محتاج المستخدم، أو حاجة هتضيع | dialog | logout وفي تعديلات لسه ماتزامنتش |
+| شغل في الخلفية | ولا حاجة، log بس | الـ SyncService، تحميل الصفحة الجاية بدري |
+| على مستوى الـ app | redirect أو شاشة للـ app كله | الـ session خلصت، لازم update، صيانة |
+
+<Diagram name="d-api-error-placement">
+
+بتسأل الأسئلة بالترتيب من فوق، وأول «أيوه» هي اللي بتقرر الشكل. الـ ErrorView الكاملة هي آخر احتمال، مش أول واحد.
+
+</Diagram>
+
+### الـ state لازم تشيل البيانات والخطأ مع بعض
+
+أكبر غلطة في عرض الأخطاء بتحصل في الـ state مش في الـ widget: لو الـ error state مكان الـ data state، أي فشل بيمسح اللي على الشاشة. في درس الـ Cubit في الوحدة 5 حلّيناها: الـ `LibraryLoaded` بيشيل الكتب والـ `refreshFailure` جنب بعض، والـ `LibraryError` لوحده بس لما مايبقاش في حاجة تتعرض.
+
+<CodeBlock label="LibraryState: الـ failure حقل جنب البيانات">
+
+```dart
+sealed class LibraryState {
+  const LibraryState();
+}
+final class LibraryLoading extends LibraryState {
+  const LibraryLoading();
+}
+final class LibraryLoaded extends LibraryState {
+  const LibraryLoaded(this.books, {this.isRefreshing = false, this.refreshFailure});
+  final List<Book> books;
+  final bool isRefreshing;
+  final Failure? refreshFailure; // the books stay, the failure sits next to them
+}
+final class LibraryError extends LibraryState {
+  const LibraryError(this.failure, {this.retrying = false});
+  final Failure failure;  // only when there is nothing to show
+  final bool retrying;    // the retry button spins, the error stays
+}
+```
+
+</CodeBlock>
+
+ولو الفريق بيحب class واحدة بـ enum (`status` و`books` و`failure`)، ده نفس الكلام بشكل تاني. المهم القاعدة: <b>الـ failure حقل جنب البيانات، مش state بتمسحها</b>.
+
+الـ `retrying` جديد هنا. لو زرار «حاول تاني» نادى `load()`، أول سطر فيها بيعمل emit لـ `LibraryLoading`، فالرسالة بتختفي وspinner في نص الشاشة، ولو فشل تاني الرسالة ترجع. المستخدم بيشوف الشاشة بترمش ومش فاهم حصل إيه. الأحسن الرسالة تفضل والزرار هو اللي يلف:
+
+<CodeBlock label="retry في الـ LibraryCubit">
+
+```dart
+Future<void> retry() async {
+  final current = state;
+  if (current is! LibraryError || current.retrying) return;
+  emit(LibraryError(current.failure, retrying: true));
+  final result = await _getLibrary();
+  if (isClosed) return;
+  emit(switch (result) {
+    Success(:final value) => LibraryLoaded(value),
+    Err(:final failure) => LibraryError(failure),
+  });
+}
+```
+
+</CodeBlock>
+
+### الـ ErrorView
+
+<CodeBlock label="core/ui/error_view.dart">
+
+```dart
+class ErrorView extends StatelessWidget {
+  const ErrorView({
+    super.key,
+    required this.message,
+    this.title,
+    this.icon = Icons.error_outline,
+    this.onRetry,
+    this.retrying = false,
+  });
+
+  final String message;    // why, and what to do: from failure.localized
+  final String? title;     // what failed: the screen knows this
+  final IconData icon;
+  final VoidCallback? onRetry; // null: no button, retrying can't help
+  final bool retrying;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final theme = Theme.of(context);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 48, color: theme.colorScheme.outline),
+            const SizedBox(height: 16),
+            if (title case final title?)
+              Text(title, style: theme.textTheme.titleMedium, textAlign: TextAlign.center),
+            const SizedBox(height: 8),
+            Text(message, textAlign: TextAlign.center),
+            if (onRetry != null) ...[
+              const SizedBox(height: 24),
+              FilledButton(
+                onPressed: retrying ? null : onRetry,
+                child: retrying
+                    ? const SizedBox.square(
+                        dimension: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Text(l10n.retry),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="استخدامه في المكتبة">
+
+```dart
+LibraryError(:final failure, :final retrying) => ErrorView(
+    icon: failure is NetworkFailure ? Icons.wifi_off : Icons.error_outline,
+    title: l10n.libraryLoadFailed,  // "مقدرناش نجيب مكتبتك"
+    message: failure.localized(l10n), // "مفيش اتصال بالنت. اتأكد من الشبكة وجرّب تاني."
+    onRetry: failure.canRetry ? context.read<LibraryCubit>().retry : null,
+    retrying: retrying,
+  ),
+```
+
+</CodeBlock>
+
+- <b>العنوان من الشاشة، والرسالة من الـ Failure:</b> الـ Failure مايعرفش إن ده كان «مكتبتك»، والشاشة ماتعرفش ليه فشل. كل واحد بيقول اللي يعرفه.
+- <b>الزرار بـ `canRetry` بس:</b> زي درس الأخطاء في الوحدة 2. زرار على 400 معناه إن المستخدم هيضغط 5 مرات على حاجة عمرها ما هتنجح.
+- <b>الأيقونة بتساعد، بس مش لوحدها:</b> الـ `wifi_off` بيقول «النت» قبل ما المستخدم يقرا، بس الكلام هو اللي بيوصل المعنى، وهو اللي قارئ الشاشة بيقراه.
+
+</Level>
+
+<Level n="3" title="الأخطاء في الاستخدام الحقيقي">
+
+### الـ refresh فشل والليستة اختفت
+
+في درس الـ Cubit في الوحدة 5 حلّينا الجزء الأهم: الـ refresh مابيمسحش الكتب، والفشل بيبقى `refreshFailure` جوه `LibraryLoaded`، وعرضناه في SnackBar. بس الـ SnackBar بيختفي بعد 4 ثواني، والكتب اللي قدام المستخدم لسه قديمة. هو مش عارف إن اللي شايفه ممكن يكون مش آخر حاجة.
+
+الفرق: الـ SnackBar لـ <b>حدث</b> («حاجة فشلت دلوقتي»)، والـ banner لـ <b>حالة</b> («اللي قدامك ده آخر اللي اتحمّل»). والحالة لازم تفضل ظاهرة طول ما هي صح:
+
+<CodeBlock label="الـ banner فوق الليستة">
+
+```dart
+LibraryLoaded(:final books, :final refreshFailure) => Column(
+    children: [
+      if (refreshFailure != null && !refreshFailure.isGlobal)
+        InlineErrorBanner(
+          title: l10n.showingLastLoaded,           // "بنعرض آخر نسخة اتحمّلت"
+          message: refreshFailure.localized(l10n),
+          onRetry: refreshFailure.canRetry ? cubit.refresh : null,
+        ),
+      Expanded(
+        child: RefreshIndicator(onRefresh: cubit.refresh, child: BookList(books: books)),
+      ),
+    ],
+  ),
+```
+
+</CodeBlock>
+
+<CodeBlock label="core/ui/inline_error_banner.dart">
+
+```dart
+class InlineErrorBanner extends StatelessWidget {
+  const InlineErrorBanner({super.key, required this.title, required this.message, this.onRetry});
+  final String title;
+  final String message;
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Semantics(
+      liveRegion: true, // read aloud when it appears (more below)
+      child: Material(
+        color: colors.surfaceContainerHighest,
+        child: ListTile(
+          leading: Icon(Icons.cloud_off, color: colors.onSurfaceVariant),
+          title: Text(title),
+          subtitle: Text(message),
+          trailing: onRetry == null
+              ? null
+              : TextButton(onPressed: onRetry, child: Text(AppLocalizations.of(context)!.retry)),
+        ),
+      ),
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+الـ banner بيختفي لوحده: الـ `copyWith` بتاع درس الـ Cubit بيمسح `refreshFailure` مع أي emit، فأول ما الـ refresh يبدأ تاني بيختفي، ولو نجح مش هيرجع. واللون مش أحمر: الكتب لسه موجودة والمستخدم يقدر يكمّل، فده تنبيه مش إنذار.
+
+### الـ SnackBar بيظهر تاني كل ما الشاشة تتبني
+
+<CodeBlock label="الـ SnackBar جوه الـ builder">
+
+```dart
+BlocBuilder<NotesCubit, NotesState>(
+  builder: (context, state) {
+    if (state.failure case final failure?) {
+      ScaffoldMessenger.of(context).showSnackBar(   // runs on every build
+        SnackBar(content: Text(failure.localized(l10n))),
+      );
+    }
+    return NotesList(notes: state.notes);
+  },
+)
+```
+
+</CodeBlock>
+
+الـ `build` بيتنادى لما الكيبورد يفتح، ولما الـ theme يتغير، ولما الـ parent يتبني تاني. كل مرة من دول، الـ SnackBar بيظهر تاني لنفس الفشل. ده غير إن `showSnackBar` جوه الـ build ممكن يضرب assertion إنك بتغيّر widget تاني وانت بتبني. زي ما قلنا في درس الـ Cubit: <b>أي حاجة بتحصل مرة واحدة مكانها `BlocListener`</b>.
+
+بس الـ listener لوحده مش كفاية. لو كتبت `listenWhen: (prev, curr) => prev.failure != curr.failure`، جرّب تمسح ملاحظتين ورا بعض والنت فاصل: التانية مش هتطلّع حاجة. الـ `const NetworkFailure()` نفس الـ object في كل مرة، فـ `prev.failure` و`curr.failure` متساويين. ولو الـ state بـ Equatable أو freezed، الموضوع أسوأ: الـ state الجديدة `==` القديمة، والـ Cubit مابيعملش emit أصلًا.
+
+الحل رقم بيزيد مع كل فشل، فكل فشل يبقى حدث جديد حتى لو نفس النوع:
+
+<CodeBlock label="failureId في NotesState">
+
+```dart
+final class NotesState {
+  // ...notes, saving, fieldErrors as before
+  final Failure? failure;
+  final int failureId; // bumped on every failed action
+}
+
+// in NotesCubit.remove(), on failure
+Err(:final failure) => state.copyWith(failure: failure, failureId: state.failureId + 1),
+
+// in the UI
+BlocListener<NotesCubit, NotesState>(
+  listenWhen: (prev, curr) => curr.failureId != prev.failureId,
+  listener: (context, state) => context.showFailure(state.failure!),
+  child: const NotesView(),
+)
+```
+
+</CodeBlock>
+
+في فرق تانية بتعمل `Stream<NotesEffect>` منفصل جنب الـ state. ده شغال، بس لو محدش بيسمع لحظة ما الحدث طلع (الشاشة بتتبني، أو في الخلفية)، الحدث بيضيع. الـ id جوه الـ state مابيضيعش، وبيتستّ بـ `blocTest` زي أي state.
+
+### 3 طلبات فشلوا و3 SnackBars فوق بعض
+
+صفحة الكتاب بتحمّل 3 حاجات: الكتاب، والكاتب، والملاحظات. النت فاصل، فالتلاتة فشلوا، وكل واحد عمل SnackBar «مفيش اتصال بالنت». الـ `ScaffoldMessenger` بيحطهم في طابور: 12 ثانية من نفس الجملة. ونفس الحكاية لو المستخدم مسح 3 كتب بسرعة وهو أوفلاين.
+
+مكان واحد بيعرض أي Failure كـ SnackBar، وبيستبدل بدل ما يحط في الطابور:
+
+<CodeBlock label="core/ui/failure_feedback.dart">
+
+```dart
+extension FailureFeedback on BuildContext {
+  void showFailure(Failure failure) {
+    final l10n = AppLocalizations.of(this)!;
+    ScaffoldMessenger.of(this)
+      ..hideCurrentSnackBar() // replace the current one, don't queue behind it
+      ..showSnackBar(SnackBar(
+        content: Text(failure.localized(l10n)),
+        behavior: SnackBarBehavior.floating,
+      ));
+  }
+}
+```
+
+</CodeBlock>
+
+والحل الأعمق في الـ Cubit: <b>رسالة واحدة لكل حاجة عملها المستخدم</b>. الـ `BookDetailsCubit` بيجمع التلات نتايج في state واحدة، والـ UI بتقرر مرة واحدة (هنشوف الشكل ده في Level 4). ولو المستخدم عمل action على 3 كتب مرة واحدة، الـ use case يرجّع نتيجة واحدة («اتشال 2 من 3») مش 3 Failures.
+
+وخلي بالك إن الـ `ScaffoldMessenger` بتاع `MaterialApp` واحد للـ app كله: SnackBar «المسح فشل» ممكن يفضل ظاهر على الشاشة اللي بعدها لو المستخدم رجع بسرعة. لو ده بيضايقك، اعمل `hideCurrentSnackBar()` في `dispose` أو حط `ScaffoldMessenger` جوه الشاشة نفسها.
+
+### Session expired ظهرت في كل شاشة
+
+السيرفر رفض الـ refresh token. في نفس الثانية: الـ `LibraryCubit` عرض ErrorView «الجلسة خلصت»، والـ `NotesCubit` طلّع SnackBar «الجلسة خلصت»، وبعد جزء من الثانية الـ redirect ودّاه للـ login اللي مكتوب فيها «الجلسة خلصت، ادخل تاني». 3 رسايل لحدث واحد، واتنين منهم في شاشات المستخدم ماشي منها أصلًا.
+
+في درس الـ Session في الوحدة 6، الـ `AuthCubit` بيسمع على `onCleared` والـ redirect بتاع درس go_router بيعمل الباقي. يعني الـ `UnauthorizedFailure` <b>ليها صاحب واحد</b> على مستوى الـ app، والشاشات مالهاش دعوة بيها:
+
+<CodeBlock label="الشاشات بتسيب الـ Failures العامة لصاحبها">
+
+```dart
+extension FailureScope on Failure {
+  // handled once, at app level: screens show nothing for these
+  bool get isGlobal => switch (this) {
+        UnauthorizedFailure() => true,
+        ServerFailure(statusCode: 426) || ServerFailure(code: 'maintenance') => true,
+        _ => false,
+      };
+}
+
+// showFailure starts with one line
+if (failure.isGlobal) return;
+
+// and the full-screen case
+LibraryError(:final failure) when failure.isGlobal => const SizedBox.shrink(),
+```
+
+</CodeBlock>
+
+ماعدا شاشة الـ login: هناك الـ 401 معناها «الباسورد غلط»، والـ LoginCubit بيحوّلها لخطأ على الحقل زي درس الـ Forms، فمابتوصلش لـ `showFailure` أصلًا.
+
+نفس الفكرة لحاجتين تانيين على مستوى الـ app: السيرفر يرد 426 لأن النسخة دي قديمة ولازم update، أو 503 بـ `code: 'maintenance'`. دول محتاجين شاشة للـ app كله، بس مين اللي يعرف؟ الـ status بيظهر في الـ data layer، والشاشة في الـ presentation، والـ Cubit ممنوع يعرف dio. الحل interface في core، والـ data layer بتنفّذه:
+
+<CodeBlock label="core/app_alerts.dart">
+
+```dart
+// no dio here
+sealed class AppAlert {
+  const AppAlert();
+}
+final class UpdateRequired extends AppAlert {
+  const UpdateRequired();
+}
+final class Maintenance extends AppAlert {
+  const Maintenance();
+}
+
+abstract interface class AppAlerts {
+  Stream<AppAlert> get alerts;
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="data/network/app_alerts_interceptor.dart">
+
+```dart
+class AppAlertsInterceptor extends Interceptor implements AppAlerts {
+  final _controller = StreamController<AppAlert>.broadcast();
+
+  @override
+  Stream<AppAlert> get alerts => _controller.stream;
+
+  @override
+  void onError(DioException err, ErrorInterceptorHandler handler) {
+    switch ((err.response?.statusCode, err.response?.data)) {
+      case (426, _):
+        _controller.add(const UpdateRequired());
+      case (503, {'code': 'maintenance'}):
+        _controller.add(const Maintenance());
+      case _:
+        break;
+    }
+    handler.next(err); // the request still fails as usual
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="مستمع واحد للـ app كله">
+
+```dart
+class AppStatusCubit extends Cubit<AppAlert?> {
+  AppStatusCubit(AppAlerts alerts) : super(null) {
+    _sub = alerts.alerts.listen(emit);
+  }
+  late final StreamSubscription<AppAlert> _sub;
+
+  void dismiss() => emit(null); // "try again" on the maintenance page
+
+  @override
+  Future<void> close() async {
+    await _sub.cancel();
+    return super.close();
+  }
+}
+
+// app.dart
+MaterialApp.router(
+  routerConfig: router,
+  builder: (context, child) => BlocBuilder<AppStatusCubit, AppAlert?>(
+    bloc: getIt<AppStatusCubit>(),
+    builder: (context, alert) => switch (alert) {
+      UpdateRequired() => const ForceUpdatePage(),
+      Maintenance() => const MaintenancePage(),
+      null => child!,
+    },
+  ),
+)
+```
+
+</CodeBlock>
+
+الـ interceptor بيتسجّل مرة واحدة في get_it كـ `AppAlerts`، ونفس الـ object بيتضاف لـ interceptors الـ Dio بتاع `'api'` بس. Open Library مالوش دعوة بـ update بتاعنا. والـ `AppStatusCubit` بيعرف `AppAlerts` اللي في core، مش dio. والطلب نفسه بيفشل عادي ويرجع `ServerFailure(statusCode: 426)` للشاشة، والـ `isGlobal` بيخليها ماتعرضش حاجة تحت شاشة الـ update.
+
+### المستخدم بعت رسالة للدعم «الـ app مش شغال»
+
+رسالة زي دي مالهاش أي فايدة. الدعم مش عارف إمتى، ولا أنهي طلب، ولا السيرفر رد بإيه. بس كل رد من Readly معاه `X-Request-Id`، والـ `_mapDio` بتاع الدرس اللي فات حطّه في `ServerFailure.requestId`. اعرضه للمستخدم كرقم مرجع:
+
+<CodeBlock label="رقم المرجع بيتنسخ بلمسة">
+
+```dart
+extension FailureReference on Failure {
+  // only failures the user can't fix and the server has a record of
+  String? get supportReference => switch (this) {
+        ServerFailure(statusCode: final s?, requestId: final id?) when s >= 500 => id,
+        ServerFailure(code: 'bad_response', requestId: final id?) => id,
+        _ => null,
+      };
+}
+
+class SupportReference extends StatelessWidget {
+  const SupportReference(this.requestId, {super.key});
+  final String requestId;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return TextButton.icon(
+      onPressed: () async {
+        await Clipboard.setData(ClipboardData(text: requestId));
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(l10n.referenceCopied)));
+      },
+      icon: const Icon(Icons.copy, size: 16),
+      label: Text(l10n.errorReference(requestId)), // "رقم المرجع: req_7f3a91c2"
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+والـ `ErrorView` بيكبر بـ field: `final String? reference;`، ولو مش null بيعرض `SupportReference(reference!)` تحت الرسالة. والاستخدام: `reference: failure.supportReference`.
+
+- <b>بلمسة مش بالكتابة:</b> المستخدم مش هيكتب `req_7f3a91c2` صح من screenshot. النسخ بيضمن إن الدعم يدوّر بنفس الرقم بالظبط. ولو الـ backend بيستخدم UUID طويل، اعرض أول 8 حروف وانسخ الرقم كله.
+- <b>مش مع كل خطأ:</b> النت الفاصل مالوش reference لأن الطلب ماوصلش. والـ 422 المستخدم يقدر يصلحه بنفسه. الرقم بيظهر بس لما المشكلة عندنا.
+- <b>السلسلة كلها بنفس الرقم:</b> المستخدم بيبعت الرقم، والدعم يلاقيه في logs السيرفر، والـ developer يلاقيه في الـ breadcrumbs على Sentry لو الـ guard بيسجّله، زي ما هنشوف في درس الـ Observability في الوحدة 10.
+
+### الرسالة بتقول "Exception: SocketException…"
+
+أسهل سطر في الدنيا: `Text(state.error.toString())`. والنتيجة: `DioException [connection error]: The connection errored: Failed host lookup: 'api.readly.app'`. المستخدم مش فاهم ولا كلمة، ومش عارف يعمل إيه، وانت سرّبت اسم السيرفر وتفاصيل داخلية. النص اللي المستخدم بيشوفه دايمًا من الـ ARB، وعمره ما يكون `toString` ولا `message` بتاع الـ Failure.
+
+الرسالة الكويسة فيها حاجتين: <b>إيه اللي حصل</b>، و<b>تعمل إيه</b>. من غير لوم، ومن غير مصطلحات:
+
+| الموقف | رسالة وحشة | رسالة كويسة |
+| --- | --- | --- |
+| النت فاصل | `SocketException: Failed host lookup` | «مفيش اتصال بالنت. اتأكد من الشبكة وجرّب تاني.» |
+| captive portal | «مفيش نت» | «الشبكة دي محتاجة تسجيل دخول. افتح المتصفح وسجّل في الـ Wi-Fi.» |
+| ساعة الموبايل غلط | `HandshakeException: CERTIFICATE_VERIFY_FAILED` | «اتأكد إن التاريخ والوقت في الموبايل مظبوطين وجرّب تاني.» |
+| 500 | «Internal Server Error» | «حصلت مشكلة عندنا مش عندك. جرّب كمان شوية.» |
+| الملاحظة طويلة (422) | «Validation failed» | «الملاحظة أطول من 2000 حرف. قصّرها شوية.» |
+| الإيميل مستخدم (409) | «انت دخلت إيميل غلط» | «الإيميل ده عليه حساب. سجّل دخول بيه أو استخدم إيميل تاني.» |
+| 429 | «Too many requests» | «طلبات كتير ورا بعض. استنى دقيقة وجرّب تاني.» |
+| `bad_response` | `FormatException: Unexpected character` | «حصلت مشكلة في عرض البيانات، وعرفنا بيها. جرّب كمان شوية.» |
+| الـ session خلصت | «401 Unauthorized» | «الجلسة خلصت، ادخل تاني.» |
+
+- <b>«عندنا مش عندك»:</b> في الـ 500 المستخدم مالوش ذنب، وقولها صراحة عشان مايقعدش يغيّر الشبكة ويعيد تشغيل الموبايل.
+- <b>«انت دخلت غلط» لوم:</b> «الإيميل ده عليه حساب» نفس المعلومة من غير ما تتهمه.
+- <b>«وعرفنا بيها»:</b> بس لو صح. الـ `bad_response` بيتبلّغ فعلًا، زي ما شفنا في الدرس اللي فات.
+
+والـ `localized` بتاع الوحدة 2 بيكبر عشان يفرّق بين الحالات دي:
+
+<CodeBlock label="الترجمة بتقرا الـ hint والـ status والـ code">
+
+```dart
+extension FailureL10n on Failure {
+  String localized(AppLocalizations l10n) => switch (this) {
+        NetworkFailure(hint: NetworkHint.captivePortal) => l10n.errorCaptivePortal,
+        NetworkFailure(hint: NetworkHint.clockOrProxy) => l10n.errorCheckDateTime,
+        NetworkFailure() => l10n.errorNoInternet,
+        UnauthorizedFailure() => l10n.errorSessionExpired,
+        ServerFailure(statusCode: 429, :final retryAfter) => l10n.errorTooManyRequests(
+            (retryAfter ?? const Duration(minutes: 1)).inMinutes.clamp(1, 60)),
+        ServerFailure(code: 'bad_response') => l10n.errorBadResponse,
+        ServerFailure(statusCode: final s?) when s >= 500 => l10n.errorServerDown,
+        ServerFailure() => l10n.errorServer,
+        CacheFailure() => l10n.errorCache,
+        ValidationFailure() => l10n.errorInvalidInput,
+      };
+}
+```
+
+</CodeBlock>
+
+الـ codes الخاصة بـ feature (زي `email_taken`) مش هنا: دي بتاعة شاشة إنشاء الحساب، وبتتترجم هناك زي `textError` في الدرس اللي فات. الـ `localized` للحالات العامة اللي أي شاشة ممكن تقابلها.
+
+### قارئ الشاشة مش بيقول إن في خطأ
+
+مستخدم كفيف بيستخدم TalkBack ضغط «تحديث». الـ banner ظهر فوق الليستة، بس محدش قاله. بالنسبة له، الضغطة ماعملتش حاجة. الـ SnackBar بيتقري لوحده، بس الـ banner والـ ErrorView والخطأ تحت الحقل لأ، لأن قارئ الشاشة بيقرا اللي عليه الـ focus بس.
+
+- <b>`Semantics(liveRegion: true)`:</b> زي اللي في `InlineErrorBanner` فوق. لما الـ widget يظهر أو الكلام بتاعه يتغير، TalkBack وVoiceOver بيقروه من غير ما المستخدم يحرك الـ focus. لف بيه الـ ErrorView كمان.
+- <b>`SemanticsService.announce`:</b> لو الخطأ مالوش widget ظاهر، زي فشل في حاجة ماحدّش شايفها، ابعت الجملة مباشرة لقارئ الشاشة: `SemanticsService.announce(message, Directionality.of(context))`. ولو الـ analyzer قالك إنها deprecated في نسختك، استخدم البديل اللي بيقترحه.
+- <b>الـ focus على أول حقل غلط:</b> في فورم إنشاء الحساب، السيرفر رجّع خطأ في الإيميل. الـ focus لسه على زرار «إنشاء»، والمستخدم مش عارف يدوّر فين.
+
+<CodeBlock label="الـ focus بيروح لأول حقل فيه خطأ">
+
+```dart
+BlocListener<RegisterCubit, RegisterState>(
+  listenWhen: (prev, curr) =>
+      curr.fieldErrors.isNotEmpty && curr.fieldErrors != prev.fieldErrors,
+  listener: (context, state) {
+    final fields = [(name: 'email', node: _emailFocus), (name: 'password', node: _passwordFocus)];
+    fields
+        .where((f) => state.fieldErrors.containsKey(f.name))
+        .firstOrNull
+        ?.node
+        .requestFocus(); // the screen reader reads the field and its error
+  },
+  child: const RegisterForm(),
+)
+```
+
+</CodeBlock>
+
+الترتيب في الليستة هو ترتيب الحقول في الشاشة، مش ترتيب الـ map اللي جاي من السيرفر. ومتعتمدش على اللون لوحده: الحد الأحمر حوالين الحقل مايتشافش لكل الناس، والنص تحته هو اللي بيقول.
+
+### الـ banner بيقول أوفلاين والنت شغال
+
+أول فكرة لأي حد: banner أحمر «انت أوفلاين» من connectivity_plus، وتقفل الأزرار لما يقول `none`. بس زي ما شفنا في درس Offline-first في الوحدة 4، الـ connectivity بيقولك الموبايل متوصل بإيه، مش إن في internet. wifi الكافيه اللي محتاج login بيطلع `wifi` وكل الطلبات بتفشل، والـ banner مش ظاهر. وساعات بيقول `none` لحظة وهو بيبدّل بين wifi وdata، فالأزرار بتتقفل من غير سبب.
+
+الحقيقة هي الطلب اللي فشل: الـ banner بيظهر من `refreshFailure is NetworkFailure`، مش من الـ connectivity. والـ connectivity بيتستخدم كتلميح «جرّب دلوقتي»:
+
+<CodeBlock label="الـ connectivity بيقول جرّب، مش بيحكم">
+
+```dart
+// LibraryCubit: NetworkStatus is the core interface from the Offline-first lesson
+_onlineSub = _network.onOnline.listen((_) {
+  if (state case LibraryLoaded(refreshFailure: NetworkFailure())) refresh();
+});
+```
+
+</CodeBlock>
+
+والكتابة عمرها ما تتقفل: إضافة كتاب وهو أوفلاين بتروح للـ DB والـ sync queue، والمستخدم يشوف الكتاب في مكتبته على طول. الـ banner بيقول «اللي قدامك ممكن يكون قديم»، مش «ممنوع تعمل حاجة».
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>الخطأ state الديزاينر لازم يرسمها:</b> أغلب التصميمات فيها الشاشة وهي مليانة بس. اطلب من الأول لكل شاشة: loading، وفاضية (مكتبة مفيهاش كتب)، وerror كاملة، وبيانات مع banner، وجزء ناقص. لو مااترسمتش، الـ developer هيرتجل، وكل شاشة هتطلع بشكل. ونفس الحالات دي تبقى golden tests، زي ما شفنا في الوحدة 8، فأي تغيير يكسر شكل الـ error يبان في الـ CI.
+- <b>سياسة الـ retry من ناحية المستخدم:</b> الإعادة التلقائية مكانها الـ data layer (الـ RetryInterceptor بتاع درس dio)، والمستخدم مايحسش بيها. الزرار يظهر بس لما `canRetry`. والـ pull-to-refresh موجود دايمًا على الليستات، حتى لو مفيش خطأ. وماتعملش retry تلقائي في الـ UI بـ Timer: الـ data layer عمل اللازم، والـ Failure وصلت معناها إن المحاولات خلصت.
+- <b>ماتقفلش الشاشة كلها عشان جزء فشل:</b> صفحة الكتاب جابت الكتاب، واسم الكاتب فشل. اعرض الكتاب، وسطر الكاتب يبقى فاضي أو فيه «مش متاح دلوقتي». الـ ErrorView الكاملة بس لما الحاجة الأساسية نفسها فشلت.
+
+<CodeBlock label="BookDetailsState: الأساسي والإضافي">
+
+```dart
+final class BookDetailsLoaded extends BookDetailsState {
+  const BookDetailsLoaded(this.book, {this.author});
+  final Book book;      // required: without it there is no page
+  final Author? author; // optional: null means "failed or not there", the page still shows
+}
+```
+
+</CodeBlock>
+
+- <b>قيس الأخطاء اللي المستخدمين بيشوفوها:</b> الـ logs بتقولك إيه اللي فشل في الشبكة، بس مش بتقولك المستخدم شاف إيه. ابعت analytics event لما ErrorView أو banner يظهر: `error_shown` ومعاه اسم الشاشة واسم ثابت للـ Failure (`network`، `server_5xx`، `bad_response`). مش الـ message (بتتغير وممكن فيها بيانات)، ومش `failure.runtimeType.toString()` (بيبقى كلام مش مفهوم لو بنيت بـ `--obfuscate`). اعمل getter بـ switch بيرجّع string ثابت. ولو لقيت إن 8% من فتحات المكتبة بتنتهي بـ ErrorView، دي أولوية أهم من أي feature.
+- <b>الـ SnackBar للحدث، والـ banner للحالة، والشاشة الكاملة للعدم:</b> لو مش عارف تختار، اسأل: «لو المستخدم بص بعيد 10 ثواني ورجع، لازم يعرف؟». لو أيوه، مايبقاش SnackBar.
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي تعرض خطأ من غير ما تضيّع البيانات اللي على الشاشة؟» الحل في الـ state مش في الـ widget: الـ failure حقل جنب البيانات (`LibraryLoaded(books, refreshFailure:)`)، مش state بتحل محلها. الـ Error state الكاملة بتتعمل بس لما مفيش بيانات خالص. الـ refresh مابيعملش emit لـ Loading لو في بيانات، وبيحط الفشل جنبها. والـ UI بتعرض banner فوق البيانات القديمة يقول إنها آخر نسخة، وبيختفي لوحده أول ما الـ refresh ينجح. وصفحة فيها أجزاء، الجزء الإضافي اللي فشل بيبقى nullable والصفحة تتعرض.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«إمتى SnackBar وإمتى شاشة error كاملة؟» الشاشة الكاملة لما مفيش حاجة تتعرض: أول تحميل فشل. الـ SnackBar لحدث: action عمله المستخدم وفشل، والبيانات زي ما هي. ولو الخطأ بيوصف حالة لسه مستمرة (البيانات قديمة)، banner مش SnackBar لأن الـ SnackBar بيختفي. ولو بيخص حقل، تحت الحقل. والـ Failures العامة زي الـ session اللي خلصت مالهاش أي رسالة في الشاشات، صاحبها واحد على مستوى الـ app. والـ SnackBar بيتعرض من `BlocListener` بـ id بيزيد مع كل فشل، ومن مكان واحد بيستبدل الحالي بدل ما يحط في طابور.
+
+</Note>
+
+</Level>
+
+<Quiz>
+
+<Question id="errui-1">
+<Ask>المستخدم في المكتبة وعنده 40 كتاب، وسحب لتحت والنت فاصل. الشاشة تعرض إيه؟</Ask>
+<Answer>
+
+الـ 40 كتاب زي ما هما، وفوقهم banner «بنعرض آخر نسخة اتحمّلت» مع سبب الفشل وزرار «حاول تاني» لو `canRetry`. مش ErrorView كاملة، لأن في بيانات تتعرض، ومش SnackBar بس، لأنه بيختفي والبيانات لسه قديمة.
+
+</Answer>
+</Question>
+
+<Question id="errui-2">
+<Ask>الـ SnackBar بتاع الخطأ بيظهر تاني كل ما الكيبورد يفتح. ليه، والحل؟</Ask>
+<Answer>
+
+لأنه بيتعرض من جوه الـ `builder`، والـ build بيتنادى مع أي rebuild لنفس الـ state. الـ SnackBar مكانه `BlocListener` بـ `listenWhen` بيشتغل مرة واحدة لكل فشل جديد.
+
+</Answer>
+</Question>
+
+<Question id="errui-3">
+<Ask>`listenWhen: (prev, curr) => prev.failure != curr.failure`. المستخدم مسح ملاحظتين ورا بعض أوفلاين، والـ SnackBar التاني ماظهرش. ليه؟</Ask>
+<Answer>
+
+`const NetworkFailure()` نفس الـ object كل مرة، فالفشلين متساويين والـ listener مابيشتغلش. ولو الـ state بـ Equatable، الـ Cubit مابيعملش emit أصلًا. الحل `failureId` بيزيد مع كل فشل، والـ `listenWhen` يقارنه.
+
+</Answer>
+</Question>
+
+<Question id="errui-4">
+<Ask>الـ refresh token اترفض، والـ `LibraryCubit` رجعله `UnauthorizedFailure`. شاشة المكتبة تعرض «الجلسة خلصت»؟</Ask>
+<Answer>
+
+لأ. دي Failure عامة ليها صاحب واحد: الـ AuthCubit بيسمع على مسح الـ tokens والـ redirect بيودّي للـ login، وصفحة الـ login هي اللي بتقول «الجلسة خلصت». الشاشات بتشيّك `isGlobal` وماتعرضش حاجة، وإلا المستخدم هيشوف نفس الرسالة 3 مرات.
+
+</Answer>
+</Question>
+
+<Question id="errui-5">
+<Ask>ليه تعرض للمستخدم «رقم المرجع: req_7f3a91c2» مع خطأ 500، ومش مع «مفيش نت»؟</Ask>
+<Answer>
+
+الرقم ده من `X-Request-Id`، والدعم بيدوّر بيه على الطلب بالظبط في logs السيرفر. مع الـ 500 المشكلة عندنا والسيرفر عنده سجل. مع النت الفاصل الطلب ماوصلش أصلًا فمفيش رقم، والمستخدم يقدر يحلها بنفسه.
+
+</Answer>
+</Question>
+
+</Quiz>

@@ -9,7 +9,7 @@ description: "العشر محاور المتقدمة، والخط الزمني �
 | --- | --- | --- | --- |
 | حدود الـ features | الـ feature-first مقابل الـ layer-first، التواصل بين الـ features، الـ core كـ shared kernel، فرض الـ dependency rule بالـ lint | المعمارية بتبوظ لما حد يعمل import غلط ومحدش يلاحظ | 1، 6 |
 | نمذجة الـ Domain | الـ value objects (Email وMoney)، الـ invariants، الـ sealed classes في Dart 3، الـ extension types، freezed | الـ domain الفاضي من الـ logic هو السبب الأول إن الناس تشوف Clean Arch مجرد boilerplate | 2 |
-| التعامل مع الأخطاء | هرم Failures بـ sealed classes، Result type خاص بيك، التحويل عند الحدود بس، ترجمة الـ Failures لرسائل بـ flutter_localizations في الـ presentation | الـ exhaustive switch بيخلي الـ compiler يقولك لو نسيت حالة | 2 |
+| التعامل مع الأخطاء | هرم Failures بـ sealed classes، Result type خاص بيك، التحويل عند الحدود بس، ترجمة الـ Failures لرسائل بـ flutter_localizations في الـ presentation (ووحدة كاملة للـ API والأخطاء من HTTP لحد عقد الـ API) | الـ exhaustive switch بيخلي الـ compiler يقولك لو نسيت حالة | 2 |
 | الـ Use cases | امتى تشيلها، تركيب use cases، الـ StreamUseCase، الـ params objects | تفرّق بين business logic حقيقي وpass-through ملوش لازمة | 2 |
 | طبقة الـ Data | الـ Dio interceptors (token refresh وretry)، الـ DTO mapping، الـ pagination، استراتيجيات الـ caching | ده المكان اللي فيه أغلب باجات الـ production | 3 |
 | الـ Offline-first | الـ local DB كمصدر وحيد للحقيقة (drift)، الـ stale-while-revalidate، الـ sync queue، حل الـ conflicts | الفرق بين app بيشتغل وapp محترم | 4 |

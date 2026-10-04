@@ -1,0 +1,503 @@
+---
+title: "خريطة أخطاء الـ API: كل اللي ممكن يبوظ"
+description: "كل حاجة ممكن تفشل بين Readly والسيرفر، مرحلة مرحلة: من الـ DNS للـ body، وكل DioExceptionType، وكل status في Readly ومعناه، وشكل الـ error body، قبل ما نحوّل أي حاجة لـ Failure."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="رحلة الطرد">
+
+انت بعت طرد لصاحبك. الطريق ممكن يبقى مقفول فالمندوب مايطلعش أصلًا. أو يطلع ويتأخر لحد ما انت تزهق. أو يوصل يلاقي العنوان مش موجود. أو صاحبك يرفض يستلم. أو يستلم ويفتحه يلاقي جواه حاجة غير اللي اتفقتوا عليها.
+
+وأصعب حالة فيهم: المندوب ماردّش عليك خالص. الطرد وصل ولا لأ؟ مش عارف. لو بعت طرد تاني، ممكن صاحبك ياخد اتنين. ولو مابعتش، ممكن مايوصلوش حاجة.
+
+</Analogy>
+
+الطلب اللي الـ app بيبعته للسيرفر بيعدّي بنفس الرحلة، وكل مرحلة ليها طريقة فشل مختلفة. الدرس ده خريطة: كل حاجة ممكن تبوظ، شكلها إيه في الـ log، ومعناها إيه في Readly. لسه مش هنحوّل حاجة لـ Failure. لو حوّلت قبل ما تشوف الخريطة كاملة، هتحط حالات مختلفة تحت اسم واحد، والمستخدم هيشوف «حصلت مشكلة» على كل حاجة.
+
+والسؤال اللي هيمشي معانا في الدرس كله: <b>السيرفر استلم الطلب ولا لأ؟</b> لأنه بيقرر هل إعادة الطلب آمنة.
+
+<Diagram name="d-api-request-journey">
+
+الطلب بيعدّي على 7 مراحل. لو فشل في أول 3، السيرفر ماشافهوش. لو فشل وهو بيتبعت أو وهو مستني الرد، مش معروف السيرفر نفّذه ولا لأ. ولو وصل status، السيرفر استلم ورد، والـ body هو اللي بيقول ليه.
+
+</Diagram>
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### الطلب مرحلة مرحلة
+
+في درس «HTTP والـ API من الصفر» شفت شكل الـ request والـ response. هنا هنبص على اللي بيحصل قبل ما الـ response يوصل، لأن أغلب الأخطاء اللي المستخدمين بيشوفوها بتحصل هناك:
+
+| المرحلة | اللي بتشوفه في الـ log | السبب الحقيقي غالبًا |
+| --- | --- | --- |
+| 1. الـ DNS | `SocketException: Failed host lookup: 'api.readly.app'` | مفيش نت، airplane mode، DNS واقع، أو غلطة في الـ baseUrl |
+| 2. فتح الاتصال | `Connection refused` أو `Network is unreachable` أو `connectTimeout` | السيرفر واقف، port غلط، `localhost` من جوه الـ emulator، أو إشارة ضعيفة |
+| 3. الـ TLS | `HandshakeException: ... CERTIFICATE_VERIFY_FAILED` | ساعة الموبايل غلط، شهادة السيرفر منتهية، أو proxy في الشركة بيفتح الـ HTTPS |
+| 4. إرسال الطلب | `sendTimeout` | رفع صورة غلاف كبيرة على نت ضعيف |
+| 5. السيرفر شغال | `receiveTimeout` | endpoint بطيء، أو السيرفر عنده ضغط |
+| 6. الـ status | `badResponse` ومعاه 4xx أو 5xx | السيرفر رد ورفض، أو عنده مشكلة |
+| 7. الـ body | `FormatException` أو `TypeError` وانت بتعمل parse | body فاضي، أو HTML، أو JSON بشكل غير المتوقع |
+
+وفي أي مرحلة، `CancelToken` ممكن يقطع الطلب (زي البحث القديم في درس dio في الوحدة 3).
+
+ولاحظ إن رسالة الـ `Failed host lookup` هي أكتر حاجة هتشوفها لما النت فاصل، مش «no internet». الموبايل بيسأل عن عنوان `api.readly.app` قبل أي حاجة، وده أول سؤال بيفشل.
+
+### كل DioExceptionType
+
+dio بيلف كل ده في `DioException` واحدة، والـ `type` بيقول المرحلة. بس الـ `type` لوحده مش كفاية: جواها `error` فيه الـ exception الأصلي، وجواها `response` لو السيرفر رد.
+
+| الـ type | حصل إيه | الـ `e.error` اللي جواها | السيرفر استلم الطلب؟ |
+| --- | --- | --- | --- |
+| `cancel` | انت لغيته بـ `CancelToken` | السبب اللي بعته لـ `cancel(...)` | مش معروف: حسب لغيته امتى |
+| `connectionTimeout` | الاتصال ماتفتحش في الـ `connectTimeout` | غالبًا مفيش | لأ |
+| `sendTimeout` | رفع الـ body خد أكتر من الـ `sendTimeout` | مفيش | غالبًا لأ: الـ body ماكملش. بس مش مضمون |
+| `receiveTimeout` | الطلب اتبعت كله والرد ماوصلش في الوقت | مفيش | <b>مش معروف</b>: ممكن يكون اتنفذ |
+| `badCertificate` | الـ `validateCertificate` بتاعك (الـ pinning) رفض الشهادة | مفيش | لأ |
+| `badResponse` | رد بـ status برا الـ `validateStatus` (الافتراضي 200 لـ 299) | مفيش، والـ status والـ body في `e.response` | أيوه، ورد |
+| `connectionError` | الاتصال مااتفتحش أو وقع | `SocketException` | لأ لو ماتفتحش. مش معروف لو وقع في النص (`Connection reset by peer`) |
+| `unknown` | أي حاجة تانية | `HandshakeException`، `HttpException: Connection closed before full header was received`، `FormatException`، أو أي exception رماه interceptor | حسب الـ `error` |
+
+العمود الأخير هو أهم عمود. «مش معروف» معناها إن `POST /library` ممكن يكون ضاف الكتاب فعلًا، والرد بس اللي ضاع. وعشان كده إعادة الـ POST من غير `Idempotency-Key` ممكن تضيفه مرتين، زي ما شفنا في درس dio في الوحدة 3.
+
+### الـ unknown مش «مش معروف»
+
+`unknown` معناها إن dio ماعرفش يصنّفها، مش إنك انت مش هتعرف. أشهر حالة: الـ `HandshakeException` بتاعة الـ TLS بتوصل غالبًا كـ `unknown` مش `connectionError`. ولو الـ mapper بيبص على الـ `type` بس، مستخدم ساعة موبايله غلط هيشوف «مشكلة في السيرفر».
+
+<CodeBlock label="بص على الـ error اللي جوه">
+
+```dart
+import 'dart:io';
+
+String describe(DioException e) => switch (e.error) {
+      SocketException(:final message) => 'socket: $message',
+      HandshakeException() => 'tls handshake failed',
+      HttpException(:final message) => 'http: $message',
+      // all three implement IOException: the network, not our server
+      _ => '${e.type.name}: ${e.message}',
+    };
+
+bool isNetworkLevel(DioException e) =>
+    e.type == DioExceptionType.connectionError ||
+    e.type == DioExceptionType.connectionTimeout ||
+    e.error is IOException;
+```
+
+</CodeBlock>
+
+الـ `SocketException` والـ `HandshakeException` والـ `HttpException` كلهم implements `IOException` من `dart:io`. فسؤال «ده من الشبكة؟» إجابته `e.error is IOException`، مهما كان الـ `type`. والسطرين دول هيبقوا جزء من الـ mapper في الدرس الجاي.
+
+</Level>
+
+<Level n="3" title="مشاكل حقيقية">
+
+### النت شغال والـ app بيقول فيه مشكلة
+
+المستخدم في فندق. الموبايل متوصل بالـ Wi-Fi، والـ connectivity_plus بيقول wifi (وده بيكدب، زي ما شفنا في درس Offline-first في الوحدة 4). بس الشبكة دي عندها <b>captive portal</b>: أي طلب بيروح لصفحة «سجّل رقم أوضتك» لحد ما المستخدم يعمل login. يعني `GET /library` بيرجع <b>200</b>، والـ body صفحة HTML.
+
+الـ dio بيشوف `content-type: text/html`، فمابيعملش decode لـ JSON، والـ `res.data` بيبقى String فيه HTML. وبعدين في حتة ما الكود بيعامله كـ Map، فيطلع `TypeError` في الـ fromJson، أو `DioException` نوعها `unknown` وجواها الـ TypeError، حسب انت كاتب الطلب إزاي. في الحالتين، الـ guard يا مش هيمسكها خالص (Error)، يا هيحوّلها لـ «مشكلة في السيرفر». والمستخدم مش هيفهم إن الحل إنه يفتح المتصفح ويسجّل.
+
+الحل إن الـ app يتأكد إن الرد JSON <b>قبل</b> ما أي حد يعمله parse، ويرمي exception بنوع واسم:
+
+<CodeBlock label="core/network/json_only_interceptor.dart">
+
+```dart
+class UnexpectedBodyException implements Exception {
+  const UnexpectedBodyException({required this.url, this.status, this.contentType});
+  final Uri url;
+  final int? status;
+  final String? contentType;
+
+  @override
+  String toString() => 'UnexpectedBodyException: $status $contentType at $url';
+}
+
+class JsonOnlyInterceptor extends Interceptor {
+  @override
+  void onResponse(Response<dynamic> response, ResponseInterceptorHandler handler) {
+    final type = response.headers.value(Headers.contentTypeHeader) ?? '';
+    final data = response.data;
+    final empty = data == null || data == '';
+    if (!empty && !type.contains('json')) {
+      // a hotel login page, a proxy page: not our API talking
+      return handler.reject(DioException(
+        requestOptions: response.requestOptions,
+        response: response,
+        type: DioExceptionType.badResponse,
+        error: UnexpectedBodyException(
+          url: response.realUri,
+          status: response.statusCode,
+          contentType: type,
+        ),
+      ));
+    }
+    handler.next(response);
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `contains('json')`:</b> بيقبل `application/json; charset=utf-8` و`application/problem+json` اللي هنشوفه تحت.
+- <b>على الـ Dio الاتنين:</b> الـ `api` والـ `openLibrary`. الـ captive portal مابيفرّقش بين السيرفرات.
+- <b>الـ log مايشيلش الـ HTML:</b> الـ status والـ content-type والـ URL كفاية. صفحة الفندق ممكن يبقى فيها اسم المستخدم أو رقم أوضته.
+- <b>2xx بـ HTML غالبًا الشبكة:</b> الـ API بتاعنا عمره ما بيرجّع HTML بـ 200. فالحالة دي للمستخدم أقرب لـ «مفيش نت» منها لـ «السيرفر باظ»، وده هيفرق في الرسالة اللي هنختارها في الدرس الجاي.
+
+### الرد 200 بس الـ body فاضي
+
+في 3 أشكال لـ «مفيش حاجة»: status `204 No Content` من غير body خالص، أو 200 والـ body string فاضي، أو 200 و`null`. مع الـ responseType الافتراضي، dio بيرجّع `res.data` بـ null في الحالات دي غالبًا. وأي `res.data!` بعدها `TypeError`.
+
+<CodeBlock label="اقرا الـ body بس لو محتاجه">
+
+```dart
+// PATCH may answer 204: the method doesn't read the body at all
+Future<void> updateStatus(BookId id, BookStatus status) => _dio.patch<void>(
+      '/library/${id.value}',
+      data: UpdateBookRequest(status: _statusToJson(status)).toJson(),
+    );
+
+// POST /library must answer with the saved book: an empty body is a broken contract
+Future<BookDto> addBook(BookDto book) async {
+  final res = await _dio.post<Map<String, dynamic>>('/library', data: book.toJson());
+  final data = res.data;
+  if (data == null) throw ParseException('empty body', url: res.realUri);
+  return BookDto.fromJson(data);
+}
+```
+
+</CodeBlock>
+
+الـ `ParseException` هو اللي عملناه في درس «الأخطاء في Dart من الصفر». الفرق بينه وبين `res.data!`: الاتنين بيوقّفوا الطلب، بس الأول exception بنوع وURL الـ guard يقدر يمسكه ويبلّغ عنه كعقد مكسور، والتاني TypeError شكله bug في الـ app.
+
+### السيرفر رجّع HTML مش JSON
+
+<CodeBlock label="502 من الـ proxy اللي قدام السيرفر">
+
+```text
+HTTP/1.1 502 Bad Gateway
+Content-Type: text/html
+
+<html><head><title>502 Bad Gateway</title></head>
+<body><center><h1>502 Bad Gateway</h1></center><hr><center>nginx</center></body></html>
+```
+
+</CodeBlock>
+
+الطلب ده ماوصلش للـ Node API خالص. nginx أو Cloudflare اللي قدامه هو اللي رد، لأن السيرفر واقف أو بيعمل deploy. والـ body صفحة HTML مش `{code, message}`.
+
+- <b>الـ status لسه صح:</b> 502 معناها «الـ gateway مالقاش السيرفر»، وده كفاية تعرف إنها مؤقتة. الـ HTML مش محتاج تقراه.
+- <b>الـ parsing مايقعش:</b> الـ `_fromResponse` بتاع درس الأخطاء في الوحدة 2 بيستخدم map patterns، فالـ String بيروح للـ `_` والـ code بيبقى null. لو كان مكتوب `res.data['code'] as String`، كان هيرمي TypeError جوه الـ guard نفسه.
+- <b>status مش معروف:</b> Cloudflare بيرجّع أرقام مش في الـ standard زي 520 و521 و522 و524. أي status مش في الجدول بتاعك اتعامل معاه بفئته: 5xx يبقى مشكلة سيرفر.
+
+### كل الطلبات بتفشل على موبايل واحد بس
+
+Sentry فيه issue من 3 أجهزة بس، كل طلب عندهم بيفشل، وباقي المستخدمين تمام. الـ error جواها:
+
+```text
+HandshakeException: Handshake error in client
+(OS Error: CERTIFICATE_VERIFY_FAILED: certificate is not yet valid)
+```
+
+ساعة الموبايل متظبطة على 2019. الشهادة بتاعة `api.readly.app` صالحة من 2026، فبالنسبة للموبايل هي «لسه ماابتدتش». الـ TLS بيفشل قبل ما الطلب يتبعت. ونفس الشكل بيحصل مع proxy في شركة بيفتح الـ HTTPS بشهادة بتاعته، أو antivirus بيعمل كده.
+
+مفيش حاجة في الكود تصلحها، والحل الغلط إنك تطفي التحقق من الشهادة (درس dio في الوحدة 3 قال ليه). اللي تقدر تعمله إن المستخدم يعرف يصلحها بنفسه:
+
+<CodeBlock label="تلميح للرسالة، مش قرار">
+
+```dart
+bool looksLikeClockOrProxy(DioException e) =>
+    e.error is HandshakeException &&
+    '${e.error}'.contains('CERTIFICATE_VERIFY_FAILED');
+```
+
+</CodeBlock>
+
+لو ده true، الرسالة تبقى «اتأكد إن التاريخ والوقت في الموبايل مظبوطين» بدل «مفيش نت». وده الاستثناء الوحيد اللي بنقرا فيه نص رسالة: رسالة من الـ OS مش من السيرفر بتاعنا، وكل اللي بتغيّره جملة اقتراح للمستخدم. لو النص اتغير، أسوأ حاجة إن المستخدم يشوف رسالة الشبكة العادية.
+
+### الـ 404 دي معناها إيه بالظبط؟
+
+`GET /books/OL45804W/notes` رجع 404. في معنيين مختلفين تمامًا:
+
+<CodeBlock label="نفس الـ status، حكايتين">
+
+```text
+// 1. the route doesn't exist: wrong baseUrl, an old app calling a removed endpoint, /book/ vs /books/
+{ "code": "route_not_found", "message": "Cannot GET /book/OL45804W/notes" }
+
+// 2. the route exists, the book isn't in this user's library
+{ "code": "book_not_in_library", "message": "Book OL45804W is not in library" }
+```
+
+</CodeBlock>
+
+الأولى bug: الـ app بيكلّم endpoint مش موجود، ومحدش هيصلحها غير مطوّر، فلازم توصل Sentry. والتانية حالة عادية: المستخدم شال الكتاب من مكتبته من التابلت، والموبايل لسه فاتح صفحته. الرد الصح «الكتاب ده مابقاش في مكتبتك» وتحديث المكتبة، ومش محتاج Sentry.
+
+ولو الـ 404 جاية من غير body، أو body HTML من الـ proxy، يبقى غالبًا route مش موجود. ده سبب إن الـ `code` في الـ body جزء من العقد مع الـ backend: الـ status بيقولك الفئة، والـ code بيقولك أنهي واحدة فيهم.
+
+### الـ 409 بتاعة التسجيل غير الـ 409 بتاعة المكتبة
+
+| الـ request | الـ code | المعنى | الـ app بيعمل إيه |
+| --- | --- | --- | --- |
+| `POST /auth/register` | `email_taken` | الإيميل عليه حساب | خطأ على حقل الإيميل (درس الـ Forms في الوحدة 5) |
+| `PATCH /library/:bookId` | `VERSION_CONFLICT` | نسخة السيرفر أحدث من اللي انت عدّلت عليها | الـ ConflictPolicy بتقرر (درس الـ Conflicts في الوحدة 4) |
+| أي طلب بـ `Idempotency-Key` | `REQUEST_IN_PROGRESS` | نفس المفتاح لسه بيتنفذ | استنى وجرّب تاني |
+
+تلات ردود 409، وتلات تصرفات مالهاش أي علاقة ببعض. أي كود بيقرر بـ `statusCode == 409` لوحده هيغلط في اتنين منهم على الأقل.
+
+### 429 ومعاها Retry-After
+
+الـ 429 معناها «بعت طلبات كتير». Readly بيرجّعها مثلًا لو حد بيحفظ ملاحظة كل ثانية. ومعاها header `Retry-After` بيقول تستنى قد إيه. الـ RetryInterceptor في درس dio كان بيقرا الثواني بس، بس الـ standard بيسمح بشكلين:
+
+<CodeBlock label="الشكلين بتوع Retry-After">
+
+```dart
+// "Retry-After: 30" or "Retry-After: Wed, 21 Oct 2026 07:28:00 GMT"
+Duration? parseRetryAfter(String? raw, DateTime now) {
+  if (raw == null) return null;
+  final seconds = int.tryParse(raw.trim());
+  if (seconds != null) return Duration(seconds: seconds);
+  try {
+    final wait = HttpDate.parse(raw).difference(now);
+    return wait.isNegative ? Duration.zero : wait;
+  } on HttpException {
+    return null; // neither form: ignore it and use our own backoff
+  }
+}
+```
+
+</CodeBlock>
+
+الـ `now` جاي من الـ `Clock` بتاع الـ app مش `DateTime.now()`، عشان التست يثبّته. والقيمة دي هتتشال في `retryAfter` جوه الـ Failure في الدرس الجاي، فالشاشة تقدر تقول «جرّب كمان 30 ثانية» بدل زرار يرجّع نفس الـ 429.
+
+### 500 ولا 503؟
+
+الـ 5xx كلها «مشكلة عند السيرفر»، بس مش كلها هتتحل لوحدها:
+
+- <b>500 Internal Server Error:</b> exception في كود السيرفر. نفس الطلب غالبًا هيوقعه تاني. الـ retry التلقائي مش هيفيد، والمستخدم يشوف «مشكلة عندنا» ومعاها رقم الطلب.
+- <b>502 Bad Gateway:</b> الـ proxy مالقاش السيرفر، غالبًا deploy أو crash. بتتحل لوحدها في ثواني.
+- <b>503 Service Unavailable:</b> السيرفر قافل عن قصد (صيانة) أو عليه ضغط، وغالبًا معاها `Retry-After`. مؤقتة.
+- <b>504 Gateway Timeout:</b> الـ proxy زهق من استنى السيرفر. بس السيرفر نفسه ممكن يكون لسه شغال وكمّل الـ POST. يعني دي زي `receiveTimeout` بالظبط: <b>مش معروف</b> اتنفذ ولا لأ.
+
+### جدول Readly: كل رد ومعناه
+
+ده الجدول اللي هتحتاجه وانت بتكتب الـ mapper. اكتبه للـ app بتاعك، واتفق عليه مع الـ backend.
+
+| الرد | معناه في Readly | غلطة مين | الـ retry يفيد؟ | المستخدم يشوف | Sentry؟ |
+| --- | --- | --- | --- | --- | --- |
+| مفيش رد (DNS، connect، TLS) | مفيش اتصال | الشبكة | أيوه | «مفيش اتصال» وزرار حاول تاني | لأ |
+| 200 بـ HTML | captive portal | الشبكة | بعد login في الـ Wi-Fi | «سجّل دخول في شبكة الـ Wi-Fi» | لأ |
+| 200 بـ JSON شكله غلط | العقد اتكسر | bug: الـ backend أو نسخة app قديمة | لأ | رسالة عامة | أيوه، non-fatal |
+| 400 | الطلب نفسه غلط | bug في الـ app | لأ | رسالة عامة | أيوه |
+| 401 من `/auth/login` | الإيميل أو الباسورد غلط | المستخدم | لأ | خطأ على الفورم | لأ |
+| 401 من أي حاجة تانية | الـ refresh فشل والـ session خلصت | محدش | لأ | يرجع لصفحة الـ login | لأ |
+| 403 `email_not_verified` | الإيميل ماتأكدش | المستخدم | لأ | «أكّد إيميلك» وزرار إعادة الإرسال | لأ |
+| 404 `book_not_in_library` | الكتاب اتشال من جهاز تاني | محدش | لأ | «الكتاب ده مابقاش في مكتبتك» | لأ |
+| 404 من غير code | الـ route مش موجود | bug أو baseUrl غلط | لأ | رسالة عامة | أيوه |
+| 409 `email_taken` | الإيميل عليه حساب | المستخدم | لأ | خطأ على حقل الإيميل | لأ |
+| 409 `VERSION_CONFLICT` | السيرفر عنده نسخة أحدث | محدش | الـ ConflictPolicy تقرر | غالبًا ولا حاجة | لأ |
+| 422 `validation_failed` | حقل غلط، زي ملاحظة `too_long` | المستخدم، أو validation ناقص في الـ app | لأ | خطأ على كل حقل | لأ |
+| 429 | طلبات كتير | المستخدم، أو bug بيكرر الطلب | بعد الـ Retry-After | «استنى شوية وجرّب» | لو بتتكرر كتير |
+| 500 | exception في السيرفر | السيرفر | غالبًا لأ | «مشكلة عندنا» ورقم الطلب | الـ backend بيسجلها، والـ app breadcrumb |
+| 502 أو 503 | السيرفر مش متاح دلوقتي | السيرفر | أيوه | «السيرفر مش متاح، جرّب كمان شوية» | لأ |
+| 504 أو `receiveTimeout` | الرد اتأخر | السيرفر أو الشبكة | للـ GET، وللـ POST بـ Idempotency-Key | «الرد اتأخر» | لأ |
+
+### شكل الـ error body: العقد
+
+الـ backend بتاع Readly بيرجّع نفس الشكل في كل خطأ، ومعاه header بيعرّف الطلب:
+
+<CodeBlock label="422 من POST /books/OL45804W/notes">
+
+```text
+HTTP/1.1 422 Unprocessable Entity
+Content-Type: application/json
+X-Request-Id: req_7f3a91c2
+
+{ "code": "validation_failed", "message": "Invalid note", "fields": { "text": "too_long" } }
+```
+
+</CodeBlock>
+
+- <b>الـ `code`:</b> ثابت ومتوثق، والـ app بيقرر بيه.
+- <b>الـ `message`:</b> للـ logs وللـ backend developer. بالإنجليزي، وممكن يتغير في أي deploy.
+- <b>الـ `fields`:</b> الحقل وكود الخطأ بتاعه، للفورم.
+- <b>الـ `X-Request-Id`:</b> نفس الرقم موجود في logs السيرفر. لو المستخدم بعتلك screenshot فيها الرقم، الـ backend يلاقي الطلب في ثانية.
+
+وفي شكل standard لنفس الفكرة: <b>RFC 9457</b>، اسمه Problem Details، والـ content-type بتاعه `application/problem+json`. لو الـ backend بتاعك Spring أو ASP.NET، غالبًا بيرجّعه لوحده:
+
+<CodeBlock label="نفس الخطأ بـ RFC 9457">
+
+```text
+HTTP/1.1 409 Conflict
+Content-Type: application/problem+json
+
+{
+  "type": "https://api.readly.app/problems/email-taken",
+  "title": "Email already registered",
+  "status": 409,
+  "detail": "An account with this email already exists.",
+  "instance": "urn:readly:request:req_7f3a91c2",
+  "fields": { "email": "taken" }
+}
+```
+
+</CodeBlock>
+
+الـ `type` URI بيعرّف نوع المشكلة (هو اللي مكان الـ `code`)، و`about:blank` لو مالهاش نوع غير الـ status. والـ `title` و`detail` للبني آدمين، يعني للـ logs برضه. والـ `instance` بيعرّف المرة دي بالذات. وأي حقل زيادة زي `fields` اسمه extension ومسموح. والـ `status` جوه الـ body مجرد نسخة: لو proxy غيّر الـ status الحقيقي، صدّق الـ status بتاع الـ response.
+
+الـ app يقدر يقرا الشكلين، من غير `as` واحد:
+
+<CodeBlock label="core/network/api_error_body.dart">
+
+```dart
+/// What the server said about a failed request. Data only: no Failure yet.
+typedef ApiErrorBody = ({
+  int? status,
+  String? code,
+  Map<String, String> fields,
+  String? requestId,
+});
+
+ApiErrorBody readApiError(Response<dynamic>? res) {
+  final (code, fields) = switch (res?.data) {
+    // Readly: {code, message, fields}
+    final Map<String, dynamic> m && {'code': final String c} => (c, _stringMap(m['fields'])),
+    // RFC 9457: {type, title, status, detail, instance, ...extensions}
+    final Map<String, dynamic> m && {'type': final String t} => (_problemCode(t), _stringMap(m['fields'])),
+    // HTML from a proxy, an empty body, a list, anything else
+    _ => (null, const <String, String>{}),
+  };
+  return (
+    status: res?.statusCode,
+    code: code,
+    fields: fields,
+    requestId: res?.headers.value('x-request-id'),
+  );
+}
+
+Map<String, String> _stringMap(Object? raw) => switch (raw) {
+      Map<String, dynamic> m => {
+          for (final MapEntry(:key, :value) in m.entries)
+            if (value is String) key: value,
+        },
+      _ => const {},
+    };
+
+// ".../problems/email-taken" -> "email-taken"; "about:blank" -> null
+String? _problemCode(String type) {
+  if (type == 'about:blank') return null;
+  final segments = Uri.tryParse(type)?.pathSegments ?? const <String>[];
+  return segments.isEmpty ? null : segments.last;
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `&&` pattern:</b> بيربط الـ map في `m` وفي نفس الوقت يتأكد إن فيها `code` من نوع String. الـ `fields` اختيارية، فبتتقري لوحدها بـ `_stringMap` اللي بيرجّع map فاضية لو مش موجودة أو شكلها غلط.
+- <b>الـ requestId من الـ header مش من الـ body:</b> عشان يبقى موجود حتى لو الـ body HTML من الـ proxy. لو الـ proxy مابيعدّيهوش، هيبقى null، وده مقبول.
+- <b>dio بيفك `application/problem+json`:</b> الـ transformer الافتراضي بيعتبر أي content-type آخره `+json` JSON، فالـ data بتوصل Map زي العادي.
+
+### الـ backend زوّد code جديد
+
+نسخة 1.4 من الـ app بتعرف `email_taken` و`validation_failed`. الـ backend زوّد `email_blocked` الشهر ده. المستخدمين على 1.4 هيستقبلوه، ومش هيعملوا update قبل شهور.
+
+الـ code مش enum مقفول، هو String. والقرار عليه لازم يبقى ليه `_` بيرجع للفئة:
+
+| اللي وصل | الـ app بيعمل إيه |
+| --- | --- |
+| code الـ app يعرفه | التصرف الخاص بيه: حقل، رسالة، شاشة |
+| code مايعرفوش | تصرف الـ status: 4xx رسالة عامة من غير retry، 5xx «مشكلة عندنا» |
+| مفيش code خالص | نفس الحاجة: الـ status بيقرر |
+
+والـ code اللي ماتعرفوش يتسجل warning فيه الـ code والـ endpoint، عشان تعرف إن في نسخ قديمة بتستقبل حاجة جديدة. نفس فكرة الـ status الجديد في درس الـ Data في الوحدة 3.
+
+وفي معمل الدرس الجاي هتختار أي حالة من الخريطة دي (أوفلاين، timeout، 401، 422، 500، body HTML)، وتشوفها بتتحول لأنهي Failure، والمستخدم بيشوف إيه.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>صنّف كل خطأ بـ 3 أسئلة:</b> غلطة مين (المستخدم، bug في الـ app، السيرفر، الشبكة)؟ الـ retry هيفيد؟ حد محتاج يصلّح كود؟ الإجابات دي هي اللي بتقرر نوع الـ Failure، وشكل الـ UI، ويتبعت لـ Sentry ولا لأ. ده اللي هنبنيه في الدرس الجاي.
+
+| الفئة | غلطة مين | الـ retry يفيد؟ | حد يصلّح كود؟ |
+| --- | --- | --- | --- |
+| مفيش اتصال، timeout، captive portal | الشبكة | أيوه | لأ |
+| input غلط، إيميل مستخدم، باسورد غلط | المستخدم | لأ، يغيّر الـ input | لأ |
+| الـ session خلصت | محدش | لأ، login تاني | لأ |
+| 502 و503 و429 | السيرفر مؤقتًا | أيوه، بعد شوية | لأ |
+| 500 | السيرفر | غالبًا لأ | أيوه، الـ backend |
+| 400، 404 route، JSON بشكل غلط | bug في الـ app أو العقد | لأ | أيوه |
+
+- <b>العقد مكتوب مش في دماغ حد:</b> اتفق مع الـ backend على ملف `docs/api-errors.md`: كل code، والـ status بتاعه، والـ endpoints اللي بترجّعه، ومعناه، والـ fields، وهل الـ retry آمن. أي code جديد بيتضاف للملف ده الأول. والـ code مايتغيرش معناه أبدًا: لو المعنى اتغير، ده code جديد.
+- <b>الـ status فئة، والـ code تفصيلة، والـ message للـ logs:</b> الـ status بيقول «طلبك اترفض» أو «عندي مشكلة». الـ code بيقول ليه بالظبط. الـ message بيساعد اللي بيقرا الـ log. القرار في الكود على أول اتنين بس.
+- <b>عمرك ما تقرر بناءً على الـ message بتاع السيرفر:</b> `if (message.contains('already'))` هيبوظ أول ما حد في الـ backend يصلّح grammar الرسالة، أو يترجمها، أو يغيّر الـ framework. والمستخدم مايشوفهوش برضه، لأنه بلغة واحدة ومكتوب لمطوّر.
+- <b>الـ request id في كل log:</b> سجّله مع كل خطأ في الـ breadcrumb، واعرضه للمستخدم في شاشة الخطأ أو «تواصل معانا» كرقم مرجعي. ده الخيط الوحيد بين crash عند المستخدم وسطر في logs السيرفر.
+- <b>الحالات المستحيلة بتحصل:</b> الـ proxy بيرجّع HTML، والـ Wi-Fi بيرجّع صفحة login، والسيرفر بيرجّع 200 فاضي. الـ parsing الدفاعي (patterns، مفيش `as`، fallback للفئة) مش تشاؤم، هو اللي بيخلي الـ guard نفسه مايوقعش.
+
+<Note kind="interview" title="سؤال interview">
+
+«إيه كل الأسباب اللي ممكن تخلي request يفشل؟» امشي مع الطلب مرحلة مرحلة: الـ DNS (مفيش نت أو host غلط)، وفتح الاتصال (السيرفر واقف أو connectTimeout)، والـ TLS (ساعة الجهاز غلط، شهادة منتهية، proxy)، والإرسال (sendTimeout)، والانتظار (receiveTimeout أو 504)، والـ status (4xx من غلطة المستخدم أو الـ app، و5xx من السيرفر)، والـ body (فاضي، HTML من captive portal أو proxy، أو شكل غلط)، والإلغاء في أي وقت. والأهم: لكل مرحلة تعرف السيرفر استلم الطلب ولا لأ، لأن ده بيقرر إعادة الـ POST آمنة ولا محتاجة Idempotency-Key.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«ليه الـ HTTP status لوحده مش كفاية؟» لأن الـ status فئة، ونفس الرقم بيحمل معاني محتاجة تصرفات مختلفة. الـ 409 في Readly ممكن تبقى «الإيميل مستخدم» (خطأ على حقل)، أو «نسخة السيرفر أحدث» (conflict policy)، أو «نفس الطلب لسه بيتنفذ» (استنى). والـ 404 ممكن تبقى route مش موجود (bug يروح Sentry) أو كتاب اتشال من جهاز تاني (حالة عادية). عشان كده الـ body فيه `code` ثابت متفق عليه في ملف مكتوب، والـ app بيقرر بالـ status والـ code مع بعض، وأي code مايعرفوش بيرجع لتصرف الفئة. والـ message عمره ما بيدخل في القرار.
+
+</Note>
+
+دلوقتي عندك الخريطة كاملة: كل حاجة ممكن تبوظ، ومعناها، وغلطة مين. في الدرس الجاي «من الـ Exception للـ Failure: الطريق كامل»، هنحوّل الخريطة دي لكود: `_mapDio` بيقرا الـ `type` والـ `error` والـ `readApiError`، ويطلّع Failure واحدة صح لكل صف في الجدول.
+
+</Level>
+
+<Quiz>
+
+<Question id="errmap-1">
+<Ask>`POST /library` رجع `DioExceptionType.receiveTimeout`. الكتاب اتضاف على السيرفر ولا لأ؟</Ask>
+<Answer>
+
+مش معروف. الطلب اتبعت كله، والسيرفر ممكن يكون نفّذه والرد بس اللي ماوصلش. عشان كده الإعادة آمنة بس لو الطلب معاه `Idempotency-Key` اتولد مرة واحدة مع العملية. نفس الكلام لـ 504 من الـ gateway.
+
+</Answer>
+</Question>
+
+<Question id="errmap-2">
+<Ask>مستخدم على Wi-Fi فندق، و`GET /library` رجع 200 والـ app قال «مشكلة في السيرفر». حصل إيه، وتكشفها إزاي؟</Ask>
+<Answer>
+
+captive portal: الشبكة رجّعت صفحة login بـ HTML و200، والـ parsing رمى TypeError أو FormatException. تكشفها بـ interceptor بيتأكد إن الـ content-type فيه json قبل أي parse، ويرمي `UnexpectedBodyException` بنوع واضح. 2xx بـ HTML من الـ API بتاعك معناها الشبكة مش السيرفر.
+
+</Answer>
+</Question>
+
+<Question id="errmap-3">
+<Ask>كل الطلبات بتفشل على 3 أجهزة بس، وجوه الـ DioException فيه `HandshakeException: CERTIFICATE_VERIFY_FAILED: certificate is not yet valid`. السبب؟ والـ type هيبقى إيه غالبًا؟</Ask>
+<Answer>
+
+ساعة الموبايل متأخرة، فالشهادة بالنسبة له لسه مابدأتش. الـ type غالبًا `unknown` مش `connectionError`، عشان كده الـ mapper لازم يبص على `e.error is IOException` مش الـ type بس. والحل رسالة تقول للمستخدم يظبط الساعة، مش إنك تطفي التحقق من الشهادة.
+
+</Answer>
+</Question>
+
+<Question id="errmap-4">
+<Ask>`GET /books/OL45804W/notes` رجع 404. ليه محتاج تقرا الـ body قبل ما تقرر؟</Ask>
+<Answer>
+
+لأن 404 ممكن تبقى route مش موجود (bug أو baseUrl غلط، يروح Sentry ورسالة عامة)، أو `book_not_in_library` (المستخدم شال الكتاب من جهاز تاني، رسالة واضحة وتحديث للمكتبة). الـ status فئة، والـ `code` هو اللي بيفرّق.
+
+</Answer>
+</Question>
+
+<Question id="errmap-5">
+<Ask>الـ backend زوّد code جديد `email_blocked`، والمستخدمين على نسخة قديمة. الـ app المفروض يعمل إيه؟</Ask>
+<Answer>
+
+يرجع لتصرف الـ status: 4xx يبقى رسالة عامة من غير retry. يعني القرار على الـ code لازم يبقى ليه `_` بيرجع للفئة، والـ code اللي ماتعرفوش يتسجل warning عشان تعرف إن في نسخ قديمة بتستقبله. ومش بيقرا الـ message عشان يخمّن المعنى.
+
+</Answer>
+</Question>
+
+</Quiz>

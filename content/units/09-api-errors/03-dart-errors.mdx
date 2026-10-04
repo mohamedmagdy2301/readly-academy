@@ -1,0 +1,587 @@
+---
+title: "الأخطاء في Dart من الصفر"
+description: "throw وtry/catch وException وError، والأخطاء اللي بتهرب من الـ try في الـ Futures والـ Streams، وفين بتروح الأخطاء اللي محدش مسكها."
+minutes: 30
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="البلاغ اللي بيطلع للمدير">
+
+موظف المخزن فتح الكرتونة ولقاها فاضية. هو مش هيقرر يعمل إيه، هو بيكتب بلاغ ويطلّعه لمديره. المدير مش عارف يتصرف، فبيطلّعه للي فوقه. وهكذا لحد ما البلاغ يوصل لحد عنده صلاحية: «كلّم المورد وابعت للزبون اعتذار». وكل واحد البلاغ عدّى عليه بيسيب اللي في إيده وقتها، مابيكمّلش شغله كأن مفيش حاجة. ولو البلاغ وصل للمدير العام ومحدش مسكه، بيتسجل في دفتر الحوادث.
+
+وفي نوعين بلاغات. «المورد ماجاش النهارده» دي حاجة من العالم بره، متوقعة، وليها رد معروف. أما «الموظف جمع الفاتورة غلط» فمالهاش رد غير إن حد يصلّح طريقة الحساب نفسها. لو المدير خبّى البلاغ التاني عشان الشغل يمشي، الغلطة هتتكرر في كل فاتورة.
+
+</Analogy>
+
+في Dart البلاغ ده اسمه exception، و«يطلّعه لفوق» اسمها <b>stack unwinding</b>: الـ function اللي حصل فيها الخطأ بتقف فورًا، والخطأ بيطلع للي ناداها، وبعدين للي نادى دي، لحد ما يلاقي `try` يمسكه. ولو مالقاش، بيوصل لـ handler عام في الـ app.
+
+والنوعين في Dart ليهم اسمين: <b>Exception</b> للمشكلة اللي جاية من بره ومتوقعة (النت قطع، الـ JSON بايظ)، و<b>Error</b> للغلطة في الكود نفسه (null في مكان مش المفروض يبقى فيه null، index برا الليست). الأولى بتتمسك وتتحول لحاجة المستخدم يفهمها. التانية بتتصلّح.
+
+<Diagram name="d-api-unwind">
+
+الـ DioException بتطلع من dio وبتوقّف كل function في الطريق لحد الـ guard اللي بيمسكها ويرجّع Result. أما الـ TypeError فمفيش `on` يطابقها، فبتعدّي الـ guard والـ Cubit لحد الـ handler العام.
+
+</Diagram>
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### throw: أي حاجة ممكن تترمي
+
+<CodeBlock label="Dart بيسمح بده كله">
+
+```dart
+throw 'Something went wrong';        // a String
+throw 404;                           // an int
+throw {'code': 'email_taken'};       // a Map
+throw const FormatException('bad'); // an Exception: the only sane choice
+```
+
+</CodeBlock>
+
+Dart بيقبل إنك ترمي أي object مش null. بس اللي بيمسك مش هيعرف يكتب `on String`، ولا هيلاقي اسم نوع يفهم منه حصل إيه. والـ Sentry هيعرض issue عنوانها `404` من غير أي سياق. القاعدة: ارمي حاجة implements `Exception` أو extends `Error` بس، والـ lint اسمه `only_throw_errors` بيمسك أي حاجة تانية.
+
+### Exception ولا Error
+
+| النوع | مين بيرميه | معناه | تمسكه؟ |
+| --- | --- | --- | --- |
+| `FormatException` | `jsonDecode`، `int.parse`، `DateTime.parse` | الداتا اللي جاية من بره شكلها غلط | أيوه، عند الحد اللي بيقرا الداتا |
+| `SocketException`، `HandshakeException` | `dart:io` تحت dio | مشكلة في الشبكة أو الـ TLS | dio بيلفهم في `DioException` |
+| `TimeoutException` | `future.timeout(...)` | الوقت خلص | أيوه |
+| `DioException` | dio | أي فشل في الطلب | أيوه، في الـ guard |
+| `StateError` | `list.first` على ليست فاضية، `emit` بعد `close` | ناديت حاجة في وقت غلط («Bad state») | لأ، صلّح الكود |
+| `ArgumentError` | انت، لما function تاخد قيمة مستحيلة | اللي نادى بعت حاجة غلط | لأ |
+| `RangeError` | `books[5]` في ليست فيها 3 | index برا الحدود | لأ |
+| `TypeError` | `json['title'] as String` والقيمة null، والـ `!` على null | النوع مش اللي الكود فاكره | لأ |
+| `LateInitializationError` | `late` اتقرا قبل ما يتعيّن | ترتيب التهيئة غلط | لأ |
+| `UnimplementedError` | `throw UnimplementedError()` اللي نسيته | الكود لسه ماتكتبش | لأ |
+
+السؤال اللي بيفرّق: <b>لو الكود كله صح، ممكن ده يحصل؟</b> النت ممكن يقطع حتى لو الكود مثالي، فده Exception. أما `books[5]` في ليست فيها 3 فمستحيل يحصل لو الكود صح، فده Error. ورسالة «Null check operator used on a null value» اللي شفتها في درس Dart في الوحدة 1 هي `TypeError`، يعني bug مش ظرف.
+
+### try و on و catch و finally
+
+<CodeBlock label="قراية ملاحظات محفوظة كـ JSON">
+
+```dart
+List<NoteDto> readCachedNotes(String raw) {
+  try {
+    final json = jsonDecode(raw) as List<dynamic>;
+    return json.map((e) => NoteDto.fromJson(e as Map<String, dynamic>)).toList();
+  } on FormatException catch (e) {
+    // the cache file got corrupted: drop it, the server has the truth
+    _logger.warning('notes cache is not valid JSON', error: e);
+    return const [];
+  } finally {
+    _lastRead = _clock.now(); // runs on success, on catch, and on return
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `on X`:</b> بيمسك النوع ده وأي subtype منه بس. أي نوع تاني بيكمّل طلوع.
+- <b>الـ `catch (e, st)`:</b> الـ `e` هو الـ object اللي اترمى، والـ `st` هو الـ StackTrace: الطريق اللي الخطأ طلع منه. ممكن تكتب `on X` من غير `catch` لو مش محتاج الـ object، أو `catch (e)` من غير `on` وده بيمسك أي حاجة.
+- <b>الـ `finally`:</b> بيشتغل في كل الحالات: نجاح، أو catch، أو `return` من جوه الـ try، أو exception ماحدش مسكها وطالعة لفوق. مكانه التنضيف: قفل ملف، رجوع flag، إلغاء timer.
+- <b>الـ `as List<dynamic>`:</b> لو الملف فيه JSON سليم بس شكله object مش list، ده `TypeError` مش `FormatException`، فهيعدّي من الـ on. وده مقبول هنا لأن الملف ده احنا اللي كتبناه، ولو شكله اتغير يبقى bug. للبيانات اللي جاية من سيرفر، الحماية في الـ DTO زي ما شفنا في درس الـ Data في الوحدة 3.
+
+### ترتيب الـ on مهم
+
+Dart بيجرّب الـ `on` clauses من فوق لتحت، وأول واحدة تطابق بتكسب. يعني الأعم لازم يبقى في الآخر:
+
+<CodeBlock label="الـ DioException مش هتوصل لـ clause بتاعتها">
+
+```dart
+try {
+  await _remote.addNote(bookId, text);
+} on Exception catch (e) {
+  _logger.warning('add note failed', error: e); // DioException is an Exception: it lands here
+} on DioException catch (e) {
+  _handleDio(e); // dead code
+}
+```
+
+</CodeBlock>
+
+الـ analyzer بيطلّع warning اسمه `dead_code_on_catch_subtype` على التانية. الصح: `on DioException` الأول، وبعدها الأعم لو محتاجه.
+
+### exception بتاعك
+
+لما الـ data layer يلاقي مشكلة مالهاش exception جاهز، اعمل نوع بتاعك، وخليه يشيل السياق اللي هتحتاجه وانت بتدوّر:
+
+<CodeBlock label="core/errors/parse_exception.dart">
+
+```dart
+class ParseException implements Exception {
+  const ParseException(this.message, {this.url, this.field, this.cause});
+
+  final String message;
+  final Uri? url;       // which endpoint sent it
+  final String? field;  // which field was wrong
+  final Object? cause;  // the original exception, if any
+
+  @override
+  String toString() {
+    final buffer = StringBuffer('ParseException: $message');
+    if (field != null) buffer.write(' (field: $field)');
+    if (url != null) buffer.write(' at $url');
+    if (cause != null) buffer.write('\ncaused by: $cause');
+    return buffer.toString();
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `implements Exception`:</b> الـ `Exception` في Dart مجرد علامة مالهاش حقول، فبتعمل implements مش extends. وكده `on Exception` بتمسكه، و`only_throw_errors` مش هيشتكي.
+- <b>الـ `toString`:</b> من غيره، الـ log والـ Sentry هيعرضوا `Instance of 'ParseException'`. وانت مش هتعرف أنهي endpoint ولا أنهي حقل.
+- <b>الـ `cause`:</b> لو انت بتلف exception تاني (زي `FormatException` من `DateTime.parse`)، احتفظ بيه. الـ message بتاعك بيقول المعنى، والـ cause بيقول اللي حصل فعلًا.
+
+### rethrow ولا throw e
+
+<CodeBlock label="سجّل وسيبه يكمّل">
+
+```dart
+try {
+  return await _dio.get<Map<String, dynamic>>('/library');
+} on DioException catch (e) {
+  _logger.debug('GET /library failed: ${e.type}');
+  rethrow; // the same exception, with the stack trace from inside dio
+}
+```
+
+</CodeBlock>
+
+الـ `rethrow` بيكمّل طلوع نفس الـ exception بنفس الـ stack trace. لو كتبت `throw e;` بدلها، Dart بيبدأ stack trace جديد من السطر ده، فالـ log هيقولك «الخطأ حصل في الـ catch» وهتخسر المكان الحقيقي جوه dio. الـ lint اسمه `use_rethrow_when_possible`.
+
+### بتلف exception في exception: Error.throwWithStackTrace
+
+`rethrow` بيرمي نفس الـ object. بس أحيانًا عايز ترمي نوع تاني فيه سياق أكتر، من غير ما تخسر الـ stack الأصلي:
+
+<CodeBlock label="ParseException بالـ stack بتاع الخطأ الحقيقي">
+
+```dart
+DateTime parseUpdatedAt(String raw, {required Uri url}) {
+  try {
+    return DateTime.parse(raw);
+  } on FormatException catch (e, st) {
+    Error.throwWithStackTrace(
+      ParseException('updatedAt is not ISO-8601', url: url, field: 'updatedAt', cause: e),
+      st, // points at DateTime.parse, not at this line
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+الـ `Error.throwWithStackTrace` نوعها `Never`، فالـ compiler عارف إن الـ function مش هتكمّل بعدها ومش هيطلب `return`. ونفس الفكرة لما تمرر خطأ لـ `Completer`: `completer.completeError(e, st)` مش `completeError(e)`، وإلا اللي مستني الـ future هيلاقي stack فاضي.
+
+</Level>
+
+<Level n="3" title="مشاكل حقيقية">
+
+### الـ try ماسكش الخطأ
+
+<CodeBlock label="الـ catch عمره ما هيشتغل">
+
+```dart
+Future<void> save(String text) async {
+  try {
+    _repository.addNote(bookId, text); // no await
+    emit(state.copyWith(saved: true));
+  } on DioException {
+    emit(state.copyWith(saveFailed: true));
+  }
+}
+```
+
+</CodeBlock>
+
+الـ `addNote` بيرجّع Future على طول، والـ try خلص ونجح. بعد ثانية الطلب بيفشل، بس ساعتها الـ function دي خلصت، ومفيش try حوالين الـ Future ده. الخطأ بيوصل كـ «Unhandled Exception» للـ handler العام، والمستخدم شاف «اتحفظ». الـ try بيمسك اللي بيحصل <b>جواه وهو شغال</b> بس، يعني لازم `await`.
+
+ونفس الحاجة مع أي callback بيشتغل بعدين: الـ try حوالين `Timer(...)` أو `stream.listen(...)` أو `addPostFrameCallback(...)` بيحمي سطر التسجيل بس، مش الكود اللي جوه الـ callback لما يشتغل. الـ callback محتاج try بتاعه جواه.
+
+ولو انت قاصد ماتستناش (زي event للـ analytics)، الـ `unawaited(...)` من درس Dart بتقول ده صراحة، بس مابتمسكش أي حاجة. الـ Future اللي بتسيبه لازم يتعامل مع أخطاؤه بنفسه:
+
+<CodeBlock label="fire-and-forget بأمان">
+
+```dart
+unawaited(_trackNoteAdded(bookId));
+
+Future<void> _trackNoteAdded(BookId id) async {
+  try {
+    await _analytics.log('note_added', {'book': id.value});
+  } on Exception catch (e) {
+    _logger.debug('analytics failed: $e'); // never worth bothering the user
+  }
+}
+```
+
+</CodeBlock>
+
+### `catchError` رمى ArgumentError
+
+<CodeBlock label="handler مابيرجّعش حاجة">
+
+```dart
+Future<BookDto> loadWork(String id) =>
+    _catalog.fetchWork(id).catchError((Object e) {
+      _logger.warning('work failed', error: e);
+      // returns null: not a BookDto
+    });
+```
+
+</CodeBlock>
+
+النتيجة وقت التشغيل: `Invalid argument (onError): The error handler of Future.catchError must return a value of the future's type`. الـ handler بتاع `catchError` لازم يرجّع قيمة من نوع الـ Future (هنا `BookDto`) أو يرمي، والـ compiler مش بيقدر يتأكد من ده لأن نوع الـ handler `Function`. وفوق ده، `catchError` من غير `test:` بيمسك كل حاجة، bugs وغيره.
+
+الحل: `async` و`await` و`on`، زي باقي الكود. ولو لازم تفضل في أسلوب الـ chaining، `onError` نوعها معروف للـ compiler:
+
+<CodeBlock label="البديلين">
+
+```dart
+// preferred
+Future<BookDto?> loadWork(String id) async {
+  try {
+    return await _catalog.fetchWork(id);
+  } on DioException catch (e) {
+    _logger.warning('work failed', error: e);
+    return null;
+  }
+}
+
+// typed chaining: E is the type it catches, the result type is checked
+final work = await _catalog
+    .fetchWork(id)
+    .then<BookDto?>((w) => w)
+    .onError<DioException>((e, st) => null);
+```
+
+</CodeBlock>
+
+### `Future.wait` مسك أول خطأ بس والباقي ضاع
+
+صفحة تفاصيل الكتاب محتاجة 3 حاجات مع بعض: الـ work من Open Library، والمؤلف، والملاحظات من Readly. لو اتنين فشلوا:
+
+<CodeBlock label="خطأ واحد بس بيوصل">
+
+```dart
+try {
+  final results = await Future.wait([
+    _catalog.fetchWork(id),
+    _catalog.fetchAuthor(authorId),
+    _notes.fetchNotes(id),
+  ]); // List<Object>: you need casts to use them
+} on DioException catch (e) {
+  // only the FIRST error; the other one is gone, and so are the values that succeeded
+}
+```
+
+</CodeBlock>
+
+الـ `Future.wait` بيستنى الكل، ولو في أخطاء بيرمي أول واحد بس. ولو `eagerError: true`، بيرمي أول ما أول واحد يفشل من غير ما يستنى. في الحالتين، الأخطاء التانية مش هتشوفها، والقيم اللي نجحت ضاعت معاها.
+
+في Dart 3، الـ `.wait` على record أو على ليست من Futures بيرمي `ParallelWaitError` فيه كل القيم وكل الأخطاء:
+
+<CodeBlock label="BookDetails: اعرض اللي نجح">
+
+```dart
+try {
+  final (work, notes) = await (_catalog.fetchWork(id), _notes.fetchNotes(id)).wait;
+  return BookDetailsDto(work: work, notes: notes);
+} on ParallelWaitError<(WorkDto?, List<NoteDto>?), (AsyncError?, AsyncError?)> catch (e) {
+  final (work, notes) = e.values; // null where that future failed
+  final (workError, notesError) = e.errors; // null where it succeeded
+  if (work == null) {
+    final failed = workError!; // the page means nothing without the book
+    Error.throwWithStackTrace(failed.error, failed.stackTrace);
+  }
+  _logger.warning('notes failed on details page', error: notesError?.error);
+  return BookDetailsDto(work: work, notes: null); // the book shows, the notes part shows an error
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `e.values` والـ `e.errors`:</b> نفس شكل الـ record، كل خانة nullable. والـ `AsyncError` بيشيل الـ error والـ stackTrace مع بعض.
+- <b>القرار مش تقني:</b> لو الـ work فشل، الصفحة مالهاش معنى، فبنرمي خطأه الأصلي بالـ stack بتاعه. لو الملاحظات بس فشلت، الكتاب يظهر وجزء الملاحظات يقول «مش قادرين نجيبها».
+- <b>فوق الـ guard الكلام ده نادر:</b> الـ repositories بترجّع Result، والفشل المتوقع جوه الـ Result مش exception، فـ `.wait` على Results مش هيرمي غير لـ bug. الكلام ده للـ data layer، أو أي Futures لسه بترمي.
+
+### الـ Stream وقف بعد أول error
+
+الـ error في Stream مش بيقفله لوحده. الـ subscription بيستقبل الـ error في `onError` ويكمّل يستقبل القيم اللي بعده. بس في 3 حاجات بتوقفه:
+
+<CodeBlock label="3 طرق الـ stream يقف بيها">
+
+```dart
+// 1. await for: the first error is thrown out of the loop and cancels the subscription
+await for (final books in _repository.watchLibrary()) {
+  emit(LibraryLoaded(books));
+}
+
+// 2. cancelOnError: true cancels on the first error, on purpose
+_sub = _repository.watchLibrary().listen(_onBooks, cancelOnError: true);
+
+// 3. no onError at all: the error goes to the global handler as "unhandled"
+_sub = _repository.watchLibrary().listen(_onBooks);
+```
+
+</CodeBlock>
+
+في الـ `LibraryCubit`، المكتبة بتيجي من stream الـ DB اللي اتعمل في درس Offline-first. لو قراية واحدة فشلت (row بايظ مثلًا)، مش عايز الشاشة تبطّل تتحدث للأبد:
+
+<CodeBlock label="الـ stream يكمّل بعد الخطأ">
+
+```dart
+_sub = _repository.watchLibrary().listen(
+  (books) => emit(LibraryLoaded(books)),
+  onError: (Object e, StackTrace st) {
+    _logger.error('watchLibrary emitted an error', error: e, stackTrace: st);
+    emit(LibraryError(const CacheFailure('watch failed')));
+  },
+); // cancelOnError is false by default: the next value still arrives
+```
+
+</CodeBlock>
+
+- <b>الـ `handleError` في الـ data layer:</b> `stream.handleError(onError, test: (e) => e is FormatException)` بيمسك الأخطاء اللي بتطابق الـ test ويشيلها من الـ stream، والباقي بيعدّي زي ما هو. مفيد لما الـ data source عايز يتجاهل عنصر بايظ ويكمّل.
+- <b>الـ subscription مش الـ source:</b> «الـ error مابيقفلش» كلام عن الـ subscription. في sources بتقفل نفسها بعد أول error، زي `Stream.fromFuture` أو response بتاع طلب واحد. ده سلوك الـ source، والـ onError مش هيرجّعه.
+- <b>في bloc:</b> لو بتستخدم `emit.forEach(stream, onData: ..., onError: ...)` جوه Bloc، الـ `onError` بيرجّع state بدل ما الـ handler يقع.
+
+### «Unhandled Exception» في الـ console والـ app كمّل عادي
+
+<CodeBlock label="اللي بتشوفه في الـ console">
+
+```text
+E/flutter (12345): [ERROR:flutter/runtime/dart_vm_initializer.cc(40)] Unhandled Exception:
+DioException [connection error]: The connection errored: Failed host lookup: 'api.readly.app'
+#0      DioMixin.fetch (package:dio/src/dio_mixin.dart:...)
+#1      NotesRemoteSource.addNote (package:readly/features/notes/data/notes_remote_source.dart:31)
+```
+
+</CodeBlock>
+
+الـ app ماوقعش لأن Dart شغال بـ event loop: الخطأ وقّف الـ event اللي كان شغال بس، والـ events اللي بعده كمّلت. بس الـ state ممكن يكون اتساب في النص: spinner شغال للأبد، أو زرار متقفل. ده مش «app شغال»، ده app في حالة محدش صممها.
+
+الأخطاء اللي محدش مسكها بتروح لواحد من 3 أماكن، حسب هي حصلت فين:
+
+| الخطأ حصل فين | بيروح فين |
+| --- | --- |
+| جوه `build` أو layout أو paint، أو callback متزامن زي `onPressed` من غير `await` | `FlutterError.onError` |
+| Future من غير await، أو `listen` من غير `onError`، أو `Timer`، أو `onPressed: () async` بعد أول `await` | `PlatformDispatcher.instance.onError` |
+| جوه isolate اتعمل بـ `Isolate.spawn` | ولا واحد منهم: الـ isolate ده بيموت، ومحدش يعرف إلا لو بعت `onError` port |
+| جوه `Isolate.run` | بيترمي تاني عند الـ `await` بتاعك، فالـ try العادي شغال |
+
+<Diagram name="d-api-global-handlers">
+
+كل مصدر خطأ ليه handler. الـ framework بيبعت أخطاء الرسم والـ callbacks المتزامنة لـ FlutterError.onError، وأي خطأ async محدش مسكه بيروح لـ PlatformDispatcher.onError. والـ isolate اللي عملته بـ spawn ليه قناة لوحده.
+
+</Diagram>
+
+<CodeBlock label="main: الـ handlers العامة">
+
+```dart
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  final AppLogger logger = ConsoleLogger(); // from DI in the real bootstrap
+
+  // build, layout, paint, gesture callbacks
+  FlutterError.onError = (details) {
+    FlutterError.presentError(details); // red screen + console dump in debug
+    logger.error('FlutterError', error: details.exception, stackTrace: details.stack);
+  };
+
+  // async errors nobody awaited or listened for
+  PlatformDispatcher.instance.onError = (error, stack) {
+    logger.error('Uncaught async error', error: error, stackTrace: stack);
+    return true; // handled: the engine won't print it again
+  };
+
+  // what replaces a widget whose build threw (release only; keep the red screen in debug)
+  if (kReleaseMode) {
+    ErrorWidget.builder = (details) => const BrokenSectionPlaceholder();
+  }
+
+  runApp(const ReadlyApp());
+}
+```
+
+</CodeBlock>
+
+- <b>الشاشة الرمادي:</b> لما `build` يرمي، Flutter بيحط `ErrorWidget` مكان الـ widget ده. في الـ debug ده الشاشة الحمرا اللي فيها الرسالة. في الـ release ده مستطيل رمادي من غير أي كلام، والمستخدم بيفتكر الـ app باظ. الـ `ErrorWidget.builder` بيخليك تحط بداله حاجة صغيرة زي «مش قادرين نعرض الجزء ده». وخليها widget بسيط مايعتمدش على حاجة، لأن لو هي كمان رمت، مفيش حد تحتها.
+- <b>الـ `return true`:</b> معناها «اتعاملت معاه». لو رجّعت false، الـ engine بيعتبره ماتمسكش ويطبعه هو كمان.
+- <b>الـ `runZonedGuarded`:</b> كان هو الطريقة قبل Flutter 3.3. دلوقتي `PlatformDispatcher.instance.onError` بيغطي نفس الأخطاء من غير zone. محتاجه بس لو عندك سبب للـ zone نفسه (زي `zoneValues`، أو تمسك `print`). ولو استخدمته، الـ `ensureInitialized` والـ `runApp` لازم يبقوا جوه نفس الـ zone، وإلا Flutter بيطلّع warning «Zone mismatch».
+- <b>الـ Sentry:</b> في درس الـ Observability في الوحدة 10 هتشوف إن `SentryFlutter.init` بيركّب الـ handlers دي بنفسه ويبعت الـ crash، وليه بنحط بتوعنا <b>قبل</b> الـ init وبنكتب فيها `debug` مش `error`، عشان الـ crash مايتسجلش مرتين. هنا لسه مفيش Sentry، فبنكتب `error`.
+
+### `catch (e) {}` بلع الخطأ
+
+<CodeBlock label="spinner للأبد">
+
+```dart
+Future<void> load() async {
+  emit(const NotesLoading());
+  try {
+    final notes = await _repository.notes(bookId);
+    emit(NotesLoaded(notes.map(NoteItem.from).toList()));
+  } catch (e) {} // TODO
+}
+```
+
+</CodeBlock>
+
+لو `NoteItem.from` فيه `!` على حقل null، الـ TypeError دي اتبلعت: مفيش log، مفيش Sentry، مفيش state جديدة. المستخدم شايف loading للأبد، وانت مش هتعرف إن في مشكلة غير من تقييم نجمة واحدة. الـ catch الفاضي أسوأ من مفيش catch خالص، لأن على الأقل من غيره الخطأ كان هيوصل للـ handler العام.
+
+الحل: يا تمسك نوع محدد وتعمل حاجة مفيدة (state جديدة + log)، يا ماتمسكش خالص. والـ lints اللي بتمسك ده: `empty_catches` و`avoid_catches_without_on_clauses`. وفي Readly الـ Cubit مافيهوش try أصلًا: الـ repository بيرجّع Result، والـ bug يطلع للـ handler العام.
+
+### `assert` مش validation
+
+<CodeBlock label="الشرط ده مش موجود في الـ release">
+
+```dart
+class NoteText {
+  NoteText(this.value) : assert(value.length <= 2000, 'note too long');
+  final String value;
+}
+```
+
+</CodeBlock>
+
+في الـ debug، ملاحظة 3000 حرف بترمي `AssertionError`. في الـ release، الـ `assert` بتتشال من الكود خالص، فالملاحظة بتتعمل عادي وتتبعت، والسيرفر يرد 422 `too_long`. التست والـ debug كانوا بيقولوا إن كله تمام.
+
+- <b>الـ `assert`:</b> لعقد بينك وبين نفسك كمبرمج، حاجة لو اتكسرت يبقى في bug: `assert(page >= 1)` في function انت اللي بتناديها.
+- <b>الـ validation الحقيقي:</b> لأي حاجة جاية من المستخدم أو من بره، بيتعمل في الـ release كمان: value object بيرجّع Result زي اللي في درس الـ Domain في الوحدة 2، أو `ArgumentError` لو القيمة الغلط معناها bug في اللي نادى.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>امسك اللي تقدر تتصرف فيه بس، وعند الحد:</b> الـ data source بيرمي، والـ guard في الـ repository بيمسك `DioException` والأنواع اللي يعرفها ويحوّلها، والـ Cubit مافيهوش try. كل try في النص بيسأل «هعمل إيه هنا؟»، ولو الإجابة «ولا حاجة»، شيله.
+- <b>ماتمسكش Error عشان «الـ app يفضل شغال»:</b> الـ Error معناها إن الكود في حالة ماحدش توقعها. لو مسكته وكمّلت، بتكمّل على state غلط، وممكن تكتب بيانات غلط للـ DB أو السيرفر. سيبه يوصل للـ handler العام يتسجل، والـ `ErrorWidget.builder` يخلي الجزء البايظ شكله مقبول.
+- <b>الـ exception بيشيل سياقه:</b> الـ URL، والـ status، والحقل، والـ cause الأصلي، والـ stack الأصلي. `ParseException('bad updatedAt', url: ..., cause: e)` مع `Error.throwWithStackTrace` بتوفّرلك ساعة debugging. و`throw Exception('failed')` بتخليك تخمّن.
+- <b>exceptions ولا Result؟</b> مش منافسة. جوه الـ data layer exceptions، لأن dio والـ JSON وdrift بيرموا. عند الـ guard بتتحول لـ Result، ومن عنده لفوق الـ signature بتقول إن العملية ممكن تفشل. ده اللي اتبنى في درس الأخطاء في الوحدة 2، والتحويل نفسه بالتفصيل في درس «من الـ Exception للـ Failure».
+- <b>`on Exception catch` ولا `catch` لوحدها؟</b> الـ `catch` لوحدها بتمسك Errors والـ strings اللي حد رماها، يعني الـ bugs. المكان الوحيد اللي ليها فيه معنى: loop لازم مايموتش بسبب عنصر واحد، زي الـ SyncService وهو بيبعت الـ queue. هناك بتمسك كله، وتسجّله `error` بالـ stack، وتعلّم العملية دي dead، وتكمّل للي بعدها. مش بتبلعه.
+- <b>الـ lints بتعمل الشغل ده عنك:</b> فعّلهم في `analysis_options.yaml` مرة واحدة، والـ review يركز على المنطق.
+
+<CodeBlock label="analysis_options.yaml">
+
+```yaml
+linter:
+  rules:
+    - only_throw_errors                 # throw only Exception / Error types
+    - avoid_catches_without_on_clauses  # no bare catch (e)
+    - avoid_catching_errors             # no on TypeError / on Error
+    - empty_catches                     # no catch (e) {}
+    - use_rethrow_when_possible         # rethrow, not throw e
+    - unawaited_futures                 # a Future with no await needs unawaited(...)
+```
+
+</CodeBlock>
+
+<Note kind="interview" title="سؤال interview">
+
+«إيه الفرق بين Exception وError في Dart؟» الـ Exception مشكلة من بره ممكن تحصل حتى لو الكود صح، زي نت مقطوع أو JSON بايظ، فبتتمسك عند الحد وتتحول لحاجة المستخدم يفهمها. الـ Error معناها إن الكود نفسه غلط، زي null check أو index برا الحدود أو `emit` بعد `close`، ومكانها التقرير والتصليح، مش الـ catch. ولو مسكتها عشان الـ app يكمّل، بتكمّل على state محدش صممها. والـ lint `avoid_catching_errors` بيمنع ده.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي تمسك كل الأخطاء اللي ماتمسكتش في Flutter؟» بـ handlerين: `FlutterError.onError` للأخطاء اللي الـ framework بيمسكها وهو بيرسم أو بينادي callback متزامن، و`PlatformDispatcher.instance.onError` لأي خطأ async محدش عمله await أو listen، وبيرجّع `true`. الاتنين بيبعتوا للـ logger أو Sentry. و`ErrorWidget.builder` بيغيّر الشاشة الرمادي في الـ release. والـ `runZonedGuarded` مابقاش لازم من Flutter 3.3 إلا لو محتاج zone لسبب تاني. والـ isolates اللي بتتعمل بـ `Isolate.spawn` محتاجة `onError` port لوحدها، أما `Isolate.run` فبيرمي الخطأ عند الـ await.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### catch بيخبّي المكان الحقيقي
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+Future<BookDto> fetchWork(String id) async {
+  try {
+    final res = await _dio.get<Map<String, dynamic>>('/works/$id.json');
+    return BookDto.fromJson(res.data!);
+  } catch (e) {
+    print(e);
+    throw Exception('fetchWork failed');
+  }
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+Future<BookDto> fetchWork(String id) async {
+  final res = await _dio.get<Map<String, dynamic>>('/works/$id.json');
+  final data = res.data;
+  if (data == null) {
+    throw ParseException('empty body', url: res.realUri);
+  }
+  return BookDto.fromJson(data);
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: الـ `catch (e)` بيمسك الـ DioException والـ TypeError مع بعض، ويرمي `Exception` عام مالوش نوع ولا سياق ولا stack أصلي. الـ guard مش هيعرف يفرّق بين نت مقطوع وbug، والـ `print` بيروح في الـ release. بعد: مفيش try خالص، لأن الـ data source مش هيعمل حاجة مفيدة بالخطأ. الـ DioException بتطلع زي ما هي للـ guard، والـ body الفاضي بقى exception بنوع واسم وURL.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="dart-err-1">
+<Ask>`json['title'] as String` رمى لأن القيمة null. ده Exception ولا Error؟ وتمسكه؟</Ask>
+<Answer>
+
+`TypeError`، يعني Error: الكود فاكر إن الحقل دايمًا موجود وده غلط. ماتمسكهوش بـ catch، لأن ده هيخبّي bugs تانية. صلّح الافتراض نفسه: الحقل يبقى nullable في الـ DTO، والـ mapper يقرر يعمل إيه لو غايب.
+
+</Answer>
+</Question>
+
+<Question id="dart-err-2">
+<Ask>حطيت `_repository.addNote(text)` جوه try بـ `on DioException`، والطلب فشل، والـ catch مااشتغلش. ليه؟ والخطأ راح فين؟</Ask>
+<Answer>
+
+مفيش `await`، فالـ try خلص قبل ما الـ Future يفشل. الـ try بيمسك اللي بيحصل جواه وهو شغال بس. الخطأ وصل كـ «Unhandled Exception» لـ `PlatformDispatcher.instance.onError`. الحل `await`، ولو قاصد ماتستناش يبقى `unawaited` لـ function بتمسك أخطاءها بنفسها.
+
+</Answer>
+</Question>
+
+<Question id="dart-err-3">
+<Ask>إيه الفرق بين `rethrow` و`throw e` جوه catch؟</Ask>
+<Answer>
+
+الـ `rethrow` بيكمّل نفس الـ exception بالـ stack trace الأصلي. الـ `throw e` بيبدأ stack جديد من سطر الـ catch، فالـ log هيقول الخطأ حصل هناك وتخسر المكان الحقيقي. ولو عايز ترمي نوع تاني وتحتفظ بالـ stack الأصلي: `Error.throwWithStackTrace(newException, st)`.
+
+</Answer>
+</Question>
+
+<Question id="dart-err-4">
+<Ask>`await (fetchWork(id), fetchNotes(id)).wait` والملاحظات بس اللي فشلت. إيه اللي بيترمي، وتعرض الكتاب إزاي؟</Ask>
+<Answer>
+
+بيترمي `ParallelWaitError`، فيه `values` بنفس شكل الـ record (الـ work موجود والملاحظات null)، و`errors` فيه `AsyncError` مكان اللي فشل. تمسكه وتعرض الكتاب، وجزء الملاحظات بس يقول إنه فشل. `Future.wait` كان هيرميلك أول خطأ بس ويضيّع القيم اللي نجحت.
+
+</Answer>
+</Question>
+
+<Question id="dart-err-5">
+<Ask>`NoteText` فيه `assert(value.length <= 2000)`، وفي الـ release ملاحظة 3000 حرف اتبعتت والسيرفر رد 422. ليه التست ماكشفهاش؟</Ask>
+<Answer>
+
+الـ `assert` بتشتغل في الـ debug والتستات بس، وبتتشال من كود الـ release خالص. الـ validation لأي input من المستخدم لازم يبقى كود حقيقي، زي value object بيرجّع Result. الـ `assert` للعقود الداخلية اللي كسرها معناه bug.
+
+</Answer>
+</Question>
+
+</Quiz>

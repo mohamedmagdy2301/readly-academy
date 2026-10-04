@@ -1,0 +1,26 @@
+---
+title: "التطبيق والمهام"
+description: "مهام وحدة الـ API والأخطاء في Readly: من أول request بـ curl لحد عقد مكتوب مع الـ backend ومراقبة الأخطاء بعد الـ release."
+type: "practice"
+---
+
+<Tasks>
+<Task id="wa-1">ابعت كل endpoint في Readly وOpen Library بـ curl أو Bruno قبل ما تكتب سطر Dart، وسجّل في ملف `docs/api-notes.md`: الـ status codes اللي بيرجّعها، وشكل الـ body في النجاح والفشل، والـ headers المهمة (درس «HTTP والـ API من الصفر»).</Task>
+<Task id="wa-2">اكتب `CatalogRemoteSource.search` مرة بـ package:http ومرة بـ dio، وقارن: مين بيرمي على 404؟ ومين محتاج timeout يدوي؟ وبعدين امسح نسخة http وخلي dio بس، مع `User-Agent` فيه اسم الـ app (درس «أول طلب من Dart»).</Task>
+<Task id="wa-3">اربط الـ handlers التلاتة في `main()`: `FlutterError.onError` و`PlatformDispatcher.instance.onError` و`ErrorWidget.builder` للـ release، وجرّب كل واحد بخطأ مقصود في نسخة debug، واتأكد إن الخطأ وصل للـ AppLogger (درس «الأخطاء في Dart من الصفر»).</Task>
+<Task id="wa-4">فعّل في `analysis_options.yaml`: `unawaited_futures` و`avoid_catches_without_on_clauses` و`only_throw_errors` و`use_rethrow_when_possible`، وصلّح كل warning طلع، واكتب في الـ PR أغرب واحد لقيته.</Task>
+<Task id="wa-5">اعمل جدول «خريطة الأخطاء» لـ Readly في `docs/errors.md`: كل status وكل `code` من الـ backend، معناه، غلطة مين، الـ retry بيفيد ولا لأ، المستخدم يشوف إيه، ويتسجل في Sentry ولا لأ. خلي الـ backend يرجّع `X-Request-Id` مع كل response (درس «خريطة أخطاء الـ API»).</Task>
+<Task id="wa-6">اكتب الـ `_mapDio` الكامل بكل أنواع `DioExceptionType`، والـ `ServerFailure` بالـ `code` والـ `fieldErrors` والـ `retryAfter` والـ `requestId` من `readApiError`، و`parseOrThrow` حوالين كل `fromJson` في الـ data sources. وتست table-driven بيغطي كل سطر في الجدول (درس «من الـ Exception للـ Failure»).</Task>
+<Task id="wa-7">ضيف `JsonOnlyInterceptor` على الـ Dio الاتنين، وجرّب الـ app على WiFi بيرجّع صفحة login (أو بـ proxy زي Proxyman): الشاشة لازم تقول «سجّل دخول للشبكة» مش «مشكلة في السيرفر». وبعدين غيّر اسم حقل في رد الـ fake backend، واتأكد إن Sentry وصله non-fatal `bad_response` فيه الـ endpoint من غير الـ body.</Task>
+<Task id="wa-8">راجع كل شاشة في Readly وحط لكل واحدة الأربع حالات: loading وempty وerror وerror فوق بيانات قديمة. الـ refresh الفاشل مايمسحش الليستة، والـ SnackBar مايتكررش مع الـ rebuild، والـ requestId يظهر كرقم مرجع تقدر تنسخه (درس «الأخطاء في الشاشة»).</Task>
+<Task id="wa-9">اكتب رسايل الأخطاء كلها من جديد في `app_ar.arb` و`app_en.arb`: كل رسالة بتقول حصل إيه وتعمل إيه، من غير كلمة «Exception» ولا أي كود. وخلي حد مش مبرمج يقراها ويقولك فهم إيه.</Task>
+<Task id="wa-10">صفحة تفاصيل الكتاب: هات الـ work والملاحظات بالتوازي، والمؤلف بعد الـ work، ولو المؤلف فشل اعرض الكتاب من غير اسمه. وضيف optimistic delete للملاحظات برجوع للمكان الأصلي لو الطلب فشل (درس «طلبات متقدمة»).</Task>
+<Task id="wa-11">اكتب OpenAPI لـ `POST /books/{bookId}/notes` و`GET /library` بالـ error schema، واعمل `FakeApiAdapter` (`HttpClientAdapter`) بيرجّع ردود من الـ fixtures ويشتغل بـ `FAKE_API` من `config/mock.json`، عشان تشتغل على أي شاشة والـ backend واقع (درس «عقد الـ API والـ production»).</Task>
+<Task id="wa-12">ضيف `GET /app-config` فيه `minSupportedBuild`، وشاشة force update لو الـ build أقدم، و`X-App-Build` على كل طلب مع 426 كشبكة أمان. وبعد كده جهّز dashboard فيه نسبة الأخطاء لكل endpoint ولكل نوع Failure ولكل نسخة من الـ app.</Task>
+</Tasks>
+
+<Deliverable>كل request في Readly بيفشل بـ Failure ليها نوع ورسالة مفهومة ومكان صح على الشاشة، ومفيش TypeError ولا spinner بيلف للأبد بسبب رد غريب من السيرفر. وفي `docs/errors.md` وOpenAPI مكتوبين ومتفق عليهم مع الـ backend، وتقدر تلاقي أي طلب فشل عند مستخدم من رقم المرجع اللي ظهرله.</Deliverable>
+
+<ReviewQuestion>اختار خطأ واحد حصل فعلًا في Readly أو في مشروع اشتغلت عليه، واحكي رحلته كاملة: حصل فين في السكة، اتحول لإيه في كل طبقة، المستخدم شاف إيه، واتسجل فين. وبعدين قول كانت هتختلف إزاي بعد الوحدة دي.</ReviewQuestion>
+
+<LogBox id="log-api-errors" />

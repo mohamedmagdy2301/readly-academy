@@ -1,0 +1,473 @@
+---
+title: "HTTP والـ API من الصفر"
+description: "يعني إيه request وresponse، وتقرا أول رد من Open Library بعينك: الـ URL والـ methods والـ status codes والـ headers والـ JSON."
+minutes: 25
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="شباك الخدمة في المصلحة">
+
+رحت مصلحة حكومية عشان تطلع شهادة. مابتدخلش أوضة الأرشيف بنفسك وتدوّر في الدواليب. بتروح لـ <b>شباك</b> معين، وتملا <b>استمارة</b>: عايز إيه بالظبط، وبياناتك، ومعاك البطاقة. الموظف بيشوف البطاقة، ويتأكد إن من حقك، ويدخل هو الأرشيف، ويرجعلك بـ <b>ورقة مختومة</b>. الختم بيقولك النتيجة من أول نظرة: «تم»، أو «الاستمارة ناقصة»، أو «ده مش من حقك»، أو «السيستم واقع النهارده». وتحت الختم، الورقة نفسها اللي كنت عايزها.
+
+</Analogy>
+
+ده بالظبط اللي بيحصل كل ما الـ app يجيب حاجة من النت:
+
+| في المصلحة | في الـ app | في Readly |
+| --- | --- | --- |
+| انت | الـ <b>client</b> | الـ app على موبايل المستخدم |
+| الموظف والأرشيف | الـ <b>server</b> | `api.readly.app` و`openlibrary.org` |
+| لستة الشبابيك واستماراتها | الـ <b>API</b> | «ابعت `GET /library` تاخد كتبك» |
+| شباك واحد | الـ <b>endpoint</b> | `POST /auth/login` |
+| الاستمارة | الـ <b>request</b> | «سجّلني بالإيميل والباسورد دول» |
+| الورقة المختومة | الـ <b>response</b> | ختم 200 وجواه الـ tokens |
+| الختم | الـ <b>status code</b> | 200، 401، 500 |
+
+الـ <b>API</b> (Application Programming Interface) هو العقد اللي السيرفر بيعلنه: الشبابيك اللي عنده، وكل شباك بياخد إيه وبيرجّع إيه. والـ <b>endpoint</b> هو شباك واحد، بيتعرّف بحاجتين مع بعض: الـ method (عايز تعمل إيه) والـ path (على إيه). يعني `GET /library` و`POST /library` شباكين مختلفين، رغم إن الـ path واحد.
+
+### ليه الـ app مايكلّمش الـ database على طول؟
+
+سؤال بييجي لكل حد بيبدأ: Readly عنده MongoDB، ليه مانخليش الـ app يقرا منها مباشرة ونوفّر السيرفر؟ نفس سبب إنك مابتدخلش الأرشيف بنفسك:
+
+- <b>الأسرار:</b> عشان الـ app يفتح الـ DB، لازم الباسورد بتاعها يبقى جوه الـ app. وأي حد يقدر يفك الـ APK ويطلّعه في دقايق، وساعتها معاه الـ DB كلها، مكتبات كل المستخدمين.
+- <b>القواعد:</b> «المستخدم يشوف مكتبته هو بس»، «الملاحظة ماتزيدش عن 2000 حرف». لو الـ app هو اللي بيطبّقها، أي حد يعدّل الـ app يكسرها. الموظف ورا الشباك هو اللي بيطبّق القواعد، ومحدش يقدر يعدّل فيه.
+- <b>التغيير:</b> لو غيّرت شكل جدول في الـ DB، كل نسخة قديمة من الـ app على موبايلات الناس هتبوظ. السيرفر بيخبّي شكل الـ DB ورا عقد ثابت، فتغيّر جوه براحتك.
+
+Readly بيكلّم سيرفرين: Open Library (API عام للكتالوج، قراية بس)، والـ backend بتاعك (الحساب والمكتبة والملاحظات)، زي ما شفنا في درس المشروع في الوحدة 0. والاتنين بيتكلموا نفس اللغة: <b>HTTP</b>.
+
+</Level>
+
+<Level n="2" title="أول request بعينك">
+
+### جرّب بنفسك قبل أي كود
+
+قبل ما تكتب سطر Dart، شوف الـ request والـ response بعينك. افتح الـ terminal واكتب:
+
+```bash
+curl -i "https://openlibrary.org/search.json?q=dune&limit=2"
+```
+
+الـ `-i` بتقول لـ curl «اطبعلي الـ headers كمان، مش الـ body بس». هيرجعلك حاجة شبه دي (شيلت حقول كتير، والأرقام عندك هتختلف):
+
+```text
+HTTP/2 200
+server: nginx
+date: Sun, 04 Oct 2026 10:12:03 GMT
+content-type: application/json
+access-control-allow-origin: *
+
+{
+  "numFound": 312,
+  "start": 0,
+  "docs": [
+    {
+      "key": "/works/OL893415W",
+      "title": "Dune",
+      "author_name": ["Frank Herbert"],
+      "first_publish_year": 1965,
+      "cover_i": 11481354,
+      "ratings_average": 4.2
+    },
+    {
+      "key": "/works/OL15358691W",
+      "title": "Dune Messiah",
+      "author_name": ["Frank Herbert"],
+      "first_publish_year": 1969
+    }
+  ]
+}
+```
+
+الـ response ده 3 أجزاء بالترتيب:
+
+1. <b>الـ status line:</b> `HTTP/2 200`. الختم. 200 معناها «تمام، اتفضل».
+2. <b>الـ headers:</b> سطور `اسم: قيمة`، بيانات عن الرد نفسه. أهمهم هنا `content-type: application/json`، يعني «الـ body ده JSON».
+3. <b>سطر فاضي، وبعده الـ body:</b> البيانات اللي انت عايزها.
+
+ولو عايز تشوف الـ request اللي curl بعته، استخدم `-v` بدل `-i`. السطور اللي قبلها `>` هي اللي طلعت منك:
+
+```text
+> GET /search.json?q=dune&limit=2 HTTP/2
+> Host: openlibrary.org
+> User-Agent: curl/8.7.1
+> Accept: */*
+```
+
+الـ request نفس الشكل: سطر أول فيه الـ method والـ path، وبعده headers، وبعدهم body لو في (الـ GET مالوش body، هو بيسأل بس).
+
+<Diagram name="d-api-request-anatomy">
+
+الـ request والـ response ليهم نفس الهيكل: سطر أول، وheaders، وbody. السطر الأول في الـ request بيقول «عايز إيه»، وفي الـ response بيقول «حصل إيه».
+
+</Diagram>
+
+### أجزاء الـ URL
+
+`https://openlibrary.org/search.json?q=dune&limit=2`
+
+| الجزء | القيمة | معناه |
+| --- | --- | --- |
+| scheme | `https` | البروتوكول. الـ s معناها إن الكلام متشفّر |
+| host | `openlibrary.org` | السيرفر نفسه |
+| path | `/search.json` | الحاجة اللي بتكلّمها على السيرفر ده |
+| query | `q=dune&limit=2` | اختيارات على الطلب: أزواج `key=value` بينهم `&`، وبيبدأوا بعد `?` |
+
+وفي حاجة اسمها <b>path parameter</b>: جزء من الـ path نفسه بيتغير. في `/works/OL45804W.json` الـ `OL45804W` هو id الكتاب، وفي Readly `PATCH /library/:bookId` بيبقى `PATCH /library/OL45804W`. الـ `:bookId` ده مجرد طريقة في الـ docs تقول «هنا بيتحط الـ id».
+
+القاعدة السهلة: الـ <b>path بيحدد الحاجة</b> (أنهي كتاب، أنهي مكتبة)، والـ <b>query بيظبط الطلب</b> عليها (ابحث عن إيه، صفحة كام، كام نتيجة).
+
+### الـ methods: عايز تعمل إيه
+
+| الـ method | معناه | في Readly | ليه body؟ |
+| --- | --- | --- | --- |
+| GET | هات، من غير ما تغيّر حاجة | `GET /library`، `GET /search.json` | لأ |
+| POST | اعمل حاجة جديدة، أو نفّذ عملية | `POST /library` (ضيف كتاب)، `POST /auth/login` | أيوه |
+| PUT | بدّل الحاجة دي كلها بالنسخة اللي معايا | Readly مابيستخدموش | أيوه، الحاجة كاملة |
+| PATCH | عدّل الحقول دي بس | `PATCH /library/OL45804W` بـ `"status": "finished"` | أيوه، الحقول اللي اتغيرت بس |
+| DELETE | امسح | `DELETE /library/OL45804W` لو ضفته في الـ backend | غالبًا لأ |
+
+الـ login بـ POST مع إنه مش «بيعمل حاجة جديدة»، لأن الـ GET مالوش body، فالإيميل والباسورد هيبقوا في الـ URL. والـ URLs بتتسجل في logs السيرفرات والـ proxies وتاريخ المتصفح. أي حاجة سرية مكانها الـ body أو الـ headers، عمرها ما تبقى في الـ URL.
+
+### الـ status codes: الختم
+
+أول رقم بيقولك العيلة، وده لوحده كفاية تعرف تتصرف إزاي:
+
+| العيلة | معناها | رد الفعل في الـ app |
+| --- | --- | --- |
+| 2xx | نجح | اعرض النتيجة |
+| 3xx | روح حتة تانية، أو عندك نسخة لسه صالحة | غالبًا الـ client بيتصرف لوحده |
+| 4xx | الغلط في الطلب: انت اللي بعت حاجة مش مظبوطة | ماتعيدش نفس الطلب زي ما هو. صلّح أو قول للمستخدم |
+| 5xx | الغلط عند السيرفر | مش ذنب المستخدم، وأحيانًا بيتحل لوحده |
+
+والأكواد اللي هتقابلها في Readly:
+
+| الكود | الاسم | معناه | في Readly |
+| --- | --- | --- | --- |
+| 200 | OK | تمام، والنتيجة في الـ body | `GET /library` رجّع الكتب |
+| 201 | Created | اتعمل حاجة جديدة | `POST /library` ضاف الكتاب |
+| 204 | No Content | تمام، ومفيش body | `DELETE` نجح ومفيش حاجة ترجع |
+| 304 | Not Modified | النسخة اللي عندك لسه هي هي | الكاش بالـ ETag في درس «طلبات متقدمة» |
+| 400 | Bad Request | الطلب نفسه مش مفهوم: JSON بايظ، حقل ناقص | bug في الـ app غالبًا |
+| 401 | Unauthorized | مش عارفينك: مفيش token، أو انتهى، أو الباسورد غلط | الـ AuthInterceptor يعمل refresh، أو «الباسورد غلط» في الـ login |
+| 403 | Forbidden | عارفينك، بس مش مسموحلك | `POST /auth/login` والإيميل ماتأكدش |
+| 404 | Not Found | الحاجة دي مش موجودة | `GET /books/OL1W/notes` والكتاب مش في مكتبتك |
+| 409 | Conflict | الطلب بيتعارض مع الحالة الحالية | الإيميل مستخدم، أو نسخة الكتاب على السيرفر أحدث |
+| 422 | Unprocessable Content | الطلب مفهوم، بس القيم مرفوضة | الملاحظة أطول من المسموح: `too_long` |
+| 429 | Too Many Requests | بعت طلبات كتير، استنى | ومعاه `Retry-After` غالبًا |
+| 500 | Internal Server Error | السيرفر وقع في bug | مش هيتصلح بإعادة الطلب |
+| 502 | Bad Gateway | السيرفر اللي في الوش مش عارف يوصل للي وراه | nginx شغال والـ Node واقع |
+| 503 | Service Unavailable | السيرفر مش متاح دلوقتي | صيانة أو ضغط، وممكن معاه `Retry-After` |
+| 504 | Gateway Timeout | اللي ورا السيرفر اتأخر في الرد | MongoDB بطيئة والطلب اتقطع في النص |
+
+الفرق بين 400 و422: الـ 400 «مش فاهم انت بتقول إيه» (الـ JSON نفسه بايظ)، والـ 422 «فاهمك، بس اللي بتطلبه مرفوض» (الملاحظة طويلة). وأي كود ماتعرفوش، اتعامل معاه بعيلته: 418 مثلًا هو 4xx، يعني الطلب مرفوض.
+
+### الـ headers: بيانات عن الطلب نفسه
+
+| الـ header | بيتبعت في | معناه | مثال في Readly |
+| --- | --- | --- | --- |
+| `Content-Type` | الاتنين | نوع الـ body اللي معايا | `application/json` |
+| `Accept` | الـ request | نوع الرد اللي عايزه | `application/json` |
+| `Authorization` | الـ request | البطاقة: انت مين | `Bearer eyJhbGciOi...` (الـ access token) |
+| `User-Agent` | الـ request | مين اللي بيكلّمك | `Readly/1.0 (support@readly.app)` لـ Open Library |
+| `Retry-After` | الـ response | استنى قد إيه قبل ما تعيد | `30` مع 429 أو 503 |
+| `X-Request-Id` | الـ response | رقم الطلب ده في logs السيرفر | `7f3a9c1e`: الـ backend بتاعنا بيبعته مع كل رد |
+
+أسماء الـ headers مش case-sensitive: `Content-Type` و`content-type` واحد. ومع HTTP/2 بتيجي small دايمًا، زي ما شفت في رد curl. فلما تقرا header في الكود، ماتعتمدش على شكل الحروف.
+
+### الـ JSON وأنواع Dart
+
+الـ body في الـ APIs اللي هتشتغل عليها JSON. وفي Dart بتحوّله بـ `jsonDecode` من `dart:convert`، وكل نوع في JSON بيبقى نوع معين في Dart:
+
+| في JSON | مثال | في Dart بعد `jsonDecode` | خلي بالك |
+| --- | --- | --- | --- |
+| object | `{"title": "Dune"}` | `Map<String, dynamic>` | الـ keys نصوص دايمًا |
+| array | `["sf", "classic"]` | `List<dynamic>` | عمرها ما بتبقى `List<String>` حتى لو كل اللي جواها نصوص |
+| number صحيح | `1965` | `int` | |
+| number بكسور | `4.2` | `double` | ونفس الحقل ممكن ييجي `4` في كتاب تاني، فيبقى `int` |
+| string | `"Dune"` | `String` | التواريخ بتيجي نصوص، مفيش نوع تاريخ في JSON |
+| true / false | `true` | `bool` | |
+| null | `null` | `null` | والحقل الناقص خالص بيرجع `null` برضه لما تقراه |
+
+<CodeBlock label="شوف الأنواع بنفسك">
+
+```dart
+import 'dart:convert';
+
+void main() {
+  final json = jsonDecode(
+    '{"title": "Dune", "year": 1965, "rating": 4.2, "tags": ["sf"], "cover": null}',
+  );
+  print(json is Map<String, dynamic>); // true
+  print(json['year'].runtimeType);   // int
+  print(json['rating'].runtimeType); // double
+  print(json['tags'].runtimeType);   // List<dynamic>
+  print(json['subtitle']);           // null: the key is not there at all
+}
+```
+
+</CodeBlock>
+
+الـ `dynamic` معناها إن Dart مش عارف النوع وقت الكتابة، فمش هيحذّرك لو غلطت. كل ده هيبقى مهم في الدرس الجاي، لما تكتب الـ `fromJson` بإيدك وتقابل أشهر error في الـ parsing.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### الـ app عمل logout لمستخدم كل ذنبه إنه ماأكدش إيميله
+
+الـ 401 والـ 403 الاتنين «مرفوض»، فناس كتير بتعاملهم زي بعض. بس السؤال اللي كل واحد بيجاوبه مختلف:
+
+| | السؤال | الحل |
+| --- | --- | --- |
+| 401 | انت مين؟ (authentication) | عرّف نفسك: token جديد بالـ refresh، أو login من الأول |
+| 403 | عارفينك، مسموحلك؟ (authorization) | لأ. والـ refresh مش هيغيّر حاجة، انت نفس الشخص بنفس الصلاحيات |
+
+في Readly، `POST /auth/login` بيرجّع 401 لو الباسورد غلط، و403 لو الإيميل ماتأكدش. لو الشاشة عاملتهم زي بعض، المستخدم اللي باسورده صح هيفضل يغيّره ويجرب، والمفروض يشوف «أكد إيميلك» وزرار «ابعت الرسالة تاني».
+
+وعلى باقي الـ endpoints، الـ AuthInterceptor بتاع درس dio في الوحدة 3 بيعمل refresh مع 401 بس:
+
+```dart
+final is401 = err.response?.statusCode == 401; // a 403 never triggers a refresh
+```
+
+لو حد غيّرها لـ `statusCode == 401 || statusCode == 403`، أي 403 هيعمل refresh ويعيد الطلب ويرجع 403 تاني. ولو الـ backend بيرجّع 403 لما الـ token ينتهي (backends كتير بتعمل كده)، الـ refresh عمره ما هيحصل والمستخدم هيشوف «مش مسموحلك» كل دقيقة. ده مش شغل الـ app إنه يخمّن: اتفق مع الـ backend إن الـ token المنتهي = 401، ونقطة.
+
+### السيرفر رجّع 200 وجواه error
+
+```text
+HTTP/1.1 200 OK
+content-type: application/json
+
+{ "success": false, "error": "Book not found" }
+```
+
+ده anti-pattern مشهور: السيرفر بيرجّع 200 دايمًا، والنجاح والفشل جوه الـ body. المشكلة إن كل حاجة في الـ client مبنية على الـ status: dio بيرمي exception مع الـ 4xx والـ 5xx بس، فهنا مش هيرمي. الـ `fromJson` هيدوّر على `title` مش هيلاقيه، ويرمي `TypeError` يوصل كـ crash بدل Failure. أو أسوأ: لو الكود كان `json['docs'] ?? []`، الشاشة هتقول «مفيش نتايج» والحقيقة إن الطلب فشل. والـ retry والـ logs والـ monitoring كلهم شايفين 200، فمحدش هيعرف إن في مشكلة.
+
+الحل الأول: الـ backend بتاعك، صلّحه هناك. الفشل بـ 4xx أو 5xx، والتفاصيل في `code` في الـ body. ولو API مش بتاعك ومش هيتغير، اعزل المشكلة في مكان واحد: interceptor على الـ Dio بتاع السيرفر ده بس، بيحوّل الـ 200 الكدّاب لنفس الـ exception اللي الـ 4xx بيعمله، فباقي الكود مايعرفش إن في حاجة غريبة:
+
+<CodeBlock label="interceptor لـ API بيرجّع 200 مع الفشل">
+
+```dart
+class EnvelopeErrorInterceptor extends Interceptor {
+  @override
+  void onResponse(Response<dynamic> response, ResponseInterceptorHandler handler) {
+    if (response.data case {'success': false}) {
+      return handler.reject(DioException(
+        requestOptions: response.requestOptions,
+        response: response,
+        type: DioExceptionType.badResponse, // same path as a real 4xx
+        message: 'success=false inside a 200',
+      ));
+    }
+    handler.next(response);
+  }
+}
+```
+
+</CodeBlock>
+
+### بعت JSON والسيرفر قال إن الـ body فاضي
+
+جربت تضيف كتاب من الـ terminal:
+
+```bash
+curl -X POST https://api.readly.app/library \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"key": "OL45804W"}'
+```
+
+ورجعلك 422 بيقول إن `key` ناقص، وانت شايفه قدامك. السبب إن curl مع `-d` بيبعت `Content-Type: application/x-www-form-urlencoded`. والـ backend (Express بـ `express.json()`) بيفك الـ body بس لو الـ `Content-Type` بيقول JSON، غير كده بيسيبه فاضي. السيرفر بيصدّق الـ header، مش بيبص على الكلام ويخمّن:
+
+```bash
+curl -X POST https://api.readly.app/library \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"key": "OL45804W"}'
+```
+
+ونفس الفخ مستنيك في Dart مع `package:http` في الدرس الجاي: لو بعت `body: jsonEncode(...)` من غير الـ header، الـ `Content-Type` بيبقى `text/plain`. ولو بعت `Map` مباشرة، بيتبعت كـ form. dio بقى بيحط `application/json` لوحده لما الـ `data` تبقى `Map`.
+
+### البحث بالعربي أو بـ «&» رجّع نتايج غلط
+
+المستخدم كتب «رواية». الـ URL مايقدرش يشيل غير حروف ASCII، فالكلمة لازم تتحول لـ <b>percent-encoding</b>: كل byte بيتكتب `%` ورقمين. يعني `q=رواية` بيتبعت `q=%D8%B1%D9%88%D8%A7%D9%8A%D8%A9`. ده مش شغلك انت، بس لازم تسيب الأداة الصح تعمله.
+
+الغلطة إنك تبني الـ URL بلزق النصوص:
+
+```dart
+// wrong: works for "dune", breaks for real input
+final url = 'https://openlibrary.org/search.json?q=$query&limit=20';
+```
+
+جرّب `Tom & Jerry`: الـ `&` بتقسم الـ query، فالسيرفر بيشوف `q=Tom ` وparameter تاني اسمه ` Jerry`. جرّب `C#`: كل اللي بعد `#` بيتشال من الطلب أصلًا (ده الـ fragment، مابيتبعتش للسيرفر). والـ `+` ممكن يتقري مسافة. الحل إنك عمرك ما تبني URL بالنص، تبنيه بـ `Uri`:
+
+<CodeBlock label="Uri بيعمل الـ encoding لكل جزء">
+
+```dart
+final uri = Uri.https('openlibrary.org', '/search.json', {
+  'q': 'Tom & Jerry',
+  'limit': '20', // values must be strings here
+});
+print(uri); // https://openlibrary.org/search.json?q=Tom+%26+Jerry&limit=20
+
+// a path segment that comes from data: let Uri encode it too
+final notes = Uri(
+  scheme: 'https',
+  host: 'api.readly.app',
+  pathSegments: ['books', bookId, 'notes'],
+);
+```
+
+</CodeBlock>
+
+ومع dio نفس الكلام: الـ `queryParameters` بيعمل الـ encoding، فماتلزقش `?q=...` في الـ path بإيدك.
+
+### الـ PUT بحقل واحد مسح الباقي
+
+عايز تغيّر حالة الكتاب لـ «خلصته»، فبعت:
+
+```text
+PUT /library/OL45804W
+{ "status": "finished" }
+```
+
+ولما فتحت المكتبة لقيت الكتاب من غير عنوان. الـ PUT معناه «دي النسخة الكاملة الجديدة»، فالسيرفر عمل بالظبط اللي اتقاله: بدّل الكتاب كله بـ object فيه `status` بس. اللي انت عايزه PATCH: «غيّر الحقول دي بس، وسيب الباقي».
+
+| | بتبعت | الحقل اللي مابعتهوش |
+| --- | --- | --- |
+| PUT | الحاجة كاملة | بيتمسح، أو بيرجع للـ default |
+| PATCH | الحقول اللي اتغيرت | بيفضل زي ما هو |
+
+والـ PATCH نفسه ممكن يمسح لو بعت `"title": null` من غير ما تقصد، ودي مشكلة «الـ PATCH مسح العنوان» في درس الـ Data في الوحدة 3، وحلها DTO للطلب بـ `includeIfNull: false`.
+
+### أعيد الطلب ولا لأ؟ الـ safe والـ idempotent
+
+النت قطع في نص الطلب، ومش عارف السيرفر نفّذه ولا لأ. تعيده؟ ده بيعتمد على الـ method:
+
+| الـ method | safe: مابيغيرش حاجة | idempotent: تكراره زي مرة واحدة |
+| --- | --- | --- |
+| GET | أيوه | أيوه |
+| PUT | لأ | أيوه: «خلّي الحالة finished» مرتين نتيجتها واحدة |
+| DELETE | لأ | أيوه: امسح ده مرتين، هيبقى ممسوح |
+| POST | لأ | لأ: «ضيف كتاب» مرتين = كتابين |
+| PATCH | لأ | مش مضمون: `"status": "finished"` آه، «زوّد عدد الصفحات 10» لأ |
+
+ده الأساس اللي سياسة الـ retry كلها مبنية عليه، والتفاصيل (backoff، والـ `Idempotency-Key` اللي بيخلي الـ POST آمن يتعاد) في درس dio في الوحدة 3.
+
+### الـ GET شغال والـ POST بيرجع 301
+
+الـ backend نقل الـ API من `readly.app/api` لـ `api.readly.app`، وخلّى الدومين القديم يرجّع <b>301</b> (اتنقل على طول) ومعاه header اسمه `Location` فيه العنوان الجديد. النسخ القديمة من الـ app: المكتبة بتفتح عادي، والإضافة بتفشل.
+
+السبب إن الـ HTTP client في Dart بيتبع الـ redirect لوحده مع GET وHEAD بس. مع POST مابيتبعوش، لأن إعادة POST لعنوان تاني ممكن تنفّذ العملية مرتين، فبيرجعلك الـ 301 نفسه، وdio بيعتبره error لأنه مش 2xx. الـ 302 نفس الحكاية بس مؤقت. والـ 307 والـ 308 معناهم «روح هناك بنفس الـ method ونفس الـ body».
+
+الدرس: الـ base URL في الـ app يبقى العنوان النهائي بالظبط، وأي نقل للـ API يتعمل والنسخ القديمة لسه شغالة عليه (الدومين القديم يفضل يخدم، مش يحوّل)، لحد ما تفرض update.
+
+### الطلب مابيطلعش من الموبايل أصلًا
+
+شغّلت الـ backend على اللابتوب، وحطيت `http://192.168.1.5:3000` في الـ app، وظهرلك على Android: `Cleartext HTTP traffic to 192.168.1.5 not permitted`. Android (من API 28) وiOS (بالـ ATS) بيمنعوا أي اتصال من غير HTTPS by default، لأن أي حد على نفس الـ WiFi يقدر يقرا الطلب ويعدّله، بما فيه الـ token. في الـ production كل حاجة HTTPS ومفيش نقاش. ولشغل الـ dev، افتح استثناء لعنوان الـ dev في نسخة الـ debug بس، والتفاصيل في Level 4 في درس dio في الوحدة 3.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>اقرا الـ API قبل ما تكتب الكود:</b> الـ docs، أو أحسن منها ملف <b>OpenAPI</b> (`openapi.yaml`، اللي بيتعرض كـ Swagger UI). فيه كل endpoint بالـ request والـ response والأكواد المحتملة. الـ junior بيبعت الطلب ويشوف بيرجع إيه ويبني عليه. الـ senior بيعرف بيرجع إيه في الحالات اللي ماحصلتش لسه: الـ 409 والـ 422 والـ body بتاعهم.
+- <b>اسأل الـ backend قبل ما تبدأ أي endpoint:</b>
+  - الـ auth: محتاج token؟ وإيه اللي بيحصل لما ينتهي، 401 دايمًا؟
+  - الـ pagination: `page` و`limit` زي Open Library، ولا cursor زي `after` في `GET /library`؟ وأقصى `limit` كام؟
+  - شكل الـ error body: ثابت في كل الـ endpoints؟ في Readly هو `code` و`message` و`fields`.
+  - الأكواد: كل endpoint بيرجّع إيه بالظبط؟ «409 لما الإيميل مستخدم» لازم تبقى مكتوبة، مش تتكشف في الـ QA.
+  - الـ rate limits: كام طلب في الدقيقة؟ وبيرجع `Retry-After`؟
+  - الـ idempotency: الـ POST ده بيقبل `Idempotency-Key`؟
+  - الـ nulls والتواريخ: أنهي حقول ممكن تيجي `null` أو ماتجيش خالص؟ والتواريخ UTC بصيغة ISO 8601؟
+- <b>الـ status هو العيلة، والـ `code` هو التفصيلة:</b> الـ 409 في `POST /auth/register` معناها «الإيميل مستخدم»، وفي `PATCH /library/:bookId` معناها «السيرفر عنده نسخة أحدث». الـ app بيقرر نوع رد الفعل من الـ status (أعيد؟ أعمل refresh؟)، والرسالة والحقل من الـ `code` الثابت في الـ body. وده بالظبط اللي الـ ServerFailure بتاع درس الأخطاء في الوحدة 2 بيشيله.
+- <b>الـ X-Request-Id هو الخيط:</b> لما مستخدم يبلّغ عن مشكلة، الرقم ده بيوصّلك للطلب نفسه في logs السيرفر في ثانية. خليه يوصل للـ logs بتاعة الـ app، وللمستخدم كرقم مرجعي، وده هنرجعله في الدروس الجاية.
+- <b>الأدوات بالترتيب:</b>
+  - <b>curl:</b> أسرع طريقة تعرف المشكلة في الـ app ولا في السيرفر. لو curl رجّع نفس الـ error، مش مشكلة Dart.
+  - <b>Bruno أو Postman:</b> collection فيها كل endpoints الـ Readly. Bruno بيحفظها ملفات نص، فتتعملها commit في الـ repo جنب الكود، وأي حد جديد في الفريق يجرّب الـ API في دقيقة.
+  - <b>تاب Network في Flutter DevTools:</b> بيعرض كل طلب الـ app عمله فعلًا، بالـ headers والـ body والوقت. شغّال مع http ومع dio على الموبايل.
+  - <b>proxy زي Charles أو Proxyman أو mitmproxy:</b> بيقف بين الموبايل والسيرفر، فتشوف الـ bytes اللي طلعت فعلًا، وتقدر تعدّل الرد (ترجّع 503 مثلًا) وتشوف الـ app بيعمل إيه. فيه فخ: الـ HTTP client في Dart مابيقراش إعدادات الـ proxy بتاعة الموبايل، فلازم تقوله في نسخة الـ debug بس:
+
+<CodeBlock label="الـ proxy في الـ debug بس">
+
+```dart
+// flutter run --dart-define=PROXY=192.168.1.10:8888
+const proxy = String.fromEnvironment('PROXY');
+
+void useDebugProxy(Dio dio) {
+  if (!kDebugMode || proxy.isEmpty) return;
+  dio.httpClientAdapter = IOHttpClientAdapter(
+    createHttpClient: () => HttpClient()
+      ..findProxy = (uri) => 'PROXY $proxy'
+      // the proxy shows its own certificate: accept it in debug only, never in release
+      ..badCertificateCallback = (cert, host, port) => true,
+  );
+}
+```
+
+</CodeBlock>
+
+الـ `kDebugMode` بيخلي الكود ده يتشال من الـ release build خالص، فمستحيل الـ `badCertificateCallback` يوصل للمستخدمين. ده الاستثناء الوحيد للقاعدة اللي في درس dio، وعشان كده هو ورا flag ومن غير `PROXY` مابيشتغلش.
+
+<Note kind="interview" title="سؤال interview">
+
+«إيه الفرق بين 401 و403؟» الـ 401 معناها السيرفر مش عارف انت مين: مفيش token، أو انتهى، أو الباسورد غلط. الحل إنك تعرّف نفسك تاني، فالـ app بيعمل refresh للـ token ويعيد الطلب. الـ 403 معناها عارفك بس مش مسموحلك، والـ refresh مش هيغيّر حاجة، فمابعيدش ومابعملش logout، بعرض الرسالة المناسبة. في Readly الـ login بيرجّع 401 للباسورد الغلط و403 للإيميل اللي ماتأكدش، وكل واحدة ليها رسالة. ولو الـ backend بيخلط بينهم، ده بيتصلح في العقد، مش بـ if في الـ app.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«PUT ولا PATCH لتغيير حالة كتاب؟» PATCH. الـ PUT معناه «دي النسخة الكاملة»، فأي حقل مش في الطلب بيتمسح، ولو جهاز تاني عدّل حقل في نفس الوقت هتكتب فوقه بنسخة قديمة. الـ PATCH بيبعت اللي اتغير بس. وتمنه إنه مش idempotent بالضرورة، فلو هيتعاد من الـ sync queue يبقى معاه `Idempotency-Key`. وحتى مع الـ PATCH، الـ DTO بتاع الطلب مابيبعتش الـ nulls، عشان null معناها «امسح» عند السيرفر.
+
+</Note>
+
+</Level>
+
+<Quiz>
+
+<Question id="http-1">
+<Ask>في `https://openlibrary.org/works/OL45804W.json?fields=title`، إيه الـ host والـ path والـ query؟ وأنهي جزء path parameter؟</Ask>
+<Answer>
+
+الـ host `openlibrary.org`، والـ path `/works/OL45804W.json`، والـ query `fields=title`. الـ `OL45804W` path parameter: جزء من الـ path بيتغير وبيحدد أنهي كتاب. الـ path بيحدد الحاجة، والـ query بيظبط الطلب عليها.
+
+</Answer>
+</Question>
+
+<Question id="http-2">
+<Ask>المستخدم كتب الباسورد صح، والـ login رجّع 403. الشاشة تقول إيه؟ ولو `GET /library` رجّع 403، الـ AuthInterceptor يعمل refresh؟</Ask>
+<Answer>
+
+في Readly الـ 403 في الـ login معناها إن الإيميل ماتأكدش، فالشاشة تقول «أكد إيميلك» مع زرار يبعت الرسالة تاني، مش «الباسورد غلط» (دي 401). ولأ، الـ refresh للـ 401 بس: الـ 403 معناها «عارفينك ومش مسموحلك»، والـ token الجديد مش هيغيّر الصلاحيات.
+
+</Answer>
+</Question>
+
+<Question id="http-3">
+<Ask>API بيرجّع `200` وفي الـ body `"success": false`. إيه اللي بيبوظ في الـ app؟ وتعمل إيه لو مش هيتغير؟</Ask>
+<Answer>
+
+dio مش هيرمي لأن الـ status نجاح، فالـ `fromJson` يقع بـ crash، أو الشاشة تعرض «مفيش نتايج» والحقيقة إن الطلب فشل، والـ retry والـ logs شايفين 200. لو الـ API بتاعك صلّحه يرجّع 4xx أو 5xx. لو مش بتاعك، interceptor على الـ Dio بتاعه بس يحوّل الحالة دي لـ `DioException` من نوع `badResponse`، فباقي الكود يتعامل معاها زي أي 4xx.
+
+</Answer>
+</Question>
+
+<Question id="http-4">
+<Ask>ليه `'https://openlibrary.org/search.json?q=$query'` غلط حتى لو اشتغل معاك؟</Ask>
+<Answer>
+
+لأنه مابيعملش encoding. `Tom & Jerry` بيتقسم عند الـ `&`، و`C#` بيتقطع عند الـ `#`، والـ `+` ممكن يبقى مسافة، والعربي محتاج percent-encoding. ابني الـ URL بـ `Uri.https(host, path, queryParameters)`، أو بالـ `queryParameters` بتاع dio، وهما يعملوا encoding لكل قيمة.
+
+</Answer>
+</Question>
+
+<Question id="http-5">
+<Ask>`curl -X POST .../library -d '{"key": "OL45804W"}'` رجّع 422 بيقول إن `key` ناقص. ليه؟</Ask>
+<Answer>
+
+الـ `-d` بيبعت `Content-Type: application/x-www-form-urlencoded`، والسيرفر (بـ `express.json()`) بيفك الـ body كـ JSON بس لو الـ header بيقول `application/json`، فشافه فاضي. ضيف `-H "Content-Type: application/json"`. ونفس الفخ في `package:http` لو بعت `jsonEncode` من غير الـ header.
+
+</Answer>
+</Question>
+
+</Quiz>

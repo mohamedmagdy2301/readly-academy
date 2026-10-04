@@ -1,0 +1,600 @@
+---
+title: "عقد الـ API والـ production"
+description: "الـ API عقد بين الـ app والـ backend: تكتبه بـ OpenAPI، وتبني عليه قبل ما السيرفر يخلص، وتغيّره من غير ما تكسر النسخ القديمة، وتراقبه بعد الـ release."
+minutes: 30
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="عقد الإيجار">
+
+عقد الإيجار ورقة الطرفين مضيين عليها: الإيجار كام، بيتدفع إمتى، ومين بيصلّح السباكة. صاحب البيت مايقدرش يصحى الصبح ويقرر إن الإيجار بقى الضعف. أي تغيير محتاج اتفاق. والأهم: لو غيّر الشروط للسكان الجداد، السكان القدام لسه عايشين بالعقد القديم، ومايقدرش يطبّق عليهم شروط ماوقّعوش عليها. ولو عايز يطلّعهم، لازم يبلّغهم الأول ويديهم مهلة.
+
+</Analogy>
+
+الـ API هو العقد ده. الـ backend صاحب البيت، وكل نسخة من الـ app على موبايل حد ساكن بعقده. النسخة 1.0 اللي نزلت من 8 شهور لسه بتكلّم السيرفر النهارده، بنفس الـ DTOs ونفس الـ URLs، ومش هتتغير غير لما المستخدم يعمل update. ويمكن عمره ما يعمل.
+
+ده الفرق بين الموبايل والـ web. موقع الـ web بيتحدث عند كل الناس في ثانية، فالـ backend والـ frontend بيتغيروا مع بعض. الـ app لأ: أي نسخة نزلت عايشة للأبد. علشان كده العقد في app الموبايل لازم يتكتب، ويتراجع، ويتغير بقواعد، ويتراقب بعد الـ release. ده الدرس ده.
+
+</Level>
+
+<Level n="2" title="العقد مكتوب">
+
+العقد مش «الـ backend بيرجّع إيه النهارده». هو كل حاجة الـ app بيعتمد عليها:
+
+| الجزء | في `POST /books/:bookId/notes` |
+| --- | --- |
+| الـ endpoint والـ method | `POST /books/OL45804W/notes` |
+| شكل الطلب | `{"text": "..."}`، والنص من 1 لـ 2000 حرف |
+| شكل الرد | الملاحظة بالـ `id` والـ `createdAt` |
+| الـ status codes | 201 اتعملت، 404 الكتاب مش في المكتبة، 422 النص غلط |
+| شكل الخطأ | `{"code", "message", "fields"}` ومعاه `X-Request-Id` |
+| الـ auth | Bearer token، و401 معناها الـ AuthInterceptor يعمل refresh |
+| الحدود | الـ rate limit، والـ pagination، والـ Idempotency-Key للكتابة |
+
+لو جزء من دول مش مكتوب، كل طرف بيفترض حاجة. الـ backend بيرجّع 400 والـ app مستني 422، أو بيبعت `fields` كـ list والـ `_errorBody` بتاع درس «من الـ Exception للـ Failure» مستنيها map. الطريقة المعروفة تكتبه بيها <b>OpenAPI</b>: ملف YAML بيوصف الـ API، والأدوات بتقراه.
+
+<CodeBlock label="api/openapi.yaml (جزء)">
+
+```yaml
+openapi: 3.1.0
+info:
+  title: Readly API
+  version: 1.4.0
+servers:
+  - url: https://api.readly.app
+paths:
+  /books/{bookId}/notes:
+    post:
+      operationId: addNote
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: bookId, in: path, required: true, schema: { type: string }, example: OL45804W }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string, minLength: 1, maxLength: 2000 }
+      responses:
+        '201':
+          description: Created
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Note' }
+        '404': { $ref: '#/components/responses/Error' } # code: not_found (book not in library)
+        '422': { $ref: '#/components/responses/Error' } # code: validation_failed, fields.text: too_long
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer }
+  headers:
+    RequestId:
+      schema: { type: string, format: uuid }
+  schemas:
+    Note:
+      type: object
+      required: [id, text, createdAt]
+      properties:
+        id: { type: string }
+        text: { type: string }
+        createdAt: { type: string, format: date-time }
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string, examples: [validation_failed, not_found] }
+        message: { type: string } # for logs only, never shown to users
+        fields:
+          type: object
+          additionalProperties: { type: string } # field -> error code
+  responses:
+    Error:
+      description: Error
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/RequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+```
+
+</CodeBlock>
+
+- <b>الـ Error مكتوب مرة واحدة:</b> وكل endpoint بيشاور عليه بـ `$ref`. ده اللي بيضمن إن كل الأخطاء ليها نفس الشكل، فالـ `_errorBody` واحد للـ app كله.
+- <b>الملف في الـ repo:</b> أي تغيير فيه PR، والـ PR ده بيتراجع من حد في الموبايل وحد في الـ backend. مش صفحة في wiki محدش بيحدّثها.
+- <b>بيتقري لوحده:</b> Swagger UI أو Redoc بيعملوا منه docs، وBruno وPostman بيعملوا منه collection تجرّب بيها من غير ما تكتب طلب بإيدك.
+
+### تولّد الكود ولا تكتبه؟
+
+| الطريقة | بتعمل إيه | كويسة في | تمنها |
+| --- | --- | --- | --- |
+| DTOs بالإيد بـ freezed وjson_serializable | انت بتكتب الـ DTO وانت بتقرا العقد | تحكّم كامل في الـ nullable والـ defaults، زي درس الـ Data | ممكن تنسى حقل أو تكتب نوع غلط، والعقد مش هيقولك |
+| retrofit مع json_serializable | interface بـ annotations، والـ client بيتولّد | الـ data source بيبقى سطور قليلة | الـ DTOs لسه بالإيد، وده أصلًا الجزء اللي بيغلط |
+| openapi_generator (dart-dio) | الـ client والـ models كلهم من الـ YAML | الشكل في الـ app مستحيل يختلف عن العقد | كود شكله مش بتاعك، والـ generator هو اللي بيقرر الـ nullable والـ enums |
+
+Readly ماشي بالأولى: الـ DTOs بالإيد، والعقد بيتحرس بتستات في Level 4. ولو الـ API كبير (100 endpoint)، الـ generator بيستاهل. بس أي طريقة اخترتها، الكود ده بيقف عند الـ data layer: الـ mapper بيحوّله لـ entities، والـ guard بيحوّل أخطاءه. لو الـ generated models وصلت للـ Cubit، يبقى أي تغيير في العقد بيوصل للشاشة.
+
+### تبني الشاشة قبل ما الـ backend يخلص
+
+الـ backend هيخلّص الـ notes الأسبوع الجاي، وانت عايز تبني الشاشة النهارده. العقد متفق عليه، فتقدر تعمل سيرفر fake منه. أسرع طريقة <b>Prism</b>: `npx @stoplight/prism-cli mock api/openapi.yaml` بيقوم سيرفر بيرد بالـ examples اللي في الـ YAML، وبيرفض الطلب اللي مش مطابق للعقد. وتقدر تطلب رد معين بـ header: `Prefer: code=422`.
+
+ولو عايز الـ app يشتغل على أي موبايل من غير سيرفر خالص (للـ designer، أو للـ demo، أو والـ backend واقع)، اعمل fake جوه dio نفسه، زي `FakeApi` في درس الاختبارات في الوحدة 7:
+
+<CodeBlock label="data/fake/fake_api_adapter.dart">
+
+```dart
+class FakeApiAdapter implements HttpClientAdapter {
+  FakeApiAdapter({this.latency = const Duration(milliseconds: 400)});
+  final Duration latency;
+  final _notes = <String, List<Map<String, dynamic>>>{
+    'OL45804W': [
+      {'id': 'n1', 'text': 'Mr Fox is too clever', 'createdAt': '2026-03-01T10:00:00Z'},
+    ],
+  };
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    await Future<void>.delayed(latency); // a real network is never instant
+    final match = RegExp(r'^/books/(\w+)/notes$').firstMatch(options.uri.path);
+    if (match == null) return _error(404, 'not_found');
+    final notes = _notes[match.group(1)];
+    if (notes == null) return _error(404, 'not_found'); // book not in the library
+    if (options.method == 'GET') return _json(200, notes);
+
+    final text = (options.data as Map<String, dynamic>)['text'] as String;
+    if (text.length > 2000) {
+      return _error(422, 'validation_failed', fields: {'text': 'too_long'});
+    }
+    final note = {
+      'id': 'n${notes.length + 1}',
+      'text': text,
+      'createdAt': DateTime.now().toUtc().toIso8601String(),
+    };
+    notes.insert(0, note);
+    return _json(201, note);
+  }
+
+  ResponseBody _error(int status, String code, {Map<String, String>? fields}) =>
+      _json(status, {'code': code, 'message': 'fake $code', if (fields != null) 'fields': fields});
+
+  ResponseBody _json(int status, Object body) => ResponseBody.fromString(
+        jsonEncode(body),
+        status,
+        headers: {
+          Headers.contentTypeHeader: [Headers.jsonContentType],
+          'x-request-id': ['fake-${DateTime.now().microsecondsSinceEpoch}'],
+        },
+      );
+
+  @override
+  void close({bool force = false}) {}
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ fake بيدخل من الـ config">
+
+```dart
+// config/mock.json: same keys as dev.json, plus "FAKE_API": true
+Dio buildApiDio(AppConfig config, TokenStore tokens) {
+  // ...the same options and interceptors as before
+  if (config.fakeApi) {
+    dio.httpClientAdapter = FakeApiAdapter();
+    refreshDio.httpClientAdapter = FakeApiAdapter(); // the refresh too
+  }
+  return dio;
+}
+```
+
+</CodeBlock>
+
+- <b>الـ interceptors حقيقية:</b> الـ AuthInterceptor والـ RetryInterceptor والـ guard والـ `_mapDio` كلهم بيشتغلوا زي ما هما. الشبكة بس هي الـ fake، فالـ 422 بيوصل الشاشة بنفس الطريق اللي هيوصل بيه من السيرفر الحقيقي.
+- <b>flag مش flavor:</b> الـ `mock.json` فيه `APP_ENV: dev`، فهو بيتبني بـ `--flavor dev` ومايكسرش check الـ `appFlavor` بتاع درس الـ release في الوحدة 10. هو mode جوه dev، مش app رابع على الموبايل.
+- <b>الـ latency:</b> من غيرها، الـ loading state عمرها ما هتتشاف، وbugs زي الضغط المتكرر مش هتبان.
+
+الخطر الوحيد إن الـ fake والسيرفر الحقيقي يختلفوا مع الوقت. الحل إن الـ fixtures والـ fake يتبنوا من نفس العقد، وده في Level 4.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### الـ backend شال حقل والنسخ القديمة وقعت
+
+يوم خميس، حد في الـ backend عمل «تنضيف»: غيّر `updatedAt` لـ `modifiedAt` في `GET /library`، وحدّث الـ dashboard بتاع الـ web في نفس الـ PR. نسخة 1.3 عند 60% من المستخدمين فيها `required DateTime updatedAt` في الـ DTO. بفضل `parseOrThrow` من درس «من الـ Exception للـ Failure»، الـ app ماوقعش، بس كل refresh للمكتبة بقى `bad_response`. ومفيش hotfix: الـ binary اللي عند المستخدمين مش هيتغير.
+
+المشكلة ليها ناحيتين، وكل ناحية ليها قواعدها.
+
+<b>ناحية الـ app: tolerant reader.</b> اقرا اللي محتاجه، واستحمل الباقي. ده اللي اتعمل في درس الـ Data في الوحدة 3، ودي قواعده كلها في مكان واحد:
+
+- <b>الحقول اللي ماتعرفهاش:</b> اتجاهلها. json_serializable بيعمل كده لوحده، فماتحطش `disallowUnrecognizedKeys: true` على DTO بتاع رد أبدًا.
+- <b>الحقل الـ optional الناقص:</b> nullable أو `@Default`. والـ `required` للي غيابه معناه إن الـ API كله باظ، زي الـ `key`.
+- <b>الـ enum الجديد:</b> fallback وlog، زي `abandoned` في درس الـ Data. ومع json_serializable: `@JsonKey(unknownEnumValue: StatusDto.unknown)`.
+- <b>الـ code الجديد في الخطأ:</b> الـ `_` في الـ switch بتاع `localized` بيعرض رسالة عامة بدل ما يقع.
+
+<b>ناحية الـ backend: additive only.</b> الـ app القديم مايقدرش يتكيف، فالسيرفر هو اللي لازم يحافظ على العقد:
+
+| التغيير | آمن على النسخ القديمة؟ | ليه |
+| --- | --- | --- |
+| حقل جديد في الرد | أيوه | النسخ القديمة بتتجاهله |
+| endpoint جديد | أيوه | محدش قديم بيكلّمه |
+| حقل optional جديد في الطلب | أيوه | القديم مش بيبعته، والسيرفر عنده default |
+| قيمة enum جديدة أو `code` خطأ جديد | لو الـ app عنده fallback بس | من غيره بيعرض حاجة غلط أو بيقع |
+| شيل حقل من الرد أو تغيير اسمه | لأ | الـ DTO القديم مستنيه |
+| تغيير نوع حقل | لأ | الـ parse بيفشل: `bad_response` |
+| حقل required جديد في الطلب | لأ | النسخ القديمة مش بتبعته، فتاخد 422 |
+| validation أشد (2000 حرف بقت 500) | لأ | ملاحظات كانت بتتقبل بقت بترجع 422 |
+| نفس الشكل ومعنى مختلف | أسوأ واحد | مفيش أي error، والـ app بيعرض حاجة غلط ومحدش واخد باله |
+
+الـ rename الصح بيبقى على 3 خطوات: السيرفر يبعت `updatedAt` و`modifiedAt` الاتنين، ونسخة جديدة من الـ app تقرا `modifiedAt`، وبعد ما أقل build مسموح بيه (تحت) يبقى بيقرا الجديد، السيرفر يشيل القديم. أسابيع، مش PR واحد.
+
+ولو التغيير مايتعملش additive خالص، يبقى <b>version جديدة</b>:
+
+| الطريقة | شكلها | مميزاتها | عيوبها |
+| --- | --- | --- | --- |
+| في الـ path | `/v2/library` | باينة في الـ logs والـ proxies والكاش، والـ app بيختار بالـ URL | الـ URL بيتغير |
+| في header | `Api-Version: 2` | الـ URL ثابت | مستخبية، والكاش والـ logs لازم يعرفوها |
+
+لـ Readly، الـ path أبسط وأوضح: الـ baseUrl يبقى `https://api.readly.app/v1` من الـ AppConfig، ولما endpoint واحد بس يحتاج يتكسر، `/v2/library` بيتعمل جنب `/v1/library`، والـ data source في النسخة الجديدة بيكلّمه. والـ v1 بيفضل شغال لحد ما مفيش build مسموح بيه بيكلّمه، والسيرفر بيعرف ده من الـ `X-App-Build` اللي جاي في الجزء الجاي.
+
+<Diagram name="d-api-versions">
+
+كل نسخة من الـ app بتكلّم نفس الـ backend بعقدها. التغيير الإضافي بيعدّي على v1 والنسخ القديمة بتتجاهله، والتغيير اللي بيكسر ليه v2، والنسخة اللي تحت الـ minimum بتاخد 426 وشاشة الـ update.
+
+</Diagram>
+
+### لازم كل المستخدمين يعملوا update
+
+في درس الـ release في الوحدة 10، الـ `CheckForUpdate` بيسأل السيرفر عن أقل build مسموح بيه وهو بيفتح، ولو النسخة أقدم بيقفل الـ app على شاشة الـ update. ولو الطلب فشل، المستخدم بيكمّل (fail open). من ناحية العقد، الـ endpoint ده بيكبر:
+
+<CodeBlock label="GET /app-config?platform=android">
+
+```json
+{
+  "minSupportedBuild": 120,
+  "latestBuild": 131,
+  "disabledFeatures": ["library.export"]
+}
+```
+
+</CodeBlock>
+
+بس الـ check ده بيحصل وقت الفتح بس. مستخدم سايب الـ app مفتوح من يومين، أو الـ check فشل والـ app كمّل، هيفضل بيكلّم `/v1/library` حتى بعد ما اتشال. علشان كده في <b>شبكة أمان</b> على كل طلب: الـ app بيقول نسخته، والسيرفر يرد `426 Upgrade Required` لو أقدم من المسموح.
+
+<CodeBlock label="AppVersionInterceptor: كل طلب بيقول نسخته">
+
+```dart
+class AppVersionInterceptor extends Interceptor {
+  AppVersionInterceptor(this._build, this._platform);
+  final int _build;        // from package_info_plus, read once in bootstrap
+  final String _platform;  // android or ios
+
+  @override
+  void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
+    options.headers['X-App-Build'] = '$_build';
+    options.headers['X-Platform'] = _platform;
+    handler.next(options);
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="السيرفر: middleware قبل كل الـ routes">
+
+```js
+app.use((req, res, next) => {
+  const build = Number(req.get('X-App-Build'));
+  const min = MIN_BUILD[req.get('X-Platform')]; // the same numbers as /app-config
+  if (build && min && build < min) {
+    return res.status(426).json({ code: 'upgrade_required', message: `min build ${min}` });
+  }
+  next();
+});
+```
+
+</CodeBlock>
+
+- <b>الـ 426 ليه صاحب خلاص:</b> الـ `AppAlertsInterceptor` بتاع درس «الأخطاء في الشاشة» بيحوّله لـ `UpdateRequired`، والـ `AppStatusCubit` بيعرض `ForceUpdatePage` فوق الـ app كله. الـ interceptor الجديد بيضيف الـ headers بس.
+- <b>مش نوع Failure جديد:</b> الطلب نفسه بيرجع `ServerFailure(statusCode: 426, code: 'upgrade_required')`، والـ `isGlobal` بيخلّي الشاشة ماتعرضش حاجة تحت شاشة الـ update. مفيش Cubit بيعمل switch عليه، فقانون الوحدة 2 لسه ماشي.
+- <b>الطلب من غير header بيعدّي:</b> الـ `build &&` بيخلّي curl والـ dashboard والنسخ القديمة جدًا اللي مش بتبعت الـ header يعدّوا. علشان كده الـ interceptor ده لازم يبقى من أول release، زي الـ check في درس الـ release.
+- <b>نفس الأرقام في مكانين:</b> الـ `/app-config` والـ middleware بيقروا نفس الإعداد، وإلا الـ app هيعدّي الـ check ويتقفل بالـ 426.
+
+والـ `disabledFeatures` هو الـ <b>kill switch</b>. لو التصدير في 1.4.0 بيولّد ملفات بايظة، أو بيضغط على السيرفر، بتشيله من عند كل الناس في دقيقة من غير release:
+
+```dart
+if (!appConfig.isDisabled('library.export')) const ExportButton(),
+```
+
+- <b>آخر قيمة معروفة:</b> الـ app بيحفظ الـ config اللي وصل، ولو الطلب فشل بيستخدم المحفوظة. ولو مفيش محفوظ، الـ feature شغالة: الـ kill switch بيقفل حاجة بايظة، مش بيقفل الـ app لو السيرفر واقع.
+- <b>ده feature flag بسيط:</b> في درس الـ release الفرق بين الـ flavor والـ flag، وإن الـ flag اللي محتاج يتقفل من غير release مكانه Remote Config. الـ `disabledFeatures` نسخة صغيرة من نفس الفكرة جوه الـ API بتاعك.
+
+### المستخدم بيشتكي ومحدش لاقي الطلب
+
+مستخدم كتب للدعم: «الملاحظة ماتحفظتش امبارح الساعة 3». الـ backend بيدوّر في الـ logs بالوقت والمستخدم، فيلاقي مئات السطور. ولو الطلب ضرب timeout، يا عمره ما وصل، يا وصل والرد ضاع. وفي الحالتين، الـ app مافيهوش `X-Request-Id`، لأن الـ backend هو اللي بيولّده والرد ماوصلش. ودي المشكلة اللي سبناها في درس «من الـ Exception للـ Failure».
+
+الحل اتفاق في العقد: <b>الـ app هو اللي بيولّد الـ id</b>، والسيرفر بيستخدمه لو موجود:
+
+<CodeBlock label="RequestIdInterceptor: أول واحد في السلسلة">
+
+```dart
+class RequestIdInterceptor extends Interceptor {
+  RequestIdInterceptor([Uuid? uuid]) : _uuid = uuid ?? const Uuid();
+  final Uuid _uuid;
+
+  @override
+  void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
+    // a retry re-sends the same options, so all its attempts share one id
+    options.headers.putIfAbsent('X-Request-Id', _uuid.v4);
+    handler.next(options);
+  }
+}
+
+// _mapDio: the server's echo, or the id we sent when no reply came back
+final requestId = e.response?.headers.value('x-request-id') ??
+    e.requestOptions.headers['X-Request-Id'] as String?;
+```
+
+</CodeBlock>
+
+<CodeBlock label="السيرفر بيستخدم نفس الـ id">
+
+```js
+app.use((req, res, next) => {
+  const incoming = req.get('X-Request-Id');
+  // accept only a uuid: anything else could inject text into our logs
+  req.id = UUID_RE.test(incoming ?? '') ? incoming : randomUUID();
+  res.set('X-Request-Id', req.id);
+  req.log = logger.child({ requestId: req.id });
+  next();
+});
+```
+
+</CodeBlock>
+
+دلوقتي نفس الرقم موجود في 3 أماكن:
+
+- <b>logs السيرفر:</b> كل سطر للطلب ده عليه الـ id، حتى لو الرد ضاع في السكة.
+- <b>الـ breadcrumbs:</b> الـ LoggingInterceptor بتاع درس الـ Observability في الوحدة 10 يزوّد الـ id في السطر: `✕ 504 POST /books/:bookId/notes [7f3a9c1e]`. ولما Sentry ياخد issue، الـ breadcrumbs اللي معاه فيها الأرقام. مش محتاج حاجة في Sentry غير كده.
+- <b>شاشة المستخدم:</b> رقم المرجع اللي في درس «الأخطاء في الشاشة»، بقى موجود حتى في الـ timeout.
+
+والـ `X-Request-Id` غير الـ `Idempotency-Key` تمامًا. الـ request id لطلب HTTP واحد ومحاولاته جوه نفس الـ interceptor، وهدفه إنك تلاقي الطلب. الـ idempotency key لعملية، بيتولد مرة ويتحفظ في الـ queue ويعيش بعد ما الـ app يتقفل، وهدفه إن السيرفر مايكررش العملية. لو استخدمت واحد مكان التاني، يا هتفقد الـ tracing يا هتكسر الـ dedupe.
+
+### الـ errors زادت بعد الـ release ومحدش واخد باله
+
+1.5.0 نزلت لـ 20% من المستخدمين (staged rollout من درس الـ release). الـ dashboards بتاعة الـ backend خضرا: نفس عدد الأخطاء، ونفس السرعة. بس المستخدمين بيشتكوا إن المكتبة «بتحمّل كتير وبعدين تقول مفيش نت». اللي حصل إن حد قلّل الـ `receiveTimeout` لـ 5 ثواني، و`GET /library` لمستخدمين عندهم 2000 كتاب بياخد 7. الطلب بيتقفل على الموبايل، فالسيرفر شايفه طلب نجح. وفي Sentry، الـ NetworkFailure مجرد breadcrumb، فمحدش شاف إنها بقت 6 أضعاف.
+
+السيرفر مابيشوفش غير الطلبات اللي وصلته. الـ timeouts، والـ DNS، والـ TLS، والـ `bad_response`، والطلبات اللي اتلغت، كلها بتحصل على الموبايل. محتاج <b>metrics</b> من ناحية الـ app: مش «حصل error»، لكن «نسبة الأخطاء كام».
+
+<CodeBlock label="ApiMetricsInterceptor">
+
+```dart
+// core/metrics/api_metrics.dart: a contract, the implementation picks the backend
+abstract interface class ApiMetrics {
+  void record(ApiCall call);
+}
+
+class ApiMetricsInterceptor extends Interceptor {
+  ApiMetricsInterceptor(this._metrics);
+  final ApiMetrics _metrics;
+
+  @override
+  void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
+    options.extra['stopwatch'] = Stopwatch()..start();
+    handler.next(options);
+  }
+
+  @override
+  void onResponse(Response<dynamic> response, ResponseInterceptorHandler handler) {
+    _record(response.requestOptions, '${response.statusCode}');
+    handler.next(response);
+  }
+
+  @override
+  void onError(DioException err, ErrorInterceptorHandler handler) {
+    _record(err.requestOptions, '${err.response?.statusCode ?? err.type.name}');
+    handler.next(err);
+  }
+
+  void _record(RequestOptions options, String outcome) => _metrics.record(ApiCall(
+        route: options.extra['route'] as String? ?? 'unknown', // 'GET /library', never the real URL
+        outcome: outcome, // 200, 422, receiveTimeout, connectionError...
+        ms: (options.extra['stopwatch'] as Stopwatch?)?.elapsedMilliseconds,
+      ));
+}
+```
+
+</CodeBlock>
+
+- <b>الـ route template:</b> الـ data source بيبعته في `Options(extra: {'route': 'POST /books/:bookId/notes'})`، نفس الاسم اللي بيبعته لـ `parseOrThrow`. الـ URL الحقيقي فيه ids وكلام بحث، يعني بيانات مستخدم، وكل كتاب هيبقى سطر لوحده في الـ dashboard.
+- <b>الـ `bad_response` كمان:</b> الـ interceptor شايفه 200 لأن الـ parse بيحصل بعده. فالـ guard بيسجّله في نفس الـ ApiMetrics وهو بيحوّل الـ ParseException، بالـ endpoint اللي جواها.
+- <b>نسخة الـ app:</b> الـ implementation بيضيفها لكل call مرة واحدة، مع الـ platform. من غيرها مش هتعرف تقارن 1.5.0 بـ 1.4.2.
+- <b>الـ implementation:</b> Firebase Performance بيقيس الـ HTTP لوحده، أو Sentry performance، أو batch بتبعته لـ endpoint عندك كل دقيقة. الـ interceptor والـ data sources مش فارق معاهم.
+
+اللي تبص عليه في الـ dashboard:
+
+| المقياس | بيقولك إيه | الـ alert |
+| --- | --- | --- |
+| نسبة الأخطاء لكل route ولكل build | الـ release الجديد كسر endpoint معين | الـ build الجديد ضعف القديم على نفس الـ route |
+| الأخطاء مقسمة بالنوع: network، timeout، 4xx، 5xx، bad_response | الفشل من النت ولا من العقد ولا من السيرفر | أي `bad_response` بعد release |
+| الـ latency: p50 وp95 وp99 | المستخدم البطيء شايف إيه، مش المتوسط | p95 لـ `GET /library` عدّى 3 ثواني |
+| عدد الطلبات لكل جلسة | loop أو طلبات مكررة | build جديد بيبعت 3 أضعاف |
+
+الـ p95 معناه إن 95% من الطلبات أسرع من الرقم ده. المتوسط بيخبّي الناس اللي عندهم نت ضعيف أو مكتبة كبيرة، والـ p95 بيوريهم. ومع الـ staged rollout، القاعدة بسيطة: لو أي route نسبة أخطائه في الـ build الجديد أعلى بوضوح من القديم، وقّف الـ rollout قبل ما توصل لـ 100%.
+
+- <b>الـ sampling:</b> الطلبات الناجحة 10% بس، والفاشلة كلها، والأرقام بتتضرب في نسبة الـ sample. الطلبات الناجحة كتير ومتشابهة، والفاشلة هي اللي محتاج تفاصيلها.
+- <b>اللي عمره ما يتسجل:</b> الـ body، والـ query، والـ headers بتاعة الـ auth، والـ user id كـ label. لو احتجت تعرف مستخدم معين شاف إيه، الـ request id بيوصّلك لـ logs السيرفر.
+
+### الـ API key بتاع خدمة الخرايط اتسرق من الـ app
+
+Readly زوّد «مكتبات قريبة منك»، بـ key لخدمة أماكن بتتحاسب بالطلب، متحط في `--dart-define`. بعد أسبوع الفاتورة اتضاعفت 40 مرة. حد فك الـ APK، وطلّع الـ key، واستخدمه في app بتاعه. درس الـ release في الوحدة 10 قال القاعدة: أي حاجة في الـ binary مش سر، والـ `--dart-define` والـ obfuscation مش استثناء. هنا الحل من ناحية الـ API:
+
+<CodeBlock label="الـ backend بيمسك الـ key، والـ app بيكلّم الـ backend">
+
+```dart
+// data source: our API, our auth, no third-party key in the app
+Future<List<StoreDto>> nearby(double lat, double lng) async {
+  final res = await _dio.get<List<dynamic>>(
+    '/stores/nearby',
+    queryParameters: {'lat': lat.toStringAsFixed(3), 'lng': lng.toStringAsFixed(3)},
+  );
+  return parseOrThrow('GET /stores/nearby',
+      () => [for (final s in res.data!) StoreDto.fromJson(s as Map<String, dynamic>)]);
+}
+```
+
+</CodeBlock>
+
+- <b>الـ key عمره ما بيوصل للموبايل:</b> السيرفر هو اللي بيكلّم خدمة الأماكن. ولو اتسرق من السيرفر، دي مشكلة تانية خالص.
+- <b>الـ backend بيحمي الفاتورة:</b> بيطلب الـ JWT بتاعنا، وبيعمل rate limit لكل مستخدم، وبيعمل كاش للنتايج بالمكان مقرّب (الـ 3 أرقام عشرية حوالي 100 متر)، فمستخدمين في نفس الشارع بياخدوا نفس الرد.
+- <b>العقد بتاعك مش بتاعهم:</b> لو غيّرت مزوّد الخدمة بكرة، الـ `/stores/nearby` بيفضل بنفس الشكل، ومفيش release.
+- <b>لو الـ SDK لازم يبقى في الـ app:</b> زي رسم الخريطة نفسها بـ Google Maps SDK، الـ key بيتقفل من الـ console على الـ package name وبصمة الـ signing (وعلى الـ bundle id في iOS)، وعلى الـ APIs اللي محتاجها بس، ومعاه quota وbilling alert. ده بيقلل الضرر، مش بيخلّيه سر.
+- <b>اللي اتسرق خلاص:</b> اعمله rotate النهارده. النسخ القديمة اللي فيه هتبطّل تشتغل في الـ feature دي، وده سبب كمان إن الـ proxy أحسن: مفيش key في أي نسخة تحتاج تتغير.
+
+### Open Library قفل علينا
+
+بعد إطلاق الكتالوج الجديد، Open Library بدأ يرجّع 429، وبعدين 403 لشوية مستخدمين. الـ metrics بتقول إن جلسة البحث الواحدة بتبعت 40 طلب: شاشة جديدة اتعملت من غير debounce، وكل tile بيطلب المؤلف لوحده، وفي retry من غير backoff في حتة اتنسخت من StackOverflow. Open Library API مجاني ومشترك بين الناس كلها، ومن حقه يقفل على أي client بيضغط عليه.
+
+| الممارسة | فين في الكورس |
+| --- | --- |
+| `User-Agent` فيه اسم الـ app ووسيلة تواصل | درس «أول feature ملف بملف» في الوحدة 1، ودرس «أول طلب من Dart» |
+| debounce للبحث وتجاهل النتايج القديمة | درس الـ Cubit في الوحدة 5 |
+| coalescing وكاش بالـ ETag وحد أقصى للطلبات المتوازية | درس «طلبات متقدمة» |
+| backoff وjitter واحترام `Retry-After` | درس dio في الوحدة 3 |
+| ماتطلبش اللي مش هتعرضه | المؤلف لما الـ tile يظهر، مش للـ 200 كتاب |
+
+```dart
+Dio buildOpenLibraryDio(PackageInfo info) => Dio(BaseOptions(
+      baseUrl: 'https://openlibrary.org',
+      headers: {'User-Agent': 'Readly/${info.version} (support@readly.app)'},
+    ));
+```
+
+ولما Readly يكبر، الخطوة الجاية إن الكتالوج يعدّي على الـ backend بتاعنا: `GET /catalog/works/:id`. Open Library بيشوف client واحد مؤدب بكاش مشترك لكل المستخدمين، بدل 100 ألف موبايل كل واحد بيسأل لوحده. والـ app بيبقى عنده عقد واحد بس، مع الـ backend بتاعه، فلو Open Library غيّر شكل الـ JSON (زي `description` اللي مرة نص ومرة object)، الـ mapper اللي على السيرفر هو اللي يتغير، مش نسخة في الـ store.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>قبل ما endpoint جديد ينزل:</b>
+
+| السؤال | ليه |
+| --- | --- |
+| العقد مكتوب في الـ OpenAPI واتراجع من الموبايل والـ backend؟ | قبل أي كود، مش بعده |
+| كل الـ status والـ codes والـ fields مكتوبة، ومعروف الـ app هيعمل إيه في كل واحد؟ | ده جدول درس «خريطة أخطاء الـ API» للـ endpoint ده |
+| الكتابة آمنة لو اتكررت؟ | Idempotency-Key، أو PUT وDELETE بمعناهم |
+| الليستة فيها pagination من أول يوم؟ | إضافتها بعدين breaking change |
+| الـ timeout معروف؟ | والـ endpoint البطيء ليه timeout خاص |
+| الـ FakeApiAdapter فيه الـ endpoint، والـ fixtures موجودة؟ | الشاشة تتبني وتتختبر من غير السيرفر |
+| الـ route متسجّل في الـ metrics وعليه alert؟ | تعرف إنه باظ قبل المستخدمين |
+| الحقول الجديدة optional، والـ enums ليها fallback؟ | النسخ اللي هتنزل النهارده هتعيش سنين |
+
+- <b>مين بيملك العقد؟</b> الـ backend بيملك الـ implementation، والاتنين بيملكوا العقد. الملف بيعيش في repo الـ backend (أو repo لوحده)، وأي PR بيغيّره محتاج موافقة حد من الموبايل. والأحسن design-first: الـ endpoint بيتكتب في الـ YAML ويتفق عليه، وبعدين الاتنين يبدأوا. الـ app هو اللي بيستهلك، فاحتياجاته (شكل يناسب الشاشة، وكام طلب للصفحة) بتتقال وقت التصميم، مش بعد ما السيرفر يخلص.
+- <b>contract tests:</b> العقد المكتوب مالوش قيمة لو محدش بيتأكد إن الطرفين ماشيين عليه. الطريقة التقيلة consumer-driven contracts (زي Pact): الـ app بيكتب توقعاته، والـ CI بتاع الـ backend بيشغّلها على السيرفر الحقيقي. الطريقة الخفيفة اللي كفاية لـ Readly 3 خطوات:
+
+<CodeBlock label="الـ app: كل fixture لازم يتقري">
+
+```dart
+// test/contract/fixtures_test.dart
+// test/fixtures/*.json come from the OpenAPI examples; CI also validates
+// each one against its schema (OpenAPI 3.1 schemas are JSON Schema)
+void main() {
+  final fixtures = Directory('test/fixtures/notes').listSync().whereType<File>();
+  for (final file in fixtures) {
+    test('NoteDto reads ${file.uri.pathSegments.last}', () {
+      final json = jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+      expect(() => NoteDto.fromJson(json).toEntity(), returnsNormally);
+    });
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ backend: أي breaking change بيوقف الـ PR">
+
+```yaml
+- name: No breaking API changes
+  run: |
+    git show origin/main:api/openapi.yaml > /tmp/base.yaml
+    docker run --rm -v /tmp:/base -v "$PWD/api":/new tufin/oasdiff \
+      breaking /base/base.yaml /new/openapi.yaml --fail-on ERR
+```
+
+</CodeBlock>
+
+- <b>التلاتة مع بعض:</b> الـ fixtures مطابقة للعقد (الـ schema validation)، والـ app بيقرا الـ fixtures (الـ test)، والعقد مابيتكسرش من غير ما حد يقرر (الـ oasdiff). ولو الـ backend عنده tests بتقارن الردود الحقيقية بالـ schema، الدايرة اتقفلت. ونفس الـ fixtures هي اللي الـ FakeApiAdapter يرجّعها، فالـ fake مايبعدش عن الحقيقة.
+- <b>الـ deprecation ليها مواعيد:</b> الـ v1 مابيتشالش لما الـ v2 ينزل. بيتشال لما الـ `minSupportedBuild` يعدّي آخر build بيكلّمه، والسيرفر عارف ده من الـ `X-App-Build` في الـ logs. وقبلها بيرجّع headers زي `Deprecation` و`Sunset` عشان أي client تاني (dashboard، شريك) ياخد باله.
+- <b>الـ API الداخلي برضه عقد:</b> حتى لو نفس الشخص كاتب الـ backend والـ app. الـ binary اللي في الـ store مش بيسمع كلامك، والقواعد دي هي اللي بتخليك تغيّر السيرفر من غير ما تخاف.
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي تغيّر API من غير ما تكسر النسخ القديمة من الـ app؟» أبدأ من إن كل نسخة نزلت عايشة للأبد. التغيير additive بس: حقول جديدة optional، وendpoints جديدة، ومفيش rename ولا remove ولا تغيير نوع. الـ rename بيبقى على مراحل: السيرفر يبعت الاتنين، والـ app الجديد يقرا الجديد، والقديم يتشال بعد ما الـ minimum build يعدّي. ولو لازم breaking change، version جديدة في الـ path (`/v2/library`) والقديمة شغالة لحد ما مفيش build مسموح بيكلّمها. ومن ناحية الـ app، tolerant reader: يتجاهل الحقول اللي مايعرفهاش، وdefaults للناقص، وfallback للـ enum الجديد. والـ CI بيحرس ده بـ oasdiff على الـ OpenAPI وfixtures بتتقري في التستات.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي تجبر المستخدمين على update؟» endpoint config فيه `minSupportedBuild` و`latestBuild`، والـ app بيقارنه بالـ build number (مش الـ version name) وهو بيفتح: أقل من الـ minimum شاشة update مقفولة، وأقل من الـ latest banner يتقفل. ولو الطلب فشل المستخدم يكمّل. ولأن الـ check وقت الفتح بس، في شبكة أمان: كل طلب فيه `X-App-Build`، والسيرفر يرد 426 لو أقدم من المسموح، والـ interceptor يبعت للـ AppAlerts فالـ router يفتح شاشة الـ update. والاتنين لازم يبقوا من أول release، لأن النسخة اللي نزلت من غيرهم مش هتعرف أبدًا إنها قديمة. والـ force update آخر حل: الـ additive changes والـ versioning بيخلّوك نادرًا ما تحتاجه.
+
+</Note>
+
+</Level>
+
+<Quiz>
+
+<Question id="contract-1">
+<Ask>الـ backend عايز يغيّر اسم `updatedAt` لـ `modifiedAt` في `GET /library`. يعملها إزاي من غير ما نسخة 1.3 تبطّل تعمل sync؟</Ask>
+<Answer>
+
+على مراحل: السيرفر يبعت الحقلين مع بعض، ونسخة جديدة من الـ app تقرا `modifiedAt`، وبعد ما الـ `minSupportedBuild` يبقى أكبر من آخر build بيقرا `updatedAt`، السيرفر يشيله. لو اتغير في PR واحد، كل النسخ القديمة هتاخد `bad_response` في كل refresh، ومفيش hotfix للـ binary اللي عند المستخدمين.
+
+</Answer>
+</Question>
+
+<Question id="contract-2">
+<Ask>الـ app بيسأل `/app-config` عن الـ `minSupportedBuild` وهو بيفتح. ليه محتاج 426 كمان؟</Ask>
+<Answer>
+
+لأن الـ check بيحصل وقت الفتح بس، وبيفشل open لو الطلب ماوصلش. مستخدم سايب الـ app مفتوح من يومين، أو الـ check بتاعه فشل، هيفضل يكلّم endpoints اتشالت. الـ `X-App-Build` على كل طلب بيخلّي السيرفر يرد 426، والـ interceptor يبعت للـ AppAlerts فشاشة الـ update تظهر في أي لحظة.
+
+</Answer>
+</Question>
+
+<Question id="contract-3">
+<Ask>طلب `POST /books/:bookId/notes` ضرب `receiveTimeout`، والمستخدم كلّم الدعم. إزاي الدعم يلاقي الطلب ده في logs السيرفر؟</Ask>
+<Answer>
+
+الـ app هو اللي يولّد الـ `X-Request-Id` في interceptor أول السلسلة، والسيرفر يستخدمه لو كان uuid سليم. كده الـ id موجود حتى لو الرد ماوصلش: الـ `_mapDio` بياخده من الـ request headers لما مفيش response، فيظهر للمستخدم كرقم مرجع، وفي الـ breadcrumbs، وفي كل سطر في logs السيرفر لو الطلب وصل.
+
+</Answer>
+</Question>
+
+<Question id="contract-4">
+<Ask>بعد release، dashboards الـ backend خضرا، بس المستخدمين بيشتكوا من «مفيش نت». إيه اللي ممكن يكون حصل، وإيه اللي كان هيبيّنه؟</Ask>
+<Answer>
+
+الفشل بيحصل على الموبايل والسيرفر مش شايفه: timeout اتقلل، أو DNS، أو `bad_response` من عقد اتكسر. اللي كان هيبيّنه metrics من ناحية الـ app: نسبة الأخطاء لكل route ولكل build، مقسمة بالنوع، والـ p95 للـ latency. ومع الـ staged rollout، المقارنة بين الـ build الجديد والقديم كانت هتوقف الـ rollout بدري.
+
+</Answer>
+</Question>
+
+<Question id="contract-5">
+<Ask>زميلك حط key خدمة الأماكن في `--dart-define` وقال إنه في أمان لأن الـ build متعمله obfuscate. إيه الحل الصح؟</Ask>
+<Answer>
+
+الـ key موجود كـ string في الـ binary، والـ obfuscation مابيغيّرش الـ strings. الحل endpoint في الـ backend (`/stores/nearby`) هو اللي بيمسك الـ key، وبيطلب الـ auth بتاعنا، وبيعمل rate limit وكاش. ولو SDK لازم يبقى في الـ app، key مقفول على الـ package والـ signing والـ APIs اللي محتاجها. والـ key اللي اتشحن يتعمله rotate فورًا.
+
+</Answer>
+</Question>
+
+</Quiz>
