@@ -27,3 +27,27 @@ description: "كل مصطلح بمعناه ومثال من Readly."
 | ADR | مستند قصير بيسجل قرار معماري وسببه | «ليه feature-first» |
 | Flavor | نسخة من الـ app بإعدادات مختلفة | dev وstaging وprod |
 | Golden test | تست بيقارن شكل الـ widget بصورة محفوظة | شاشة المكتبة بالعربي |
+| Pagination | تقسيم النتايج لصفحات، وكل طلب بيجيب صفحة واحدة بس | بحث الكتالوج بيجيب 20 كتاب في الطلب |
+| Infinite scroll | الصفحة الجاية بتتطلب لوحدها لما المستخدم يقرب من آخر الليست | `loadMore()` لما `extentAfter` يقل عن 500px |
+| Cursor pagination | السيرفر بيرجّع اللي بعد آخر عنصر شفته بدل رقم صفحة، فالإضافة والمسح مابيزحزحوش النتايج | `after=<id آخر كتاب>` على `_id` في الـ backend بتاعك |
+| PagedResult | نتيجة صفحة في الـ domain: العناصر، وهل في صفحة بعدها | `PagedResult<Book>(items:, hasMore:)` من `SearchBooks` |
+| touched | علامة إن المستخدم ساب الحقل، فالخطأ يظهر بعدها مش من أول حرف | `emailTouched` في `LoginFormState` |
+| account enumeration | إن رسالة الخطأ تكشف مين عنده حساب | «الإيميل أو الباسورد غلط» بدل «الإيميل ده مش متسجّل» |
+| shared_preferences | package بيحفظ قيم صغيرة key-value على الجهاز، ومش متشفّر | الثيم واللغة في `SettingsStoreImpl` |
+| ThemeMode.system | الثيم بيتبع إعداد الجهاز، فده اختيار تالت جنب light وdark | «زي الجهاز» في الـ SegmentedButton بتاع الإعدادات |
+| Session | الفترة اللي الـ tokens فيها شغالة بعد الـ login | بتخلص لما السيرفر يرفض الـ refresh token، مش لما النت يقع |
+| flutter_secure_storage | package بيحفظ key-value متشفّر: في الـ Keychain على iOS، وبمفتاح من الـ Keystore على Android | الـ access والـ refresh token في `SecureTokenStore` |
+| Keychain | خزنة iOS للباسوردات والمفاتيح، وبتفضل موجودة بعد مسح الـ app | علامة first-run بتمسح الـ tokens القديمة بعد إعادة التسطيب |
+| Auto-login | الـ app بيفتح على الحساب من غير باسورد لو في refresh token محفوظ | `checkSession()` في `AuthCubit`، والـ splash ظاهرة وقت `AuthUnknown` |
+| Forced logout | خروج إجباري لما السيرفر يرفض الـ refresh، والمستخدم يتحوّل للـ login من أي شاشة | `onCleared` بيخلّي الـ AuthCubit يطلّع `Unauthenticated(sessionExpired: true)` |
+| Breadcrumb | خطوة بتتسجل على الجهاز، ومابتتبعتش غير مع أول error | الـ `info` والـ `warning` في `SentryLogger` |
+| Release | النسخة اللي الـ crash جه منها، فتعرف الـ fix وصل ولا لأ | `readly@1.4.0+42` |
+| BlocObserver | class واحدة بتسمع على كل الـ Cubits في الـ app | `AppBlocObserver` بيسجّل `LibraryCubit: LibraryLoading → LibraryError` |
+| Redaction | إخفاء البيانات الحساسة قبل ما تتسجل | الـ `LoggingInterceptor` بيكتب `***` مكان الـ Authorization والـ password |
+| Characterization test | تست بيمسك اللي الكود بيعمله النهارده قبل الـ refactor، مش اللي المفروض يعمله | تست `NotesScreen` بـ `FakeNotesApi` |
+| Feature flag | قيمة بتختار بين الكود القديم والجديد، فتقدر ترجع من غير ما ترجع كود | `AppConfig.newNotes` |
+| Architecture test | تست بيقرا الـ imports وبيفرض حدود الطبقات | محدش بره الـ data يعمل import لـ dio، مع allowlist بتصغر بس |
+| StreamUseCase | use case بيرجّع Stream بدل Future، للحاجة اللي بتتغير مع الوقت | `WatchLibrary` بيفلتر المكتبة بالحالة |
+| StatefulShellRoute | تابات كل واحد فيها ليه Navigator، وبيفضل عايش لما تروح تاب تاني | المكتبة والكتالوج والإعدادات |
+| HttpClientAdapter | الجزء في dio اللي بيبعت الطلب فعلًا، وبيتبدل بـ fake في التست | `FakeApi` في تست الـ AuthInterceptor |
+| BlocSelector | بيعيد الرسم بس لما قيمة واحدة من الـ state تتغير | زرار الـ refresh في الـ AppBar بيسمع على `isRefreshing` |

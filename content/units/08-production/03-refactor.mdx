@@ -1,59 +1,652 @@
 ---
 title: "Refactor feature قديمة لـ Clean"
-description: "سطر واحد بيقول الدرس ده عن إيه."
-minutes: 15
-draft: true
+description: "تنقل feature قديمة لـ Clean حتة حتة، والـ app شغال والفريق بيسلّم في كل خطوة."
+minutes: 30
 ---
 
 <Level n="1" title="الفكرة بتشبيه">
 
-<Analogy title="اسم التشبيه">
+<Analogy title="تجديد البيت وانت ساكن فيه">
 
-اشرح الفكرة بحاجة من الحياة اليومية، من غير كود.
+عايز تجدد شقتك، بس مش هتسيبها وتأجّر حتة تانية ست شهور. فبتجددها <b>أوضة أوضة</b>: تفضّي المطبخ، وتجدده، وترجع تطبخ فيه، وبعدين تبدأ في الحمام. وفي كل يوم البيت لسه بيتسكن: في سرير تنام عليه وحنفية شغالة. وقبل ما تكسر أي حيطة، بتصوّر مكان المواسير والكهربا، عشان تتأكد إن مفيش حاجة كانت شغالة وقفت بعد التجديد.
 
 </Analogy>
+
+الـ refactor بنفس الطريقة. عندك feature قديمة شغالة عند المستخدمين، والفريق لازم يفضل يسلّم features جديدة، فماينفعش توقف كل حاجة وتكتبها من الأول. بتنقلها حتة حتة، وفي آخر كل حتة الـ app شغال زي ما كان بالظبط. والصور اللي بتاخدها قبل التكسير هي تستات بتمسك اللي الكود بيعمله النهارده، قبل ما تلمس أي سطر.
+
 
 </Level>
 
 <Level n="2" title="الكود الأساسي">
 
-اشرح أبسط كود للفكرة.
+feature الـ notes في Readly اتكتبت بسرعة قبل ما المعمارية تتحط، وشكلها كده:
 
-<CodeBlock label="وصف قصير للكود">
+<CodeBlock label="نقطة البداية: كل حاجة في widget واحد">
 
 ```dart
-// code here
+// notes/note.dart: the model knows the JSON
+class Note {
+  const Note({required this.id, required this.text, required this.createdAt});
+  final String id;
+  final String text;
+  final DateTime createdAt;
+
+  factory Note.fromJson(Map<String, dynamic> json) => Note(
+        id: json['id'] as String,
+        text: json['text'] as String,
+        createdAt: DateTime.parse(json['createdAt'] as String),
+      );
+}
+
+// notes/notes_screen.dart
+class _NotesScreenState extends State<NotesScreen> {
+  final _dio = getIt<Dio>();
+  List<Note> _notes = [];
+  bool _loading = true;
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final res = await _dio.get<List<dynamic>>('/books/${widget.bookId}/notes');
+      final notes = res.data!
+          .map((e) => Note.fromJson(e as Map<String, dynamic>))
+          .toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt)); // newest first
+      setState(() {
+        _notes = notes;
+        _loading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _error = 'Something went wrong';
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _add(String text) async {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty || _saving) return; // a business rule and a double-tap guard
+    setState(() => _saving = true);
+    try {
+      final res = await _dio.post<Map<String, dynamic>>(
+        '/books/${widget.bookId}/notes',
+        data: {'text': trimmed},
+      );
+      setState(() => _notes.insert(0, Note.fromJson(res.data!)));
+      notesChanged.value++; // a global: the book page reloads its notes count
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Something went wrong')));
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  // build(): a spinner, the error text, or the list with a NoteInput(onSubmit: _add)
+}
 ```
 
 </CodeBlock>
 
+كل اللي الكورس قال إنه بيبوظ موجود هنا: الشاشة عارفة dio والـ URLs وشكل الـ JSON، وقاعدة «الملاحظة الفاضية ماتتبعتش» مستخبية في الـ UI، وكل الأخطاء بقت «Something went wrong». بس الكود ده <b>شغال</b> عند المستخدمين، وده أهم حاجة لازم تفضل صح.
+
+أول خطوة مش إنك تعمل فولدر domain. أول خطوة <b>characterization test</b>: تست بيوصف اللي الكود بيعمله النهارده، مش اللي المفروض يعمله. ولازم يكلّم الحاجات اللي مش هتتغير طول الـ refactor بس: الشاشة من بره (نصوص وزراير)، والشبكة من تحت.
+
+الشبكة بنبدّلها بـ fake على مستوى الـ <b>HttpClientAdapter</b>، زي تست الـ AuthInterceptor في درس الاختبارات. ده الجزء في dio اللي بيبعت الطلب فعلًا، ولو حطيت مكانه fake، كل الطلبات بترجع منه، والكود اللي فوق (سواء widget أو repository) مايحسّش بفرق.
+
+<CodeBlock label="characterization test">
+
+```dart
+class FakeNotesApi implements HttpClientAdapter {
+  final notes = <Map<String, dynamic>>[
+    {'id': 'n1', 'text': 'old', 'createdAt': '2026-01-01T10:00:00Z'},
+    {'id': 'n2', 'text': 'new', 'createdAt': '2026-03-01T10:00:00Z'},
+  ];
+  final posted = <Object?>[];
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    if (options.method == 'POST') {
+      posted.add(options.data);
+      final text = (options.data as Map<String, dynamic>)['text'];
+      return _json({'id': 'n3', 'text': text, 'createdAt': '2026-10-04T10:00:00Z'}, 201);
+    }
+    return _json(notes, 200);
+  }
+
+  ResponseBody _json(Object body, int status) => ResponseBody.fromString(
+        jsonEncode(body),
+        status,
+        headers: {Headers.contentTypeHeader: [Headers.jsonContentType]},
+      );
+
+  @override
+  void close({bool force = false}) {}
+}
+
+void main() {
+  late FakeNotesApi api;
+
+  setUp(() async {
+    await getIt.reset();
+    api = FakeNotesApi();
+    getIt.registerSingleton<Dio>(
+        Dio(BaseOptions(baseUrl: 'https://test'))..httpClientAdapter = api);
+  });
+
+  Future<void> pumpNotes(WidgetTester tester) async {
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: const NotesScreen(bookId: 'OL1'),
+    ));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('shows notes newest first', (tester) async {
+    await pumpNotes(tester);
+    final newY = tester.getTopLeft(find.text('new')).dy;
+    final oldY = tester.getTopLeft(find.text('old')).dy;
+    expect(newY, lessThan(oldY));
+  });
+
+  testWidgets('does not send a blank note', (tester) async {
+    await pumpNotes(tester);
+    await tester.enterText(find.byType(TextField), '   ');
+    await tester.tap(find.byKey(const Key('addNote')));
+    await tester.pumpAndSettle();
+    expect(api.posted, isEmpty);
+  });
+
+  testWidgets('a new note shows on top', (tester) async {
+    await pumpNotes(tester);
+    await tester.enterText(find.byType(TextField), ' first idea ');
+    await tester.tap(find.byKey(const Key('addNote')));
+    await tester.pumpAndSettle();
+    expect(api.posted.single, {'text': 'first idea'});
+    expect(tester.getTopLeft(find.text('first idea')).dy,
+        lessThan(tester.getTopLeft(find.text('new')).dy));
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>التست مايعرفش التفاصيل:</b> مايعرفش setState ولا Cubit ولا repository، فهيفضل أخضر من غير ما تعدّل الـ assertions بتاعته طول الـ refactor.
+- <b>بيمسك السلوك زي ما هو:</b> حتى لو لقيت سلوك غريب، التست يوصفه زي ما هو. الـ refactor مابيغيّرش سلوك، وأي تصليح بيبقى PR لوحده.
+- <b>اتأكد إنه بيمسك فعلًا:</b> امسح الـ `sort` في الشاشة وشغّل التست. لو فضل أخضر، التست مش بيحميك من حاجة.
+
+
 </Level>
 
-<Level n="3" title="التفاصيل والحالات الصعبة">
+<Level n="3" title="الخطوات بالترتيب">
 
-الحالات اللي بتظهر في المشاريع الحقيقية.
+كل خطوة هنا <b>PR لوحده</b>، بيتدمج ويطلع للمستخدمين عادي، والـ characterization test أخضر قبله وبعده. ولو الفريق اضطر يوقف في النص عشان deadline، الكود بيبقى أحسن من الأول، مش في نص هدّة.
+
+<Diagram name="d-refactor-steps">
+
+5 PRs، وكل واحد بيطلع للمستخدمين لوحده. الـ characterization test شغال تحتهم كلهم من غير ما يتغير، والشاشة القديمة عايشة جنب الجديدة ورا flag من PR 2 لحد ما تتمسح في PR 5.
+
+</Diagram>
+
+### PR 1: الشاشة بتكلّم dio بنفسها
+
+طول ما الشاشة هي اللي بتبعت الطلب وبتعمل parse، مفيش حاجة تقدر تحطها بينها وبين الشبكة: لا Cubit ولا fake في التست. فأول حاجة تطلّع الكلام مع الشبكة ورا <b>repository بـ contract</b>، والشاشة تفضل StatefulWidget بـ setState زي ما هي:
+
+<CodeBlock label="الـ repository ورا interface">
+
+```dart
+// notes/domain/notes_repository.dart
+abstract interface class NotesRepository {
+  Future<Result<List<Note>>> getNotes(String bookId);
+  Future<Result<Note>> addNote(String bookId, String text);
+}
+
+// notes/data/notes_remote_source.dart
+class NotesRemoteSource {
+  NotesRemoteSource(this._dio);
+  final Dio _dio;
+
+  Future<List<Note>> fetchNotes(String bookId) async {
+    final res = await _dio.get<List<dynamic>>('/books/$bookId/notes');
+    return res.data!.map((e) => Note.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  Future<Note> addNote(String bookId, String text) async {
+    final res = await _dio.post<Map<String, dynamic>>(
+      '/books/$bookId/notes',
+      data: {'text': text},
+    );
+    return Note.fromJson(res.data!);
+  }
+}
+
+// notes/data/notes_repository_impl.dart
+class NotesRepositoryImpl implements NotesRepository {
+  NotesRepositoryImpl(this._remote, this._logger);
+
+  final NotesRemoteSource _remote;
+  final AppLogger _logger;
+
+  @override
+  Future<Result<List<Note>>> getNotes(String bookId) => guard(
+        () async => (await _remote.fetchNotes(bookId))
+          ..sort((a, b) => b.createdAt.compareTo(a.createdAt)), // newest first
+        logger: _logger,
+        operation: 'notes.getNotes',
+      );
+
+  @override
+  Future<Result<Note>> addNote(String bookId, String text) => guard(
+        () => _remote.addNote(bookId, text),
+        logger: _logger,
+        operation: 'notes.addNote',
+      );
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الشاشة بتكلّم الـ repository">
+
+```dart
+final _repository = getIt<NotesRepository>(); // still get_it in a widget: PR 2 fixes it
+
+Future<void> _load() async {
+  final result = await _repository.getNotes(widget.bookId);
+  if (!mounted) return;
+  setState(() {
+    switch (result) {
+      case Success(:final value):
+        _notes = value;
+      case Err():
+        _error = 'Something went wrong'; // same text: a refactor keeps behavior
+    }
+    _loading = false;
+  });
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="التسجيل، والتست بينادي نفس الـ function">
+
+```dart
+// notes/notes_di.dart: called from setupDependencies
+void registerNotes(GetIt getIt) {
+  getIt
+    ..registerLazySingleton(() => NotesRemoteSource(getIt()))
+    ..registerLazySingleton<NotesRepository>(() => NotesRepositoryImpl(getIt(), getIt()));
+}
+
+// in the characterization test's setUp
+getIt.registerSingleton<AppLogger>(const ConsoleLogger());
+registerNotes(getIt);
+```
+
+</CodeBlock>
+
+- <b>الـ contract بيرجّع نفس الـ Note القديم:</b> اللي فيه `fromJson`. ده مؤقت، وPR 4 بيصلحه من غير ما الـ contract يتغير.
+- <b>الـ setUp اتغير والـ assertions لأ:</b> كل PR بيضيف تسجيلاته في `registerNotes`، والتست بينادي نفس الـ function اللي الـ app بيناديها.
+
+الشاشة بقت ماتعرفش dio ولا URLs، وده كل اللي الـ PR ده عمله.
+
+### PR 2: الـ state متفرقة على 4 متغيرات
+
+`_notes` و`_loading` و`_saving` و`_error` ممكن يبقوا في حالة مالهاش معنى، زي loading وerror مع بعض، ومفيش طريقة تختبر الـ logic من غير ما تعمل pump للشاشة. والسبب إن الـ state مش مكتوبة في مكان واحد كأنواع. الحل Cubit بـ sealed states، والشاشة الجديدة بتتبني <b>جنب</b> القديمة مش مكانها:
+
+<CodeBlock label="NotesCubit">
+
+```dart
+sealed class NotesState {
+  const NotesState();
+}
+final class NotesLoading extends NotesState {
+  const NotesLoading();
+}
+final class NotesLoaded extends NotesState {
+  const NotesLoaded(this.notes, {this.saving = false, this.addFailure});
+  final List<Note> notes;
+  final bool saving;
+  final Failure? addFailure; // the list stays, a snackbar shows it
+}
+final class NotesError extends NotesState {
+  const NotesError(this.failure);
+  final Failure failure;
+}
+
+class NotesCubit extends Cubit<NotesState> {
+  NotesCubit(this._repository) : super(const NotesLoading());
+
+  final NotesRepository _repository;
+  late String _bookId;
+
+  Future<void> load(String bookId) async {
+    _bookId = bookId;
+    emit(const NotesLoading());
+    final result = await _repository.getNotes(bookId);
+    if (isClosed) return;
+    emit(switch (result) {
+      Success(:final value) => NotesLoaded(value),
+      Err(:final failure) => NotesError(failure),
+    });
+  }
+
+  Future<void> add(String text) async {
+    final current = state;
+    final trimmed = text.trim();
+    if (current is! NotesLoaded || current.saving || trimmed.isEmpty) return;
+    emit(NotesLoaded(current.notes, saving: true));
+    final result = await _repository.addNote(_bookId, trimmed);
+    if (isClosed) return;
+    emit(switch (result) {
+      Success(:final value) => NotesLoaded([value, ...current.notes]),
+      Err(:final failure) => NotesLoaded(current.notes, addFailure: failure),
+    });
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="القديمة والجديدة ورا flag">
+
+```dart
+// notes/notes_entry.dart: the route and the test build the screen here
+// the old screen is renamed to LegacyNotesScreen, not touched
+Widget notesEntry(String bookId, {required bool useNew}) => useNew
+    ? BlocProvider(
+        create: (_) => getIt<NotesCubit>()..load(bookId),
+        child: const NotesView(),
+      )
+    : LegacyNotesScreen(bookId: bookId);
+
+GoRoute(
+  path: 'books/:id/notes',
+  builder: (_, state) =>
+      notesEntry(state.pathParameters['id']!, useNew: getIt<AppConfig>().newNotes),
+),
+
+// the characterization test: pumpNotes now pumps notesEntry('OL1', useNew: ...)
+final screens = ValueVariant<bool>({false, true}); // legacy, new
+// home: notesEntry('OL1', useNew: screens.currentValue!)
+// testWidgets('shows notes newest first', (tester) async { ... }, variant: screens);
+```
+
+</CodeBlock>
+
+- <b>الـ flag:</b> `newNotes` field في الـ `AppConfig` بتاع درس الـ flavors. بتشغّله في dev الأول، وبعد ما الـ QA يتأكد بيتشغّل في prod. ولو طلع bug، بترجّعه false في release صغير من غير ما ترجع كود.
+- <b>الـ ValueVariant:</b> بيشغّل نفس التست مرتين، مرة لكل قيمة. فنفس الـ assertions بتثبت إن الشاشتين بيعملوا نفس الحاجة.
+- <b>الـ Cubit بيكلّم الـ repository مباشرة:</b> لسه مفيش use case. والقاعدة `trimmed.isEmpty` لسه في الـ Cubit، وده PR 3.
+- <b>blocTest بقى ممكن:</b> تقدر تختبر الـ Cubit بـ fake repository في أجزاء من الثانية، من غير widgets.
+
+الـ state بقت أنواع واضحة، والشاشة الجديدة طالعة للمستخدمين والقديمة لسه موجودة كخط رجوع.
+
+### الـ global اللي شاشات تانية بتسمع عليه
+
+أول ما الـ flag اتشغّل، صفحة الكتاب بطّلت تحدّث عدد الملاحظات. السبب السطر ده في الشاشة القديمة: `notesChanged.value++`. ده `ValueNotifier` global، وصفحة الكتاب والـ badge في الرئيسية بيسمعوا عليه، والـ NotesView الجديدة مابتلمسوش. والـ characterization test مامسكش ده، لأنه بيختبر شاشة الملاحظات بس.
+
+الحل الغلط إن الـ Cubit يعمل `notesChanged.value++`، كده الكود الجديد ورث المشكلة القديمة. الحل إن الـ repository يقول «حصل تغيير» بـ stream، زي `onCleared` بتاع الـ TokenStore، و<b>كوبري واحد</b> في الـ composition root يوصّله للـ global:
+
+<CodeBlock label="الـ repository بيطلّع تغييراته">
+
+```dart
+abstract interface class NotesRepository {
+  Future<Result<List<Note>>> getNotes(String bookId);
+  Future<Result<Note>> addNote(String bookId, String text);
+  Stream<void> get changes; // a note was added
+}
+
+class NotesRepositoryImpl implements NotesRepository {
+  // ...
+  final _changes = StreamController<void>.broadcast();
+
+  @override
+  Stream<void> get changes => _changes.stream;
+
+  @override
+  Future<Result<Note>> addNote(String bookId, String text) async {
+    final result = await guard(
+      () => _remote.addNote(bookId, text),
+      logger: _logger,
+      operation: 'notes.addNote',
+    );
+    if (result is Success<Note>) _changes.add(null);
+    return result;
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الكوبري في مكان واحد">
+
+```dart
+void registerNotes(GetIt getIt) {
+  getIt
+    ..registerLazySingleton(() => NotesRemoteSource(getIt()))
+    ..registerLazySingleton<NotesRepository>(() => NotesRepositoryImpl(getIt(), getIt()))
+    ..registerFactory(() => NotesCubit(getIt()));
+
+  // legacy bridge: the book page still listens to the global.
+  // delete this line in the PR that moves the book page to `changes`.
+  getIt<NotesRepository>().changes.listen((_) => notesChanged.value++);
+}
+```
+
+</CodeBlock>
+
+- <b>ماتمسحش الـ global في الأول:</b> شاشات لسه ماتنقلتش بتقرا منه، ومسحه معناه إنك بتعمل refactor لـ 3 features في PR واحد.
+- <b>الكود الجديد مايلمسوش:</b> لا الـ Cubit ولا الـ repository يعرفوا إن في global. السطر الوحيد اللي يعرف العالمين في الـ DI، فمسحه بعدين سطر واحد.
+- <b>اكتب characterization test للقاري:</b> تست لصفحة الكتاب يتأكد إن العدد بيزيد بعد الإضافة. ده اللي كان هيمسك المشكلة دي قبل ما توصل للمستخدمين.
+
+الـ global بيفضل عايش لحد ما آخر واحد بيقرا منه يتنقل، والكوبري بس هو اللي يعرفه.
+
+### PR 3: القاعدة جوه الـ Cubit
+
+«الملاحظة الفاضية ماتتبعتش» قاعدة business، بس هي في الـ `add` بتاع الـ Cubit. لو صفحة الكتاب زوّدت زرار «ملاحظة سريعة» بـ Cubit تاني، القاعدة هتتنسخ. فدي اللي تستاهل <b>use case</b>:
+
+<CodeBlock label="AddNote">
+
+```dart
+class AddNoteParams {
+  const AddNoteParams({required this.bookId, required this.text});
+  final String bookId;
+  final String text;
+}
+
+class AddNote {
+  AddNote(this._notes);
+  final NotesRepository _notes;
+
+  Future<Result<Note>> call(AddNoteParams params) async {
+    final text = params.text.trim();
+    if (text.isEmpty) return const Err(ValidationFailure('Empty note'));
+    return _notes.addNote(params.bookId, text);
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ Cubit بعد الـ use case">
+
+```dart
+NotesCubit(this._repository, this._addNote) : super(const NotesLoading());
+
+final NotesRepository _repository; // load() still uses it: getNotes has no rule
+final AddNote _addNote;
+
+Future<void> add(String text) async {
+  final current = state;
+  if (current is! NotesLoaded || current.saving) return;
+  emit(NotesLoaded(current.notes, saving: true));
+  final result = await _addNote(AddNoteParams(bookId: _bookId, text: text));
+  if (isClosed) return;
+  emit(switch (result) {
+    Success(:final value) => NotesLoaded([value, ...current.notes]),
+    Err(failure: ValidationFailure()) => current, // blank: nothing happens, as before
+    Err(:final failure) => NotesLoaded(current.notes, addFailure: failure),
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>مفيش GetNotes:</b> هيبقى pass-through بينادي `getNotes` وبس، فالـ Cubit بيكلّم الـ repository مباشرة، زي قرار الـ pass-through في درس الـ Domain. الـ use case بيتعمل لما في قاعدة يحميها، مش عشان الفولدر يبقى كامل.
+- <b>الـ ValidationFailure بترجّع نفس الـ state:</b> الشاشة القديمة كانت بتتجاهل الملاحظة الفاضية من غير رسالة، والـ refactor بيحافظ على ده. لو عايز رسالة، ده تغيير سلوك وليه PR لوحده.
+- <b>ده نفس AddNote اللي في درس SOLID:</b> لما يحتاج يتأكد إن الكتاب موجود في المكتبة، هياخد `BookLookup` زي هناك.
+
+القاعدة بقت في مكان واحد وبتتختبر بـ dart test، والـ use case اتعمل للعملية اللي فيها قاعدة بس.
+
+### PR 4: الـ Note لسه عارف شكل الـ JSON
+
+الـ contract في الـ domain بيرجّع Note فيه `fromJson`، يعني الـ domain مربوط بشكل الـ API. لو السيرفر غيّر `createdAt` لـ `created_at`، التعديل هيلمس class بيستخدمها الـ Cubit والـ use case. ده بالظبط درس الـ Data: الـ entity تبقى Dart صافي، والـ JSON يروح DTO بـ mapper:
+
+<CodeBlock label="الـ entity والـ DTO">
+
+```dart
+// notes/domain/note.dart: no JSON
+class Note {
+  const Note({required this.id, required this.text, required this.createdAt});
+  final String id;
+  final String text;
+  final DateTime createdAt;
+}
+
+// notes/data/note_dto.dart
+class NoteDto {
+  const NoteDto({required this.id, required this.text, required this.createdAt});
+  final String id;
+  final String text;
+  final String createdAt;
+
+  factory NoteDto.fromJson(Map<String, dynamic> json) => NoteDto(
+        id: json['id'] as String,
+        text: json['text'] as String,
+        createdAt: json['createdAt'] as String,
+      );
+}
+
+extension NoteDtoMapper on NoteDto {
+  Note toEntity() => Note(id: id, text: text, createdAt: DateTime.parse(createdAt));
+}
+```
+
+</CodeBlock>
+
+الـ `NotesRemoteSource` بقى يرجّع `NoteDto`، والـ repository بيعمل `toEntity()` جوه الـ guard. الـ contract نفسه ماتغيرش، فالـ Cubit والـ use case والتستات مااتلمسوش. والـ LegacyNotesScreen بتاخد Note من الـ repository من PR 1، فمش محتاجة غير إن الـ import بتاعها يتغير.
+
+الـ domain بقى مايعرفش حاجة عن الـ API، والتغيير وقف عند الـ data زي ما كان مخطط.
+
+### PR 5: الكود القديم لسه موجود
+
+الـ flag بقاله أسبوعين `true` في prod ومفيش مشاكل. لو سبت الشاشة القديمة، حد هيصلّح bug فيها هي، أو هيعمل import ليها في feature جديدة. والـ refactor مابيخلصش غير لما القديم يتمسح:
+
+- امسح `LegacyNotesScreen`، والـ flag `newNotes` من الـ `AppConfig`، و`notesEntry` يرجّع الـ BlocProvider بس.
+- شيل الـ `ValueVariant` من الـ characterization test، فيرجع يشتغل على الشاشة الجديدة بس. والـ assertions زي ما هي من أول يوم.
+- سطر الكوبري والـ `notesChanged` نفسه بيتمسحوا في الـ PR اللي بينقل صفحة الكتاب تسمع على `changes`، مش هنا. الـ global بيموت مع آخر واحد بيقرا منه.
+
+الـ refactor خلص لما مفيش طريق في الكود يوصل للشكل القديم.
+
 
 </Level>
 
 <Level n="4" title="قرارات الـ senior">
 
-الـ trade-offs والأخطاء الشائعة.
+- <b>امتى ماتعملش refactor أصلًا:</b> feature محدش بيلمسها ومابتطلّعش bugs. الكود الوحش اللي مابيتغيرش مابيكلّفش حاجة. ولا feature هتتشال قريب. ابدأ بالملفات اللي بتتعدّل أكتر وفيها bugs أكتر، وده بيبان من الـ git log ومن Sentry.
+- <b>refactor مش rewrite:</b> إعادة الكتابة من الصفر بتوقف الـ features شهور، وبتضيّع سلوكيات صغيرة محدش كتبها في أي حتة، زي «الأحدث الأول»، ومابتوصلش للمستخدم غير في الآخر. الخطوات الصغيرة بتوصل كل أسبوع، وكل واحدة تقدر ترجع فيها.
+- <b>إقناع الفريق بالأرقام مش بالذوق:</b> «الكود وحش» مش حجة. «آخر 3 تعديلات في الـ notes خدوا ضعف التقدير، و40% من الـ bugs من الشاشة دي، ومفيش عليها ولا تست» حجة. واعرضه كـ PRs صغيرة بتمشي جنب الـ features، مثلًا 20% من كل sprint، مش sprint متوقف.
+- <b>التقدير لكل PR:</b> ماتقدّرش «الـ refactor كله». أول feature بتاخد أطول لأنها بتبني الأساس (الـ `registerNotes` والـ characterization tests والـ flag)، واللي بعدها أسرع. ولو PR عدّى يومين شغل، قسّمه.
+- <b>قيس التقدم بأداة:</b> architecture test بيقرا الـ imports، وبيفشل لو أي ملف جديد بره الـ data عمل import لـ dio. الملفات القديمة في allowlist، والتست بيفشل كمان لو ملف اتصلّح ولسه في الليست، فالليست مابتصغرش غير لتحت. وطولها هو رقم التقدم اللي بتوريه للفريق.
+
+<CodeBlock label="test/architecture_test.dart">
+
+```dart
+// shrinks with every PR; never add to it
+const legacy = {
+  'lib/book/book_page.dart',
+  'lib/profile/profile_screen.dart',
+  // lib/notes/notes_screen.dart left in PR 1
+};
+
+bool mayUseDio(String path) =>
+    path.contains('/data/') || path.startsWith('lib/core/network/') || path.startsWith('lib/di/');
+
+void main() {
+  test('only data, network and DI import dio', () {
+    final offenders = Directory('lib')
+        .listSync(recursive: true)
+        .whereType<File>()
+        .map((f) => f.path.replaceAll(r'\', '/'))
+        .where((path) => path.endsWith('.dart') && !mayUseDio(path))
+        .where((path) => File(path).readAsStringSync().contains('package:dio/'))
+        .toSet();
+    expect(offenders.difference(legacy), isEmpty, reason: 'new code goes through a repository');
+    expect(legacy.difference(offenders), isEmpty, reason: 'fixed? remove it from the list');
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>الـ ADR قبل أول PR:</b> بيقول ليه بتنقل الـ notes، والترتيب، والـ flag، وامتى القديم يتمسح، وإن أي feature جديدة بتتكتب بالشكل الجديد من النهارده. من غيره، حد جديد في الفريق هيقلّد الشاشة القديمة لأنها أول حاجة شافها.
+- <b>تغيير السلوك PR لوحده:</b> لو لقيت bug وانت بتعمل refactor، اكتبه وصلّحه في PR منفصل فيه تست بيوصف السلوك الجديد. لو اتخلطوا، الـ review مش هيفرّق بين اللي اتنقل واللي اتغير، ولو حصلت مشكلة مش هتعرف ترجع أنهي واحد.
 
 <Note kind="interview" title="سؤال interview">
 
-السؤال، والإجابة القوية.
+«عندك feature قديمة كلها في widget واحد. هتنقلها لـ Clean إزاي من غير ما توقف الشغل؟» أبدأ بـ characterization tests بتكلّم الشاشة من بره والشبكة بـ fake `HttpClientAdapter`، فتفضل خضرا طول الطريق. بعدين PRs صغيرة، كل واحد بيطلع للمستخدمين لوحده: الـ repository ورا contract، وبعدين Cubit في شاشة جديدة جنب القديمة ورا flag، وuse case بس للعملية اللي فيها قاعدة، وبعدين الـ entity للـ domain والـ JSON لـ DTO، وفي الآخر أمسح القديم والـ flag. أي global مشترك بيفضل لحد ما آخر قاري يتنقل، وكوبري واحد في الـ composition root بيوصّله. والتقدم بقيسه بـ architecture test على الـ imports وallowlist بتصغر بس، والقرار كله مكتوب في ADR. والأهم: الـ refactor مابيغيّرش سلوك، وأي تصليح PR لوحده.
 
 </Note>
+
+<Note kind="info" title="الخطوة الجاية">
+
+كده خلصت دروس الكورس. اعمل مهام الوحدة دي في درس «التطبيق والمهام»، وبعدها راجع كل حاجة من صفحة المراجعة: الكروت اللي علّمتها «راجعها تاني» وأسئلة الـ interviews.
+
+</Note>
+
 
 </Level>
 
 <Quiz>
 
 <Question id="refactor-1">
-<Ask>السؤال الأول؟</Ask>
+<Ask>ليه أول خطوة characterization test، مش فولدر domain؟</Ask>
 <Answer>
 
-الإجابة.
+عشان يمسك اللي الكود بيعمله النهارده قبل ما تلمسه. ولأنه بيكلّم الشاشة من بره والشبكة بـ fake بس، بيفضل أخضر طول الـ refactor، وأي سلوك يتكسر بيبان فورًا.
+
+</Answer>
+</Question>
+
+<Question id="refactor-2">
+<Ask>بعد ما شغّلت الـ NotesView الجديدة، صفحة الكتاب بطّلت تحدّث عدد الملاحظات. ليه، وتصلحها فين؟</Ask>
+<Answer>
+
+الشاشة القديمة كانت بتزوّد `notesChanged` الـ global، والجديدة لأ. الـ repository يطلّع `changes`، وسطر كوبري واحد في `registerNotes` يزوّد الـ global، لحد ما صفحة الكتاب تتنقل. مش في الـ Cubit.
+
+</Answer>
+</Question>
+
+<Question id="refactor-3">
+<Ask>وانت في PR 3 لقيت إن الشاشة بتقبل ملاحظة 10,000 حرف والسيرفر بيرجع 500. تصلحها في نفس الـ PR؟</Ask>
+<Answer>
+
+لأ. ده تغيير سلوك، فليه PR لوحده فيه تست جديد وقاعدة في `AddNote` بترجع ValidationFailure. لو اتخلط مع الـ refactor، الـ review مش هيفرّق بينهم، ولو حصلت مشكلة مش هتعرف ترجع أنهي واحد.
 
 </Answer>
 </Question>

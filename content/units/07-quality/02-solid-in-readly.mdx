@@ -281,3 +281,34 @@ final resolver = ConflictResolver(FixedClock(DateTime(2026, 10, 4)));
 interface ليه implementation واحد ومش بيتبدل في التست، ومش بيعزل حاجة من بره، ده boilerplate مش DIP. اعمل abstraction لما يكون في سبب: تست، أو تبديل، أو عزل framework.
 
 </Note>
+
+<Quiz>
+
+<Question id="solid-readly-1">
+<Ask>إيه المقياس الحقيقي لمبدأ المسؤولية الواحدة؟</Ask>
+<Answer>
+
+عدد الأسباب اللي تخلي الـ class تتغير، مش «بتعمل حاجة واحدة». لو أكتر من جهة ممكن تطلب تعديل عليها، محتاجة تتقسم.
+
+</Answer>
+</Question>
+
+<Question id="solid-readly-2">
+<Ask>`CachedLibraryRepository` بيعمل implement لـ `LibraryRepository`، و`addBook` فيه بيرمي `UnsupportedError`. أنهي مبدأ اتكسر، وتصلحه إزاي؟</Ask>
+<Answer>
+
+LSP: اللي بينادي واخد وعد إن addBook بترجع Result، فالـ app هيقع. الحل مش try/catch: الـ cache اللي للقراية بس يعمل implement لـ interface صغير على قده (ISP)، مش للـ contract الكامل.
+
+</Answer>
+</Question>
+
+<Question id="solid-readly-3">
+<Ask>ضفت Failure جديد، والـ compiler طلّع errors في كل switch. زميلك بيقول ده كسر لـ OCP، ونحوّل الـ Failures لـ class مفتوحة. توافق؟</Ask>
+<Answer>
+
+لأ. ده trade-off مقصود: في المجموعات المقفولة زي الـ Failures والـ states، الأولوية إن كل حالة تتعامل صح، والـ compiler بيضمن ده. الـ OCP مكانه المجموعات اللي بتكبر، زي الـ interceptors والـ data sources.
+
+</Answer>
+</Question>
+
+</Quiz>

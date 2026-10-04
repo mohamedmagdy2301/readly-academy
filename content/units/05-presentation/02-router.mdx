@@ -91,9 +91,110 @@ GoRouter buildRouter(AuthCubit auth) => GoRouter(
 
 دلوقتي لما الـ token يبوظ والـ AuthCubit يطلّع loggedOut (من الـ interceptor في درس dio والشبكة في الوحدة 3)، المستخدم بيتحول لصفحة الدخول من أي مكان في الـ app، من غير ما أي شاشة تكتب كود للموضوع ده.
 
+وفي درس الـ Session في الوحدة 6، الـ AuthCubit هيزيد حالة تالتة، `AuthUnknown`، للحظة اللي الـ app لسه بيقرا فيها الـ token وهو بيفتح. والـ redirect هيوديها لـ splash، بدل ما يعرض صفحة الدخول لحظة وبعدين يحوّل للمكتبة.
+
 ### Deep links
 
 لو حد فتح لينك `readly.app/library/books/OL1`، go_router بيبني الـ stack كامل: المكتبة تحت وصفحة الكتاب فوقها. والـ redirect بيتطبق برضه: لو مش مسجّل يروح للـ login الأول.
+
+### StatefulShellRoute: كل تاب بحالته
+
+Readly فيها 3 تابات تحت: المكتبة والكتالوج والإعدادات. لو كل تاب `GoRoute` عادي وبتنقل بينهم بـ `context.go('/catalog')`، المستخدم اللي كان نازل لنص المكتبة وراح الكتالوج ورجع، هيلاقي الليست من أولها، وspinner، وطلب جديد للسيرفر. ولو كان فاتح صفحة كتاب جوه المكتبة، راحت هي كمان.
+
+السبب إن `go` بيبني الـ stack من شجرة الـ routes للعنوان الجديد بس. صفحة المكتبة مش جزء من `/catalog`، فبتتشال من الشجرة: الـ ListView بالـ scroll بتاعه بيتشال، والـ BlocProvider بيعمل close للـ LibraryCubit. ولما ترجع، كل حاجة بتتعمل من الأول.
+
+الحل `StatefulShellRoute`: route بيلف التابات، وكل تاب جواه <b>branch</b> ليه Navigator بتاعه. والـ `indexedStack` بيحط الـ branches في `IndexedStack`، يعني widget بيعرض واحد بس منهم، والباقي بيفضلوا عايشين مستخبيين:
+
+<CodeBlock label="التابات كـ branches">
+
+```dart
+GoRouter buildRouter(AuthCubit auth) => GoRouter(
+      initialLocation: '/library',
+      refreshListenable: StreamListenable(auth.stream),
+      redirect: (context, state) {/* same as before */},
+      routes: [
+        GoRoute(path: '/login', builder: (_, __) => const LoginPage()), // outside the shell
+        StatefulShellRoute.indexedStack(
+          builder: (context, state, navigationShell) =>
+              HomeShell(navigationShell: navigationShell),
+          branches: [
+            StatefulShellBranch(routes: [
+              GoRoute(
+                path: '/library',
+                builder: (_, __) => BlocProvider(
+                  create: (_) => getIt<LibraryCubit>()..load(),
+                  child: const LibraryPage(),
+                ),
+                routes: [
+                  GoRoute(
+                    path: 'books/:id',
+                    builder: (_, state) => BookPage(id: state.pathParameters['id']!),
+                  ),
+                ],
+              ),
+            ]),
+            StatefulShellBranch(routes: [
+              GoRoute(
+                path: '/catalog',
+                builder: (_, __) => BlocProvider(
+                  create: (_) => getIt<CatalogSearchCubit>(),
+                  child: const CatalogPage(),
+                ),
+              ),
+            ]),
+            StatefulShellBranch(routes: [
+              GoRoute(path: '/settings', builder: (_, __) => const SettingsPage()),
+            ]),
+          ],
+        ),
+      ],
+    );
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ shell والتابات">
+
+```dart
+class HomeShell extends StatelessWidget {
+  const HomeShell({super.key, required this.navigationShell});
+  final StatefulNavigationShell navigationShell;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        body: navigationShell, // the IndexedStack: hidden tabs stay alive
+        bottomNavigationBar: NavigationBar(
+          selectedIndex: navigationShell.currentIndex,
+          onDestinationSelected: (index) => navigationShell.goBranch(
+            index,
+            // tapping the current tab again goes back to its first page
+            initialLocation: index == navigationShell.currentIndex,
+          ),
+          destinations: const [
+            NavigationDestination(icon: Icon(Icons.menu_book), label: 'Library'),
+            NavigationDestination(icon: Icon(Icons.search), label: 'Catalog'),
+            NavigationDestination(icon: Icon(Icons.settings), label: 'Settings'),
+          ],
+        ),
+      );
+}
+```
+
+</CodeBlock>
+
+<Diagram name="d-shell-branches">
+
+كل branch ليه Navigator والـ stack بتاعه. المكتبة ظاهرة وفوقها صفحة كتاب، والكتالوج مستخبي بس الـ scroll والـ Cubit بتوعه عايشين، والإعدادات لسه ماتبنتش لأن المستخدم مافتحهاش. والـ login بره الـ shell خالص.
+
+</Diagram>
+
+- <b>الـ goBranch بدل go:</b> بيرجّعك للـ branch بنفس الـ stack اللي سبته عليه. لو كنت فاتح صفحة كتاب في المكتبة ورحت الكتالوج ورجعت، هتلاقي صفحة الكتاب.
+- <b>الـ scroll والـ Cubit بيفضلوا:</b> لأن الـ branch مابيتشالش من الشجرة، فالـ ListView والـ BlocProvider عايشين، والـ LibraryCubit مابيعملش close ولا `load()` تاني.
+- <b>الـ branch بيتبني أول مرة تفتحه بس:</b> الإعدادات مش بتتعمل غير لما المستخدم يدوس عليها، وبعدها بتفضل عايشة.
+- <b>الـ redirect لسه شغال:</b> بيتنادى مع كل تنقل، حتى `goBranch`. والـ `/login` بره الـ shell، فلما الـ AuthCubit يطلّع إن المستخدم خرج، الـ redirect بيوديه هناك والـ shell كله بيتشال بالـ Cubits اللي جواه. ولما يدخل تاني، التابات بتتبني من جديد.
+- <b>الـ deep links:</b> `/library/books/OL1` بيفتح تاب المكتبة وفوقه صفحة الكتاب، والتابات التانية مستنية أول ضغطة.
+
+كل تاب بقى ليه Navigator بتاعه وبيفضل عايش، فالرجوع ليه بيلاقيه زي ما سبته، والـ redirect لسه فوقهم كلهم.
 
 
 </Level>
@@ -101,7 +202,7 @@ GoRouter buildRouter(AuthCubit auth) => GoRouter(
 <Level n="4" title="تفاصيل بتفرق">
 
 - <b>الـ redirect لازم يبقى سريع:</b> بيتنادى مع كل تنقل، فماتعملش فيه طلبات شبكة. اقرا الحالة من الـ Cubit وبس.
-- <b>متى go ومتى push؟</b> go للتنقل بين أقسام رئيسية (زي تابات)، وpush لما عايز المستخدم يرجع للي كان فيه (زي فتح تفاصيل كتاب).
+- <b>متى go ومتى push؟</b> go للتنقل لقسم رئيسي من أي مكان، وpush لما عايز المستخدم يرجع للي كان فيه (زي فتح تفاصيل كتاب). أما التابات اللي تحت، فبـ `navigationShell.goBranch` مع StatefulShellRoute، عشان كل تاب يحتفظ بحالته (آخر جزء في Level 3).
 - <b>الـ routes بأنواع:</b> الـ `go_router_builder` بيخليك تكتب `BookRoute(id: 'OL1').go(context)` بدل string، فأي غلطة في الـ path تبقى compile error.
 - <b>الـ router نفسه مايتبنيش جوه build:</b> لو اتعمل من جديد مع كل rebuild، الـ navigation state هيضيع.
 

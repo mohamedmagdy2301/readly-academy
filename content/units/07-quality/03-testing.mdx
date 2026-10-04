@@ -106,6 +106,153 @@ test('maps connection errors to NetworkFailure', () async {
 | بيختبر | السلوك والنتيجة | التفاعل: الـ method اتنادت؟ كام مرة؟ |
 | ميزته | مابيتكسرش لما التفاصيل الداخلية تتغير | سريع تكتبه لأي حالة غريبة (زي exception معين) |
 
+### تست الـ AuthInterceptor
+
+الـ AuthInterceptor من درس dio أخطر class في الشبكة: لو باظ، يا إما المستخدم بيخرج من الـ app من غير سبب، يا إما السيرفر بياخد 3 طلبات refresh في نفس اللحظة. وهو كمان أصعب class تختبرها. لو عملت mock لـ Dio بـ mocktail، الـ interceptor نفسه مش هيشتغل، لأن اللي بينادي `onRequest` و`onError` ويستنى `handler.resolve` هو Dio الحقيقي. ولو جربته على سيرفر حقيقي، مش هتقدر ترجّع 3 مرات 401 في نفس اللحظة، ولا تقطع النت وقت الـ refresh بالظبط.
+
+الحل إن Dio يفضل حقيقي، والـ interceptor حقيقي، والشبكة بس هي اللي fake. الـ <b>HttpClientAdapter</b> هو آخر جزء في dio، اللي بيبعت الطلب فعلًا ويرجّع الرد. لو حطيت مكانه class بتاعك، كل اللي فوقه بيشتغل زي ما هو، والردود بتيجي منك:
+
+<CodeBlock label="السيرفر والـ tokens كـ fakes">
+
+```dart
+// the API: a request with the old token gets 401, with the new one 200
+class FakeApi implements HttpClientAdapter {
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    if (options.path == '/auth/login') return _json({}, 401); // wrong password
+    final ok = options.headers['Authorization'] == 'Bearer new-access';
+    return _json({}, ok ? 200 : 401);
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
+// the refresh endpoint, behind _refreshDio
+class FakeRefreshApi implements HttpClientAdapter {
+  int calls = 0;
+  bool offline = false;
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    calls++;
+    await Future<void>.delayed(const Duration(milliseconds: 20)); // slow: requests overlap
+    if (offline) {
+      throw DioException.connectionError(requestOptions: options, reason: 'offline');
+    }
+    return _json({'accessToken': 'new-access', 'refreshToken': 'new-refresh'}, 200);
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
+ResponseBody _json(Object body, int status) => ResponseBody.fromString(
+      jsonEncode(body),
+      status,
+      headers: {Headers.contentTypeHeader: [Headers.jsonContentType]},
+    );
+
+class FakeTokenStore implements TokenStore {
+  String? access = 'old-access';
+  String? refresh = 'old-refresh';
+  int clears = 0;
+
+  @override
+  Future<String?> get accessToken async => access;
+  @override
+  Future<String?> get refreshToken async => refresh;
+  @override
+  Future<void> save({required String access, required String refresh}) async {
+    this.access = access;
+    this.refresh = refresh;
+  }
+  @override
+  Future<void> clear() async {
+    access = refresh = null;
+    clears++;
+  }
+  @override
+  Stream<void> get onCleared => const Stream.empty();
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="التستات">
+
+```dart
+void main() {
+  late FakeTokenStore tokens;
+  late FakeRefreshApi refreshApi;
+  late Dio dio;
+
+  setUp(() {
+    tokens = FakeTokenStore();
+    refreshApi = FakeRefreshApi();
+    final refreshDio = Dio(BaseOptions(baseUrl: 'https://test'))
+      ..httpClientAdapter = refreshApi;
+    dio = Dio(BaseOptions(baseUrl: 'https://test'))..httpClientAdapter = FakeApi();
+    dio.interceptors.add(AuthInterceptor(tokens, refreshDio, dio));
+  });
+
+  test('three parallel 401s share one refresh', () async {
+    final responses = await Future.wait([
+      dio.get('/library'),
+      dio.get('/catalog'),
+      dio.get('/settings'),
+    ]);
+
+    expect(responses.map((r) => r.statusCode), everyElement(200));
+    expect(refreshApi.calls, 1);
+    expect(tokens.access, 'new-access');
+  });
+
+  test('an offline refresh keeps the tokens and fails as a network error', () async {
+    refreshApi.offline = true;
+
+    await expectLater(
+      dio.get('/library'),
+      throwsA(isA<DioException>()
+          .having((e) => e.type, 'type', DioExceptionType.connectionError)),
+    );
+    expect(tokens.clears, 0);
+    expect(tokens.refresh, 'old-refresh'); // still logged in
+  });
+
+  test('a 401 on a skipAuth request never refreshes', () async {
+    await expectLater(
+      dio.post(
+        '/auth/login',
+        data: {'email': 'a@readly.app', 'password': 'wrong'},
+        options: Options(extra: {'skipAuth': true}),
+      ),
+      throwsA(isA<DioException>()
+          .having((e) => e.response?.statusCode, 'status', 401)),
+    );
+    expect(refreshApi.calls, 0);
+    expect(tokens.clears, 0);
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>الـ 401 وبعدين 200:</b> الـ FakeApi مش بيعدّ الطلبات، بيبص على الـ token. أي طلب بالـ token القديم بياخد 401، ولما الـ interceptor يعيده بالـ token الجديد بياخد 200. ده نفس اللي السيرفر الحقيقي بيعمله، وبيشتغل مهما كان عدد الطلبات.
+- <b>الـ delay هو اللي بيعمل الزحمة:</b> الـ refresh بياخد 20ms، فالـ 3 طلبات بيرجعوا 401 والـ refresh لسه شغال. اتأكد إن التست بيمسك فعلًا: امسح الـ Completer من الـ interceptor، والتست هيفشل بـ `calls` بـ 3.
+- <b>الـ refresh فشل من غير رد:</b> الـ `DioException.connectionError` من الـ adapter هو بالظبط اللي dio بيرميه لما النت مقطوع. الـ interceptor بيعدّيه زي ما هو، فالـ guard بيحوّله لـ NetworkFailure زي جدول درس dio، والـ tokens بتفضل لأن السيرفر ماقالش «لأ».
+- <b>الـ skipAuth:</b> الـ 401 هنا معناه باسورد غلط، فبيوصل زي ما هو ومفيش refresh ولا مسح. والـ Options بتحط الـ `extra` على الطلب زي ما الـ remote source بتاع الـ login بيعمل.
+
+اختبر الـ interceptor بـ Dio حقيقي والشبكة بس fake على مستوى الـ HttpClientAdapter، فالتست بيشغّل نفس الكود اللي بيشتغل عند المستخدم.
+
 ### blocTest: تسلسل الـ states
 
 <CodeBlock label="blocTest للـ debounce">

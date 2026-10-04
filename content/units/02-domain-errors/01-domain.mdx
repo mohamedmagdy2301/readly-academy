@@ -143,6 +143,74 @@ class SearchBooks {
 
 </CodeBlock>
 
+### StreamUseCase: لما النتيجة بتتغير مع الوقت
+
+كل الـ use cases لحد دلوقتي بترجّع `Future`: بتسأل مرة وبتاخد إجابة مرة. بس شاشة المكتبة محتاجة تعرف <b>كل ما</b> المكتبة تتغير: المستخدم ضاف كتاب من شاشة الكتالوج، أو علّم كتاب إنه خلّصه من صفحته. لو المكتبة سألت مرة واحدة، هتفضل عارضة الليست القديمة لحد ما حد يسأل تاني.
+
+السبب إن الـ Future بيرجّع قيمة واحدة وبيخلص. اللي محتاجه هنا <b>Stream</b>: قيمة جديدة كل ما البيانات تتغير، لحد ما اللي بيسمع يقول «كفاية». والـ contract فيه ده أصلًا: `watchLibrary()` بيرجّع `Stream<List<Book>>`، يعني وعد إن الـ repository هيطلّع الليست كاملة من جديد مع كل تغيير. إزاي بيعرف إن في تغيير ده شغل الـ Data، والـ Domain يهمه الوعد بس.
+
+ولو الشاشة محتاجة الكتب اللي بتقراها دلوقتي بس ومترتبة بالعنوان، القاعدة دي مكانها use case، بنفس شكل اللي فاتوا بس بيرجّع Stream:
+
+<CodeBlock label="StreamUseCase">
+
+```dart
+// domain/stream_use_case.dart
+abstract class StreamUseCase<T, P> {
+  Stream<T> call(P params);
+}
+
+// domain/watch_library.dart
+class WatchLibraryParams {
+  const WatchLibraryParams({this.status});
+  final BookStatus? status; // null: every book
+}
+
+class WatchLibrary extends StreamUseCase<List<Book>, WatchLibraryParams> {
+  WatchLibrary(this._repository);
+  final LibraryRepository _repository;
+
+  @override
+  Stream<List<Book>> call(WatchLibraryParams params) =>
+      _repository.watchLibrary().map((books) => books
+          .where((b) => params.status == null || b.status == params.status)
+          .toList()
+        ..sort((a, b) => a.title.compareTo(b.title)));
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الاستخدام">
+
+```dart
+final watchLibrary = WatchLibrary(repository);
+
+final sub = watchLibrary(const WatchLibraryParams(status: BookStatus.reading))
+    .listen((books) {
+  // called now, and again after every change in the library
+});
+
+// when the screen closes
+await sub.cancel();
+```
+
+</CodeBlock>
+
+- <b>الـ T والـ P:</b> الـ T نوع اللي بيطلع من الـ stream، والـ P نوع الـ params. كده كل stream use case في المشروع شكله واحد: بتناديه بـ params، وبتعمل listen على اللي راجع.
+- <b>الـ map:</b> بيطبّق القاعدة على كل ليست جديدة بتطلع من الـ repository. فالفلترة والترتيب بيحصلوا مع كل تغيير، مش مرة واحدة.
+- <b>من غير Result:</b> الـ stream بيقول «المكتبة دلوقتي شكلها كده»، مش «طلب نجح أو فشل». التحميل من السيرفر وأخطاؤه لسه في `getLibrary()`.
+- <b>الـ cancel:</b> اللي بيعمل listen لازم يعمل cancel لما يخلص، وإلا الـ stream هيفضل شغال ومحدش بيعرض نتايجه.
+
+|  | use case بـ Future | StreamUseCase |
+| --- | --- | --- |
+| بيرجّع | قيمة واحدة وبيخلص | قيمة جديدة مع كل تغيير |
+| بتستخدمه بـ | `await` | `listen` وبعدين `cancel` |
+| مثال في Readly | `AddBookToLibrary`، `SearchBooks` | `WatchLibrary` |
+
+امتى تعمل StreamUseCase، وامتى اللي بيستخدم يسمع على `watchLibrary()` مباشرة؟ نفس السؤال بتاع أي use case: <b>في قاعدة ولا لأ؟</b> لو في فلترة أو ترتيب أو دمج stream من repositoryين، يبقى use case، والقاعدة تتختبر بـ dart test. لو الشاشة عايزة الليست زي ما هي، الـ use case هيبقى سطر بينادي `watchLibrary()` وبس، وده ملف زيادة.
+
+الـ Future للسؤال اللي ليه إجابة واحدة، والـ Stream للحاجة اللي بتتغير، والـ StreamUseCase بيتعمل لما يكون في قاعدة على اللي بيتغير.
+
 
 </Level>
 

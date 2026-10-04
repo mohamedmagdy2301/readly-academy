@@ -180,6 +180,24 @@ Cubit أبسط ومناسب لمعظم الشاشات. Bloc مفيد لما تح
 </Answer>
 </Question>
 
+<Question id="interview-25">
+<Ask>الـ validation مكانها فين: الـ UI ولا الـ Cubit ولا الـ domain؟</Ask>
+<Answer>
+
+في التلاتة، وكل واحد ليه شغلانة. القاعدة في الـ domain جوه value object زي `Email.create`، فبتتكتب مرة وتتستّ بـ dart test، والـ use case بياخد `Email` فمستحيل يوصله حاجة غلط. الـ Cubit بيمسك حالة الفورم: النص وtouched وsubmitAttempted وأخطاء السيرفر. والـ UI بتعرض بس وبتختار النص من الترجمة حسب الحقل. والسيرفر بيتحقق تاني، لأن الـ client مايتوثقش فيه.
+
+</Answer>
+</Question>
+
+<Question id="interview-26">
+<Ask>إزاي تعمل infinite scroll من غير ما تحمّل نفس الصفحة مرتين، ومن غير ما تخسر البيانات لو حصل error؟</Ask>
+<Answer>
+
+الحماية في الـ Cubit: flag قبل أول await، و`hasReachedEnd` بيوقف الطلبات لما الصفحات تخلص، وrequest id بيتجاهل أي صفحة راجعة لكلمة بحث قديمة. والـ error بتاع الصفحة N حقل جوه الـ Loaded state (`loadMoreFailure`)، فالليست بتفضل والـ footer يعرض retry، ورقم الصفحة مابيزيدش غير لما الطلب ينجح. وفوق ده dedupe بالـ id، ولو السيرفر بتاعك، cursor بدل offset.
+
+</Answer>
+</Question>
+
 ### الأسبوع 6: الـ DI والـ Flavors
 
 <Question id="interview-19">
@@ -196,6 +214,24 @@ Factory، عشان كل شاشة تاخد instance جديد يتقفل معاه�
 <Answer>
 
 entry points منفصلة (main_dev وmain_prod)، وproductFlavors في Android، وschemes في iOS، وconfig class بيتسجل في الـ DI. مش if (kDebugMode) متوزعة في الكود.
+
+</Answer>
+</Question>
+
+<Question id="interview-27">
+<Ask>امتى تتخطى طبقة الـ domain؟ وإزاي تبرر ده في code review؟</Ask>
+<Answer>
+
+لما الـ feature مافيهاش business rules، ومصدر بياناتها واحد، ومحدش تاني بيستخدم منطقها، زي الثيم واللغة. الـ domain هنا هيبقى use case بينادي repository بينادي store من غير ما حد فيهم يضيف حاجة. بس الـ Cubit لسه بيعتمد على contract (`SettingsStore`) مش على shared_preferences، والتست شغال بـ fake. والقرار يتعكس لما الإعدادات تتزامن مع السيرفر أو يظهر فيها rule.
+
+</Answer>
+</Question>
+
+<Question id="interview-28">
+<Ask>إزاي تعمل logout نضيف وتتأكد إن مفيش بيانات من المستخدم القديم فضلت؟</Ask>
+<Answer>
+
+أعدّ كل مكان البيانات عايشة فيه وأمسحه من مكان واحد: الـ tokens من الـ secure storage، وكل جداول drift بـ `allTables`، والـ caches، والـ singletons اللي شايلة state. والـ refresh token يتلغي على السيرفر من غير ما أستنى الرد. وأحوّل للـ login بعد ما المسح يخلص مش قبله. وعشان أتأكد: integration test بيدخل بمستخدم A ويضيف كتاب، ويعمل logout، ويدخل بـ B، ويتأكد إن مفيش أي أثر لـ A.
 
 </Answer>
 </Question>
@@ -236,6 +272,24 @@ entry points منفصلة (main_dev وmain_prod)، وproductFlavors في Android
 <Answer>
 
 Sentry أو Crashlytics مربوطين بـ FlutterError.onError وPlatformDispatcher.onError، والـ Failures غير المتوقعة بتتسجل مع context. وبتابع الـ release health بعد كل نسخة.
+
+</Answer>
+</Question>
+
+<Question id="interview-29">
+<Ask>تفرّق إزاي بين error لازم يتبعت لـ Sentry وerror يتعرض للمستخدم بس؟</Ask>
+<Answer>
+
+بسؤال واحد: مين يقدر يصلحه؟ لو المستخدم أو الظروف (النت فاصل، الـ session انتهت، input غلط، أو رد business زي 409 «الإيميل مستخدم»)، تبقى Failure متوقعة: رسالة مترجمة وbreadcrumb بس. لو المطوّر بس (bug، أو 4xx الـ endpoint مابيرجّعهوش، أو cache بايظ)، تتبعت لـ Sentry. والقرار في مكانين: `isReportable` جنب الـ sealed Failure، و`expected` جنب كل endpoint.
+
+</Answer>
+</Question>
+
+<Question id="interview-30">
+<Ask>عندك feature قديمة كلها في widget واحد. هتنقلها لـ Clean إزاي من غير ما توقف الشغل؟</Ask>
+<Answer>
+
+أبدأ بـ characterization tests بتكلّم الشاشة من بره والشبكة بـ fake `HttpClientAdapter`، فتفضل خضرا طول الطريق. بعدين PRs صغيرة، كل واحد بيطلع للمستخدمين لوحده: الـ repository ورا contract، وCubit في شاشة جديدة ورا flag، وuse case بس للعملية اللي فيها قاعدة، والـ entity للـ domain، وفي الآخر أمسح القديم. الـ global المشترك يفضل لحد ما آخر قاري يتنقل، والتقدم بقيسه بـ architecture test وallowlist بتصغر بس. والـ refactor مابيغيّرش سلوك.
 
 </Answer>
 </Question>

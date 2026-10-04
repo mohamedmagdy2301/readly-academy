@@ -204,6 +204,98 @@ Future<void> close() async {
 
 </CodeBlock>
 
+### refresh من غير ما تمسح البيانات
+
+المستخدم في المكتبة وسحب الليست لتحت عشان يحدّثها. لو الـ refresh نادى `load()`، أول سطر فيها `emit(const LibraryLoading())`، فالكتب بتختفي ويظهر spinner في نص الشاشة. ولو النت فاصل، `LibraryError` بيغطي الشاشة كلها، والكتب اللي كانت قدامه من ثانية راحت.
+
+السبب إن كل state لوحدها: يا بيانات، يا loading، يا error. ومفيش state تقول «عندي بيانات وبحدّثها» ولا «عندي بيانات والتحديث فشل». والاتنين دول مش states جديدة، دول <b>حقول جوه LibraryLoaded</b>:
+
+<CodeBlock label="LibraryLoaded وهو بيكبر">
+
+```dart
+final class LibraryLoaded extends LibraryState {
+  const LibraryLoaded(this.books, {this.isRefreshing = false, this.refreshFailure});
+  final List<Book> books;
+  final bool isRefreshing;
+  final Failure? refreshFailure;
+
+  // refreshFailure is not "?? this": leaving it out clears it
+  LibraryLoaded copyWith({List<Book>? books, bool? isRefreshing, Failure? refreshFailure}) =>
+      LibraryLoaded(
+        books ?? this.books,
+        isRefreshing: isRefreshing ?? this.isRefreshing,
+        refreshFailure: refreshFailure,
+      );
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="refresh في الـ LibraryCubit">
+
+```dart
+Future<void> refresh() async {
+  final current = state;
+  if (current is! LibraryLoaded) return load(); // nothing on screen yet
+  if (current.isRefreshing) return;            // one refresh at a time
+  emit(current.copyWith(isRefreshing: true));   // the books stay
+  final result = await _getLibrary();
+  if (isClosed) return;
+  emit(switch (result) {
+    Success(:final value) => LibraryLoaded(value),
+    Err(:final failure) => current.copyWith(refreshFailure: failure), // old list stays
+  });
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ UI: pull-to-refresh وsnackbar">
+
+```dart
+BlocListener<LibraryCubit, LibraryState>(
+  listenWhen: (_, curr) => curr is LibraryLoaded && curr.refreshFailure != null,
+  listener: (context, state) {
+    final failure = (state as LibraryLoaded).refreshFailure!;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(failure.localized(AppLocalizations.of(context)!)),
+    ));
+  },
+  child: BlocBuilder<LibraryCubit, LibraryState>(
+    builder: (context, state) => switch (state) {
+      LibraryLoading() => const Center(child: CircularProgressIndicator()),
+      LibraryLoaded(:final books) => RefreshIndicator(
+          onRefresh: context.read<LibraryCubit>().refresh,
+          child: BookList(books: books),
+        ),
+      LibraryError(:final failure) => ErrorView(
+          message: failure.localized(AppLocalizations.of(context)!),
+          onRetry: context.read<LibraryCubit>().load,
+        ),
+    },
+  ),
+)
+
+// the same refresh from an AppBar button
+BlocSelector<LibraryCubit, LibraryState, bool>(
+  selector: (state) => state is LibraryLoaded && state.isRefreshing,
+  builder: (context, refreshing) => IconButton(
+    onPressed: refreshing ? null : context.read<LibraryCubit>().refresh,
+    icon: const Icon(Icons.refresh),
+  ),
+)
+```
+
+</CodeBlock>
+
+- <b>الـ RefreshIndicator:</b> بياخد function بترجّع Future، وبيعرض الـ spinner بتاعه فوق الليست لحد ما الـ Future يخلص. فالـ `refresh` لازم تستنى الطلب، مش ترجع على طول.
+- <b>الـ isRefreshing:</b> الـ pull مش محتاجه عشان الـ RefreshIndicator بيعرض الـ spinner لوحده. بس أي refresh تاني محتاجه، زي الزرار اللي في الـ AppBar: بيتقفل طول ما في refresh شغال. وهو كمان اللي بيمنع refresh تاني يبدأ والأول لسه ماخلصش.
+- <b>الـ BlocSelector:</b> بيختار قيمة واحدة من الـ state، وبيعيد رسم الزرار بس لما القيمة دي تتغير، مش مع كل state.
+- <b>الـ refreshFailure بيتمسح لوحده:</b> الـ copyWith مابيعملش `?? this` للـ failure، فأي emit بعده بيمسحه. والـ snackbar في BlocListener، زي أول جزء في المستوى ده، فبيظهر مرة واحدة بس مهما الشاشة اتعاد رسمها.
+- <b>الكود القديم ماتكسرش:</b> `books` لسه positional، فـ `LibraryLoaded(value)` في `load()` و`LibraryLoaded(books)` في `watch()` شغالين زي ما هما.
+
+البيانات اللي ظاهرة مابتتمسحش عشان طلب جديد فشل: الـ loading والـ error بتوعه حقول جوه الـ Loaded state، مش states لوحدهم.
+
 
 </Level>
 

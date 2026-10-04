@@ -2,7 +2,6 @@
 title: "الـ Pagination والـ infinite scroll"
 description: "الكتالوج بيتجاب صفحة ورا صفحة وانت بتعمل scroll، من غير طلبات متكررة، ومن غير ما الليست تتمسح لو حصل error."
 minutes: 30
-draft: true
 ---
 
 <Level n="1" title="الفكرة بتشبيه">
@@ -402,7 +401,7 @@ RefreshIndicator(
 )
 ```
 
-لو الـ refresh فشل، الليست القديمة أحسن من شاشة error. ضيف `Failure? refreshFailure` لـ `CatalogLoaded` بنفس طريقة `loadMoreFailure`، واعرضه snackbar من `BlocListener` بـ `listenWhen: (_, curr) => curr is CatalogLoaded && curr.refreshFailure != null`.
+لو الـ refresh فشل، الليست القديمة أحسن من شاشة error. ده نفس نمط `refreshFailure` في `LibraryLoaded` بدرس الـ Cubit: `Failure? refreshFailure` جوه `CatalogLoaded`، والـ copyWith بيمسحه لو ماتبعتش، والـ snackbar من `BlocListener` بـ `listenWhen: (_, curr) => curr is CatalogLoaded && curr.refreshFailure != null`.
 
 ### كلمة البحث اتغيرت والصفحة لسه بتحمّل
 

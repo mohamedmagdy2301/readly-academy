@@ -10,6 +10,9 @@ type: "practice"
 <Task id="w6-3">قسّم المشروع لـ packages بـ pub workspaces (أو melos)، وكل package ليها barrel file هو الـ public API بس.</Task>
 <Task id="w6-4">تأكد إن packages الـ domain مافيهاش Flutter في الـ pubspec أصلًا.</Task>
 <Task id="w6-5">اعمل BookLookup interface صغير في الـ public API بتاع library، وخلي feature الـ notes تعتمد عليه بس (ISP).</Task>
+<Task id="w6-6">خلي SettingsCubit يقرا ويكتب من SettingsStore، واكتب FakeSettingsStore وتست إن أول state جاية من القيم المحفوظة، واعرض الثيم بـ SegmentedButton فيه «زي الجهاز» (الكود في درس الـ Settings).</Task>
+<Task id="w6-7">اعمل SecureTokenStore بعلامة first-run بتمسح الـ Keychain بعد إعادة التسطيب، وAuthCubit بتلات حالات (AuthUnknown وAuthenticated وUnauthenticated) مع الـ splash والـ redirect (الكود في درس الـ Session).</Task>
+<Task id="w6-8">خلي الـ logout يمسح كل حاجة: الـ tokens وجداول drift والـ caches والـ singletons، واكتب integration test بيتأكد إن مفيش أي أثر لمستخدم A بعد ما B يدخل (الكود في درس الـ Session).</Task>
 </Tasks>
 
 <Diagram name="d-ace81d5baa">
