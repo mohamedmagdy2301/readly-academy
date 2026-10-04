@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 import { NAV } from "@/lib/nav";
 import { KEYS, write } from "@/lib/storage";
+import Logo from "./Logo";
 import Search from "./Search";
 import ThemeToggle from "./ThemeToggle";
 
@@ -20,7 +21,7 @@ export default function TopBar() {
   return (
     <header className="topbar">
       <div className="topbar-in">
-        <Link className="brand" href="/"><i>CA</i><span>رحلة Clean Architecture</span></Link>
+        <Link className="brand" href="/" aria-label="Flutter Clean Path"><Logo /><span>Flutter Clean Path</span></Link>
         <nav className="tabs" aria-label="أقسام الموقع">
           {NAV.map((item) => (
             <Link key={item.href} className="tab" href={item.href} aria-current={isActive(item.href) ? "page" : undefined}>

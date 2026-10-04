@@ -5,7 +5,7 @@ import MarkerDefs from "@/components/MarkerDefs";
 import { themeScript } from "@/lib/keys";
 
 export const metadata: Metadata = {
-  title: { default: "رحلة Clean Architecture في Flutter", template: "%s · رحلة Clean Architecture" },
+  title: { default: "Flutter Clean Path · رحلة Clean Architecture في Flutter", template: "%s · Flutter Clean Path" },
   description: "خطة 8 أسابيع، وشرح كامل من الصفر للاحتراف، ومعامل تفاعلية، ومراجعة لـ Clean Architecture في Flutter.",
 };
 

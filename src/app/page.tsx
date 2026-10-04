@@ -6,7 +6,7 @@ export default function HomePage() {
   return (
     <div className="content home">
       <section className="home-hero">
-        <p className="kicker">رحلة Clean Architecture في Flutter</p>
+        <p className="kicker">Flutter Clean Path</p>
         <h1>من الأساس للاحتراف، خطوة بخطوة</h1>
         <p className="lede">9 وحدات بترتيب المذاكرة. كل درس فيه الشرح والكود والمعمل والأسئلة في مكان واحد، وآخر كل وحدة مهام تطبّقها في مشروع حقيقي. التقدم بيتحفظ على المتصفح ده.</p>
       </section>

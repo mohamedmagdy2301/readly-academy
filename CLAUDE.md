@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A static course site ("رحلة Clean Architecture في Flutter") built with Next.js (App Router, `output: "export"`) + `next-mdx-remote`. All lesson content is MDX under `content/`; interactive parts are React components. The UI and content are written in Egyptian colloquial Arabic, RTL (`<html lang="ar" dir="rtl">`), mixing in English technical terms — match that voice when writing content. The README (in Arabic) is the authoring guide and is kept up to date; read it before adding content.
+A static course site ("Flutter Clean Path", a Clean Architecture in Flutter course) built with Next.js (App Router, `output: "export"`) + `next-mdx-remote`. All lesson content is MDX under `content/`; interactive parts are React components. The UI and content are written in Egyptian colloquial Arabic, RTL (`<html lang="ar" dir="rtl">`), mixing in English technical terms — match that voice when writing content. The README (in Arabic) is the authoring guide and is kept up to date; read it before adding content.
 
 ## Commands
 
