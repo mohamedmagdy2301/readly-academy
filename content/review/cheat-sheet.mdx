@@ -81,4 +81,17 @@ description: "كل قاعدة في سطر."
 
 </CheatCard>
 
+<CheatCard title="Cubit وBloc">
+
+- Cubit default، وBloc لما الـ inputs بتتزاحم وكل نوع محتاج سياسة.
+- الـ state immutable وبتتقارن بالقيمة: Equatable أو freezed أو sealed.
+- sealed لو كل حالة شاشة، وstatus لو البيانات بتفضل.
+- `isClosed` بعد كل await في الـ Cubit.
+- `create` للي الـ widget صاحبته، و`.value` للموجود.
+- `read` في الـ callbacks، و`watch` و`select` في build.
+- الـ Cubit مايعرفش Flutter ولا Cubit تاني.
+- الـ transformer لكل `on<E>` لوحده، والـ default `concurrent`.
+
+</CheatCard>
+
 </CheatGrid>

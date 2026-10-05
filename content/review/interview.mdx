@@ -430,3 +430,122 @@ Sentry أو Crashlytics مربوطين بـ FlutterError.onError وPlatformDispa
 
 </Answer>
 </Question>
+
+### Cubit وBloc
+
+<Question id="interview-46">
+<Ask>إيه اللي بيحصل لو عملت emit لـ state بتساوي الحالية؟ ولو عدّلت list جوه الـ state وعملت emit ليها؟</Ask>
+<Answer>
+
+الـ Cubit بيقارن بـ `==`، ولو الاتنين متساويين الـ emit بيتجاهل ومفيش rebuild. ولو عدّلت الـ list نفسها وعملت emit لنفس الـ object، الـ `==` بيقول متساويين لأنه نفس الـ object، فالشاشة مش هتتغير. الحل immutability: list جديدة دايمًا (`[...books, book]`)، وstate بـ value equality بـ Equatable أو freezed، فالمقارنة تبقى على المحتوى مش على العنوان في الـ memory.
+
+</Answer>
+</Question>
+
+<Question id="interview-47">
+<Ask>الـ state تبقى sealed classes ولا class واحدة فيها status وcopyWith؟</Ask>
+<Answer>
+
+حسب سؤال واحد: لو الحالة دي حصلت، البيانات اللي على الشاشة بتفضل؟ لو كل حالة شاشة مختلفة تمامًا (loading، تفاصيل الكتاب، error)، sealed، والـ switch بيجبرني أتعامل مع كل حالة. لو البيانات بتفضل والحالات حواليها بتتغير (فورم بيتبعت، ليستة بتتعمل لها refresh)، class واحدة بـ status. والأغلب hybrid: sealed من بره، والـ loading والـ error الخاصين بتحديث البيانات حقول جوه الـ Loaded.
+
+</Answer>
+</Question>
+
+<Question id="interview-48">
+<Ask>`BlocProvider(create:)` ولا `BlocProvider.value`؟ وإيه الغلطة الشائعة؟</Ask>
+<Answer>
+
+الـ `create` بيعمل الـ Cubit وبيقفله لما الـ provider يتشال، فهو للـ Cubit اللي الـ widget دي صاحبته. الـ `.value` بيوفّر instance موجودة ومابيقفلهاش، فهو لما توصّل Cubit لـ route جديد أو لـ singleton عايش طول الـ app. الغلطتين: `.value(value: getIt<X>())` لـ factory، فالـ Cubit مابيتقفلش أبدًا والـ subscriptions بتاعته بتفضل شغالة. و`create` حوالين singleton، فأول شاشة تتقفل بتقفله للـ app كله، وأي emit بعدها `StateError`.
+
+</Answer>
+</Question>
+
+<Question id="interview-49">
+<Ask>`context.read` و`context.watch` و`context.select`: كل واحد مكانه فين؟</Ask>
+<Answer>
+
+الـ `read` في الـ callbacks بس (onPressed)، عشان تنادي method، ومابيسمعش على التغييرات، فلو استخدمته في build الشاشة مش هتتحدث. الـ `watch` في build، وبيعيد بناء الـ widget كلها مع كل state، فبحطه في Builder صغير أو بستخدم BlocBuilder. الـ `select` في build برضه، وبيعيد البناء بس لما القيمة اللي اخترتها تتغير. ولو عايز الـ rebuild يبقى محدد بشكل واضح في الشجرة، BlocSelector أوضح من select في أول الـ build.
+
+</Answer>
+</Question>
+
+<Question id="interview-50">
+<Ask>إزاي تعرض SnackBar أو تعمل navigation مرة واحدة من Cubit؟</Ask>
+<Answer>
+
+في BlocListener، مش في build، لأن build بيتنادى أكتر من مرة لنفس الـ state. الطريقة الأبسط إن الحاجة تبقى حقل في الـ state (`refreshFailure` أو status بقى success) مع `listenWhen` يحدد اللحظة. ولو الـ effect مالوش أي معنى كـ state (navigation بعد حفظ مثلًا)، ممكن stream منفصل للـ effects من الـ Cubit بيتقفل في `close`، بتمن إن أي effect بيحصل والشاشة مش سامعة بيضيع. والـ Cubit نفسه عمره ما بيمسك BuildContext ولا Navigator.
+
+</Answer>
+</Question>
+
+<Question id="interview-51">
+<Ask>إزاي Cubitين يتكلموا مع بعض؟</Ask>
+<Answer>
+
+مش مع بعض مباشرة. الطريقة الأولى إن الاتنين يسمعوا stream من نفس الـ repository، فأي تغيير يظهر في الاتنين لوحده، زي `watchLibrary()` في المكتبة والـ Home. التانية BlocListener في الـ UI: لما واحد يتغير، الـ listener ينادي method في التاني، وده مناسب لما الربط خاص بالشاشة دي. أما Cubit بيمسك reference لـ Cubit تاني فبيربط عمرهم ببعض، ومع get_it factory ممكن ياخد instance غير اللي الشاشة شايفاها خالص.
+
+</Answer>
+</Question>
+
+<Question id="interview-52">
+<Ask>اشرح الـ transformers بتاعة bloc_concurrency، وامتى تستخدم كل واحد.</Ask>
+<Answer>
+
+الـ default `concurrent`: كل event يبدأ فورًا والنتايج ترجع بأي ترتيب. `sequential` طابور، للعمليات اللي ترتيبها مهم زي الحفظ. `droppable` بيرمي أي event جه والـ handler شغال، للـ «حمّل الصفحة الجاية» وزرار الحفظ. `restartable` بيقفل الـ handler القديم ويبدأ الجديد، للبحث والفلاتر. وحاجتين مهمين: الـ restartable مابيلغيش الطلب نفسه، بيمنع الـ emit بتاعه بس. والـ transformer لكل `on<E>` لوحده، فالتزاحم بين نوعين events مختلفين لسه محتاج guard.
+
+</Answer>
+</Question>
+
+<Question id="interview-53">
+<Ask>امتى تستخدم HydratedCubit؟ وإيه اللي عمرك ما تحفظه بيه؟</Ask>
+<Answer>
+
+للتفضيلات وحالة الـ UI اللي المستخدم يتوقع يلاقيها زي ما سابها: فلاتر الكتالوج، وضع العرض، مسودة ملاحظة. ومابحفظش الـ loading ولا الـ errors (هترجع بعد الفتح على حالة مالهاش معنى)، ولا الـ tokens ولا أي حاجة سرية (مكانها secure storage)، ولا بيانات الـ server (مكانها drift). وبثبّت `storagePrefix` لأن الافتراضي اسم الـ class وبيتغير مع الـ obfuscation والـ rename، وبحط version في الـ JSON عشان أقدر أعمل migration، وبمسحه مع الـ logout.
+
+</Answer>
+</Question>
+
+<Question id="interview-54">
+<Ask>إيه علاقة flutter_bloc بـ provider وInheritedWidget؟</Ask>
+<Answer>
+
+flutter_bloc مبني على provider، وprovider مبني على InheritedWidget. الـ `BlocProvider` هو `InheritedProvider` بيعمل الـ Cubit ويقفله، و`context.read` و`watch` و`select` نفسهم extensions provider. فقواعد provider هي هي: الـ lookup بالـ type بالظبط، والـ context لازم يبقى تحت الـ provider، و`read` في الـ callbacks. اللي الـ bloc بيزوّده هو الـ state الـ immutable اللي بتتغير بـ emit بس، والـ stream، والـ observer، والتستات.
+
+</Answer>
+</Question>
+
+<Question id="interview-55">
+<Ask>ChangeNotifier مع provider ولا Cubit؟</Ask>
+<Answer>
+
+الاتنين بيوصلوا الـ state للشجرة بنفس الطريقة. الفرق في الـ state نفسها: الـ ChangeNotifier بيعدّل في مكانه، ولازم تفتكر `notifyListeners` بعد كل تغيير، ومفيش سجل للتغييرات. الـ Cubit بيطلّع state جديدة immutable، فالـ `==` بيقرر الـ rebuild، والـ observer بيشوف كل تغيير، والتست بيقارن تسلسل states. الـ ChangeNotifier مناسب لحاجة صغيرة جوه الـ UI، أو لفريق متفق عليه زي مثال الـ architecture الرسمي بتاع Flutter. لشاشات فيها async وrace conditions، الـ Cubit أوضح وأسهل في التست.
+
+</Answer>
+</Question>
+
+<Question id="interview-56">
+<Ask>Riverpod ولا Bloc؟</Ask>
+<Answer>
+
+Riverpod بيجمع الـ DI والـ state والـ caching في أداة واحدة، والـ lookup بيتأكد منه الـ compiler مش في الـ runtime، والـ async (`AsyncValue`) والـ derived state جاهزين. التمن codegen، وlifecycle ضمني (autoDispose، والـ Notifier بيتبني من الأول مع كل rebuild)، وstate متعرّفة كـ declarations global الشكل. الـ Bloc أوضح: كل تغيير emit، والـ concurrency بسياسات باسمها، والـ DI منفصل (get_it). الاتنين بيحافظوا على Clean Architecture لو الـ domain فاضل Dart نقي. الاختيار حسب الفريق والمشروع، مش حسب الأحدث. ولو مشروع قايم على واحد فيهم، النقل للتاني نادرًا ما بيستاهل.
+
+</Answer>
+</Question>
+
+<Question id="interview-57">
+<Ask>اشتغلت على مشروع بـ GetX. إيه المشاكل اللي ممكن تقابلها، وتنقله لـ Cubit إزاي؟</Ask>
+<Answer>
+
+GetX سريع في البداية، بس بيجمع الـ state والـ DI والـ routing في مكان واحد. الـ `Get.find` service locator global، والـ navigation والـ snackbar من غير context جوه الـ controller، فالـ controller بيعرف Flutter وصعب تختبره لوحده، والحدود بين الطبقات بتبوظ. النقل بيبقى شاشة شاشة: الأول أطلّع مصدر الحقيقة لـ repository بـ stream، فالقديم والجديد يقروا منه. بعدين أكتب characterization test للشاشة، وأعمل Cubit بنفس السلوك، وأبدّل الشاشة، وأمسح الـ controller. والـ DI والـ routing ينتقلوا في الآخر. والتستات خضرا في كل PR.
+
+</Answer>
+</Question>
+
+<Question id="interview-58">
+<Ask>إزاي تختار state management لمشروع جديد؟</Ask>
+<Answer>
+
+مش بالأشهر. بسأل عن الفريق: يعرف إيه، ومين هيمسك المشروع بعدنا. وعن المشروع: هيعيش قد إيه، وفيه async وstreams قد إيه، ومحتاج traceability ولا لأ. وبعدين المعايير: الـ state immutable وتغييرها صريح، والـ logic بتتست من غير Flutter، والـ domain بيفضل نقي، والـ package متصانة. الـ setState والـ ValueNotifier للـ state المحلية في أي حالة. وللشاشات بختار Cubit default وBloc للـ inputs اللي بتتزاحم، أو Riverpod لو الفريق عايز DI وcaching في أداة واحدة. وبكتب القرار في ADR بالبدائل اللي اترفضت وليه.
+
+</Answer>
+</Question>

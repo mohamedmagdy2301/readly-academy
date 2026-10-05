@@ -1,0 +1,786 @@
+---
+title: "أنواع الـ Cubit (2): المتقدم"
+description: "الـ Cubit اللي بيسمع على stream، والبحث اللي بيلغي الشغل القديم، والـ pagination، والـ Cubits اللي بتعيش على مستوى الـ app أو الشاشة أو الـ item، والشاشة اللي فيها كذا Cubit، وليه الـ base Cubit العام بيوجع. وفي الآخر: أنهي نوع محتاجه بالظبط."
+minutes: 45
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="الجرنال واللوحات في العمارة">
+
+فيه طريقتين تعرف بيهم الأخبار. يا إما تنزل تشتري الجرنال لما تحب (انت اللي بتسأل)، يا إما تشترك فيه فييجي لحد باب الشقة كل ما في عدد جديد، من غير ما تطلبه. والاشتراك ليه قاعدة واحدة: لو عزّلت، لازم تلغيه، وإلا الجرايد هتفضل تتكوّم قدام شقة مافيهاش حد.
+
+وفي العمارة نفسها في لوحات إعلانات: لوحة عند المدخل الكل بيشوفها (ميعاد قطع المية)، ولوحة في كل دور تخص سكانه، وورقة على باب شقتك تخصك انت بس، ولزقة صغيرة على كل كرتونة في الشحنة بتقول حالتها. نفس الخبر لو اتحط في المكان الغلط، يا إما محدش محتاجه هيشوفه، يا إما اللي محتاجه مش هيلاقيه.
+
+</Analogy>
+
+في درس «أنواع الـ Cubit (1)» شفنا خمس أنواع: الـ Value والـ Selection والـ Load والـ Action والـ Form. في كلهم تقريبًا الـ Cubit هو اللي <b>بيسأل</b>: يجيب الكتاب، يحفظ الملاحظة، يتحقق من الفورم. الدرس ده عن نوعين من الأسئلة اللي بتظهر لما الـ app يكبر:
+
+1. <b>البيانات بتيجي منين وإمتى؟</b> ساعات بتيجي لوحدها كـ stream (الاشتراك)، وساعات بتتجاب حتة حتة (صفحات)، وساعات المستخدم بيغيّر رأيه وهي لسه جاية (البحث).
+2. <b>الـ Cubit عايش فين ومين بيشاركه؟</b> على مستوى الـ app كله (لوحة المدخل)، ولا الشاشة (ورقة الباب)، ولا item واحد في ليستة (اللزقة على الكرتونة). وشاشة فيها كذا جزء: Cubit واحد ولا كذا؟
+
+| النوع | السؤال اللي بيجاوبه | مثال في Readly |
+| --- | --- | --- |
+| Stream Cubit | البيانات بتتغير لوحدها وأنا لازم أعرض آخر نسخة | `LibraryCubit` بيسمع على drift |
+| Search Cubit | المستخدم بيكتب، والنتيجة القديمة مالهاش لازمة | `CatalogSearchCubit` |
+| Pagination Cubit | الليستة كبيرة وبتتجاب صفحة صفحة | `CatalogCubit` |
+| App-scoped Cubit | الـ state دي الـ app كله محتاجها | `AuthCubit`، `SettingsCubit`، `SyncStatusCubit` |
+| Composite screen | شاشة فيها أجزاء مستقلة | صفحة الكتاب: التفاصيل والملاحظات والحالة |
+| Per-item Cubit | كل item في الليستة ليه شغل لوحده | `BookTileCubit` لتغيير الحالة |
+| Base Cubit عام | «كل الشاشات شبه بعض، نعمل class أب؟» | `AsyncCubit<T>`، وليه غالبًا لأ |
+
+وفي Level 4 خريطة واحدة بتجمع النوعين: الخمسة بتوع الدرس اللي فات والأنواع اللي هنا، وبتقولك تبدأ بأنهي سؤال.
+
+</Level>
+
+<Level n="2" title="الـ Stream Cubit: الـ state بتيجي لوحدها">
+
+### إمتى تحتاجه
+
+Readly offline-first: المكتبة الحقيقية في drift، والشبكة بتكتب فيها والـ UI بتقرا منها، زي ما شفنا في درس Offline-first في الوحدة 4. يعني الكتب ممكن تتغير وانت مش طالب حاجة: الـ SyncService جاب نسخة جديدة من السيرفر، أو المستخدم ضاف كتاب من تاب الكتالوج، أو غيّر حالة كتاب من صفحته. لو `LibraryCubit` بيحمّل مرة واحدة (Load Cubit)، الشاشة هتفضل تعرض الليست القديمة لحد ما حد يعمل refresh بإيده.
+
+الـ repository عنده الحل من الوحدة 2: `watchLibrary()` بيرجّع `Stream<List<Book>>`، يعني وعد إنه هيطلّع الليست كاملة من جديد مع كل تغيير. الـ Stream Cubit هو الـ Cubit اللي <b>بيشترك</b> في stream زي ده، وكل قيمة جاية بيحوّلها state.
+
+استخدمه لما مصدر الحقيقة نفسه بيتغير لوحده: جدول في drift، أو حالة الـ auth، أو الـ sync queue، أو أي حاجة الـ repository بيطلّعها كـ `Stream`. ولو البيانات بتتجاب مرة ومش بتتغير وانت قاعد (تفاصيل كتاب من Open Library)، الـ Load Cubit أبسط.
+
+### شكل الـ state
+
+نفس `LibraryState` اللي في درس Cubit في الوحدة 5: `LibraryLoading` لحد ما أول قيمة توصل، و`LibraryLoaded` فيها الكتب ومعاها `isRefreshing` و`refreshFailure`، و`LibraryError` لو الـ stream نفسه رمى error. الفرق مش في الشكل، الفرق إن `LibraryLoaded` ممكن تيجي كذا مرة ورا بعض من غير ما حد يطلبها.
+
+### الكود
+
+<CodeBlock label="features/library/presentation/library_cubit.dart">
+
+```dart
+class LibraryCubit extends Cubit<LibraryState> {
+  LibraryCubit(this._watchLibrary, this._library) : super(const LibraryLoading());
+
+  final WatchLibrary _watchLibrary;     // stream use case from unit 2
+  final LibraryRepository _library;     // only for refresh()
+  StreamSubscription<List<Book>>? _sub;
+  BookStatus? _status;
+
+  void watch({BookStatus? status}) {
+    _status = status;
+    _sub?.cancel(); // one subscription at a time
+    if (state is LibraryError) emit(const LibraryLoading()); // retry
+    _sub = _watchLibrary(WatchLibraryParams(status: status)).listen(
+      (books) => emit(switch (state) {
+        // keep the refresh flags, replace the books
+        LibraryLoaded current => LibraryLoaded(
+            books,
+            isRefreshing: current.isRefreshing,
+            refreshFailure: current.refreshFailure,
+          ),
+        _ => LibraryLoaded(books),
+      }),
+      onError: (Object error, StackTrace stackTrace) {
+        addError(error, stackTrace); // onError + BlocObserver see it
+        emit(LibraryError(CacheFailure(error.toString())));
+      },
+    );
+  }
+
+  void retry() => watch(status: _status);
+
+  @override
+  Future<void> close() async {
+    await _sub?.cancel();
+    return super.close();
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `watch` مش `load`:</b> الاسم بيقول للي بيقرا إن دي مش عملية بتخلص، دي اشتراك بيفضل شغال لحد ما الـ Cubit يتقفل. ومش `async` لأنه مابيستناش حاجة.
+- <b>الـ `_sub?.cancel()` في الأول:</b> الـ `watch` بتتنادى تاني لما الفلتر يتغير. من غير السطر ده، هيبقى فيه اشتراكين شغالين مع بعض، والاتنين بيعملوا emit، فالشاشة ترمش بين ليستة «كل الكتب» وليستة «بقراها».
+- <b>الـ `LibraryLoading` بس بعد error:</b> أول مرة الـ state أصلًا `LibraryLoading` من الـ constructor. ولما الفلتر يتغير والكتب ظاهرة، مفيش داعي للـ spinner: drift بيطلّع النتيجة الجديدة في ملّي ثواني، والليست تتبدل. الـ spinner بيرجع بس لما الـ retry يبدأ من شاشة الـ error.
+- <b>الـ `onError`:</b> الـ repository streams مابترجّعش `Result` (درس الأخطاء في الوحدة 2)، فالـ error بييجي من الـ stream نفسه. ده نادر (DB بايظة مثلًا)، بس من غير `onError` بيبقى unhandled error. والـ `addError` بيوصّله للـ `BlocObserver` اللي بيبعته للـ logs، زي ما هنشوف في درس «Cubit متقدم».
+- <b>الـ `close`:</b> ده أهم سطر في النوع ده كله. الاشتراك مش بيتلغي لوحده لما الـ Cubit يتقفل.
+
+<Diagram name="d-sm-stream-cubit">
+
+في أي لحظة فيه اشتراك واحد بس. تغيير الفلتر بيلغي الاشتراك القديم قبل ما يفتح الجديد، والـ close بيلغي الأخير. كل اشتراك بيطلّع قيمة أول ما يبدأ، وبعدين مع كل تغيير في الجدول.
+
+</Diagram>
+
+### في الـ UI
+
+الفلتر نفسه Value Cubit من درس «أنواع الـ Cubit (1)»: `LibraryFilterCubit` شايل `BookStatus?`. والـ `/library` route اللي بيعمل الاتنين (`getIt<LibraryCubit>()..watch()`) شفناه كامل هناك في «شاشة فيها أكتر من نوع». والشاشة هي اللي بتوصّل الاتنين، فمحدش فيهم بيعرف التاني:
+
+<CodeBlock label="الشاشة">
+
+```dart
+// LibraryPage.build
+BlocListener<LibraryFilterCubit, BookStatus?>(
+  listener: (context, status) => context.read<LibraryCubit>().watch(status: status),
+  child: BlocBuilder<LibraryCubit, LibraryState>(
+    builder: (context, state) => switch (state) {
+      LibraryLoading() => const Center(child: CircularProgressIndicator()),
+      LibraryLoaded(:final books) => RefreshIndicator(
+          onRefresh: context.read<LibraryCubit>().refresh,
+          child: BookList(books: books),
+        ),
+      LibraryError(:final failure) => ErrorView(
+          message: failure.localized(AppLocalizations.of(context)!),
+          onRetry: context.read<LibraryCubit>().retry,
+        ),
+    },
+  ),
+)
+```
+
+</CodeBlock>
+
+وشاشة الـ Home عايزة «بقرا دلوقتي»؟ `HomeCubit` تاني بيعمل `watch` على نفس الـ use case بـ `status: BookStatus.reading`. الاتنين بيسمعوا على نفس الجدول، فلما المستخدم يخلّص كتاب من صفحته، الكتاب بيختفي من الـ Home ويتنقل في المكتبة في نفس اللحظة، ومن غير ما أي Cubit يمسك reference للتاني. ده نفس كلام درس Cubit في الوحدة 5: التواصل بين الـ Cubits عن طريق الـ repository، مش عن طريق بعض.
+
+### الـ refresh في عالم الـ stream
+
+في الوحدة 5، الـ `refresh` كان بيجيب الليست ويعمل emit بيها. هنا الكتب مش بتيجي من الـ refresh خالص: الـ `refresh()` بتاع الـ repository بيجيب من السيرفر ويكتب في drift، والـ stream هو اللي بيوصّل الكتب الجديدة. الـ refresh راجع بحاجة واحدة بس: نجح ولا فشل.
+
+<CodeBlock label="refresh في الـ Stream Cubit">
+
+```dart
+Future<void> refresh() async {
+  final before = state;
+  if (before is! LibraryLoaded || before.isRefreshing) return;
+  emit(LibraryLoaded(before.books, isRefreshing: true));
+  final result = await _library.refresh(); // server -> drift -> our stream
+  if (isClosed) return;
+  final now = state; // NOT "before": the stream may have emitted meanwhile
+  if (now is! LibraryLoaded) return;
+  emit(LibraryLoaded(
+    now.books,
+    refreshFailure: switch (result) {
+      Success() => null,
+      Err(:final failure) => failure,
+    },
+  ));
+}
+```
+
+</CodeBlock>
+
+الفرق المهم عن الوحدة 5 هو السطر اللي عليه comment. هناك كان صح تبني على `current` اللي قبل الـ await، لأن محدش غيرك بيغيّر الـ state. هنا الـ stream ممكن يكون عمل emit 3 مرات وانت مستني، فلو بنيت على `before`، هترجّع الشاشة لليستة القديمة وتمسح الكتب اللي لسه واصلة. <b>في Stream Cubit، أي حاجة بعد await بتبني على `state`، مش على نسخة متخزنة قبله.</b> وعشان كده كمان الـ listener في `watch` بيحافظ على `isRefreshing` و`refreshFailure`: لو كان كتب `LibraryLoaded(books)` بس، أول قيمة توصل وسط الـ refresh هتطفي الـ spinner والـ refresh لسه شغال.
+
+### المشاكل اللي بتحصل في الحقيقة
+
+- <b>نسيت `cancel` في `close`:</b> المستخدم فتح المكتبة وقفلها 20 مرة، يبقى 20 اشتراك شغالين على الجدول. وأول ما الجدول يتغير، الاشتراكات القديمة بتعمل emit على Cubits مقفولة: `Bad state: Cannot emit new states after calling close`. التست بتاعه في درس «تست الـ Cubit» في الوحدة 8 (`hasListener`).
+- <b>الـ stream بيطلّع التغييرات بس، مش القيمة الحالية:</b> drift بيطلّع النتيجة أول ما تشترك، فالـ Loading بتعدّي على طول. بس `StreamController.broadcast` عادي (زي `onCleared` في الـ TokenStore) مابيطلّعش حاجة غير لما يحصل تغيير. لو اشتركت فيه وانت في `Loading`، هتفضل Loading للأبد. الحل: اقرا القيمة الحالية الأول واعمل بيها emit، وبعدين اشترك، أو خلي الـ repository يطلّع stream بيبدأ بالقيمة الحالية.
+- <b>الـ error مش بيقفل الاشتراك:</b> الـ default في Dart إن `cancelOnError` بـ false، فبعد الـ error ممكن ييجي data تاني. الـ listener بتاع الـ data بيعمل `LibraryLoaded` عادي، فالشاشة بترجع لوحدها. ولو الـ stream بيتقفل بعد الـ error (بيحصل في streams كتير)، الـ `retry` بيفتح اشتراك جديد.
+- <b>الاشتراك في الـ constructor ولا في method؟</b> الـ `SyncStatusCubit` في درس Offline-first بيشترك في الـ constructor، وده تمام لـ stream مالوش parameters وشغال طول عمر الـ Cubit. لو فيه parameters (فلتر، id) أو محتاج retry، اعمله method. والـ method أسهل في التست: بتجهّز الـ fake الأول، وبعدين تنادي `watch`.
+- <b>stream بيطلّع قيم كتير جدًا:</b> زي progress بتاع تنزيل ملف كل ملّي ثانية. كل قيمة emit، وكل emit rebuild. الـ throttle مكانه الـ repository أو الـ use case، مش الـ Cubit.
+
+</Level>
+
+<Level n="3" title="باقي الأنواع المتقدمة بالتفصيل">
+
+### الـ Search Cubit: البحث اللي بيلغي الشغل القديم
+
+<b>إمتى:</b> المستخدم بيكتب، وكل حرف بيغيّر السؤال. اللي بيميّزه عن الـ Load Cubit إن <b>الطلب القديم بيبقى مالوش لازمة</b> أول ما المستخدم يكمّل كتابة.
+
+الأساسيات اتشرحت في درس Cubit في الوحدة 5: الـ debounce بيقلل الطلبات، والـ request id بيتجاهل النتيجة اللي جاية متأخرة. اللي ناقص: النتيجة القديمة بتتجاهل، بس الطلب نفسه لسه بيحمّل. المستخدم كتب «dahl» ومسح الخانة، أو قفل التاب، والطلب لسه شغال على نت المستخدم.
+
+في درس dio في الوحدة 3، الـ `CatalogRemoteSource` كان بيلغي البحث القديم بـ `CancelToken` لما بحث جديد يبدأ. ده بيغطي حالة واحدة: «بحث جديد بدأ». بس فيه حالتين الـ data source مايعرفهمش: المستخدم مسح البحث، والشاشة اتقفلت. دول الـ Cubit بس اللي يعرفهم. والأداة جاهزة من درس «طلبات متقدمة» في الوحدة 9: `CancelScope` في core، مفيهوش dio، والـ data layer بس هو اللي بيحوّله `CancelToken`.
+
+<CodeBlock label="الـ state: النتايج القديمة بتفضل وهي بتتحدث">
+
+```dart
+sealed class CatalogSearchState {
+  const CatalogSearchState();
+}
+final class SearchIdle extends CatalogSearchState {
+  const SearchIdle();
+}
+final class SearchLoading extends CatalogSearchState {
+  const SearchLoading({this.previous = const []});
+  final List<Book> previous; // shown dimmed while the new query runs
+}
+final class SearchLoaded extends CatalogSearchState {
+  const SearchLoaded(this.query, this.books);
+  final String query;
+  final List<Book> books; // empty means "no results for query"
+}
+final class SearchError extends CatalogSearchState {
+  const SearchError(this.failure);
+  final Failure failure;
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ Cubit: كل بحث ليه scope، والجديد بيلغي القديم">
+
+```dart
+class CatalogSearchCubit extends Cubit<CatalogSearchState> {
+  CatalogSearchCubit(this._searchBooks) : super(const SearchIdle());
+
+  final SearchBooks _searchBooks;
+  Timer? _debounce;
+  CancelScope? _inFlight; // the search running right now
+  String _query = '';
+
+  void queryChanged(String input) {
+    final query = input.trim();
+    if (query == _query) return; // "dahl " -> "dahl": nothing new
+    _query = query;
+    _debounce?.cancel();
+    _cancelInFlight(); // the old query is useless from this keystroke
+    if (query.length < 2) {
+      emit(const SearchIdle());
+      return;
+    }
+    _debounce = Timer(const Duration(milliseconds: 350), () => _search(query));
+  }
+
+  void retry() {
+    if (_query.length >= 2) _search(_query);
+  }
+
+  Future<void> _search(String query) async {
+    _cancelInFlight();
+    final scope = _inFlight = CancelScope();
+    emit(SearchLoading(previous: _visibleBooks));
+    final result = await _searchBooks(SearchParams(query: query, page: 1), scope: scope);
+    if (isClosed || scope.isCancelled) return; // a newer query took over
+    _inFlight = null;
+    emit(switch (result) {
+      Success(:final value) => SearchLoaded(query, value.items),
+      Err(:final failure) => SearchError(failure),
+    });
+  }
+
+  List<Book> get _visibleBooks => switch (state) {
+        SearchLoaded(:final books) => books,
+        SearchLoading(:final previous) => previous,
+        _ => const [],
+      };
+
+  void _cancelInFlight() {
+    _inFlight?.cancel();
+    _inFlight = null;
+  }
+
+  @override
+  Future<void> close() {
+    _debounce?.cancel();
+    _cancelInFlight();
+    return super.close();
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ scope بقى هو الـ request id:</b> كل بحث ليه scope، وأي حاجة جديدة بتلغيه. فبعد الـ await، `scope.isCancelled` معناها «في حد أحدث مني»، وده نفس سؤال `requestId != _latestRequest`. بس كمان الطلب نفسه بيتقفل في dio.
+- <b>الإلغاء من أول حرف، مش بعد الـ debounce:</b> أول ما المستخدم يكمّل كتابة، الطلب القديم مالوش لازمة، فمفيش داعي يستنى 350ms عشان يتلغي.
+- <b>الـ `isClosed` لسه أول شرط:</b> الـ `close` بيلغي الـ scope، فالاتنين بيبقوا true مع بعض، وممكن تقول إن `isCancelled` كفاية. بس لو حد بعد شهر شال `_cancelInFlight()` من `close`، الـ `isClosed` هو اللي هيفضل حاميك من `StateError`. الشرطين بيقولوا حاجتين مختلفتين: «في حد أحدث مني» و«مفيش حد خالص».
+- <b>الـ `SearchBooks` بياخد scope:</b> `{CancelScope? scope}` زي `LoadBookPage` في الوحدة 9، وبيعدّيه للـ repository والـ data source. ده التمن: parameter زيادة في كل طبقة.
+- <b>نفس الكلمة مرتين:</b> «dahl» وبعدها مسافة. من غير الـ check، ده طلب جديد لنفس النتيجة. والـ `retry` موجودة عشان الـ check ده بيمنع إعادة نفس الكلمة بعد error.
+
+<CodeBlock label="الـ UI: النتايج القديمة باهتة وفوقها progress">
+
+```dart
+BlocBuilder<CatalogSearchCubit, CatalogSearchState>(
+  builder: (context, state) => switch (state) {
+    SearchIdle() => const SearchHint(),
+    SearchLoading(:final previous) when previous.isEmpty =>
+      const Center(child: CircularProgressIndicator()),
+    SearchLoading(:final previous) => Column(children: [
+        const LinearProgressIndicator(),
+        Expanded(child: Opacity(opacity: 0.5, child: BookList(books: previous))),
+      ]),
+    SearchLoaded(:final books, :final query) when books.isEmpty => NoResults(query: query),
+    SearchLoaded(:final books) => BookList(books: books),
+    SearchError(:final failure) => ErrorView(
+        message: failure.localized(AppLocalizations.of(context)!),
+        onRetry: context.read<CatalogSearchCubit>().retry,
+      ),
+  },
+)
+```
+
+</CodeBlock>
+
+الـ `previous` قرار UX مش قاعدة: لو المستخدم بيكتب «roald» بعد «roa»، الشاشة مابتفضاش وترجع تتملي مع كل حرف. ولو الفريق شايف إن النتايج القديمة بتلخبط، شيل الحقل والـ Loading تبقى spinner بس. و«مفيش نتايج» مش state لوحدها: هي `SearchLoaded` بليستة فاضية، والـ `when` في الـ switch بيفرّقها. لو عملتها state، هتلاقي نفسك بتعمل emit لـ `SearchEmpty` في مكان و`SearchLoaded([])` في مكان تاني بالغلط.
+
+في Readly الحقيقية، الكتالوج بيجمع البحث والصفحات في `CatalogCubit` واحد زي درس الـ Pagination في الوحدة 5. هنا فصلناهم عشان كل نوع يبان لوحده، والـ scope بيدخل في `loadFirst` بنفس الشكل بالظبط.
+
+### دمج نتيجة بحث مع stream: علامة «في مكتبتك»
+
+في تاب الكتالوج، المستخدم بيدوّر على «Dahl»، وعايز يعرف أنهي نتيجة عنده في المكتبة أصلًا عشان مايضيفهاش تاني. النتايج جاية من طلب لـ Open Library، والمكتبة جاية من stream. والـ `LibraryCubit` مش هيساعد: الـ provider بتاعه في route المكتبة، وتاب الكتالوج branch تاني خالص، فمش شايفه (هنشوف ليه في درس «flutter_bloc بالتفصيل»). وحتى لو شايفه، الـ Cubit مايمسكش Cubit تاني.
+
+الحل إن الـ Cubit يمسك آخر قيمة من كل مصدر، ويعمل emit لما أي واحد فيهم يتغير. الـ `SearchLoaded` بتكبر بحقل، والـ `CatalogSearchCubit` اللي فوق بياخد الـ repository ويشترك في المكتبة:
+
+<CodeBlock label="CatalogSearchCubit بيعرف الكتب اللي في المكتبة">
+
+```dart
+final class SearchLoaded extends CatalogSearchState {
+  const SearchLoaded(this.query, this.books, {this.owned = const {}});
+  final String query;
+  final List<Book> books;
+  final Set<BookId> owned; // ids already in the user's library
+
+  SearchLoaded withOwned(Set<BookId> owned) => SearchLoaded(query, books, owned: owned);
+}
+
+class CatalogSearchCubit extends Cubit<CatalogSearchState> {
+  CatalogSearchCubit(this._searchBooks, LibraryRepository library)
+      : super(const SearchIdle()) {
+    // always-on and has no parameters: fine to subscribe here
+    _ownedSub = library.watchLibrary().listen((books) {
+      _owned = {for (final b in books) b.id};
+      if (state case final SearchLoaded loaded) emit(loaded.withOwned(_owned));
+    });
+  }
+
+  final SearchBooks _searchBooks;
+  late final StreamSubscription<List<Book>> _ownedSub;
+  Set<BookId> _owned = const {};
+  // ...queryChanged, retry, _search as above, and on success:
+  //   Success(:final value) => SearchLoaded(query, value.items, owned: _owned),
+
+  @override
+  Future<void> close() async {
+    _debounce?.cancel();
+    _cancelInFlight();
+    await _ownedSub.cancel();
+    return super.close();
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>المصدرين مستقلين:</b> نتيجة البحث بتيجي مرة مع كل كلمة، والمكتبة بتيجي مع كل تغيير. الـ Cubit شايل آخر قيمة من كل واحد، وأي واحد يتغير بيبني state من الاتنين.
+- <b>الـ UI مابتحسبش:</b> الـ tile بيسأل `state.owned.contains(book.id)` بس. ولما المستخدم يضيف الكتاب، الـ AddBook بيكتب في drift، والـ stream بيوصل، والعلامة بتظهر لوحدها.
+- <b>الـ Equatable هنا بيوفّر:</b> كل تغيير في المكتبة (حتى تغيير حالة كتاب) بيطلّع set جديدة. لو `SearchLoaded` بـ Equatable، الـ set اللي ماتغيرتش بتطلع `==` القديمة (Equatable بيقارن المحتوى)، والـ Cubit بيتجاهل الـ emit. من غيره، كل تغيير في المكتبة = rebuild لنتايج البحث. ده من درس «تصميم الـ State».
+
+### دمج stream مع stream: combineLatest
+
+لو المصدرين الاتنين streams، فيه أداة جاهزة. الـ `combineLatest` من package:stream_transform بيطلّع قيمة لما الاتنين يكونوا طلّعوا أول قيمة، وبعدها مع أي تغيير في أي واحد:
+
+<CodeBlock label="الكتب ومعاها حالة الـ sync">
+
+```dart
+// domain/watch_library_items.dart
+class LibraryItem {
+  const LibraryItem(this.book, {required this.synced});
+  final Book book;
+  final bool synced;
+}
+
+class WatchLibraryItems {
+  WatchLibraryItems(this._library);
+  final LibraryRepository _library;
+
+  Stream<List<LibraryItem>> call() => _library.watchLibrary().combineLatest(
+        _library.watchSyncStatus(),
+        (books, sync) => [
+          for (final b in books) LibraryItem(b, synced: !sync.unsynced.contains(b.id)),
+        ],
+      );
+}
+```
+
+</CodeBlock>
+
+لاحظ إن الدمج ده في <b>use case</b> مش في الـ Cubit. الـ Cubit بيشترك في stream واحد زي `LibraryCubit` بالظبط. لو الدمج فيه قاعدة (مين يتعرض، بأنهي ترتيب)، مكانه الـ domain وبيتختبر بـ dart test، زي `WatchLibrary` في درس الـ Domain في الوحدة 2. ولو الدمج عرض بس ومحدش غير شاشة واحدة محتاجه، ممكن تفضل في الـ Cubit زي «في مكتبتك». وفي درس Offline-first عملنا نفس العلامة بـ `context.select` على `SyncStatusCubit` من غير دمج خالص: ده أبسط لو كل tile محتاج سؤال واحد بس. الدمج يستاهل لما الـ Cubit نفسه محتاج المعلومة (يرتّب «اللي لسه ماتزامنش» فوق، أو يعدّهم).
+
+### الـ Pagination Cubit: ليستة بتكبر
+
+النوع ده متشرح كامل في درس الـ Pagination في الوحدة 5، بكل مشاكله: الصفحة اللي بتتحمّل مرتين، وآخر الليستة، والـ error في الصفحة 4، والـ refresh، وتغيير كلمة البحث، والكتاب اللي ظهر في صفحتين. هنا الملخص اللي يخليك تعرفه لما تشوفه:
+
+| الحاجة | مكانها | ليه |
+| --- | --- | --- |
+| `books` | الـ state | الـ UI بترسمها |
+| `hasReachedEnd` | الـ state | الـ UI بتشيل الـ spinner اللي تحت، والـ Cubit بيبطّل يطلب |
+| `loadMoreFailure` | الـ state | الـ footer بيعرض retry والليست زي ما هي |
+| `refreshFailure` | الـ state | snackbar والليست القديمة فاضلة |
+| `_page` | private في الـ Cubit | محدش بيرسمه، ومابيزيدش غير لما الطلب ينجح |
+| `_loadingMore` | private في الـ Cubit | قفل ضد الطلب المكرر، بيتحط قبل أول await |
+| `_latestRequest` | private في الـ Cubit | الصفحة الراجعة لبحث قديم بتتجاهل |
+
+القاعدة اللي بتطلع من الجدول وبتنفع في أي نوع: <b>اللي الـ UI بترسمه يبقى في الـ state، واللي بيحمي الـ Cubit بس يفضل private</b>. لو حطيت `_loadingMore` في الـ state، كل بداية ونهاية طلب هتعمل rebuild لليستة كلها، من غير ما حاجة تتغير على الشاشة. ولو الديزاين محتاج spinner مخصوص للصفحة الجاية، ساعتها بس يدخل الـ state.
+
+ولو الـ backend بتاعك بيدعم cursor، الشكل نفسه مابيتغيرش كتير: `_page` بيبقى `String? _cursor`، و`hasReachedEnd` بيبقى `_cursor == null` بعد أول صفحة.
+
+### الـ scope: الـ Cubit عايش فين
+
+نفس الـ Cubit ممكن يبقى صح أو غلط حسب <b>هو متوفر فين في الشجرة</b>. ده بيحدد هو عايش قد إيه، ومين يقدر يوصله، وإمتى بيتقفل.
+
+| المستوى | عايش قد إيه | التسجيل في get_it | بيتحط فين | أمثلة في Readly |
+| --- | --- | --- | --- | --- |
+| الـ app | طول عمر الـ app | lazySingleton لو حد بره الشجرة محتاجه، وإلا factory | فوق `MaterialApp.router` | `AuthCubit`، `SettingsCubit`، `SyncStatusCubit`، `AppStatusCubit` |
+| الـ shell أو الـ flow | طول ما المستخدم داخل، أو طول ما الـ flow مفتوح | factory | الـ builder بتاع `StatefulShellRoute` أو `ShellRoute` | `ProfileCubit` في كل التابات، `AddBookFlowCubit` لخطوات إضافة كتاب يدوي |
+| الشاشة | طول ما الشاشة في الـ stack | factory أو factoryParam | الـ builder بتاع الـ `GoRoute` | `LibraryCubit`، `BookDetailsCubit`، `CatalogCubit` |
+| الـ item | طول ما الـ widget في الشجرة | factoryParam | جوه الـ widget نفسه | `BookTileCubit` |
+
+الخريطة كاملة لكل Cubit في Readly، بالـ branches والـ routes، في درس «الـ State management في مشروع حقيقي». هنا السؤال: إزاي تعرف النوع ده مكانه فين.
+
+### الـ app-scoped: مين يستاهل
+
+`AuthCubit` لازم يبقى على مستوى الـ app: الـ redirect بتاع go_router بيقرا منه، والـ setup بيسمع عليه عشان يعمل reset بعد الـ logout. الاتنين دول <b>بره الـ widget tree</b>، فمش هيلاقوه في `BlocProvider`. علشان كده اتسجّل `registerLazySingleton` في درس الـ Session، والـ provider بتاعه بيدّي نفس النسخة للشجرة. أما `SettingsCubit` فمحدش بره الشجرة محتاجه، فاتسجّل factory عادي واتعمل مرة واحدة لأن الـ provider بتاعه فوق الـ app. القاعدة: <b>lazySingleton بس لما كود بره الشجرة محتاج نفس النسخة</b>.
+
+الغلطة الشائعة العكسية: كل Cubit يتحط فوق الـ app «عشان أي حد يوصله». النتيجة: `LibraryCubit` عايش ومشترك في drift والمستخدم في شاشة الـ login، وبيانات المستخدم القديم فاضلة في الذاكرة بعد الـ logout (درس الـ Session عدّ الأماكن دي)، وأي emit فيه بيعمل rebuild لحاجات ملهاش دعوة. حط الـ Cubit عند <b>أقرب أب مشترك</b> للي محتاجينه، مش أعلى.
+
+وأي Cubit على مستوى الـ app شايل بيانات تخص المستخدم لازم يتمسح مع الـ logout: الـ `SettingsCubit.reset()` في درس الـ Settings بيتنادى من `BlocListener` على الـ `AuthCubit`. ولو بتفكر تعمل `ConnectivityCubit` للـ app كله يقفل الأزرار لما النت يفصل، ارجع لدرس «الأخطاء في الشاشة» في الوحدة 9: الـ connectivity تلميح مش حقيقة، والحقيقة هي `SyncStatusCubit` والطلب اللي فشل.
+
+### الـ flow-scoped: Cubit لكذا شاشة ورا بعض
+
+إضافة كتاب يدوي في 3 خطوات: البيانات الأساسية، وبعدين الحالة والغلاف، وبعدين التأكيد. الـ draft لازم يعدّي بين الشاشات التلاتة، ومش محفوظ في أي حتة لحد آخر خطوة. ده Cubit بيعيش قد الـ flow: بيتعمل لما تدخل أول خطوة، ويتقفل لما تخرج من آخر واحدة. إزاي تحطه فوق التلات routes مع بعض في go_router هو موضوع درس «flutter_bloc بالتفصيل». هنا المهم القرار: <b>لو الشاشات مش بتشارك state في الذاكرة</b> (صفحة المكتبة وصفحة الكتاب مثلًا)، يبقى مش flow، وكل شاشة ليها Cubit وبيتواصلوا عن طريق الـ repository.
+
+### شاشة فيها كذا جزء: Cubit واحد ولا كذا؟
+
+صفحة الكتاب فيها 3 حاجات: التفاصيل (العنوان والغلاف والمؤلف)، والملاحظات (ليستة بتتضاف لها وبتتمسح منها)، وزرار الحالة (عايز أقراه، بقراه، خلصته). أول حاجة بتيجي في بال أي حد: `BookPageCubit` واحد شايل كل ده. وبعد شهر بيبقى فيه 12 حقل و9 methods، وكل إضافة ملاحظة بتعمل rebuild للغلاف، وتست زرار الحالة محتاج يجهّز التفاصيل والملاحظات.
+
+السؤال اللي بيحسم: <b>الأجزاء دي ليها lifecycle واحد ولا كل واحد ليه lifecycle؟</b>
+
+| السؤال | لو أيوه | مثال |
+| --- | --- | --- |
+| الأجزاء بتتحمّل مع بعض وبتفشل مع بعض؟ | Cubit واحد، وuse case بيجمعهم | `LoadBookPage` في الوحدة 9 بيجيب التفاصيل والملاحظات مع بعض بـ `.wait` |
+| كل جزء ليه loading وerror وactions لوحده؟ | Cubit لكل جزء | الملاحظات بتتضاف وبتتمسح، والتفاصيل read-only |
+| جزء محتاج يعرف إن جزء تاني اتغير؟ | الاتنين يسمعوا نفس الـ repository stream | تغيير الحالة بيظهر في التفاصيل لوحده |
+| الـ state فيها حقول مالهاش علاقة ببعض وبتكبر؟ | علامة god Cubit: قسّم | `savingNote` جنب `statusUpdating` جنب `author` |
+
+يعني مش «Cubit واحد لكل شاشة» ولا «Cubit لكل widget». الوحدة هي <b>الجزء اللي ليه حياة لوحده</b>. في صفحة الكتاب: `BookDetailsCubit` (Load)، و`NotesCubit` (ليستة وactions)، و`BookStatusCubit` (Action). وكلهم بيتعملوا في الـ route بـ `MultiBlocProvider`، وكل جزء في الشاشة ليه `BlocBuilder` بتاعه، فإضافة ملاحظة مابتلمسش الغلاف. الكود كامل قبل وبعد تحت في «قبل وبعد والكود».
+
+والعكس كمان غلط: لو قسمت لدرجة إن Cubitين محتاجين يكلموا بعض على طول (كل action في واحد لازم يتبعه حاجة في التاني)، يبقى انت قسمت في المكان الغلط، وهما في الحقيقة جزء واحد.
+
+### Cubit لكل item في الليستة
+
+في المكتبة، كل كتاب عليه menu لتغيير الحالة. لو المستخدم غيّر حالة كتابين ورا بعض، كل tile محتاج spinner لوحده، وفشل واحد مايأثرش على التاني. فيه طريقتين:
+
+<b>الطريقة الأولى: الأب شايل الـ ids اللي شغالة.</b> `LibraryLoaded` فيها `Set<BookId> updating`، و`LibraryCubit.changeStatus(id, status)` بيزوّد ويشيل منها، وكل tile بيسأل بـ `context.select`. بسيطة، وكفاية لما الـ item عنده action واحد.
+
+<b>الطريقة التانية: Cubit لكل tile.</b> الـ tile شايل الشغل بتاعه كله:
+
+<CodeBlock label="BookTileCubit: الـ action state بس، مش الكتاب">
+
+```dart
+final class BookTileState {
+  const BookTileState({this.updatingTo, this.failure});
+  final BookStatus? updatingTo; // non-null while the request runs
+  final Failure? failure;       // last failed attempt
+  bool get isUpdating => updatingTo != null;
+}
+
+class BookTileCubit extends Cubit<BookTileState> {
+  BookTileCubit(this._library, this._id) : super(const BookTileState());
+  final LibraryRepository _library;
+  final BookId _id;
+
+  Future<void> changeStatus(BookStatus status) async {
+    if (state.isUpdating) return;
+    emit(BookTileState(updatingTo: status));
+    final result = await _library.updateStatus(_id, status);
+    if (isClosed) return;
+    emit(switch (result) {
+      Success() => const BookTileState(), // the new status arrives via watchLibrary()
+      Err(:final failure) => BookTileState(failure: failure),
+    });
+  }
+}
+
+// di/setup.dart: the id comes from the caller
+getIt.registerFactoryParam<BookTileCubit, BookId, void>(
+  (id, _) => BookTileCubit(getIt(), id),
+);
+```
+
+</CodeBlock>
+
+<CodeBlock label="في الليستة: key لكل tile">
+
+```dart
+ListView.builder(
+  itemCount: books.length,
+  itemBuilder: (context, i) {
+    final book = books[i];
+    return BlocProvider(
+      key: ValueKey(book.id), // this Cubit belongs to this book, not to slot i
+      create: (_) => getIt<BookTileCubit>(param1: book.id),
+      child: BookTile(book: book), // the book itself comes from the parent
+    );
+  },
+)
+```
+
+</CodeBlock>
+
+- <b>الـ Cubit مش شايل الكتاب:</b> الكتاب جاي من الأب، اللي بيسمع على الـ stream. لو الـ tile Cubit خد نسخة من الكتاب، أول تغيير ييجي من السيرفر مش هيوصلها، والـ tile هيعرض حالة قديمة. الـ tile Cubit شايل اللي الأب مايعرفهوش: «أنا بغيّر دلوقتي» و«آخر محاولة فشلت».
+- <b>الـ `ValueKey(book.id)`:</b> من غيرها، الـ ListView بيربط الـ elements بالترتيب. كتاب جديد اتضاف فوق (الـ stream طلّعه)، فكل الكتب نزلت خطوة، بس الـ BlocProvider اللي في الخانة 0 لسه هو هو، والـ `create` مابيتناداش تاني. يعني الـ Cubit بتاع «Matilda» بقى متركّب على «Dune»، والـ spinner بيلف على الكتاب الغلط، والـ changeStatus الجاي هيغيّر Matilda. الـ key بيقول لـ Flutter إن ده item تاني، فيرمي القديم ويعمل جديد. ولو عايز الـ Cubit يفضل مع الكتاب وهو بيتحرك في الليستة (مش يتعمل من جديد)، زوّد `findChildIndexCallback` للـ ListView.
+- <b>الـ factoryParam:</b> get_it بيعمل Cubit جديد كل مرة بالـ id اللي بعته. ده من الأماكن القليلة اللي get_it بيتنادى فيها بره الـ route، ولو الفريق شايلها، الـ route يدّي الـ View function من نوع `BookTileCubit Function(BookId)`.
+
+<b>إمتى يستاهل؟</b> في Readly الـ `updateStatus` بيكتب في drift والـ queue، فبيخلص في ملّي ثواني، والـ spinner بالعافية بيبان. هنا الطريقة الأولى كفاية. الـ per-item Cubit يستاهل لما:
+
+- الـ item عنده <b>كذا حاجة لوحده</b>: حالة، وتنزيل sample، وexpand فيه تفاصيل بتتحمّل، واشتراك في stream بتاعه.
+- الـ action <b>بطيء ومن الشبكة</b> والمستخدم ممكن يشغّل كذا واحد مع بعض.
+- نفس الـ tile بيتستخدم في <b>كذا شاشة</b> (المكتبة والـ Home ونتايج البحث)، فبدل ما كل أب يكرر `updating` والـ method، الـ tile ومعاه الـ Cubit بتاعه حتة واحدة.
+
+ومش يستاهل لو الليستة فيها 500 item والـ tile عرض بس: 500 Cubit ملهمش لازمة. والـ ListView.builder بيبني اللي ظاهر بس، فالـ Cubits بتتعمل وتتقفل مع الـ scroll، وأي state في الـ tile Cubit بتضيع لما الـ tile يخرج من الشاشة. لو الـ state لازم تفضل، مكانها الأب.
+
+### الـ Base Cubit العام: AsyncCubit وليه بيوجع
+
+بعد 10 شاشات، حد في الفريق لاحظ إن نص الـ Cubits شكلهم واحد: Loading، وبعدين Loaded أو Error. فعمل class أب:
+
+<CodeBlock label="الإغراء">
+
+```dart
+sealed class AsyncState<T> {
+  const AsyncState();
+}
+final class AsyncLoading<T> extends AsyncState<T> {
+  const AsyncLoading();
+}
+final class AsyncData<T> extends AsyncState<T> {
+  const AsyncData(this.value);
+  final T value;
+}
+final class AsyncFailure<T> extends AsyncState<T> {
+  const AsyncFailure(this.failure);
+  final Failure failure;
+}
+
+abstract class AsyncCubit<T> extends Cubit<AsyncState<T>> {
+  AsyncCubit() : super(AsyncLoading<T>());
+
+  Future<Result<T>> fetch();
+
+  Future<void> load() async {
+    emit(AsyncLoading<T>());
+    final result = await fetch();
+    if (isClosed) return;
+    emit(switch (result) {
+      Success(:final value) => AsyncData<T>(value),
+      Err(:final failure) => AsyncFailure<T>(failure),
+    });
+  }
+}
+
+class BookDetailsCubit extends AsyncCubit<BookDetails> {
+  BookDetailsCubit(this._get, this._id);
+  final GetBookDetails _get;
+  final BookId _id;
+
+  @override
+  Future<Result<BookDetails>> fetch() => _get(_id);
+}
+```
+
+</CodeBlock>
+
+أول أسبوع شكله عبقري: `BookDetailsCubit` بقى 6 سطور. المشكلة بتبان مع أول طلب مختلف:
+
+- <b>المكتبة محتاجة refresh مايمسحش البيانات:</b> فـ `AsyncData` بياخد `isRefreshing` و`refreshFailure`، وكل الشاشات بقى عندها حقول مش بتستخدمها.
+- <b>صفحة الكتاب محتاجة فشل جزئي</b> (المؤلف null والصفحة تتعرض): مش هينفع بـ `AsyncFailure`، فإما hack، إما الشاشة تخرج من الـ base.
+- <b>الكتالوج محتاج pagination:</b> `AsyncData<List<Book>>` مافيهوش مكان لـ `hasReachedEnd`، فتتعمل `PagedAsyncCubit` فوق `AsyncCubit`، وبعدها `SearchablePagedAsyncCubit`.
+- <b>الـ base بقت فيها flags:</b> `keepDataOnReload`، `showLoadingOnRefresh`. وأي تعديل فيها بيلمس كل الشاشات، فمحدش بيجرؤ يعدّلها.
+- <b>الأسماء ضاعت:</b> في الـ logs بتاعة الـ BlocObserver هتشوف `AsyncData<List<Book>>` بدل `LibraryLoaded`. والـ `switch` في الـ UI بقى على `AsyncData(:final value)`، و«value» دي إيه؟ لازم ترجع للـ type parameter عشان تعرف.
+
+الـ duplication اللي شفته في الأول كان في <b>الشكل</b>، مش في <b>المعنى</b>. كل شاشة شكلها شبه التانية النهارده، بس بتتغير لأسباب مختلفة. وده بالظبط المكان اللي الـ inheritance بيوجع فيه: أي حاجة تتغير لشاشة بتتغير للكل. الـ LessonPart تحت فيه البديل جنب الإغراء.
+
+اللي يستاهل يتشارك فعلًا حاجات صغيرة بتتركّب، مش class أب:
+
+<CodeBlock label="value object بيتشارك، مش Cubit">
+
+```dart
+// core/paged.dart: used by CatalogCubit and any future paged list
+final class Paged<T> {
+  const Paged({this.items = const [], this.hasReachedEnd = false});
+  final List<T> items;
+  final bool hasReachedEnd;
+
+  Paged<T> append(PagedResult<T> page, {required Object Function(T) idOf}) {
+    final seen = items.map(idOf).toSet();
+    return Paged(
+      items: [...items, ...page.items.where((e) => seen.add(idOf(e)))],
+      hasReachedEnd: !page.hasMore,
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>value objects</b> زي `Paged<T>`: الـ dedupe والـ hasReachedEnd متكتبين ومتستّين مرة، وكل Cubit يحطه جوه الـ state بتاعته باسمها.
+- <b>widgets مشتركة</b> زي `ErrorView` و`InlineErrorBanner` من الوحدة 9: التكرار الحقيقي في العرض، وده مكانه.
+- <b>mixin صغير</b> لسلوك واحد مالوش state، زي safe emit، وده في درس «Cubit متقدم».
+
+وإمتى الـ base مقبولة؟ لو عندك فعلًا 8 شاشات Load بسيطة جدًا (صفحات About وشروط الاستخدام وتفاصيل read-only) والفريق متفق إن أي شاشة محتاجة حاجة زيادة بتخرج منها فورًا ومش بتزوّد flag. يعني base صغيرة ومقفولة، مش framework.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+### أنهي Cubit محتاجه؟
+
+الأنواع في الدرسين بتجاوب على سؤال واحد: «الـ state دي بتتغير إزاي؟». اسأل الأسئلة بالترتيب، وأول «أيوه» هي النوع:
+
+<Diagram name="d-sm-cubit-picker">
+
+ابدأ من فوق. الأسئلة الأولى عن البيانات اللي بتيجي لوحدها أو على دفعات، وبعدها عن اللي المستخدم بيعمله، وآخر سؤال عن القيم البسيطة. ولو مفيش ولا «أيوه»، غالبًا مش محتاج Cubit خالص.
+
+</Diagram>
+
+| النوع | علامته | شكل الـ state | مثال في Readly | الدرس |
+| --- | --- | --- | --- | --- |
+| Value | قيمة واحدة، كذا widget محتاجها | `Cubit<bool>` أو enum أو رقم | `ViewModeCubit`، `LibraryFilterCubit` | «أنواع الـ Cubit (1)» |
+| Selection | المستخدم بيختار items | `Set<BookId>` | `BookSelectionCubit` | «أنواع الـ Cubit (1)» |
+| Load | بتتجاب مرة وتتعرض | sealed: Loading وLoaded وError | `BookDetailsCubit` | «أنواع الـ Cubit (1)» |
+| Action | عملية واحدة بنتيجة | idle وinProgress وsuccess وfailure | `AddBookCubit`، `BookStatusCubit` | «أنواع الـ Cubit (1)» |
+| Form | حقول وvalidation وsubmit | class واحدة: القيم والأخطاء والـ status | `LoginCubit` | «أنواع الـ Cubit (1)» ودرس الـ Forms في الوحدة 5 |
+| Stream | البيانات بتتغير لوحدها | زي Load، بس Loaded بتيجي كتير | `LibraryCubit`، `SyncStatusCubit` | الدرس ده |
+| Search | السؤال بيتغير مع الكتابة | Idle وLoading(previous) وLoaded وError | `CatalogSearchCubit` | الدرس ده، ودرس Cubit في الوحدة 5 |
+| Pagination | الليستة بتتجاب صفحات | Loaded فيها `hasReachedEnd` والـ failures | `CatalogCubit` | الدرس ده، ودرس الـ Pagination في الوحدة 5 |
+
+وبعد ما تعرف النوع، السؤال التاني: <b>بيتحط فين؟</b> مين محتاجه؟ لو كود بره الشجرة: lazySingleton وفوق الـ app. لو كذا شاشة بتشارك draft في الذاكرة: فوق الـ flow. لو شاشة واحدة: في الـ route. لو كل item ليه شغل لوحده بجد: في الـ tile. وكتير من الشاشات الحقيقية خليط: الكتالوج Search وPagination في Cubit واحد، والمكتبة Stream ومعاها Value للفلتر، وصفحة الكتاب Load وAction وليستة ملاحظات في 3 Cubits.
+
+### قرارات بتفرق
+
+- <b>النوع بيتغير مع المعمارية:</b> `LibraryCubit` كان Load Cubit في الوحدة 5، وبقى Stream Cubit لما Readly بقت offline-first. ده مش refactor للـ UI: الـ state زي ما هي، والـ `load()` بقت `watch()`. لو الـ UI بتبص على الـ state بس وبتنادي methods، تغيير النوع بيبقى جوه الـ Cubit.
+- <b>الـ stream مصدر الحقيقة، والـ Cubit مش cache:</b> في Stream Cubit، ماتعدّلش الليستة اللي في الـ state بإيدك بعد action (`books.add(newBook)`). الـ action بيكتب في الـ repository، والـ stream بيرجّع الحقيقة. لو عدّلت بإيدك، هيبقى عندك نسختين ممكن يختلفوا، وأول emit من الـ stream هيمسح تعديلك.
+- <b>اللي بيحمي private، واللي بيترسم state:</b> flags زي `_loadingMore` و`_inFlight` و`_page` مالهمش مكان في الـ state. كل حقل في الـ state معناه rebuild لما يتغير، وتست بيتأكد منه.
+- <b>Cubit لكل جزء ليه حياة لوحده:</b> مش لكل شاشة ومش لكل widget. لو اتنين محتاجين يكلموا بعض على طول، اجمعهم. لو واحد فيه حقول بتتغير لأسباب مالهاش علاقة ببعض، قسّمه.
+- <b>المشاركة بالـ composition مش بالـ inheritance:</b> value objects وwidgets وmixins صغيرة. الـ base Cubit بيوفّر سطور النهارده وبيدفّعك تمنها في كل feature جاية.
+- <b>الـ scope أقل حاجة ممكنة:</b> كل Cubit فوق الـ app هو state بتعيش لحد ما الـ app يتقفل، ولازم تفتكر تمسحها مع الـ logout. ابدأ من الـ route، وطلّعه لفوق بس لما حد تاني يحتاجه فعلًا.
+
+<Note kind="interview" title="سؤال interview">
+
+«عندك Cubit بيسمع على stream من الـ database. إيه اللي لازم تعمله عشان مايبقاش فيه leak أو crash؟» الاشتراك بيتحفظ في field ويتلغي في `close()` قبل `super.close()`، وإلا هيفضل شغال ويعمل emit على Cubit مقفول ويرمي `StateError`. ولو الاشتراك بيتعمل من method ممكن تتنادى تاني (فلتر اتغير)، الـ method بتلغي القديم الأول، عشان مايبقاش فيه اشتراكين بيعملوا emit مع بعض. والـ `onError` بيتحوّل لـ error state ويتبلّغ بـ `addError`. ولو الـ stream مابيطلّعش القيمة الحالية أول ما تشترك، تقراها الأول. وأي method async في نفس الـ Cubit بتبني على `state` بعد الـ await مش على نسخة قبله، لأن الـ stream ممكن يكون غيّرها وانت مستني.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«إمتى تعمل Cubit لكل item في ليستة؟» لما الـ item ليه شغل حقيقي لوحده: action بطيء من الشبكة ممكن يشتغل على كذا item مع بعض، أو أكتر من حاجة (حالة وتنزيل وتفاصيل بتتحمّل)، أو نفس الـ tile بيتستخدم في كذا شاشة. غير كده، الأب يشيل `Set` بالـ ids اللي شغالة وكل tile يسأل بـ `context.select`. ولو عملته: الـ tile Cubit يشيل الـ action state بس والبيانات جاية من الأب، والـ BlocProvider بتاعه عليه `ValueKey` بالـ id، وإلا لما الليستة تتحرك الـ Cubit هيفضل في نفس الخانة ويتركّب على item تاني.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### صفحة الكتاب: Cubit واحد كبير ولا تلاتة صغيرين
+
+<BeforeAfter>
+
+<Side label="قبل: BookPageCubit شايل كل حاجة" kind="before">
+
+```dart
+class BookPageState {
+  // details
+  final BookDetails? details;
+  final bool detailsLoading;
+  final Failure? detailsFailure;
+  // notes
+  final List<Note> notes;
+  final bool savingNote;
+  final Map<String, String> noteErrors;
+  final Failure? notesFailure;
+  // status button
+  final BookStatus? updatingTo;
+  final Failure? statusFailure;
+  // ...constructor and a 10-field copyWith
+}
+
+class BookPageCubit extends Cubit<BookPageState> {
+  Future<void> load() async {/* details + notes */}
+  Future<void> addNote(String text) async {/* ... */}
+  Future<void> removeNote(NoteId id) async {/* ... */}
+  Future<void> changeStatus(BookStatus s) async {/* ... */}
+}
+
+// one BlocBuilder for the whole page:
+// adding a note rebuilds the cover and the details
+```
+
+</Side>
+
+<Side label="بعد: Cubit لكل جزء ليه حياة لوحده" kind="after">
+
+```dart
+GoRoute(
+  path: 'books/:id',
+  builder: (_, state) {
+    final id = BookId.fromTrusted(state.pathParameters['id']!);
+    return MultiBlocProvider(
+      providers: [
+        BlocProvider(create: (_) => getIt<BookDetailsCubit>()..load(id)), // Load
+        BlocProvider(create: (_) => getIt<NotesCubit>(param1: id)),       // list + actions
+        BlocProvider(create: (_) => getIt<BookStatusCubit>(param1: id)),  // Action
+      ],
+      child: const BookPage(),
+    );
+  },
+),
+
+// BookPage: each section listens to its own Cubit
+Column(children: [
+  BlocBuilder<BookDetailsCubit, BookDetailsState>(/* cover, title, author */),
+  BlocBuilder<BookStatusCubit, BookStatusState>(/* status button */),
+  Expanded(child: BlocBuilder<NotesCubit, NotesState>(/* notes */)),
+]),
+```
+
+</Side>
+
+</BeforeAfter>
+
+- <b>كل Cubit بيتستّ لوحده:</b> تست زرار الحالة مابيجهّزش ملاحظات ولا تفاصيل.
+- <b>الـ rebuild في مكانه:</b> إضافة ملاحظة بتعيد بناء الـ BlocBuilder بتاع الملاحظات بس.
+- <b>التواصل من غير reference:</b> لما الحالة تتغير، الـ `BookStatusCubit` بيكتب في الـ repository. لو التفاصيل محتاجة تعرض الحالة الجديدة، `BookDetailsCubit` يسمع على الكتاب من drift، مش على الـ `BookStatusCubit`.
+- <b>والفشل في مكانه:</b> فشل تحميل الملاحظات بيبان في جزء الملاحظات بس، زي جدول «لو ده ناقص، الصفحة لسه ليها لازمة؟» في درس «طلبات متقدمة» في الوحدة 9.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="sm-types2-1">
+<Ask>`LibraryCubit.watch(status:)` بيتنادى كل ما الفلتر يتغير، ومافيهوش `_sub?.cancel()` في أوله. المستخدم غيّر الفلتر من «الكل» لـ «بقراه». إيه اللي هيحصل؟</Ask>
+<Answer>
+
+هيبقى فيه اشتراكين شغالين مع بعض، والاتنين بيعملوا emit. أي تغيير في الجدول هيطلّع ليستة «الكل» وبعدها ليستة «بقراه» (أو العكس)، فالشاشة ترمش وممكن تستقر على الفلتر الغلط. والاشتراك القديم عمره ما هيتلغي، حتى في `close` لو الـ field اتكتب عليه. الحل: الغي القديم قبل ما تفتح الجديد، والغي الأخير في `close`.
+
+</Answer>
+</Question>
+
+<Question id="sm-types2-2">
+<Ask>في Stream Cubit، الـ `refresh` بيحفظ `final before = state` قبل الـ await، وبعد ما يخلص بيعمل `emit(LibraryLoaded(before.books))`. إيه الغلط؟</Ask>
+<Answer>
+
+الـ stream ممكن يكون طلّع كتب جديدة وانت مستني الـ refresh (والـ refresh نفسه هو اللي كتبها في drift). الـ emit بـ `before.books` بيرجّع الليستة القديمة ويمسح اللي لسه واصل، لحد ما الـ stream يطلّع تاني. في Stream Cubit، أي حاجة بعد await بتبني على `state` الحالية، والـ refresh يرجع بنجح أو فشل بس، والكتب نفسها بتيجي من الـ stream.
+
+</Answer>
+</Question>
+
+<Question id="sm-types2-3">
+<Ask>كل tile في المكتبة عليه `BlocProvider(create: (_) => getIt<BookTileCubit>(param1: book.id))` من غير key. المستخدم غيّر حالة «Matilda» وفي نفس اللحظة كتاب جديد اتضاف فوق الليستة من الـ sync. الـ spinner ظهر على كتاب تاني. ليه، والحل؟</Ask>
+<Answer>
+
+الـ ListView بيربط الـ elements بالترتيب. لما الكتاب الجديد اتضاف، كل الكتب نزلت خطوة، بس الـ BlocProvider اللي في كل خانة فضل هو هو، والـ `create` مابيتناداش تاني، فالـ Cubit بتاع Matilda بقى متركّب على الكتاب اللي بقى في خانتها. الحل `key: ValueKey(book.id)` على الـ BlocProvider، فـ Flutter يعرف إنه item مختلف ويعمل Cubit جديد. والـ tile Cubit مايشيلش نسخة من الكتاب نفسه، الكتاب جاي من الأب.
+
+</Answer>
+</Question>
+
+<Question id="sm-types2-4">
+<Ask>`AuthCubit` و`SettingsCubit` الاتنين متحطين فوق `MaterialApp.router`. ليه الأول `registerLazySingleton` والتاني `registerFactory`؟ وليه `LibraryCubit` مايتحطش جنبهم «عشان أي حد يوصله»؟</Ask>
+<Answer>
+
+الـ `AuthCubit` محتاجه كود بره الـ widget tree: الـ redirect بتاع go_router، والـ listener اللي في الـ setup بيعمل reset بعد الـ logout. الاتنين لازم ياخدوا نفس النسخة اللي في الشجرة، فـ lazySingleton. الـ `SettingsCubit` محدش بره الشجرة محتاجه، والـ provider بتاعه فوق الـ app فبيتعمل مرة واحدة أصلًا. أما `LibraryCubit` فمكانه route المكتبة: لو اتحط فوق الـ app، هيفضل مشترك في drift في شاشة الـ login، وبيانات المستخدم هتفضل في الذاكرة بعد الـ logout، وأي emit هيعمل rebuild لحاجات ملهاش دعوة. الـ Cubit بيتحط عند أقرب أب مشترك للي محتاجينه.
+
+</Answer>
+</Question>
+
+<Question id="sm-types2-5">
+<Ask>زميلك عايز يعمل `AsyncCubit<T>` أب لكل الشاشات عشان «كلهم Loading وLoaded وError». هترد بإيه؟</Ask>
+<Answer>
+
+الشاشات شبه بعض في الشكل النهارده، بس بتتغير لأسباب مختلفة: المكتبة محتاجة refresh مايمسحش البيانات، وصفحة الكتاب محتاجة فشل جزئي، والكتالوج محتاج pagination. كل ده هيتحط في الأب كـ flags وحقول، وأي تعديل فيه يلمس كل الشاشات، والأسماء في الـ UI والـ logs تبقى `AsyncData` بدل `LibraryLoaded`. البديل composition: value objects زي `Paged<T>`، وwidgets مشتركة زي `ErrorView`، وmixin صغير لسلوك من غير state. والـ base مقبولة بس لشوية شاشات Load بسيطة جدًا، بشرط إن أي شاشة محتاجة حاجة زيادة تخرج منها مش تزوّد flag.
+
+</Answer>
+</Question>
+
+</Quiz>

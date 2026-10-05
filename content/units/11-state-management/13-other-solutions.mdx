@@ -1,0 +1,1217 @@
+---
+title: "GetX وMobX وRedux وsignals: الباقي بعين ناقدة"
+description: "أربع طرق تانية للـ state management هتقابلها في الشغل: الفكرة ورا كل واحدة، والـ API من الصفر، وهدف القراية وشاشة المكتبة مكتوبين بيها، وإيه اللي بتعمله كويس وإيه اللي بيبوظ في المشاريع الحقيقية، ومقابلها في الـ Cubit، وإزاي تنقل شاشة منها لـ Cubit خطوة خطوة. ومعاهم flutter_hooks للـ state الصغيرة."
+minutes: 50
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="عربيات مختلفة، ونفس قواعد المرور">
+
+اتعلمت السواقة على عربية مانيوال: الفتيس والدبرياج بإيدك، وعارف بالظبط العربية بتعمل اللي بتعمله ليه. ده الـ Cubit: كل تغيير `emit` انت كاتبه، وكل widget بيسمع انت كاتب إنه بيسمع.
+
+بعدين اشتغلت في شركة واديولك عربية أوتوماتيك: بتدوس بنزين وهي بتغيّر السرعات لوحدها. أريح بكتير، بس أول ما تعمل حاجة غريبة، لازم تفهم الفتيس الأوتوماتيك شغال إزاي من جوه. ده MobX وsignals والـ `Obx` بتاع GetX: بتغيّر قيمة، والشاشة تتحدث لوحدها.
+
+في شركة تانية، عربية نقل ليها دفتر: كل مشوار يتكتب قبل ما يحصل، ومحاسب واحد بيراجع كل الدفاتر. أبطأ، بس أي حد يقدر يعرف إيه اللي حصل وامتى. ده Redux.
+
+وفي شركة تالتة، عربية فيها شاشة واحدة بتعمل كل حاجة: تشغّل، وتوجّه، وتركن، وتكلّم الميكانيكي. ده GetX: state وroutes وDI وsnackbars في package واحدة. سريعة جدًا في الأول، لحد ما يحصل عطل وتكتشف إن كل حاجة متوصلة بكل حاجة.
+
+قواعد المرور واحدة في الأربعة: state واضحة، وطبقات مفصولة، وتستات. اللي بيتغير هو الـ controls.
+
+</Analogy>
+
+Readly اختارت Cubit وBloc، والوحدة كلها شرحت ليه: state صريحة، وتست سهل، وبتقعد في طبقة الـ presentation من غير ما تلمس الـ domain، ونفس الـ package للاتنين. بس انت مش هتشتغل في Readly بس. في السوق المصري هتقابل GetX كتير جدًا، خصوصًا في مشاريع الـ freelance والـ agencies. وهتقابل MobX أو Redux في مشاريع أقدم، أو في فرق جاية من الـ web. وsignals بيظهر في فرق جديدة.
+
+الدرس ده مش عشان يقنعك إنهم وحشين. هدفه 4 حاجات: تقرا كود مكتوب بأي واحد فيهم وتفهمه، وتكتب فيه صح لو ده اللي الفريق اختاره، وتعرف بيبوظ فين، وتنقل منه لـ Cubit شاشة شاشة لو الفريق قرر كده. وRiverpod ليه درس لوحده ([«Riverpod من الصفر ومقارنته بالـ Cubit»](/course/state-management/riverpod/))، و[درس «تختار state management إزاي»](/course/state-management/choosing/) بيحط الكل جنب بعض في جدول واحد.
+
+### السؤالين اللي بيفرّقوا بينهم
+
+أي state management بيجاوب على سؤالين: <b>الـ state بتتغير إزاي؟</b> و<b>الـ UI بتعرف إزاي إنها اتغيرت؟</b> لو عرفت إجابة الأربعة على السؤالين دول، فهمت 80% من الفرق.
+
+| | بتغيّر الـ state إزاي | الـ UI بتعرف إزاي | الـ state شكلها |
+| --- | --- | --- | --- |
+| Cubit | `emit(newState)` من method | `BlocBuilder` سامع على stream | object واحد immutable |
+| Bloc | `add(event)` وhandler بيعمل emit | نفس الـ Cubit | نفس الـ Cubit |
+| GetX | `x.value = ...` أو تعدّل في `RxList`، أو `update()` | `Obx` بيتتبع لوحده، أو `GetBuilder` | خانات Rx كتير في controller |
+| MobX | `@action` بيعدّل `@observable` | `Observer` بيتتبع لوحده | observables في store، ومعاها `@computed` |
+| Redux | `dispatch(action)` وreducer دالة صافية | `StoreConnector` بـ converter | `AppState` واحدة للـ app كله |
+| signals | `signal.value = ...` | `SignalBuilder` و`SignalWidget` بيتتبعوا لوحدهم | signals و`computed` |
+
+<Diagram name="d-sm-tracking">
+
+يمين: الاشتراك الصريح. الـ Cubit بيطلّع state كاملة، والـ builder سامع عليها لأنك كتبت كده، وانت اللي بتضيّق. شمال: التتبع التلقائي في GetX وMobX وsignals. الـ builder بيشتغل جوه tracking context، وأي قيمة اتقرت جواه بتبقى dependency. أي قيمة اتقرت برا الـ builder مش هتعمل rebuild، ودي أشهر مصدر bugs في التلاتة.
+
+</Diagram>
+
+Redux أقرب واحد للـ Bloc في الفكرة: حاجة بتدخل (action أو event)، وstate جديدة بتطلع. الفرق إن Redux عنده store واحد للـ app كله، والـ Bloc لكل feature. وGetX وMobX وsignals عيلة واحدة تقريبًا: قيم reactive بتتعدّل، والـ UI بتتتبعها لوحدها.
+
+### نفس الـ features في الأربعة
+
+عشان المقارنة تبقى عادلة، كل مكتبة هتكتب نفس الحاجتين بنفس السلوك بالظبط:
+
+1. <b>هدف القراية:</b> عدد صفحات في اليوم، بيبدأ 20، يزيد وينقص 5 في المرة، ومابيقلش عن 5 ولا يزيد عن 200. نفس `ReadingGoalCubit` في [درس «أول Cubit سطر بسطر»](/course/state-management/first-cubit/).
+2. <b>شاشة المكتبة:</b> بتسمع على `watchLibrary()`، وفيها pull-to-refresh بينادي use case اسمه `RefreshLibrary` بيرجّع `Result<void>`. الليستة تفضل ظاهرة وقت الـ refresh، ولو الـ refresh فشل تظهر SnackBar مرة واحدة، والليستة ماتتمسحش أبدًا. نفس الـ `LibraryCubit` في [درس «Cubit ولا Bloc»](/course/state-management/cubit-vs-bloc/).
+
+وقواعد هدف القراية نفسها Dart صافي، ومش تبع أي مكتبة. هنحطها في مكان واحد، والأربعة يستخدموها:
+
+<CodeBlock label="lib/features/settings/domain/goal_rules.dart">
+
+```dart
+// Pure Dart: the same rules for every state management solution.
+abstract final class GoalRules {
+  static const initial = 20;
+  static const min = 5;
+  static const max = 200;
+  static const step = 5;
+
+  static int up(int pages) => (pages + step).clamp(min, max);
+  static int down(int pages) => (pages - step).clamp(min, max);
+}
+```
+
+</CodeBlock>
+
+خد بالك من الفكرة دي من دلوقتي، لأنها هترجع في الـ migration: <b>كل اللي برا مكتبة الـ state management بيعيش لما تغيّرها</b>. القواعد دي، والـ use cases، والـ repository، والـ `LibraryState` نفسها. اللي بيتغير هو الغلاف بس.
+
+</Level>
+
+<Level n="2" title="الأربعة بالكود: هدف القراية والمكتبة">
+
+### GetX
+
+GetX زي سكرتير شاطر بيعمل كل حاجة: بيمسك الـ state، ويفتح الشاشات، ويطلّع الرسايل، ويجيبلك أي object تطلبه باسمه. مش محتاج تقوله الحاجة دي فين، هو عارف. وده سبب انتشاره: في ساعة بيبقى عندك app شغال.
+
+النسخة المستقرة `get: ^4.7.3`. نسخة 5 بقالها فترة طويلة release candidates بس، فأي مشروع production هتلاقيه على 4.x.
+
+الـ API اللي هتحتاجه:
+
+- <b>`GetxController`:</b> الـ class اللي فيه الـ state والـ logic. ليه `onInit()` (بعد ما يتعمل) و`onReady()` (بعد أول frame) و`onClose()` (قبل ما يتمسح).
+- <b>`.obs` و`Rx`:</b> `20.obs` بيعمل `RxInt`، و`<Book>[].obs` بيعمل `RxList<Book>`، و`Rxn<Failure>()` لقيمة ممكن تبقى null. القيمة في `.value`، والتغيير `x.value = ...`. القيمة لو بتساوي الحالية (`==`) بيتجاهلها، زي الـ `emit`.
+- <b>`Obx(() => ...)`:</b> widget بيبني الـ closure، وبيسجّل أي Rx اتقرا جواه، وبيعيد البناء لما واحد منهم يتغير.
+- <b>`GetBuilder` و`update()`:</b> الطريقة التانية من غير Rx: fields عادية، والـ controller بينادي `update()` عشان الـ `GetBuilder` يتبني. هتلاقي الطريقتين في نفس المشروع كتير.
+- <b>`Get.put` و`Get.lazyPut` و`Get.find`:</b> service locator عام. `Get.put(x)` بيسجّل، و`Get.find<T>()` بيجيب من أي مكان.
+- <b>`Bindings` و`GetPage`:</b> class بيسجّل الـ dependencies بتاعة route، والـ route بيتعرّف بـ `GetPage(name:, page:, binding:)`.
+- <b>`GetView<T>`:</b> `StatelessWidget` فيه getter اسمه `controller` بيعمل `Get.find<T>()`.
+- <b>الـ workers:</b> `ever(rx, callback)` و`debounce(rx, callback, time: ...)` و`once` و`interval`. بيسمعوا على Rx ويعملوا side effect.
+- <b>من غير context:</b> `Get.to(...)` و`Get.back()` و`Get.snackbar(...)` و`Get.dialog(...)`. شغالين بشرط إن الـ app معمول بـ `GetMaterialApp`.
+
+<CodeBlock label="هدف القراية بـ GetX">
+
+```dart
+class ReadingGoalController extends GetxController {
+  final goal = GoalRules.initial.obs; // RxInt
+
+  void increase() => goal.value = GoalRules.up(goal.value);
+  void decrease() => goal.value = GoalRules.down(goal.value);
+}
+
+class ReadingGoalBinding extends Bindings {
+  @override
+  void dependencies() => Get.lazyPut(() => ReadingGoalController());
+}
+
+// GetMaterialApp(getPages: [
+//   GetPage(name: '/goal', page: () => const ReadingGoalPage(), binding: ReadingGoalBinding()),
+// ])
+
+class ReadingGoalPage extends GetView<ReadingGoalController> {
+  const ReadingGoalPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Obx(() {
+        final pages = controller.goal.value; // read inside Obx: tracked
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              onPressed: pages > GoalRules.min ? controller.decrease : null,
+              icon: const Icon(Icons.remove),
+            ),
+            Text('$pages صفحة'),
+            IconButton(
+              onPressed: pages < GoalRules.max ? controller.increase : null,
+              icon: const Icon(Icons.add),
+            ),
+          ],
+        );
+      }),
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>`GoalRules.initial.obs`:</b> الـ state خانة `RxInt`. مفيش class للـ state، الـ controller نفسه هو الـ state.
+- <b>الـ binding:</b> `lazyPut` بيسجّل factory، والـ controller بيتعمل أول ما حد يعمل `find`. ولما الـ route يتقفل، GetX بيمسحه وبينادي `onClose`، بشرط إن الـ navigation معمول بـ GetX (هنرجع للشرط ده).
+- <b>`controller`:</b> getter من `GetView` بيعمل `Get.find<ReadingGoalController>()`. مفيش `BuildContext` في الموضوع خالص.
+- <b>`Obx`:</b> قرا `goal.value` جوه الـ closure، فبقى dependency. أي تغيير في `goal` بيعيد بناء الـ Row بس.
+
+وهتلاقي في مشاريع كتير الاختصار ده بدل الـ binding: `final c = Get.put(ReadingGoalController());` جوه `build`. لو الـ controller متسجّل قبل كده، الـ `put` بيرجّع القديم، والـ object الجديد اللي اتعمل في السطر ده بيترمي من غير ما يتعمله `onInit`. يعني بيشتغل، بس بيعمل object على الفاضي مع كل build.
+
+<CodeBlock label="شاشة المكتبة بـ GetX، زي ما هتلاقيها في مشروع حقيقي">
+
+```dart
+class LibraryController extends GetxController {
+  LibraryController(this._repository, this._refreshLibrary);
+
+  final LibraryRepository _repository;
+  final RefreshLibrary _refreshLibrary;
+  StreamSubscription<List<Book>>? _sub;
+  late final Worker _failureWorker;
+
+  final books = <Book>[].obs;
+  final isLoading = true.obs;
+  final loadFailure = Rxn<Failure>();
+  final isRefreshing = false.obs;
+  final refreshFailure = Rxn<Failure>();
+
+  @override
+  void onInit() {
+    super.onInit();
+    _sub = _repository.watchLibrary().listen(
+      (list) {
+        books.assignAll(list);
+        loadFailure.value = null; // like the Cubit: new books end the error state
+        isLoading.value = false;
+      },
+      onError: (Object error) {
+        loadFailure.value = CacheFailure('$error');
+        isLoading.value = false;
+      },
+    );
+    // the usual GetX way: the controller shows the SnackBar itself
+    _failureWorker = ever<Failure?>(refreshFailure, (failure) {
+      if (failure == null) return;
+      Get.snackbar('', failure.localized(AppLocalizations.of(Get.context!)!));
+    });
+  }
+
+  // not called "refresh": GetxController already has refresh(), and update() calls it
+  Future<void> refreshLibrary() async {
+    // only with books on screen (the Cubit's LibraryLoaded), one at a time
+    if (isLoading.value || loadFailure.value != null || isRefreshing.value) return;
+    refreshFailure.value = null; // so the same failure twice still fires the worker
+    isRefreshing.value = true;
+    final result = await _refreshLibrary();
+    isRefreshing.value = false;
+    if (result case Err(:final failure)) refreshFailure.value = failure;
+  }
+
+  @override
+  void onClose() {
+    _sub?.cancel();
+    _failureWorker.dispose();
+    super.onClose();
+  }
+}
+
+class LibraryBinding extends Bindings {
+  @override
+  void dependencies() {
+    // Get.find() infers the type from the constructor parameter
+    Get.lazyPut(() => LibraryController(Get.find(), Get.find()));
+  }
+}
+
+class LibraryPage extends GetView<LibraryController> {
+  const LibraryPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('المكتبة'),
+        actions: [
+          Obx(() => IconButton(
+                onPressed: controller.isRefreshing.value ? null : controller.refreshLibrary,
+                icon: const Icon(Icons.sync),
+              )),
+        ],
+      ),
+      body: Obx(() {
+        if (controller.isLoading.value) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final failure = controller.loadFailure.value;
+        if (failure != null) {
+          return ErrorView(message: failure.localized(AppLocalizations.of(context)!));
+        }
+        return RefreshIndicator(
+          onRefresh: controller.refreshLibrary,
+          child: BookList(books: controller.books.toList()),
+        );
+      }),
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>5 خانات بدل state واحدة:</b> `books` و`isLoading` و`loadFailure` و`isRefreshing` و`refreshFailure`. ده الشكل الطبيعي في GetX. كل خانة بتتغير لوحدها، ومفيش حاجة تمنع إنهم يتناقضوا (`isLoading` true و`loadFailure` فيها قيمة). وعشان السلوك يطابق الـ Cubit، لازم تفتكر بإيدك قواعد كانت ببلاش هناك: كتب جديدة تمسح الـ `loadFailure` (زي ما `LibraryError` بيبقى `LibraryLoaded` مع أول كتب)، والـ refresh مايشتغلش غير والكتب ظاهرة. انسى سطر منهم، والشاشة تفضل على الـ error للأبد.
+- <b>`books.assignAll(list)`:</b> بيبدّل محتوى الـ `RxList` وبيبلّغ مرة واحدة. أي `add` أو `remove` على `RxList` بيبلّغ هو كمان.
+- <b>`ever`:</b> worker بيسمع على `refreshFailure`، وده مقابل الـ `BlocListener`. بس هو جوه الـ controller، فبيستخدم `Get.snackbar` و`Get.context!`. ده شغال، وهو بالظبط اللي هيوجعنا في Level 3.
+- <b>`refreshFailure.value = null` الأول:</b> الـ Rx بيتجاهل قيمة بتساوي الحالية. لو الـ refresh فشل مرتين بنفس الـ failure، التانية مش هتوصل للـ worker من غير السطر ده.
+- <b>`Obx` واحد للـ body:</b> بيقرا `isLoading` الأول. لو true، بيرجع من غير ما يقرا الباقي، فمش هيتبني تاني غير لما `isLoading` نفسه يتغير. والـ dependencies بتتحسب من جديد مع كل build، فلما يبقى false بيبدأ يتتبع `books` و`loadFailure`.
+- <b>مفيش `isClosed`:</b> لو الـ controller اتقفل والطلب لسه راجع، الكتابة في الـ Rx مابترميش error. ده بيبان «أريح» من الـ Cubit، بس معناه إن الـ bug بيعدّي ساكت.
+
+### MobX
+
+MobX زي ملف Excel: في خانات فيها أرقام (observables)، وخانات فيها formulas (computed)، ورسومات بيانية بتتحدث لوحدها لما أي خانة بتعتمد عليها تتغير (reactions والـ `Observer`). انت بتغيّر رقم، والباقي بيحصل. ومحدش كتب في أي مكان «الرسمة دي بتعتمد على الخانة دي»، الـ Excel عرف لوحده لما الـ formula اتحسبت.
+
+الـ packages: `mobx` (2.7.x)، و`flutter_mobx` (2.4.x)، وفي الـ dev dependencies `build_runner` و`mobx_codegen` (2.8.x). وبعد أي تعديل في store:
+
+<CodeBlock label="terminal">
+
+```bash
+dart run build_runner watch --delete-conflicting-outputs
+```
+
+</CodeBlock>
+
+الـ API:
+
+- <b>الـ store:</b> `abstract class _X with Store`، والـ class اللي هتستخدمه `class X = _X with _$X;`، و`part 'x.g.dart';` فوق. الـ mixin `_$X` هو اللي الـ codegen بيكتبه.
+- <b>`@observable`:</b> field لما يتغير، أي حد قراه يتبلّغ.
+- <b>`@computed`:</b> getter محسوب من observables، ونتيجته بتتخزن ومابتتحسبش تاني غير لما حاجة هو قراها تتغير.
+- <b>`@action`:</b> method بتعدّل observables. التغييرات جواها بتتجمع، والـ observers بيتبلغوا مرة واحدة في الآخر. ولو الـ method `async`، الـ codegen بيلفّها في `AsyncAction`.
+- <b>`runInAction(() => ...)`:</b> action من غير method، لكود زي callback بتاع stream.
+- <b>`Observer(builder: (context) => ...)`:</b> من `flutter_mobx`، بيتتبع الـ observables اللي اتقرت في الـ builder ويعيد البناء.
+- <b>الـ reactions:</b> `autorun(fn)` و`reaction(track, effect)` و`when(predicate, effect)`. كلهم بيرجّعوا `ReactionDisposer` لازم تناديه. و`ReactionBuilder` widget بيعمل reaction ويقفلها مع الـ widget.
+- <b>`ObservableList` و`ObservableFuture` و`ObservableStream`:</b> collections وasync values بتبلّغ لوحدها.
+
+<CodeBlock label="هدف القراية بـ MobX">
+
+```dart
+part 'reading_goal_store.g.dart';
+
+class ReadingGoalStore = _ReadingGoalStore with _$ReadingGoalStore;
+
+abstract class _ReadingGoalStore with Store {
+  @observable
+  int pages = GoalRules.initial;
+
+  @computed
+  bool get canIncrease => pages < GoalRules.max;
+
+  @computed
+  bool get canDecrease => pages > GoalRules.min;
+
+  @action
+  void increase() => pages = GoalRules.up(pages);
+
+  @action
+  void decrease() => pages = GoalRules.down(pages);
+}
+
+// MobX has no DI: provider (already a dependency of flutter_mobx) or get_it
+// Provider(create: (_) => ReadingGoalStore(), child: const ReadingGoalView())
+
+class ReadingGoalView extends StatelessWidget {
+  const ReadingGoalView({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final store = context.read<ReadingGoalStore>(); // a reference, not a subscription
+    return Center(
+      child: Observer(
+        builder: (_) => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              onPressed: store.canDecrease ? store.decrease : null,
+              icon: const Icon(Icons.remove),
+            ),
+            Text('${store.pages} صفحة'),
+            IconButton(
+              onPressed: store.canIncrease ? store.increase : null,
+              icon: const Icon(Icons.add),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `@computed`:</b> الـ UI مابقتش تعرف الـ min والـ max. بتسأل `canIncrease` بس. ده أحلى حاجة في MobX: الـ derived values بتتعرّف مرة وبتتحدث لوحدها، وبتتخزن.
+- <b>الـ `context.read` برا الـ Observer:</b> ده مجرد reference للـ store، وده تمام. اللي لازم يبقى جوه الـ builder هو <b>قراية القيم</b> (`store.pages`)، مش الوصول للـ store.
+- <b>`pages = GoalRules.up(pages)`:</b> تعديل مباشر في field. مفيش copyWith ولا state جديدة.
+
+<CodeBlock label="شاشة المكتبة بـ MobX">
+
+```dart
+part 'library_store.g.dart';
+
+class LibraryStore = _LibraryStore with _$LibraryStore;
+
+abstract class _LibraryStore with Store {
+  _LibraryStore(this._repository, this._refreshLibrary);
+
+  final LibraryRepository _repository;
+  final RefreshLibrary _refreshLibrary;
+  StreamSubscription<List<Book>>? _sub;
+
+  @observable
+  List<Book>? books; // null until the first value from drift
+
+  @observable
+  Failure? loadFailure;
+
+  @observable
+  bool isRefreshing = false;
+
+  @observable
+  Failure? refreshFailure;
+
+  @computed
+  bool get isLoading => books == null && loadFailure == null;
+
+  void watch() {
+    _sub?.cancel();
+    _sub = _repository.watchLibrary().listen(
+      // a stream callback is not an action: wrap the writes
+      (list) => runInAction(() {
+        books = list;
+        loadFailure = null; // new books end the error state, like the Cubit
+      }),
+      onError: (Object error) => runInAction(() => loadFailure = CacheFailure('$error')),
+    );
+  }
+
+  @action
+  Future<void> refresh() async {
+    if (books == null || loadFailure != null || isRefreshing) return;
+    refreshFailure = null;
+    isRefreshing = true;
+    final result = await _refreshLibrary();
+    isRefreshing = false;
+    if (result case Err(:final failure)) refreshFailure = failure;
+  }
+
+  void dispose() => _sub?.cancel();
+}
+
+// Provider<LibraryStore>(
+//   create: (_) => getIt<LibraryStore>()..watch(),
+//   dispose: (_, store) => store.dispose(),
+//   child: const LibraryView(),
+// )
+
+class LibraryView extends StatelessWidget {
+  const LibraryView({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final store = context.read<LibraryStore>();
+    return ReactionBuilder(
+      // like BlocListener: a side effect, disposed with the widget
+      builder: (context) => reaction<Failure?>((_) => store.refreshFailure, (failure) {
+        if (failure == null) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(failure.localized(AppLocalizations.of(context)!))),
+        );
+      }),
+      child: Observer(
+        builder: (context) {
+          final failure = store.loadFailure;
+          if (failure != null) {
+            return ErrorView(message: failure.localized(AppLocalizations.of(context)!));
+          }
+          final books = store.books;
+          if (books == null) return const Center(child: CircularProgressIndicator());
+          return RefreshIndicator(onRefresh: store.refresh, child: BookList(books: books));
+        },
+      ),
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>`runInAction` في الـ listener:</b> أهم سطر في الكود. الـ callback بتاع الـ stream بيشتغل برا أي action. لو كتبت `books = list` مباشرة، وفي `Observer` بيقرا `books`، MobX هيرمي في الـ debug: «Side effects like changing state are not allowed at this point. Please wrap the code in an "action"».
+- <b>`@action` على method async:</b> الـ codegen بيلفّها في `AsyncAction`، فالكتابات قبل الـ await وبعده كلها جوه action.
+- <b>`reaction` جوه `ReactionBuilder`:</b> الجزء الأول بيحدد إيه اللي يتتبع (`refreshFailure`)، والتاني الـ effect، وبيتنادى لما القيمة تتغير بس، مش أول مرة. والـ `ReactionBuilder` بيقفل الـ reaction لما الـ widget يتشال.
+- <b>`refreshFailure = null` في أول الـ refresh:</b> نفس سبب GetX. الـ reaction بيقارن القيمة الجديدة بالقديمة.
+- <b>الـ `@computed isLoading`:</b> مش مستخدم في الـ UI هنا، بس هو اللي هتحتاجه في أي حتة تانية عايزة تعرف «لسه بيحمّل»، من غير ما تكرر الشرط.
+
+### Redux
+
+Redux زي دفتر البنك: محدش بيغيّر الرصيد بإيده. بتقدّم إيصال (action) فيه «سحب 500»، والموظف (reducer) بياخد الرصيد القديم والإيصال ويحسب رصيد جديد، ومابيعملش أي حاجة تانية: لا بيتصل بحد، ولا بيستنى حاجة. والدفتر واحد للبنك كله (store). ولو محتاج حاجة برا البنك (تحويل لبنك تاني)، في موظف تاني على الباب (middleware) بيعمل الشغل ده ويرجع بإيصال جديد.
+
+الـ packages: `redux` (5.0.0)، و`flutter_redux` (0.10.0)، و`redux_thunk` (0.4.0) للـ async. خلي بالك إن `flutter_redux` آخر نسخة منه نزلت من حوالي 4 سنين. ده مش معناه إنه بايظ: الـ API صغير وثابت وشغال. بس معناه إن مفيش تطوير، ولو طلع bug مع نسخة Flutter جديدة، انت لوحدك.
+
+الـ API:
+
+- <b>`Store<AppState>(reducer, initialState: ..., middleware: [...])`:</b> الـ store الوحيد في الـ app.
+- <b>الـ action:</b> أي object. العادة class لكل action.
+- <b>الـ reducer:</b> `AppState Function(AppState state, dynamic action)`. دالة صافية: نفس الـ input، نفس الـ output، ومن غير side effects.
+- <b>الـ middleware:</b> `(store, action, next)`. بيشوف كل action قبل الـ reducer، وده مكان الـ async والـ logging.
+- <b>`thunkMiddleware` و`ThunkAction`:</b> action عبارة عن function بتاخد الـ store، فتقدر تعمل await وdispatch جواها.
+- <b>`StoreProvider`:</b> فوق الـ app، بيوصّل الـ store للشجرة.
+- <b>`StoreConnector<AppState, ViewModel>`:</b> `converter` بيحوّل الـ store لـ view model، و`builder` بيبني منه. `distinct: true` معناه «ماتبنيش لو الـ view model الجديد `==` القديم». وفيه `onInit` و`onDispose` و`onDidChange`.
+
+<CodeBlock label="الـ store والـ actions والـ reducers">
+
+```dart
+@immutable
+class AppState {
+  const AppState({this.readingGoal = GoalRules.initial, this.library = const LibraryLoading()});
+  final int readingGoal;
+  final LibraryState library; // the same sealed LibraryState as the Cubit
+
+  @override
+  bool operator ==(Object other) =>
+      other is AppState && other.readingGoal == readingGoal && other.library == library;
+  @override
+  int get hashCode => Object.hash(readingGoal, library);
+}
+
+// actions
+final class GoalIncreased { const GoalIncreased(); }
+final class GoalDecreased { const GoalDecreased(); }
+final class LibraryWatchStarted { const LibraryWatchStarted(); }
+final class LibraryWatchStopped { const LibraryWatchStopped(); }
+final class LibraryBooksReceived { const LibraryBooksReceived(this.books); final List<Book> books; }
+final class LibraryWatchFailed { const LibraryWatchFailed(this.failure); final Failure failure; }
+final class LibraryRefreshStarted { const LibraryRefreshStarted(); }
+final class LibraryRefreshFinished { const LibraryRefreshFinished(this.failure); final Failure? failure; }
+
+// reducers: pure functions, no await, no repository
+int readingGoalReducer(int goal, dynamic action) => switch (action) {
+      GoalIncreased() => GoalRules.up(goal),
+      GoalDecreased() => GoalRules.down(goal),
+      _ => goal,
+    };
+
+LibraryState libraryReducer(LibraryState state, dynamic action) => switch ((state, action)) {
+      (final LibraryLoaded s, LibraryBooksReceived(:final books)) => s.copyWith(books: books),
+      (_, LibraryBooksReceived(:final books)) => LibraryLoaded(books),
+      (_, LibraryWatchFailed(:final failure)) => LibraryError(failure),
+      (final LibraryLoaded s, LibraryRefreshStarted()) => s.copyWith(isRefreshing: true),
+      (final LibraryLoaded s, LibraryRefreshFinished(:final failure)) =>
+        s.copyWith(isRefreshing: false, refreshFailure: failure),
+      _ => state,
+    };
+
+AppState appReducer(AppState state, dynamic action) => AppState(
+      readingGoal: readingGoalReducer(state.readingGoal, action),
+      library: libraryReducer(state.library, action),
+    );
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ async: middleware للـ stream وthunk للـ refresh">
+
+```dart
+class LibraryWatchMiddleware extends MiddlewareClass<AppState> {
+  LibraryWatchMiddleware(this._repository);
+  final LibraryRepository _repository;
+  StreamSubscription<List<Book>>? _sub;
+
+  @override
+  dynamic call(Store<AppState> store, dynamic action, NextDispatcher next) {
+    switch (action) {
+      case LibraryWatchStarted():
+        _sub?.cancel();
+        _sub = _repository.watchLibrary().listen(
+          (books) => store.dispatch(LibraryBooksReceived(books)),
+          onError: (Object e) => store.dispatch(LibraryWatchFailed(CacheFailure('$e'))),
+        );
+      case LibraryWatchStopped():
+        _sub?.cancel();
+        _sub = null;
+    }
+    return next(action);
+  }
+}
+
+ThunkAction<AppState> refreshLibrary(RefreshLibrary refresh) => (store) async {
+      final library = store.state.library;
+      if (library is! LibraryLoaded || library.isRefreshing) return; // one at a time
+      store.dispatch(const LibraryRefreshStarted());
+      final result = await refresh();
+      store.dispatch(LibraryRefreshFinished(switch (result) {
+        Success() => null,
+        Err(:final failure) => failure,
+      }));
+    };
+
+// main.dart
+final store = Store<AppState>(
+  appReducer,
+  initialState: const AppState(),
+  middleware: [thunkMiddleware, LibraryWatchMiddleware(getIt())],
+);
+// runApp(StoreProvider(store: store, child: const ReadlyApp()));
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ UI: هدف القراية والمكتبة">
+
+```dart
+class ReadingGoalView extends StatelessWidget {
+  const ReadingGoalView({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final store = StoreProvider.of<AppState>(context, listen: false);
+    return StoreConnector<AppState, int>(
+      distinct: true, // rebuild only when the goal itself changes
+      converter: (store) => store.state.readingGoal,
+      builder: (context, pages) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            onPressed: pages > GoalRules.min ? () => store.dispatch(const GoalDecreased()) : null,
+            icon: const Icon(Icons.remove),
+          ),
+          Text('$pages صفحة'),
+          IconButton(
+            onPressed: pages < GoalRules.max ? () => store.dispatch(const GoalIncreased()) : null,
+            icon: const Icon(Icons.add),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class LibraryView extends StatelessWidget {
+  const LibraryView({super.key});
+
+  static Failure? _refreshFailureOf(LibraryState? s) =>
+      s is LibraryLoaded ? s.refreshFailure : null;
+
+  @override
+  Widget build(BuildContext context) {
+    return StoreConnector<AppState, LibraryState>(
+      distinct: true,
+      converter: (store) => store.state.library,
+      onInit: (store) => store.dispatch(const LibraryWatchStarted()),
+      onDispose: (store) => store.dispatch(const LibraryWatchStopped()),
+      onDidChange: (previous, library) {
+        final failure = _refreshFailureOf(library);
+        if (failure != null && failure != _refreshFailureOf(previous)) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(failure.localized(AppLocalizations.of(context)!))),
+          );
+        }
+      },
+      builder: (context, library) => switch (library) {
+        LibraryLoading() => const Center(child: CircularProgressIndicator()),
+        LibraryError(:final failure) =>
+          ErrorView(message: failure.localized(AppLocalizations.of(context)!)),
+        LibraryLoaded(:final books) => RefreshIndicator(
+            onRefresh: () async {
+              final store = StoreProvider.of<AppState>(context, listen: false);
+              await store.dispatch(refreshLibrary(getIt()));
+            },
+            child: BookList(books: books),
+          ),
+      },
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `LibraryState` نفسها:</b> نفس الـ sealed class بتاعة الـ Cubit، بقت حتة من `AppState`. والـ reducer هو نفس منطق الـ Cubit، بس مقسوم: كل `emit` بقى case، وكل حاجة async خرجت برا.
+- <b>الـ `switch ((state, action))`:</b> record pattern بيطابق الـ state والـ action مع بعض. الـ refresh بيتجاهل لو الـ state مش Loaded، والكتب الجديدة بتحافظ على الـ `isRefreshing` (الـ `copyWith` بتاع درس «تصميم الـ State»).
+- <b>الـ thunk بيرجّع Future:</b> `thunkMiddleware` بيرجّع اللي الـ thunk رجّعه، و`dispatch` بيرجّعه للـ UI. عشان كده الـ `RefreshIndicator` بيقدر يستنى. ده أسهل من الـ Bloc اللي `add` فيه بترجّع `void`.
+- <b>`onInit` و`onDispose`:</b> الشاشة بتبدأ وتقفل الاشتراك عن طريق actions. لو نسيت الـ `onDispose`، الـ middleware هيفضل سامع على drift بعد ما الشاشة اتقفلت.
+- <b>`onDidChange` بيقارن القديم بالجديد:</b> مقابل `listenWhen` في الـ `BlocListener`. والـ `context` اللي جواه هو بتاع الـ `build`، لأن الـ callback مابياخدش context.
+
+### signals
+
+signals زي لمبات بيت ذكي: كل مفتاح (signal) متوصل باللمبات اللي بتعتمد عليه بس، ومفيش لوحة كهربا مركزية. تحط المفتاح في أي حتة: في class، أو في widget، أو top-level في الملف. وفي «مفاتيح محسوبة» (computed) بتنور لوحدها لما مفاتيح تانية تتغير. الفكرة نفسها اللي في Angular وSolid وPreact، وهي قريبة جدًا من MobX، بس من غير codegen ومن غير store class.
+
+الـ package: `signals: ^7.1.0`، والـ import للـ Flutter: `package:signals/signals_flutter.dart`. ونسخة 7 كسرت حاجات، فلازم تعرف الفرق عشان أغلب الأمثلة على النت أقدم:
+
+- <b>`signal(value)`:</b> قيمة reactive. القراية والكتابة `.value`. والقيمة لو بتساوي الحالية بتتجاهل.
+- <b>`computed(() => ...)`:</b> قيمة محسوبة، lazy (مابتتحسبش غير لما حد يقراها) ومتخزنة.
+- <b>`effect(() => ...)`:</b> side effect بيشتغل فورًا مرة، وتاني مع كل تغيير في اللي قراه. بيرجّع function لما تناديها الـ effect يتقفل.
+- <b>`batch(() => ...)`:</b> كذا كتابة، والتبليغ مرة واحدة في الآخر. و`untracked(() => ...)` أو `signal.peek()` تقرا من غير ما تشترك.
+- <b>`streamSignal(() => stream)` و`futureSignal(...)`:</b> قيمتهم `AsyncState<T>`، وهي sealed: `AsyncData` و`AsyncError` و`AsyncLoading`.
+- <b>`readonly()`:</b> بترجّع نفس الـ signal بنوع `ReadonlySignal` مافيهوش setter، عشان تطلّعه من class من غير ما حد برا يكتب فيه.
+- <b>`dispose()`:</b> على أي signal أو computed، بيقفله ويفك اللي متوصل بيه.
+- <b>الـ widgets في 7:</b> `SignalBuilder(builder: (context) => ...)` (الـ `builder:` بقى named وإجباري في 7.0)، و`SignalWidget` و`SignalStatefulWidget` (أي signal يتقري في الـ `build` بيتتبع لوحده)، و`SignalEffect(effect: (context) { ... }, child: ...)` واسمه التاني `SignalListener`، للـ side effects زي الـ SnackBar.
+- <b>القديم:</b> `Watch(...)` والـ extension `.watch(context)` والـ `SignalsMixin` (بـ `createSignal`) لسه موجودين بس عليهم `@Deprecated` في 7. لو لقيتهم في مشروع، ده كود من 6 أو أقدم.
+
+<CodeBlock label="هدف القراية بـ signals">
+
+```dart
+class ReadingGoalModel {
+  final _pages = signal(GoalRules.initial);
+  ReadonlySignal<int> get pages => _pages.readonly(); // read-only from outside
+
+  late final canIncrease = computed(() => _pages.value < GoalRules.max);
+  late final canDecrease = computed(() => _pages.value > GoalRules.min);
+
+  void increase() => _pages.value = GoalRules.up(_pages.value);
+  void decrease() => _pages.value = GoalRules.down(_pages.value);
+
+  void dispose() {
+    canIncrease.dispose();
+    canDecrease.dispose();
+    _pages.dispose();
+  }
+}
+
+class ReadingGoalView extends StatefulWidget {
+  const ReadingGoalView({super.key});
+  @override
+  State<ReadingGoalView> createState() => _ReadingGoalViewState();
+}
+
+class _ReadingGoalViewState extends State<ReadingGoalView> {
+  final goal = ReadingGoalModel();
+
+  @override
+  void dispose() {
+    goal.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: SignalBuilder(
+        builder: (context) => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              onPressed: goal.canDecrease.value ? goal.decrease : null,
+              icon: const Icon(Icons.remove),
+            ),
+            Text('${goal.pages.value} صفحة'),
+            IconButton(
+              onPressed: goal.canIncrease.value ? goal.increase : null,
+              icon: const Icon(Icons.add),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>class عادي:</b> مفيش base class ولا codegen. الـ signals fields، والـ methods بتكتب فيهم. الـ `_pages` private، والـ getter بيطلّعه `ReadonlySignal`، فالـ UI مش هتقدر تكتب `goal.pages.value = 999`.
+- <b>الـ `late final` للـ computed:</b> عشان الـ closure تقدر تشوف `_pages`. والـ computed lazy، فمابيتحسبش غير لما الـ `SignalBuilder` يقراه.
+- <b>`SignalBuilder`:</b> بيتتبع أي `.value` اتقرت في الـ builder، ويعيد بناء نفسه بس. والـ `dispose` بتاع الـ model على مسؤوليتك، في `State.dispose`.
+
+<CodeBlock label="شاشة المكتبة بـ signals">
+
+```dart
+class LibraryModel {
+  LibraryModel(this._repository, this._refreshLibrary);
+
+  final LibraryRepository _repository;
+  final RefreshLibrary _refreshLibrary;
+
+  // subscribes lazily, cancels on dispose; the value is AsyncState<List<Book>>
+  late final books = streamSignal(() => _repository.watchLibrary());
+  final isRefreshing = signal(false);
+  final refreshFailure = signal<Failure?>(null);
+
+  Future<void> refresh() async {
+    if (isRefreshing.value || !books.value.hasValue) return; // one at a time
+    batch(() {
+      refreshFailure.value = null;
+      isRefreshing.value = true;
+    });
+    final result = await _refreshLibrary();
+    batch(() {
+      isRefreshing.value = false;
+      if (result case Err(:final failure)) refreshFailure.value = failure;
+    });
+  }
+
+  void dispose() {
+    books.dispose();
+    isRefreshing.dispose();
+    refreshFailure.dispose();
+  }
+}
+
+class LibraryView extends StatefulWidget {
+  const LibraryView({super.key});
+  @override
+  State<LibraryView> createState() => _LibraryViewState();
+}
+
+class _LibraryViewState extends State<LibraryView> {
+  late final model = getIt<LibraryModel>(); // registered as a factory: one per screen
+
+  @override
+  void dispose() {
+    model.dispose();
+    super.dispose();
+  }
+
+  // like BlocListener: runs on mount, then whenever refreshFailure changes
+  void _showRefreshFailure(BuildContext context) {
+    final failure = model.refreshFailure.value;
+    if (failure == null) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(failure.localized(AppLocalizations.of(context)!))),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SignalEffect(
+      effect: _showRefreshFailure, // a stable tear-off, not a new closure per build
+      child: SignalBuilder(
+        builder: (context) => switch (model.books.value) {
+          // AsyncData first: a refreshing state is both AsyncData and AsyncLoading
+          AsyncData(:final value) => RefreshIndicator(
+              onRefresh: model.refresh,
+              child: BookList(books: value),
+            ),
+          AsyncError(:final error) =>
+            ErrorView(message: CacheFailure('$error').localized(AppLocalizations.of(context)!)),
+          AsyncLoading() => const Center(child: CircularProgressIndicator()),
+        },
+      ),
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>`streamSignal`:</b> بيشترك في الـ stream أول ما حد يقرا `books.value`، وبيلغي الاشتراك في `dispose`. ده بيوفّر الـ `StreamSubscription` اليدوي اللي في الـ Cubit.
+- <b>ترتيب الـ switch:</b> `AsyncData` و`AsyncError` قبل `AsyncLoading`. في 7، في states زي `AsyncDataRefreshing` بتورث من `AsyncData` وبتعمل implement لـ `AsyncLoading` في نفس الوقت. لو `AsyncLoading()` جه الأول، هيمسك الحالة دي ويعرض spinner مكان الكتب. الـ docs بتاعة signals نفسها بتحذر من ده.
+- <b>`batch`:</b> الكتابتين بيوصلوا للـ UI مرة واحدة.
+- <b>`SignalEffect`:</b> الـ effect بيشتغل مرة أول ما يتركّب (والـ `refreshFailure` لسه null، فمش هيعمل حاجة)، وتاني مع كل تغيير. وبيتقفل مع الـ widget.
+- <b>ليه method مش closure:</b> الـ `SignalEffect` لما يتبني تاني بـ function مختلفة (`!=`)، بيقفل الـ effect ويعمله من جديد، والـ effect الجديد بيشتغل فورًا. closure مكتوبة جوه `build` بتبقى object جديد مع كل build، فأي rebuild للشاشة (الأب مثلًا اتبنى تاني) كان هيطلّع نفس الـ SnackBar تاني طول ما `refreshFailure` لسه فيها الـ failure. الـ tear-off لنفس الـ method على نفس الـ object بيساوي نفسه، فالـ effect بيفضل هو هو.
+- <b>`refresh()` بتقرا `.value` برا أي tracking:</b> هنا ده تمام. بس لو حد ناداها من جوه effect، القراية دي هتشترك الـ effect في `isRefreshing`، وهنشوف ده بيعمل إيه في Level 3.
+
+</Level>
+
+<Level n="3" title="في المشاريع الحقيقية: الحلو، واللي بيبوظ، والمقابل في الـ Cubit">
+
+الكود اللي فوق هو أحسن شكل لكل مكتبة. في المشاريع الحقيقية، الكود بيكبر، وفي فريق بيتغير، وفي deadline. هنا المشاكل اللي بتظهر فعلًا، والمقابل في اللي انت عارفه.
+
+### GetX في الشغل
+
+<b>اللي بيعمله كويس:</b>
+
+- <b>أسرع بداية في Flutter:</b> controller و`.obs` و`Obx`، وخلاص. مطور جديد بيعمل شاشة شغالة في ساعة. وده مكسب حقيقي لـ prototype أو app صغير.
+- <b>`Obx` دقيق:</b> بيبني بس اللي قرا القيمة اللي اتغيرت، من غير `buildWhen` ولا `BlocSelector`.
+- <b>الـ workers:</b> `debounce(query, search, time: 350ms)` سطر واحد للبحث. في الـ Cubit ده `Timer` بتلغيه في `close`.
+- <b>مجتمع كبير بالعربي:</b> tutorials وكورسات كتير جدًا، وده جزء من سبب انتشاره في مصر.
+
+<b>اللي بيبوظ:</b>
+
+1. <b>`Get.find` من أي حتة:</b> بعد سنة، الـ `CheckoutController` بيعمل `Get.find<CartController>()` و`Get.find<AuthController>()` جوه methods. الـ dependencies مش في الـ constructor، فمحدش يعرفها غير لما يقرا كل سطر. وأول deep link بيفتح شاشة الدفع على طول من غير ما يعدّي على الشاشة اللي كانت بتعمل `Get.put(CartController())`، يطلع `"CartController" not found. You need to call "Get.put(CartController())"`. والتست لازم يعمل `Get.put(FakeX())` لكل حاجة بالترتيب الصح، وينضّف الـ registry العام بعد كل تست، وإلا التستات بتأثر في بعض.
+2. <b>عمر الـ controller مربوط بالـ routing بتاع GetX:</b> المسح التلقائي في `onClose` بيحصل لأن GetX بيتابع الـ routes اللي هو فتحها، وده محتاج `GetMaterialApp` و`Get.to` أو `GetPage`. فريق قرر يستخدم go_router (أو `Navigator.push` عادي) وساب `Get.put`: محدش بيمسح حاجة. المستخدم عمل logout ودخل بحساب تاني، والمكتبة عرضت كتب الحساب القديم، لأن `LibraryController` بتاع أول login لسه عايش بالـ `books` بتاعته. ونفس الحاجة مع `permanent: true` اللي حد حطه عشان «الـ controller كان بيتمسح».
+3. <b>الـ UI والـ navigation من الـ controller:</b> `Get.snackbar` و`Get.to(() => BookDetailsPage())` و`Get.dialog` جوه الـ controller. النتيجة: الـ controller بيعمل import لـ Flutter وبيقرر شكل الشاشة، وتست الـ logic محتاج `GetMaterialApp` شغال أو `Get.testMode = true`. والـ `Get.context!` اللي استخدمناه عشان الـ l10n بيضرب null لو مفيش route ظاهر لسه. أغلب المشاريع بتهرب لـ `'error'.tr` (الترجمة بتاعة GetX)، فيبقى عندك نظامين ترجمة.
+4. <b>package بتعمل كل حاجة:</b> state، وDI، وroutes، وsnackbars، وترجمة، وHTTP (`GetConnect`)، وvalidators. ده مريح، بس كل حاجة في الـ app بقت معتمدة على package واحدة، ونسختها الجاية (5) في RC بقالها فترة طويلة. ولو عايز تغيّر حتة (الـ routing بس مثلًا)، بتكتشف إن كل حاجة متشابكة. ده عكس فكرة Clean Architecture: الـ presentation بقت مربوطة بالـ framework من كل ناحية.
+5. <b>التعديل في المكان:</b> `final book = Rx<Book>(b);` وبعدين `book.value.status = BookStatus.finished;`. الـ reference ماتغيرش، فمفيش حد اتبلّغ، والشاشة مابتتحدثش. الحل اللي هتلاقيه: `book.refresh()` بعد كل تعديل، أو `update()` في كل مكان «للاحتياط». وبعد شوية مابقاش حد عارف إيه اللي محتاج `refresh` وإيه لأ.
+6. <b>اسم `refresh` محجوز:</b> `GetxController` جواه `refresh()` (protected)، و`update()` بيناديها عشان يبلّغ الـ `GetBuilder`. لو سمّيت method الـ pull-to-refresh بتاعتك `Future<void> refresh()`، انت عملت override ليها من غير ما تاخد بالك (الـ Dart بيقبله لأن `Future<void>` ينفع مكان `void`). من دلوقتي، أي `update()` في الـ controller ده بيضرب request للسيرفر بدل ما يعيد البناء. وعشان كده سمّيناها `refreshLibrary`.
+7. <b>`Obx` من غير قراية جواه:</b> `Obx(() => BookList(books: controller.books))`. الـ `RxList` نفسه اتبعت للـ child، بس محدش قرا قيمته جوه الـ closure (الـ `BookList` هو اللي هيقراه في الـ build بتاعه، بعدين). GetX بيرمي: «[Get] the improper use of a GetX has been detected». الحل إن القراية تحصل جوه الـ `Obx` (`controller.books.toList()`) أو `Obx` جوه الـ `BookList` نفسه.
+
+<b>الخريطة: GetX ↔ Cubit وBloc</b>
+
+| GetX | Cubit / Bloc |
+| --- | --- |
+| `GetxController` | `Cubit<State>` |
+| كذا خانة `.obs` | state واحدة immutable (sealed أو `copyWith`) |
+| `x.value = ...` أو `update()` | `emit(newState)` |
+| `Obx` أو `GetBuilder` | `BlocBuilder` |
+| `Obx` حوالين widget صغير | `BlocSelector` |
+| الـ workers `ever` و`once` في الـ controller | `BlocListener` في الـ UI |
+| الـ worker `debounce` | `Timer` في Cubit، أو transformer في Bloc |
+| `onInit` و`onClose` | `..load()` في `BlocProvider(create:)`، و`close()` |
+| `Get.put` و`Get.lazyPut` و`Bindings` | get_it، و`BlocProvider(create:)` على الـ route |
+| `Get.find` و`GetView.controller` | constructor injection، و`context.read` |
+| `Get.to` و`Get.snackbar` | go_router، و`BlocListener` مع `ScaffoldMessenger` |
+
+### MobX في الشغل
+
+<b>اللي بيعمله كويس:</b>
+
+- <b>الـ derived state:</b> `@computed` بيتعرّف مرة، وبيتخزن، وبيتحدث لوحده. شاشة فيها 10 قيم محسوبة من بعض (فلتر، وترتيب، وعدد، وإجمالي) MobX بيبان فيها جدًا.
+- <b>كود قليل بعد الـ codegen:</b> field وannotation. مفيش copyWith ولا state classes.
+- <b>rebuilds دقيقة لوحدها:</b> زي GetX، الـ `Observer` بيتبني بس لو حاجة قراها اتغيرت.
+- <b>ناضج:</b> نسخة Dart من MobX بتاع الـ JavaScript، والأفكار متجربة سنين، وأي حد جاي من React مع MobX هيحس إنه في البيت.
+
+<b>اللي بيبوظ:</b>
+
+1. <b>الـ codegen:</b> كل تعديل في store محتاج `build_runner`. نسيت تشغّله؟ `_$LibraryStore` مش موجود والمشروع مايعملش compile. ملفات `.g.dart` بتعمل conflicts في الـ PRs، والـ build بيبطأ مع كبر المشروع. والفريق بيتعلم ياخد باله، بس دي ضريبة يومية.
+2. <b>التتبع الضمني بيفاجئ:</b> حد عمل refactor وطلّع `final books = store.books;` فوق الـ `Observer` «عشان الكود يبقى أنضف»، والـ builder بقى بيستخدم `books`. الشاشة بطّلت تتحدث، ومفيش error، بس warning في الـ console: «No observables detected in the build method of Observer». ونفس المشكلة في `ListView.builder`: الـ `itemBuilder` بيتنادى وقت الـ layout، بعد ما الـ builder بتاع الـ `Observer` خلص، فأي observable بيتقري جوه الـ item مش متتبع. الحل `Observer` لكل item، أو تقرا اللي محتاجه في الـ builder نفسه. الفرق عن الـ Cubit: الاشتراك هناك مكتوب ومتشاف، هنا محسوب وقت الـ build، والـ refactor البريء بيكسره.
+3. <b>الكتابة برا action:</b> زي ما شفنا في الـ listener. الـ assertion بيطلع في الـ debug بس، و<b>بس لو في حد بيراقب القيمة دي ساعتها</b> (الـ write policy الافتراضية `observed`). يعني ممكن الكود يعدّي في تستاتك (مفيش Observer) ويضرب لما الشاشة تتفتح.
+4. <b>الـ objects جوه الـ observable مش observable:</b> `store.books` observable، بس `books.first.status = ...` تعديل في `Book` عادي. محدش اتبلّغ. لازم يا تبدّل الـ list كلها بنسخة جديدة، يا تعمل store لكل item بـ `@observable` fields.
+5. <b>reactions منسية:</b> `reaction(...)` في `initState` من غير ما حد يحفظ الـ disposer ويناديه. كل مرة الشاشة تتفتح، reaction جديدة، والقديمة لسه عايشة. النتيجة: SnackBar بتظهر مرتين، وتلاتة، ومعاها memory leak. الـ `ReactionBuilder` بيحل ده لأنه بيقفلها لوحده.
+6. <b>الـ state متفرقة:</b> مفيش object واحد اسمه «state الشاشة دي» تعمله log أو تقارنه في تست. فيه 6 observables، وكل action بيعدّل في 3 منهم. MobX عنده `spy` للـ debugging، بس مفيش حاجة زي `onChange` بتديك قبل وبعد للشاشة كلها.
+
+<b>الخريطة: MobX ↔ Cubit</b>
+
+| MobX | Cubit |
+| --- | --- |
+| store بـ `with Store` وcodegen | `Cubit<State>` |
+| fields عليها `@observable` | fields في state واحدة immutable |
+| getter عليه `@computed` (متخزن) | getter على الـ state (بيتحسب مع كل قراية) |
+| method عليها `@action` | method بتعمل `emit` |
+| `Observer` | `BlocBuilder`، و`BlocSelector` للتضييق |
+| `reaction` أو `when` في `ReactionBuilder` | `BlocListener` و`listenWhen` |
+| `listen` أو `ObservableStream` | subscription في الـ Cubit بيتلغي في `close()` |
+| `spy` | `BlocObserver.onChange` |
+| `dispose()` | `close()` |
+
+### Redux في الشغل
+
+<b>اللي بيعمله كويس:</b>
+
+- <b>مسار واحد للبيانات:</b> كل تغيير action بيعدّي على reducer. middleware واحد للـ logging بيسجّل كل حاجة حصلت في الـ app بالترتيب، وده أقوى debugging ممكن تاخده.
+- <b>الـ reducer أسهل حاجة تتختبر:</b> دالة: input وoutput. `expect(libraryReducer(LibraryLoading(), LibraryBooksReceived(books)), LibraryLoaded(books))`. مفيش mocks ولا async.
+- <b>الـ state كلها في مكان واحد:</b> تقدر تعمل snapshot، وتحفظها، وترجعها. وعشان كده أدوات زي time-travel debugging اتعملت لـ Redux.
+
+<b>اللي بيبوظ:</b>
+
+1. <b>الكود الكتير:</b> زرار «زوّد» محتاج action class، وcase في reducer، وconverter، وdispatch. والـ refresh محتاج actions للبداية والنهاية، وthunk، وview model. شاشة Cubit من 45 سطر بتبقى 3 ملفات. والفرق ده بيدفعه كل حد بيضيف feature، كل يوم.
+2. <b>store عالمي لحاجات محلية:</b> فريق حط نص الـ search box في الـ store «عشان كل حاجة في Redux». كل حرف بقى action. و<b>كل `StoreConnector` في الشجرة بيشغّل الـ converter بتاعه مع كل action</b>، حتى لو مالوش علاقة. لو converter بيعمل filter وsort لـ 2000 كتاب، كل حرف بيعمل ده في كل الشاشات المفتوحة، والكتابة بتقطّع. الـ `distinct: true` بيمنع الـ rebuild، بس مابيمنعش الـ converter نفسه. الحل: الـ state المحلية تفضل محلية (`TextEditingController` أو Cubit للشاشة)، والحسابات التقيلة تتعمل memoization.
+3. <b>الـ `dynamic action`:</b> الـ reducer بياخد أي حاجة. كتبت `GoalIncreased` بس حد عمل `dispatch(GoalIncreased)` (النوع نفسه من غير `()`)، أو action اتشال من الـ reducer في refactor: مفيش compile error، الـ `_ => state` بيرجّع الـ state زي ما هي، والزرار مابيعملش حاجة.
+4. <b>الـ async بعيد عن الـ state:</b> منطق الـ refresh متقسم: الشرط في الـ thunk، والـ state في الـ reducer، والاشتراك في middleware، والقفل في `onDispose` بتاع widget. عشان تفهم feature واحدة، بتفتح 4 أماكن.
+5. <b>مفيش scope:</b> الـ store عايش طول الـ app. logout مابيمسحش حاجة إلا لو كتبت action ليه وكل reducer بيتعامل معاه. وstate شاشة اتقفلت بتفضل في الذاكرة لحد ما حد يمسحها.
+6. <b>النشاط:</b> `flutter_redux` ثابت من سنين. مقبول لكود شغال، بس مش اختيار تبدأ بيه مشروع جديد النهارده من غير سبب قوي. ولو فريق بيحب فكرة Redux، `async_redux` package تانية بنفس الروح وأقل كود، والـ Bloc نفسه فيه نفس فكرة «حاجة بتدخل، state بتطلع» من غير store عالمي.
+
+<b>الخريطة: Redux ↔ Bloc</b>
+
+| Redux | Bloc |
+| --- | --- |
+| action | event |
+| case في reducer (sync بس) | handler في `on<Event>` (يقدر يعمل await) |
+| thunk أو middleware للـ async | الـ handler نفسه، والـ transformers |
+| `AppState` واحدة للـ app كله | state لكل Bloc، وعمره مربوط بالـ route |
+| `StoreProvider` فوق الـ app | `BlocProvider` مكان الـ feature |
+| `StoreConnector` وconverter | `BlocBuilder` و`BlocSelector` |
+| `distinct: true` | الـ `emit` بيتجاهل state بتساوي الحالية |
+| `onDidChange(previous, current)` | `BlocListener` و`listenWhen` |
+| middleware للـ logging | `BlocObserver.onTransition` |
+
+### signals في الشغل
+
+<b>اللي بيعمله كويس:</b>
+
+- <b>أدق rebuild بأقل كود:</b> `SignalBuilder` صغير حوالين `Text` بيتبني لوحده. مفيش codegen، ومفيش base class.
+- <b>Dart صافي:</b> `signals_core` مالوش علاقة بـ Flutter، فالـ model بيتختبر بـ `dart test`.
+- <b>مفاهيم مشتركة مع الـ web:</b> نفس الـ signals اللي في Angular وSolid وPreact. لو الفريق شغال web كمان، الفكرة واحدة.
+- <b>`streamSignal` و`AsyncState`:</b> loading وdata وerror جاهزين من stream أو future، من غير ما تكتبهم.
+
+<b>اللي بيبوظ:</b>
+
+1. <b>نفس فخ التتبع الضمني:</b> قراية بعد `await`، أو في callback، أو برا الـ builder، مابتتسجّلش. والـ `SignalWidget` بيتتبع اللي اتقرا في الـ `build` <b>synchronously</b> بس، والـ docs بتقولها صريحة.
+2. <b>الـ effects والترتيب:</b> الـ effect بيشتغل فورًا لما يتعمل، وتاني بعد كل تغيير في أي signal قراه، ولو في كذا effect على نفس الـ signal، الترتيب بينهم مش حاجة تبني عليها. فريق عمل effect بيعمل «لو المستخدم اتغير، نادي `refresh()`». الـ `refresh()` بتقرا `isRefreshing.value` وبتكتب فيه، فالـ effect اشترك في `isRefreshing` من غير ما حد يقصد، وكتب في signal هو قاريه. النتيجة: cycle error، أو loop. الحل إن أي قراية جوه effect مش المفروض تعمل اشتراك تبقى `peek()` أو جوه `untracked`، وده انضباط لازم الفريق كله يفتكره.
+3. <b>signals top-level:</b> الأمثلة كلها بتبدأ بـ `final count = signal(0);` في أول الملف. في app حقيقي، ده global mutable state: بيعيش بين التستات (تست بيأثر في اللي بعده)، وبيعيش بعد الـ logout، وأي ملف يقدر يكتب فيه. الحل: signals جوه classes ليها `dispose`، وبتتعمل في scope معروف، زي ما عملنا في `LibraryModel`.
+4. <b>الـ dispose عليك:</b> مفيش provider بيقفل لوحده. نسيت `model.dispose()`؟ الـ `streamSignal` لسه مشترك في drift.
+5. <b>الـ API بيتغير:</b> بين 6 و7: `Watch` و`.watch(context)` و`SignalsMixin` بقوا deprecated، والـ `SignalBuilder` اتغيّر، والـ options زي `debugLabel` و`autoDispose` اتنقلوا لـ objects زي `SignalOptions(name: ...)`. أغلب الـ tutorials والإجابات على النت لسه بالشكل القديم. مكتبة نشطة، بس محتاجة حد في الفريق متابعها.
+6. <b>ترتيب `AsyncState`:</b> زي ما شفنا، `AsyncLoading()` في أول الـ switch بيبلع الـ data وقت الـ refresh. compile مافيهوش مشكلة، والـ bug بيبان بس لما المستخدم يعمل refresh.
+
+<b>الخريطة: signals ↔ Cubit</b>
+
+| signals | Cubit |
+| --- | --- |
+| class فيه signals | `Cubit<State>` |
+| `signal(value)` | field في الـ state |
+| `computed(() => ...)` (lazy ومتخزن) | getter على الـ state |
+| `signal.value = ...` | `emit(state.copyWith(...))` |
+| كذا كتابة جوه `batch` | `emit` واحد فيه كل التغييرات |
+| `SignalBuilder` و`SignalWidget` | `BlocBuilder` و`BlocSelector` |
+| `SignalEffect` أو `effect()` | `BlocListener` |
+| `streamSignal(() => stream)` | subscription في الـ Cubit، وstates للـ Loading وLoaded وError |
+| `readonly()` | الـ `emit` محمي (`@protected`) |
+| `dispose()` | `close()` |
+
+### flutter_hooks: للـ state الصغيرة، مش بديل
+
+`flutter_hooks` (0.21.x) مش state management للـ app. هو طريقة أقصر تكتب بيها <b>الـ ephemeral state</b> اللي بتعيش في widget واحد: controller لـ TextField، أو AnimationController، أو bool «مفتوح ولا مقفول». الحاجات دي مكانها مش الـ Cubit أصلًا ([درس «الـ State من الصفر»](/course/state-management/state-basics/) شرح ليه)، وعادة بتكتبها في `StatefulWidget` بـ `initState` و`dispose`. الـ hooks بتختصر ده:
+
+<CodeBlock label="خانة إضافة ملاحظة: hooks للـ UI، والـ Cubit للـ logic">
+
+```dart
+class AddNoteField extends HookWidget {
+  const AddNoteField({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final text = useTextEditingController(); // created once, disposed with the widget
+    final expanded = useState(false);         // ValueNotifier<bool>, rebuilds on change
+
+    return Column(
+      children: [
+        TextField(
+          controller: text,
+          maxLines: expanded.value ? 6 : 1,
+          onSubmitted: (value) {
+            context.read<NotesCubit>().add(value); // app state goes to the Cubit
+            text.clear();
+          },
+        ),
+        TextButton(
+          onPressed: () => expanded.value = !expanded.value,
+          child: Text(expanded.value ? 'أصغر' : 'أكبر'),
+        ),
+      ],
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>`useTextEditingController()`:</b> بيعمل الـ controller أول build، وبيرجّع نفس الـ instance في كل build بعد كده، وبيعمله dispose لما الـ widget يتشال. ده بيشيل `initState` و`dispose` و`StatefulWidget` كامل.
+- <b>`useState(false)`:</b> `ValueNotifier` محلي، وأي تغيير فيه بيعيد بناء الـ widget ده بس.
+- <b>القاعدة الوحيدة:</b> الـ hooks بتتنادى في `build` بس، ومن غير `if` ولا loop، وبنفس الترتيب كل مرة، لأن الـ hook بيتعرف بترتيبه.
+- <b>جنب أي state management:</b> هنا مع Cubit عادي جدًا. ومع Riverpod في `hooks_riverpod` (`HookConsumerWidget`)، ومع signals في `signals_hooks`. الـ hooks بتمسك الـ UI state، والـ state management بيمسك الـ app state، والخط بينهم هو نفس سؤال «لو الـ widget ده اتشال، الـ state دي ليها لازمة؟».
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior: تشتغل فيه وتنقل منه">
+
+### لو اتعينت في مشروع بيستخدم واحد منهم
+
+أول قاعدة: <b>ماتبدأش بـ «نغيّره»</b>. المشروع شغال وبيكسب فلوس، والفريق عارف المكتبة. اكتب صح جوه اللي موجود، وخلي الكود الجديد سهل يتنقل لو القرار اتاخد بعدين. القواعد دي بتعمل الاتنين:
+
+| المكتبة | اكتب كده | وابعد عن |
+| --- | --- | --- |
+| GetX | dependencies في الـ constructor، و`Get.put` في الـ Bindings بس، وstate واحدة `Rx<LibraryState>` لما الشاشة فيها مراحل، والـ snackbar والـ navigation من الـ View | `Get.find` جوه methods، و`Get.to` و`Get.snackbar` في الـ controller، و`permanent: true` للـ screen controllers، وmethod اسمها `refresh` |
+| MobX | `runInAction` أو `@action` لأي كتابة، و`ReactionBuilder` بدل reactions يدوية، وimmutable models جوه الـ observables | قراية observables برا الـ `Observer`، وstores بتمسك stores، وflutter imports في الـ store |
+| Redux | state محلية برا الـ store، وconverters خفيفة مع `distinct: true`، وaction للـ logout بيرجّع `initialState` | كل حرف action، وlogic في الـ widgets، وmiddleware بيعدّل state |
+| signals | signals جوه classes ليها `dispose`، و`readonly()` للي برا، و`peek()` جوه effects، و`AsyncData` قبل `AsyncLoading` | signals top-level، و`Watch` و`.watch(context)` و`SignalsMixin` في كود جديد |
+
+وفي الأربعة: الـ use cases والـ repositories والـ entities مايعرفوش حاجة عن المكتبة. لا `RxList` في الـ domain، ولا `@observable` في الـ entity، ولا `Signal<Book>` في الـ repository. ده اللي بيخلي أي migration بعدين شغل في الـ presentation بس.
+
+### نقل شاشة المكتبة من GetX لـ Cubit خطوة خطوة
+
+ده أشهر migration في السوق المصري: app اتكتب بـ GetX بسرعة، كبر، والفريق قرر يمشي على Cubit. الخطة الكاملة للـ app (الـ strangler، والجرد، وترتيب الشاشات، وإمتى الـ routing) في [درس «تختار state management إزاي»](/course/state-management/choosing/). هنا هنعمل شاشة واحدة بالتفصيل، `LibraryController` اللي فوق، في 6 PRs صغيرة، والـ app شغال بعد كل واحد.
+
+<Diagram name="d-sm-getx-migration">
+
+كل خطوة PR لوحده. أول 4 خطوات جوه GetX نفسه، وبيخلّوا الـ controller شبه الـ Cubit. الخطوة الخامسة تقريبًا copy، والسادسة بتغيّر الصفحة. الـ routing بتاع GetX بيفضل زي ما هو لحد ما كل الشاشات تخلص.
+
+</Diagram>
+
+<b>الخطوة 1: تستات للسلوك الحالي.</b> قبل ما تلمس سطر، اكتب تستات على الـ controller زي ما هو. الـ `GetxController` بيتعمل بـ constructor عادي، و`onInit()` تقدر تناديها بإيدك:
+
+<CodeBlock label="test/library_controller_test.dart">
+
+```dart
+void main() {
+  late MockLibraryRepository repo;
+  late MockRefreshLibrary refreshLibrary;
+  late StreamController<List<Book>> books;
+
+  setUp(() {
+    repo = MockLibraryRepository();
+    refreshLibrary = MockRefreshLibrary();
+    books = StreamController<List<Book>>();
+    when(() => repo.watchLibrary()).thenAnswer((_) => books.stream);
+  });
+
+  test('a successful refresh keeps the books and ends the refresh', () async {
+    when(() => refreshLibrary()).thenAnswer((_) async => const Success(null));
+    final c = LibraryController(repo, refreshLibrary)..onInit();
+    books.add([aBook()]);
+    await pumpEventQueue();
+
+    await c.refreshLibrary();
+
+    expect(c.books, [aBook()]);
+    expect(c.isRefreshing.value, isFalse);
+    expect(c.refreshFailure.value, isNull);
+  });
+}
+```
+
+</CodeBlock>
+
+جرّب تكتب نفس التست لـ refresh فاشل، وهيضرب: الـ worker بينادي `Get.snackbar` بـ `Get.context!`، ومفيش `GetMaterialApp` في التست، فالـ `!` بيرمي. ده أول اكتشاف: الـ controller مش قابل للتست لوحده، والخطوة 3 هي اللي بتصلّح ده. لحد ساعتها، الحالة دي تتغطى بـ widget test على الشاشة كلها تحت `GetMaterialApp` ([درس «Widget tests» في الوحدة 8](/course/testing/widget-tests/) بيوريك الأدوات). ونفس الحكاية لو الـ controller بيعمل `Get.find` جواه: الخطوة 2.
+
+<b>الخطوة 2: الـ dependencies في الـ constructor.</b> لو الـ controller كان بيعمل `Get.find<LibraryRepository>()` جوه `onInit`، طلّعها للـ constructor، والـ binding هو اللي يعمل `find` (أو `getIt`). الـ controller اللي فوق عامل كده أصلًا. والـ binding ممكن من دلوقتي يقرا من get_it: `Get.lazyPut(() => LibraryController(getIt(), getIt()))`، فالـ repository يبقى متسجّل في مكان واحد للـ GetX والـ Cubit.
+
+<b>الخطوة 3: الـ UI برا الـ controller.</b> امسح الـ `ever` والـ `Get.snackbar` من الـ controller. الـ `refreshFailure` لسه موجود، والـ View هي اللي تعرض. في GetX، ده `StatefulWidget` بيعمل الـ worker في `initState` ويقفله في `dispose`، أو أي widget بيسمع. ومعاه أي `Get.to` جوه الـ controller يبقى callback أو state بتقول للـ View تعمل navigate. بعد الخطوة دي، الـ controller مابقاش بيعرف حاجة عن الشاشة، وتست الـ refresh الفاشل (`refreshFailure` فيها `NetworkFailure` والكتب لسه موجودة) بقى unit test عادي.
+
+<b>الخطوة 4: state واحدة.</b> الـ 5 خانات يبقوا خانة واحدة من نوع `LibraryState`، نفس الـ sealed class بتاعة الـ Cubit:
+
+<BeforeAfter>
+<Side label="5 خانات" kind="before">
+
+```dart
+final books = <Book>[].obs;
+final isLoading = true.obs;
+final loadFailure = Rxn<Failure>();
+final isRefreshing = false.obs;
+final refreshFailure = Rxn<Failure>();
+
+// in the listener:
+books.assignAll(list);
+isLoading.value = false;
+```
+
+</Side>
+<Side label="state واحدة" kind="after">
+
+```dart
+final state = Rx<LibraryState>(const LibraryLoading());
+
+// in the listener: exactly what the Cubit will emit
+state.value = switch (state.value) {
+  final LibraryLoaded s => s.copyWith(books: list),
+  _ => LibraryLoaded(list),
+};
+```
+
+</Side>
+</BeforeAfter>
+
+والـ View بقت `Obx(() => switch (controller.state.value) { ... })`، نفس الـ switch اللي هيبقى في الـ `BlocBuilder`. دي أهم خطوة: الحالات المتناقضة اختفت، والـ `state.value = ...` بقى هو الـ `emit` بالظبط. لو الـ Rx بيقارن بـ `==`، الـ `LibraryState` عندها equality (درس «تصميم الـ State»)، فنفس السلوك.
+
+<b>الخطوة 5: الـ `LibraryCubit`.</b> دلوقتي النقل تقريبًا ميكانيكي:
+
+| في الـ controller بعد الخطوة 4 | في الـ Cubit |
+| --- | --- |
+| `extends GetxController` | `extends Cubit<LibraryState>` و`super(const LibraryLoading())` |
+| `state.value = x` | `emit(x)` |
+| `state.value` (قراية) | `state` |
+| `onInit()` | `watch()`، والـ provider بيناديها: `..watch()` |
+| `onClose()` | `close()` |
+| بعد كل await | `if (isClosed) return;`، لأن الـ Cubit بيرمي لو عملت emit بعد القفل |
+| `refreshLibrary()` | `refresh()`، الاسم بقى حر |
+
+والنتيجة هي الـ `LibraryCubit` اللي في [درس «Cubit ولا Bloc»](/course/state-management/cubit-vs-bloc/) حرف بحرف. والتستات بتاعة الخطوة 1: الـ arrange زي ما هو، الـ `..onInit()` بقى `..watch()`، والـ expectations بقت على `cubit.state` بدل الخانات. ولو حابب، تكتبها `blocTest` بنفس الـ expectations. لو عدّت، السلوك ماتغيرش.
+
+<b>الخطوة 6: الصفحة.</b> الـ `GetView` بقى `StatelessWidget`، والـ `Obx` بقى `BlocBuilder`، والـ worker بقى `BlocListener`. والـ route لسه `GetPage`، من غير binding:
+
+<CodeBlock label="الـ route بعد النقل: GetX للـ routing بس">
+
+```dart
+GetPage(
+  name: '/library',
+  page: () => BlocProvider(
+    create: (_) => getIt<LibraryCubit>()..watch(),
+    child: const LibraryView(), // BlocBuilder + BlocListener, like any Readly screen
+  ),
+),
+```
+
+</CodeBlock>
+
+- <b>`GetMaterialApp` بيبني `MaterialApp` عادي:</b> فالـ `BlocProvider` والـ `BlocBuilder` شغالين تحته من غير أي حاجة زيادة. الـ `BlocProvider` بيقفل الـ Cubit لما الـ route يتشال، أيًا كان مين اللي فتحه.
+- <b>امسح:</b> `LibraryController` و`LibraryBinding`. ودوّر في المشروع على `Get.find<LibraryController>` و`LibraryController`: لازم يبقوا صفر. لو في شاشة تانية كانت بتقرا من الـ controller ده، دي جارة، ومكانها في الجرد بتاع درس «تختار state management إزاي» (الحل هناك: الحقيقة في الـ repository).
+- <b>الـ routing آخر حاجة:</b> `Get.to` و`Get.back` بيفضلوا لحد ما كل الشاشات تتنقل. بعدين PR كبير لوحده يبدّل `GetMaterialApp` بـ go_router، وبعده `get` يتشال من الـ pubspec.
+
+### ومن MobX وRedux وsignals
+
+نفس المبدأ: <b>خلي الشكل القديم شبه الـ Cubit من جوه الأول، وبعدين بدّل الغلاف</b>.
+
+- <b>MobX:</b> الـ observables اللي بتتغير مع بعض يبقوا observable واحد بنوع `LibraryState`، والـ `@computed` يبقوا getters على الـ state. بعدها كل `@action` بيبقى method بتعمل emit، والـ `Observer` يبقى `BlocBuilder`، والـ `ReactionBuilder` يبقى `BlocListener`. وآخر store يتنقل، امسح `mobx_codegen` من الـ dev dependencies، وهتحس بالفرق في وقت الـ build.
+- <b>Redux:</b> أسهل مما تتخيل، لأن الـ `LibraryState` كانت immutable أصلًا. الـ slice بتاع المكتبة يبقى Cubit (أو Bloc لو الـ actions كتير ومحتاج transformers: الـ actions تبقى events بنفس الأسامي تقريبًا). الـ reducer cases تبقى emits، والـ thunk يبقى method async، والـ middleware بتاع الـ stream يبقى subscription في الـ Cubit. وفي الفترة الانتقالية، الـ Cubit ممكن يعمل `dispatch` لـ `store` لو شاشات قديمة لسه بتقرا الـ slice، بس ده كوبري بيتمسح، مش تصميم.
+- <b>signals:</b> الـ model class بيبقى Cubit تقريبًا لوحده: الـ signals يبقوا fields في state، والـ `computed` يبقوا getters، والـ `batch` يبقى emit واحد، والـ `SignalEffect` يبقى `BlocListener`. والـ `streamSignal` يبقى subscription في الـ Cubit بـ `LibraryLoading` و`LibraryLoaded` و`LibraryError`.
+
+### امتى ماتنقلش خالص
+
+الـ migration ليه تمن: وقت، وrisk، وfeatures مش بتتعمل. فبيتعمل لما يبقى في ألم مقاس، مش عشان «Cubit أحسن»، والمعايير في [درس «تختار state management إزاي»](/course/state-management/choosing/). ضيف عليها سؤالين: الـ app هيعيش؟ (app هيتسلّم ويتقفل بعد 6 شهور، سيبه). والفريق موافق؟ (migration فرد واحد مقتنع بيها بتقف في النص، وده أسوأ من الاتنين: مشروع بمكتبتين).
+
+لو القرار «نفضل»، القواعد اللي في أول الـ Level ده بتخلي الكود صحي، وبتخلي الـ migration أرخص لو القرار اتغير بعدين.
+
+<Note kind="interview" title="سؤال interview">
+
+«ليه مش GetX؟ أسهل وأسرع.» أسرع في البداية فعلًا، وده مكسب حقيقي لـ prototype. اللي بيوجع في المشاريع اللي بتكبر 3 حاجات: `Get.find` بيخلي الـ dependencies مخفية جوه الكود ومربوطة بـ registry عام، فالتست والـ deep links بيتعبوا. وعمر الـ controllers مربوط بالـ routing بتاع GetX نفسه، فلو غيّرت الـ navigation، الـ controllers مابتتمسحش وبتشيل state قديمة. والـ controller بيعمل snackbars وnavigation من غير context، فالـ logic بيعرف شكل الشاشة. ولو اشتغلت في مشروع GetX، بكتب فيه بـ constructor injection وstate واحدة sealed والـ UI في الـ View، وده بيخلي الكود صحي ويخلي النقل لـ Cubit بعدين شبه ميكانيكي.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«إيه الفرق بين `Obx` أو `Observer` والـ `BlocBuilder`؟» الـ `BlocBuilder` بيشترك صراحة في stream الـ state كلها، وانت اللي بتضيّق بـ `buildWhen` أو `BlocSelector`. الـ `Obx` والـ `Observer` (والـ `SignalBuilder`) بيشغّلوا الـ builder جوه tracking context، وأي قيمة reactive اتقرت جواه بتبقى dependency، فالتضييق تلقائي. التمن إن الاشتراك مش مكتوب في الكود: قراية برا الـ builder، أو بعد await، أو في `itemBuilder` بتاع `ListView.builder` مابتتسجّلش، والشاشة بتبطل تتحدث من غير error. الصريح ممكن يعمل rebuilds زيادة، والضمني ممكن يفوّت rebuilds. وأنا بفضّل الغلطة اللي بتبان.
+
+</Note>
+
+</Level>
+
+<LessonPart title="أسئلة interview">
+
+<Note kind="interview" title="«Redux وBloc شبه بعض؟»">
+
+في الفكرة أيوه: حاجة بتدخل (action أو event)، وstate جديدة immutable بتطلع، والـ UI بتسمع. الفرق في 3 حاجات. Redux store واحد للـ app كله، والـ Bloc لكل feature وعمره مربوط بالـ route. الـ reducer في Redux sync وصافي، والـ async في middleware أو thunks، والـ handler في الـ Bloc بيعمل await بنفسه. والـ Bloc عنده transformers لكل نوع event (droppable، restartable)، وفي Redux ده middleware بتكتبه. يعني الـ Bloc بياخد أحسن حاجة في Redux، المسار الواضح والتتبع، من غير الـ store العالمي والـ boilerplate.
+
+</Note>
+
+<Note kind="interview" title="«MobX ولا Cubit لشاشة فيها قيم محسوبة كتير؟»">
+
+MobX بيكسب في الكتابة: `@computed` بيتخزن وبيتحدث لوحده، والـ `Observer` بيبني اللي محتاج بس. في الـ Cubit، القيم المحسوبة getters على الـ state، بتتحسب مع كل قراية، ولو تقيلة بتعمل memoization بإيدك أو بتحسبها مرة وقت الـ emit. بس التمن في MobX: codegen، وتتبع ضمني ممكن يتكسر بـ refactor بريء، والـ state متفرقة على observables كتير مفيش snapshot واحد ليها. لو الفريق كله مرتاح لـ MobX والشاشات فيها derived state كتير، اختيار معقول. Readly اختارت Cubit لأن الـ state الصريحة والـ snapshot الواحد أهم لها من توفير الـ getters.
+
+</Note>
+
+<Note kind="interview" title="«سمعت عن signals؟ ينفع يبقى state management للـ app؟»">
+
+signals قيم reactive دقيقة جدًا: `signal` و`computed` و`effect`، ومن غير codegen، وفي Flutter الـ `SignalBuilder` والـ `SignalWidget` بيتتبعوا اللي اتقرا. ممتاز لأجزاء بتتحدث كتير ولـ derived state. ينفع للـ app بشرط انضباط: signals جوه classes ليها dispose وscope معروف، مش top-level، و`readonly()` للي برا، و`peek` أو `untracked` جوه الـ effects عشان ماتعملش اشتراكات بالغلط. ونسخة 7 غيّرت الـ API (الـ `Watch` والـ `.watch(context)` بقوا deprecated)، فمحتاج حد متابع. ومافيهوش DI container (فيه `SignalProvider` بس عشان تمرّر signal في الشجرة)، فبيتجمع مع get_it أو provider.
+
+</Note>
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="sm-others-1">
+<Ask>زميلك كتب في `LibraryController extends GetxController` الـ method دي: `Future<void> refresh() async { await _refreshLibrary(); }`. الكود بيعمل compile، وبعد أسبوع لاحظتوا إن السيرفر بيستقبل requests refresh كتير من غير ما حد يسحب الشاشة. إيه اللي حصل؟</Ask>
+<Answer>
+
+`GetxController` جواه `refresh()` بالفعل، و`update()` بيناديها عشان يبلّغ الـ `GetBuilder`. الـ method الجديدة عملت override ليها (Dart بيقبل `Future<void>` مكان `void`)، فأي `update()` في الـ controller بقى بيبعت request للسيرفر بدل ما يعيد البناء. الحل: اسم تاني زي `refreshLibrary()`. والـ lint `annotate_overrides` (موجود في `flutter_lints`) كان بيقول من الأول إن الـ method دي override من غير `@override`، بس الـ info بتعدّي لو محدش بيقرا رسايل الـ analyzer.
+
+</Answer>
+</Question>
+
+<Question id="sm-others-2">
+<Ask>في `LibraryStore` بـ MobX، الـ listener بتاع `watchLibrary()` كاتب `(list) => books = list`. التستات بتعدّي، بس أول ما الشاشة تتفتح في الـ debug بيطلع error بيقول «Please wrap the code in an action». ليه التستات عدّت، وإيه الحل؟</Ask>
+<Answer>
+
+الـ callback بتاع الـ stream بيشتغل برا أي action. والـ write policy الافتراضية (`observed`) بتشتكي بس لو القيمة عليها observer ساعة الكتابة. في التست مفيش `Observer` بيقرا `books`، فمحدش اشتكى. في الشاشة، الـ `Observer` بيقراها، فالـ assertion بيضرب. الحل: `(list) => runInAction(() => books = list)`، أو الـ listener ينادي method عليها `@action`.
+
+</Answer>
+</Question>
+
+<Question id="sm-others-3">
+<Ask>app بـ Redux فيه 2000 كتاب. فريق حط نص خانة البحث في الـ `AppState`، وكل حرف بيعمل dispatch. الكتابة بقت بتقطّع، مع إن كل `StoreConnector` عليه `distinct: true`. ليه الـ distinct ماحلّش المشكلة؟</Ask>
+<Answer>
+
+مع كل action، كل `StoreConnector` في الشجرة بيشغّل الـ `converter` بتاعه عشان يعرف الـ view model الجديد. الـ `distinct: true` بيمنع الـ rebuild لو النتيجة `==` القديمة، بس الـ converter نفسه اتنفذ. فلو في converters بتعمل filter وsort للـ 2000 كتاب، كل حرف بيشغّلهم كلهم. الحل إن نص البحث يفضل state محلية (`TextEditingController` أو Cubit للشاشة)، والحسابات التقيلة تتعمل memoization أو تتحسب مرة في الـ reducer.
+
+</Answer>
+</Question>
+
+<Question id="sm-others-4">
+<Ask>في نسخة signals من المكتبة، حد رتّب الـ switch كده: `AsyncLoading() => spinner`، وبعده `AsyncData(:final value) => list`، وبعده `AsyncError`. الشاشة بتشتغل، بس في حالة معينة الكتب بتختفي ويظهر spinner. امتى، وليه؟</Ask>
+<Answer>
+
+وقت الـ refresh أو الـ reload: في signals 7، الحالات زي `AsyncDataRefreshing` بتورث من `AsyncData` وفي نفس الوقت بتعمل implement لـ `AsyncLoading`. الـ switch بياخد أول case بيطابق، فـ `AsyncLoading()` بيمسكها ويعرض spinner والكتب موجودة. الحل: `AsyncData` و`AsyncError` قبل `AsyncLoading`، زي ما الـ docs بتاعة signals بتقول.
+
+</Answer>
+</Question>
+
+<Question id="sm-others-5">
+<Ask>الفريق قرر ينقل شاشة المكتبة من GetX لـ Cubit. واحد اقترح: «نبدأ بتبديل `GetMaterialApp` بـ go_router، وبعدين ننقل الـ controllers». ترد بإيه؟ وإيه أول خطوتين انت تعملهم؟</Ask>
+<Answer>
+
+الـ routing آخر حاجة مش أول حاجة. `GetMaterialApp` بيبني `MaterialApp` عادي، فالـ `BlocProvider` والـ `BlocBuilder` شغالين تحته، وكل `Get.to` و`Get.snackbar` في الـ app محتاجينه. لو بدأت بيه، هتكسر كل الشاشات مرة واحدة في PR ضخم. أول خطوتين: تستات بتصوّر سلوك الـ `LibraryController` الحالي، وبعدين تطلّع الـ dependencies للـ constructor (مفيش `Get.find` جواه). بعدهم: الـ UI برا الـ controller، وstate واحدة `Rx<LibraryState>`، وبعدين الـ Cubit بنفس التستات، وبعدين الصفحة. والـ routing بيتنقل لوحده بعد ما كل الشاشات تخلص.
+
+</Answer>
+</Question>
+
+</Quiz>

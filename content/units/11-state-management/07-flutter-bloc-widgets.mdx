@@ -1,0 +1,718 @@
+---
+title: "flutter_bloc بالتفصيل"
+description: "كل widget في flutter_bloc: الـ providers وهي بتعيش فين مع go_router، وBlocBuilder وBlocSelector وBlocListener وBlocConsumer، وقواعد context.read وwatch وselect وليه، والـ ProviderNotFoundException، وتمرير Cubit لشاشة تانية، وإزاي تقيس الـ rebuilds وتقللها."
+minutes: 45
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="الكهربا في الشقة">
+
+الـ <b>provider</b> زي سلك الكهربا اللي في الحيطة. أي جهاز في الأوضة دي، أو في أوضة جواها، يقدر يتوصل بيه. بس جهاز في الشقة اللي جنبك مايقدرش، حتى لو الحيطة بينكم رفيعة. ولو جبت جهاز تاني لأوضة ضيوف مؤقتة (dialog)، الأوضة دي ليها أسلاكها، ولازم تمد وصلة بنفسك.
+
+وفي الأوضة أجهزة مختلفة: <b>شاشة</b> بتعرض اللي جاي في السلك وبتتغير معاه (BlocBuilder)، و<b>عداد</b> بيبص على رقم واحد بس ومش بيتحرك غير لو الرقم ده اتغير (BlocSelector)، و<b>جرس</b> بيرن مرة واحدة لما حاجة معينة تحصل، ومابيعرضش حاجة (BlocListener).
+
+</Analogy>
+
+الـ `flutter_bloc` مش محتاج تحفظه widget widget. هو 3 عائلات وبس، وكل عيلة بتجاوب على سؤال:
+
+| العيلة | السؤال | الأدوات |
+| --- | --- | --- |
+| الـ providers | الـ Cubit عايش فين، ومين يقدر يوصله، ومين بيقفله؟ | `BlocProvider`، `MultiBlocProvider`، `RepositoryProvider`، `MultiRepositoryProvider` |
+| الـ builders | أرسم إيه من الـ state، وإمتى أعيد الرسم؟ | `BlocBuilder`، `BlocSelector`، `context.watch`، `context.select` |
+| الـ listeners | أعمل إيه مرة واحدة لما الـ state تتغير؟ | `BlocListener`، `MultiBlocListener` |
+| الاتنين مع بعض | | `BlocConsumer` |
+| الوصول من غير ما تسمع | أنادي method | `context.read` |
+
+في درس «أول Cubit سطر بسطر» استخدمنا `BlocProvider` و`BlocBuilder` و`context.read` من غير ما ندخل جواهم. الدرس ده بيفتحهم كلهم، وبيوصّلهم بـ go_router زي ما Readly مبنية في درس go_router في الوحدة 5.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### BlocProvider: create ولا value
+
+`flutter_bloc` مبني فوق package اسمها `provider`. الـ `BlocProvider` بيحط الـ Cubit في الشجرة كـ `InheritedWidget`، فأي widget تحته يقدر يلاقيه بالنوع بتاعه. وفيه طريقتين تحطه بيهم، والفرق بينهم سؤال واحد: <b>مين صاحب الـ Cubit؟</b>
+
+<CodeBlock label="create: الـ provider هو اللي بيعمل وهو اللي بيقفل">
+
+```dart
+GoRoute(
+  path: '/library',
+  builder: (_, __) => BlocProvider(
+    create: (_) => getIt<LibraryCubit>()..watch(),
+    child: const LibraryView(),
+  ),
+),
+```
+
+</CodeBlock>
+
+<CodeBlock label="value: الـ Cubit موجود قبله، وحد تاني هو اللي بيقفله">
+
+```dart
+// get_it owns AuthCubit (lazySingleton): the router reads the same instance
+BlocProvider.value(
+  value: getIt<AuthCubit>(),
+  child: const ReadlyRouterApp(),
+)
+```
+
+</CodeBlock>
+
+| | `BlocProvider(create:)` | `BlocProvider.value(value:)` |
+| --- | --- | --- |
+| مين بيعمل الـ Cubit | الـ provider، بالـ `create` | حد تاني قبله |
+| مين بيقفله | الـ provider، لما يتشال من الشجرة | صاحبه (get_it، أو provider تاني فوق) |
+| `create` بيتنادى إمتى | مرة واحدة، أول ما حد يطلبه (lazy) | مفيش create |
+| استخدمه لما | الـ Cubit بتاع الـ subtree ده | تشارك instance موجود: singleton، أو Cubit لـ dialog، أو mock في الـ widget test |
+
+القاعدة اللي بتلخّص الجدول: <b>اللي عمل الـ Cubit هو اللي يقفله</b>. والغلطتين اللي بتحصل لما تكسرها في Level 3.
+
+- <b>الـ create مابيتناداش مع كل build:</b> الـ GoRoute builder ممكن يتنادى كذا مرة، وكل مرة بيرجّع `BlocProvider` جديد. بس Flutter بيحتفظ بنفس الـ element، فالـ `create` بيتنادى مرة واحدة والـ Cubit بيفضل هو هو.
+- <b>الـ lazy:</b> default بـ true. الـ `create` مش بيتنادى لما الـ provider يتبني، بيتنادى لما أول widget يطلب الـ Cubit. عادة ده بيحصل على طول لأن أول `BlocBuilder` تحته بيطلبه وهو بيتبني. متى بيفرق، في Level 3.
+
+### MultiBlocProvider
+
+بدل ما تحط providers جوه بعض، `MultiBlocProvider` بياخد ليستة. مجرد شكل أنضف لنفس الشجرة: الأول في الليستة هو اللي فوق.
+
+<CodeBlock label="صفحة الكتاب: 3 Cubits لـ 3 أجزاء">
+
+```dart
+MultiBlocProvider(
+  providers: [
+    BlocProvider(create: (_) => getIt<BookDetailsCubit>()..load(id)),
+    BlocProvider(create: (_) => getIt<NotesCubit>(param1: id)),
+    BlocProvider(create: (_) => getIt<BookStatusCubit>(param1: id)),
+  ],
+  child: const BookPage(),
+)
+```
+
+</CodeBlock>
+
+ليه 3 Cubits مش واحد، ده في درس «أنواع الـ Cubit (2)».
+
+### RepositoryProvider
+
+نفس الفكرة لأي object مش Cubit: repository، أو client، أو service. Readly مابتستخدموش لأن get_it بيعمل الشغل ده (درس الـ DI في الوحدة 6)، بس هتلاقيه في مشاريع كتير مابتستخدمش get_it، وفي أمثلة الـ bloc الرسمية:
+
+<CodeBlock label="من غير get_it">
+
+```dart
+RepositoryProvider<LibraryRepository>( // the type the readers ask for, not the Impl
+  create: (_) => LibraryRepositoryImpl(AppDatabase()),
+  dispose: (repository) => repository.dispose(), // since flutter_bloc 9.1
+  child: BlocProvider(
+    create: (context) {
+      final repository = context.read<LibraryRepository>();
+      return LibraryCubit(WatchLibrary(repository), repository)..watch();
+    },
+    child: const LibraryView(),
+  ),
+)
+```
+
+</CodeBlock>
+
+- <b>الـ `dispose`:</b> اتضاف في flutter_bloc 9.1. قبل كده الـ `RepositoryProvider` ماكانش بيقفل حاجة، فلو الـ repository فاتح database أو stream controller، كنت لازم تقفله بنفسك.
+- <b>الـ `context.read` جوه الـ `create`:</b> مسموح ومن الاستخدامات الصح ليه، لأن الـ `create` بيتنادى مرة.
+- <b>get_it ولا RepositoryProvider؟</b> الاتنين بيحلوا نفس المشكلة. الـ RepositoryProvider مربوط بالشجرة، فممكن تحط repository مختلف لـ subtree معين، بس مش هتوصله من كود بره الشجرة (الـ router، أو الـ SyncService). Readly اختارت get_it ومش هتخلط الاتنين: مصدرين للـ dependencies معناها إن محدش عارف يدوّر فين.
+
+### BlocBuilder وbuildWhen
+
+<CodeBlock label="BlocBuilder">
+
+```dart
+BlocBuilder<LibraryCubit, LibraryState>(
+  // optional: false skips this rebuild. Here: the list doesn't show isRefreshing,
+  // so a state that only flipped that flag (same books list) draws nothing new
+  buildWhen: (previous, current) => !(previous is LibraryLoaded &&
+      current is LibraryLoaded &&
+      identical(previous.books, current.books)),
+  builder: (context, state) => switch (state) {
+    LibraryLoading() => const Center(child: CircularProgressIndicator()),
+    LibraryLoaded(:final books) => BookList(books: books),
+    LibraryError(:final failure) => ErrorView(/* ... */),
+  },
+)
+```
+
+</CodeBlock>
+
+- <b>بيدوّر على الـ Cubit لوحده:</b> بـ `context.read<LibraryCubit>()` وقت ما بيتبني. ولو باعتله `bloc:` بإيدك، بيستخدمه ومابيدوّرش.
+- <b>الـ builder بيتنادى مع كل state جديدة</b> (لو الـ `buildWhen` قال أيوه)، و<b>كمان</b> مع أي rebuild للأب. يعني الـ builder لازم يبقى pure: يرسم وبس، من غير navigation ولا snackbar (درس Cubit في الوحدة 5).
+- <b>الـ `buildWhen` مابيتناداش على أول build:</b> أول مرة بيرسم الـ state الحالية على طول.
+
+### BlocSelector
+
+<CodeBlock label="BlocSelector: قيمة واحدة من الـ state">
+
+```dart
+// the AppBar title: "My library (12)"
+BlocSelector<LibraryCubit, LibraryState, int?>(
+  selector: (state) => state is LibraryLoaded ? state.books.length : null,
+  builder: (context, count) => Text(count == null ? l10n.library : l10n.libraryCount(count)),
+)
+```
+
+</CodeBlock>
+
+مع كل state جديدة، بينادي الـ `selector`، ويقارن النتيجة بالقديمة بـ `==`. لو هي هي، مفيش rebuild. فلما كتاب يتغير من «بقراه» لـ «خلصته»، الـ `LibraryLoaded` اتغيرت، بس العدد زي ما هو، فالعنوان مابيتبنيش تاني. شرطه الوحيد إن اللي بترجّعه يتقارن صح: رقم، bool، enum، String، أو object عامل `==`.
+
+### BlocListener وlistenWhen
+
+<CodeBlock label="BlocListener: حاجة بتحصل مرة، مش حاجة بتترسم">
+
+```dart
+BlocListener<AddBookCubit, AddBookState>(
+  listenWhen: (previous, current) => current is AddBookSaved,
+  listener: (context, state) => context.pop(),
+  child: const AddBookForm(),
+)
+```
+
+</CodeBlock>
+
+الـ `listener` بيتنادى <b>مرة واحدة لكل state جديدة</b>، مهما الشاشة اتبنت. وده سبب وجوده: navigation، وsnackbar، وdialog، وfocus، وأي حاجة لو اتكررت تبقى bug. والـ `child` بيتبني عادي ومالوش علاقة بالـ state.
+
+<CodeBlock label="MultiBlocListener">
+
+```dart
+MultiBlocListener(
+  listeners: [
+    BlocListener<NotesCubit, NotesState>(
+      listenWhen: (prev, curr) => curr.failureId != prev.failureId,
+      listener: (context, state) => context.showFailure(state.failure!),
+    ),
+    BlocListener<BookStatusCubit, BookStatusState>(
+      listenWhen: (prev, curr) => curr is BookStatusFailed,
+      listener: (context, state) => context.showFailure((state as BookStatusFailed).failure),
+    ),
+  ],
+  child: const BookPageView(),
+)
+```
+
+</CodeBlock>
+
+الـ `failureId` ده من درس «الأخطاء في الشاشة» في الوحدة 9: رقم بيزيد مع كل فشل، عشان فشلين ورا بعض بنفس النوع يطلّعوا رسالتين.
+
+### BlocConsumer
+
+`BlocBuilder` و`BlocListener` على نفس الـ Cubit في widget واحد. فيه `buildWhen` و`listenWhen` منفصلين:
+
+<CodeBlock label="BlocConsumer">
+
+```dart
+BlocConsumer<LoginCubit, LoginFormState>(
+  listenWhen: (prev, curr) =>
+      prev.status != curr.status && curr.status == FormStatus.failure,
+  listener: (context, state) => ScaffoldMessenger.of(context)
+      .showSnackBar(SnackBar(content: Text(l10n.errorLoginFailed))),
+  buildWhen: (prev, curr) => curr.status != FormStatus.success, // the auth redirect takes us away
+  builder: (context, state) => LoginForm(state: state),
+)
+```
+
+</CodeBlock>
+
+مفيش حاجة بيعملها مش بتعملها الاتنين جوه بعض. استخدمه لما الاتنين على نفس الـ Cubit وفي نفس المكان، ولو الـ listener على Cubit تاني أو مكانه أعلى في الشجرة، افصلهم.
+
+### context.read وwatch وselect
+
+دول extensions على `BuildContext` جاية من package:provider، وflutter_bloc بيعمل لهم export:
+
+| الـ method | بيعمل إيه | مكانه | ممنوع فين |
+| --- | --- | --- | --- |
+| `context.read<LibraryCubit>()` | بيجيب الـ Cubit من غير ما يسمع | الـ callbacks: `onPressed`، `onChanged`، `initState`، `create` | جوه `build` عشان تقرا الـ state |
+| `context.watch<LibraryCubit>()` | بيجيب الـ Cubit وبيعيد بناء الـ widget ده مع كل state | جوه `build` بس | بره `build` (بيضرب assertion) |
+| `context.select((LibraryCubit c) => c.state...)` | بيعيد البناء بس لما القيمة المختارة تتغير | جوه `build` بس | بره `build`، أو بالـ context بتاع `itemBuilder` مباشرة |
+
+- <b>الـ read في الـ build:</b> `final state = context.read<LibraryCubit>().state;` بيقرا الـ state مرة، ومش بيسجّل إنه مهتم. الـ state تتغير والـ widget مابيتبنيش، فالشاشة بتعرض حاجة قديمة. الـ package مش بتمنعك، بس الـ docs بتاعتها بتقول صراحة: ماتعتمدش على read عشان تقلل الـ rebuilds، استخدم select. الاستثناء المقبول: إنك تجيب الـ Cubit نفسه عشان تمرر method منه، زي `onRetry: context.read<LibraryCubit>().retry`.
+- <b>الـ watch في callback:</b> `onPressed: () => context.watch<LibraryCubit>().refresh()` بيضرب assertion في الـ debug: «Tried to listen to a value exposed with provider, from outside of the widget tree». الـ callback مابيرسمش حاجة، فمفيش معنى إنه يسمع.
+- <b>الـ watch والـ BlocBuilder:</b> `context.watch<LibraryCubit>().state` جوه build بيعمل نفس شغل `BlocBuilder`، بس على الـ widget كله. لو الـ widget ده صفحة كاملة، كل state جديدة بتعيد بناء الصفحة كلها. الـ BlocBuilder بيحدد حدود الـ rebuild بنفسه.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### ProviderNotFoundException: الـ context فوق الـ provider
+
+<CodeBlock label="بيقع أول ما تدوس">
+
+```dart
+class LibraryPage extends StatelessWidget {
+  const LibraryPage({super.key});
+
+  @override
+  Widget build(BuildContext context) => BlocProvider(
+        create: (_) => getIt<LibraryCubit>()..watch(),
+        child: Scaffold(
+          floatingActionButton: FloatingActionButton(
+            // this context belongs to LibraryPage, which is ABOVE the provider
+            onPressed: () => context.read<LibraryCubit>().refresh(),
+            child: const Icon(Icons.refresh),
+          ),
+          body: const LibraryList(),
+        ),
+      );
+}
+```
+
+</CodeBlock>
+
+`Error: Could not find the correct Provider<LibraryCubit> above this LibraryPage Widget`. والمحيّر إن الـ provider مكتوب في نفس الملف، فوق الزرار بسطرين.
+
+السبب إن الـ `context` مش «المكان في الملف»، الـ `context` هو <b>الـ element بتاع الـ widget اللي الـ build بتاعه شغال</b>. يعني `context` هنا هو `LibraryPage` نفسها. والـ `BlocProvider` طفل لـ `LibraryPage`، فأي بحث بيبدأ من `LibraryPage` ويطلع لفوق، عمره ما هيعدّي عليه. أما `LibraryList` فشغالة، لأن الـ build بتاعها بياخد context بتاعها هي، وهي تحت الـ provider.
+
+| الحل | إزاي | إمتى |
+| --- | --- | --- |
+| Page وView | الـ Page فيها الـ provider بس، والـ View widget لوحده تحته | الافتراضي في Readly |
+| `Builder` | `Builder(builder: (context) => ...)` بيدّيك context جديد تحت الـ provider | تصليح سريع في مكان صغير |
+| الـ provider في الـ route | الـ GoRoute builder بيلف الصفحة | لما الصفحة نفسها مالهاش دعوة بمين عمل الـ Cubit |
+
+<CodeBlock label="Page وView">
+
+```dart
+class LibraryPage extends StatelessWidget {
+  const LibraryPage({super.key});
+
+  @override
+  Widget build(BuildContext context) => BlocProvider(
+        create: (_) => getIt<LibraryCubit>()..watch(),
+        child: const LibraryView(), // its build gets a context below the provider
+      );
+}
+
+class LibraryView extends StatelessWidget {
+  const LibraryView({super.key});
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        floatingActionButton: FloatingActionButton(
+          onPressed: () => context.read<LibraryCubit>().refresh(),
+          child: const Icon(Icons.refresh),
+        ),
+        body: const LibraryList(),
+      );
+}
+```
+
+</CodeBlock>
+
+الـ Page والـ View ليهم فايدة تانية أكبر من الـ bug ده: الـ View مابتعرفش الـ Cubit جه منين، فالـ widget test بيحط فوقها mock بـ `BlocProvider.value` من غير get_it خالص (درس «Widget tests» في الوحدة 8، ودرس «الـ State management في مشروع حقيقي»).
+
+وفيه نسختين تانيين من نفس الـ exception لازم تعرفهم:
+
+- <b>نوع غلط:</b> الـ provider بـ `BlocProvider<CatalogCubit>` وانت بتطلب `CatalogSearchCubit`. الـ lookup بالنوع بالظبط.
+- <b>نسيت الـ generic:</b> `context.read()` من غير نوع، والـ Dart استنتج نوع غير اللي في الـ provider. اكتب النوع دايمًا.
+
+ولو استخدمت `BlocProvider.of<LibraryCubit>(context)` بدل `context.read`، هتلاقي رسالة مختلفة شوية («BlocProvider.of() called with a context that does not contain a LibraryCubit»)، بس نفس السبب ونفس الحل.
+
+### الـ dialog والـ bottom sheet مش شايفين الـ Cubit
+
+المستخدم ضغط على كتاب ضغطة طويلة، فظهر bottom sheet فيه «غيّر الحالة». الـ sheet بينادي `context.read<BookStatusCubit>()`، والـ app يقع بـ `ProviderNotFoundException`، مع إن الصفحة اللي فتحته فيها الـ provider.
+
+`showModalBottomSheet` و`showDialog` بيعملوا <b>route جديد</b>، والـ route ده بيتحط في الـ Navigator، مش جوه الصفحة اللي فتحته. يعني الـ sheet مش ابن الصفحة في الشجرة، هو جار ليها. والـ `context` اللي في الـ `builder` بتاع الـ sheet بيدوّر لفوق من الـ Navigator، فبيلاقي الـ providers اللي فوق الـ Navigator بس (اللي على مستوى الـ app)، ومش بيلاقي اللي جوه الصفحة.
+
+<CodeBlock label="وصلة بـ BlocProvider.value">
+
+```dart
+void _showStatusSheet(BuildContext context) {
+  final cubit = context.read<BookStatusCubit>(); // page context: it can see the provider
+  showModalBottomSheet<void>(
+    context: context,
+    builder: (_) => BlocProvider.value(
+      value: cubit,               // same instance, the page still owns it
+      child: const StatusSheet(), // inside: context.read<BookStatusCubit>() works
+    ),
+  );
+}
+```
+
+</CodeBlock>
+
+- <b>الـ read قبل الـ show:</b> بالـ context بتاع الصفحة، اللي شايف الـ provider. جوه الـ builder بتاع الـ sheet الـ context مختلف.
+- <b>الـ `.value` مش `create`:</b> الـ sheet بيستعير الـ Cubit مش بيملكه. لو اتعمل بـ `create: (_) => cubit`، أول ما الـ sheet يتقفل هيقفل الـ Cubit، والصفحة هتفضل شغالة بـ Cubit مقفول وأول emit هيرمي `StateError`.
+
+### الـ providers والـ routes في go_router
+
+<Diagram name="d-sm-provider-tree">
+
+الصفحة اللي اتعملها push (BookPage) بتتحط في نفس الـ Navigator جنب LibraryPage، مش جواها، فمش شايفة الـ LibraryCubit. الاتنين شايفين الـ ProfileCubit لأنهم جوه الـ shell، وكل حاجة شايفة الـ app. والـ bottom sheet route جديد بره الصفحة خالص.
+
+</Diagram>
+
+الـ URL بيقول إن `/library/books/OL1` جوه `/library`. بس ده تداخل في <b>العناوين</b>، مش في <b>الـ widgets</b>. go_router بيحط كل route في الـ Navigator كـ page لوحدها، فوق بعض في الـ stack. فالـ `BlocProvider` اللي في الـ builder بتاع `/library` بيلف `LibraryPage` بس، وصفحة الكتاب جارة ليها مش بنت ليها. علشان كده الأماكن في Readly كده:
+
+| عايز الـ Cubit يوصل لـ | حطه في | مثال | بيتقفل إمتى |
+| --- | --- | --- | --- |
+| الـ app كله، وكود بره الشجرة | فوق `MaterialApp.router` بـ `BlocProvider.value` | `AuthCubit`، `SyncStatusCubit` | عمره ما بيتقفل من الشجرة، get_it صاحبه |
+| الـ app كله، الشجرة بس | فوق `MaterialApp.router` بـ `create` | `SettingsCubit` | مع الـ app |
+| كل التابات وصفحاتها | الـ `builder` بتاع `StatefulShellRoute` | `ProfileCubit` | مع الـ logout، لأن الـ redirect بيشيل الـ shell |
+| صفحة واحدة | الـ `builder` بتاع الـ `GoRoute` بتاعها | `LibraryCubit`، `BookDetailsCubit` | لما الصفحة تتشال من الـ stack |
+| كذا صفحة ورا بعض (flow) | `ShellRoute` بيلف الـ routes دي | `AddBookFlowCubit` | لما تخرج من آخر صفحة في الـ flow |
+
+<CodeBlock label="ShellRoute: Cubit واحد لـ 3 خطوات">
+
+```dart
+GoRoute(
+  path: '/library',
+  builder: (_, __) => const LibraryPage(),
+  routes: [
+    bookRoute,
+    ShellRoute(
+      // one draft for the whole flow, closed when the user leaves it
+      builder: (context, state, child) => BlocProvider(
+        create: (_) => getIt<AddBookFlowCubit>(),
+        child: child, // a nested Navigator with the step pages
+      ),
+      routes: [
+        GoRoute(
+          path: 'add',
+          builder: (_, __) => const AddBookDetailsStep(),
+          routes: [
+            GoRoute(
+              path: 'status',
+              builder: (_, __) => const AddBookStatusStep(),
+              routes: [
+                GoRoute(path: 'confirm', builder: (_, __) => const AddBookConfirmStep()),
+              ],
+            ),
+          ],
+        ),
+      ],
+    ),
+  ],
+),
+```
+
+</CodeBlock>
+
+- <b>الـ `child`:</b> الـ ShellRoute بيعمل Navigator جوّاني للـ routes اللي تحته، والـ `child` هو الـ Navigator ده. فالـ provider بيلف الخطوات التلاتة كلها، وهي بيتعملها push فوق بعض جواه.
+- <b>بيتقفل لوحده:</b> لما المستخدم يخلص ويرجع لـ `/library`، الـ ShellRoute بيتشال من الشجرة والـ `AddBookFlowCubit` بيتقفل، والـ draft بيروح. ولو رجع من نص الـ flow، نفس الكلام.
+- <b>الـ deep link لنص الـ flow:</b> `/library/add/status` بيبني الخطوة 2 بـ draft فاضي. الخطوة 2 لازم تتعامل مع ده: لو مفيش عنوان، `context.go('/library/add')`. ده تمن إن الـ state في الذاكرة مش في الـ URL.
+- <b>ماتعملش ShellRoute لكل صفحتين</b>: لو الصفحتين مش بيشاركوا draft في الذاكرة، كل واحدة ليها Cubit والبيانات المشتركة جاية من الـ repository، زي المكتبة وصفحة الكتاب.
+
+ولو route متسجّل بـ `parentNavigatorKey` بتاع الـ root navigator (صفحة full screen فوق التابات)، فهو بيتحط في الـ root Navigator، يعني جار للـ shell كله، ومش شايف غير الـ providers اللي على مستوى الـ app. الـ `ProfileCubit` مش هيبقى موجود هناك.
+
+### تمرير Cubit لـ route جديد
+
+المستخدم في المكتبة وضغط على كتاب. صفحة الكتاب عايزة بيانات الكتاب. أول فكرة: «ابعتلها الـ LibraryCubit». الاختيارات:
+
+| الطريقة | الحكم | ليه |
+| --- | --- | --- |
+| الصفحة الجديدة ليها Cubit، والـ id في الـ path | الافتراضي | بتشتغل من deep link ومن أي تاب، والـ Cubit بيتقفل معاها، والتواصل بالـ repository stream |
+| `ShellRoute` فوق الصفحتين | لما بيشاركوا state في الذاكرة | flow زي إضافة كتاب على خطوات |
+| `BlocProvider.value` في `Navigator.push` أو dialog أو sheet | لـ UI مؤقتة مش route ليه عنوان | الـ sheet بتاع تغيير الحالة |
+| `context.push('/x', extra: cubit)` | ماتعملهاش | الـ extra بيضيع مع الـ deep link وrefresh الـ web وstate restoration، ومش معروف مين بيقفل الـ Cubit |
+
+<CodeBlock label="ليه extra بالذات وحش">
+
+```dart
+// tempting: hand the Cubit over in extra
+context.push('/library/books/${book.id.value}', extra: context.read<LibraryCubit>());
+
+// in the route
+builder: (_, state) => BlocProvider.value(
+  value: state.extra! as LibraryCubit, // null when opened from a link: crash
+  child: const BookPage(),
+),
+```
+
+</CodeBlock>
+
+الصفحة دلوقتي ماتقدرش تتفتح غير من المكتبة. اللينك `readly.app/library/books/OL1` اللي حد بعته في رسالة هيقع. ولو صفحة المكتبة اتشالت والصفحة دي لسه فاتحة (ممكن يحصل مع `go`)، الـ LibraryCubit اتقفل والصفحة لسه ماسكاه. الصفحة بتاخد من الـ URL اللي يكفيها تبني نفسها: الـ id.
+
+### الـ lazy: Cubit اتعمل متأخر
+
+الـ `ProfileCubit` في الـ shell بيجيب اسم المستخدم وصورته:
+
+```dart
+builder: (context, state, navigationShell) => BlocProvider(
+  create: (_) => getIt<ProfileCubit>()..load(),
+  child: HomeShell(navigationShell: navigationShell),
+),
+```
+
+الصورة بتظهر في تاب الإعدادات بس. والـ provider lazy، فالـ `create` مش هيتنادى غير لما حد يطلبه، يعني لما المستخدم يفتح الإعدادات. ساعتها بس الطلب بيبدأ، والمستخدم بيشوف spinner مكان صورته كل مرة يفتح التاب لأول مرة.
+
+```dart
+BlocProvider(
+  lazy: false, // create (and load) as soon as the shell is built
+  create: (_) => getIt<ProfileCubit>()..load(),
+  child: HomeShell(navigationShell: navigationShell),
+)
+```
+
+ونفس الكلام لأي Cubit بيشترك في stream من الـ constructor وأول واحد بيقراه بييجي متأخر: الحاجات اللي حصلت قبل ما يتعمل ضاعت. الـ lazy الـ default صح في أغلب الأحوال (Cubit ماحدش طلبه مايتعملش)، فاستخدم `lazy: false` عن قصد، للـ Cubits اللي لازم تشتغل قبل ما حد يبص عليها.
+
+### الـ ownership: الغلطتين
+
+<b>الغلطة الأولى: `create` لحاجة مش بتاعتك.</b> `BlocProvider(create: (_) => getIt<SyncStatusCubit>())` في صفحة. الـ Cubit متسجّل lazySingleton، فـ get_it رجّع نفس النسخة اللي فوق الـ app. الصفحة اتقفلت، والـ provider فاكر نفسه صاحبه فقفله. بعد كده الـ sync queue اتغيرت، والـ SyncStatusCubit المقفول حاول يعمل emit: `Bad state: Cannot emit new states after calling close`. وده بيظهر بعد ما الصفحة اتقفلت بفترة، في مكان تاني خالص. والصفحة دي أصلًا مش محتاجة provider: الـ Cubit متوفر من فوق الـ app، و`context.read` بيلاقيه من أي حتة.
+
+<b>الغلطة التانية: `value` لحاجة جديدة.</b> `BlocProvider.value(value: getIt<BookDetailsCubit>()..load(id), ...)` جوه `build`. دي أول غلطة في «أخطاء أول مرة» في درس «أول Cubit سطر بسطر»: الـ Cubit متسجّل factory، فكل build (الكيبورد فتح، الثيم اتغير) بيعمل واحد جديد بيبدأ من `BookDetailsLoading` وبيبعت طلب جديد، والشاشة ترجع spinner. والقديم ماحدش قفله، لأن الـ `.value` مابيقفلش. Cubit factory يتعمل بـ `create` وبس.
+
+| التسجيل في get_it | الـ provider | لو عكست |
+| --- | --- | --- |
+| `registerLazySingleton` | `BlocProvider.value` | `create` بيقفل الـ singleton مع أول صفحة تتشال |
+| `registerFactory` أو `registerFactoryParam` | `BlocProvider(create:)` | `.value` في build بيعمل Cubit مع كل rebuild ومحدش بيقفلهم |
+
+### الـ buildWhen بيرسم state قديمة
+
+```dart
+BlocBuilder<LibraryCubit, LibraryState>(
+  buildWhen: (prev, curr) => curr is LibraryLoaded, // "only redraw for data"
+  builder: (context, state) => switch (state) {/* ... */},
+)
+```
+
+الفكرة كانت «ماتعرضش spinner لو في بيانات». بس الـ `buildWhen` مابيمنعش الـ state تتغير، بيمنع الـ BlocBuilder يحدّث <b>النسخة اللي هو شايلها</b>. الـ state بقت `LibraryError`، والـ BlocBuilder لسه شايل آخر `LibraryLoaded`، فالمستخدم شايف كتب قديمة ومش عارف إن في error. وأي rebuild للأب بيرسم نفس النسخة القديمة دي تاني.
+
+القاعدة: الـ `buildWhen` لتوفير rebuilds مالهاش لازمة (القيمة اللي بترسمها ماتغيرتش)، مش لإخفاء states. لو مش عايز spinner والبيانات موجودة، ده قرار في الـ Cubit (ماتعملش emit لـ Loading) أو في الـ switch في الـ builder، مش في الـ buildWhen.
+
+### الـ BlocListener مابيشتغلش على الـ state الحالية
+
+الـ BlocListener بيشترك في الـ stream وقت ما بيتبني، وبيعتبر الـ state اللي موجودة ساعتها «البداية». الـ listener بيتنادى للـ states <b>اللي بعدها</b> بس. فلو حطيت listener بيعمل redirect لما `AuthCubit` يبقى `Unauthenticated`، والشاشة اتبنت والـ state أصلًا `Unauthenticated`، مفيش حاجة هتحصل.
+
+ده مقصود: الـ listener للأحداث، والـ state الحالية مش حدث. لو الحالة الحالية نفسها محتاجة تصرف، ده مكانه حاجة بتقرا الـ state وقت البناء: الـ redirect بتاع go_router بيقرا `auth.state` مع كل تنقل (درس go_router)، أو الـ builder بيرسم حاجة مختلفة.
+
+ونفس الحكاية بشكل تاني: الـ `previous` في `listenWhen` هو آخر state <b>الـ listener شافها</b>، مش آخر state الـ listener اتنادى عليها. يعني لو `listenWhen` رجّعت false، الـ `previous` برضه بيتحدث.
+
+### الـ context.select اللي بيعيد البناء كل مرة
+
+```dart
+// Home: rebuilds on EVERY library change, even if the reading list is the same
+final reading = context.select(
+  (LibraryCubit c) => switch (c.state) {
+    LibraryLoaded(:final books) => books.where((b) => b.status == BookStatus.reading).toList(),
+    _ => const <Book>[],
+  },
+);
+```
+
+الـ `select` بيقارن القيمة القديمة بالجديدة بـ `==`. والـ `toList()` بيعمل List جديدة كل مرة، وList في Dart بتتقارن بالـ identity، يعني دايمًا مختلفة. فالـ select ده بيعيد البناء مع كل state، زي `watch` بالظبط.
+
+- <b>اختار حاجة بتتقارن:</b> العدد (`int`)، أو `bool`، أو الـ ids كـ String مدموجين، أو object عامل `==` (Equatable).
+- <b>أو خلي الـ Cubit يحسبها:</b> لو الـ Home محتاجة «بقرا دلوقتي»، `HomeCubit` بيشترك في `WatchLibrary` بـ `status: reading`، زي ما في درس «أنواع الـ Cubit (2)». الـ widget مايفلترش.
+
+وفيه assertion تاني هتقابله: `context.select` بالـ `context` بتاع `ListView.builder` اللي جاي في الـ `itemBuilder` مباشرة بيضرب: «Tried to use context.select inside a SliverList». الـ context ده بتاع الليستة كلها، فالـ select هيعيد بناء الليستة كلها مش الـ item. الحل `Builder` جوه الـ itemBuilder، أو الأحسن: الـ tile widget لوحده، والـ select جوه الـ build بتاعه.
+
+<CodeBlock label="select في الـ tile، مش في الليستة">
+
+```dart
+class BookTile extends StatelessWidget {
+  const BookTile({super.key, required this.book});
+  final Book book;
+
+  @override
+  Widget build(BuildContext context) {
+    // this tile rebuilds only when ITS answer changes
+    final unsynced = context.select(
+      (SyncStatusCubit c) => c.state.unsynced.contains(book.id),
+    );
+    return ListTile(
+      title: Text(book.title),
+      trailing: unsynced ? const Icon(Icons.cloud_upload_outlined) : null,
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+ده نفس السطر اللي في درس Offline-first، في مكانه الصح.
+
+### الـ rebuilds: قيسها الأول
+
+مش كل rebuild مشكلة. Flutter معمول عشان يبني بسرعة، والـ widget اللي بيتبني مرتين في الثانية مش هيحس بيه حد. المشكلة لما widget كبير (صفحة كاملة، ليستة فيها صور) بيتبني مع كل state مالهاش علاقة بيه. وماتخمّنش، قيس:
+
+1. <b>شغّل في profile mode</b> (`flutter run --profile`) لما تقيس الوقت. الـ debug mode أبطأ بكتير ومش بيعبّر عن الحقيقة. عدد الـ rebuilds نفسه ممكن تشوفه في الـ debug عادي.
+2. <b>افتح Flutter DevTools، صفحة Performance</b>، وفعّل من Enhance Tracing اختيار <b>Track widget builds</b>. كل frame في الـ timeline هيبان فيه كل widget اتبنى باسمه. وفي نسخ DevTools الحديثة فيه tab اسمه <b>Rebuild Stats</b> بيعدّ كل widget اتبنى كام مرة في الـ frames اللي سجّلتها. لو الـ IDE بتاعك فيه عدّاد rebuilds في الـ Flutter Inspector، ده نفس الفكرة.
+3. <b>اعمل الحركة اللي شاكك فيها</b>: pull-to-refresh في المكتبة مثلًا. وبص: `LibraryView` اتبنت كام مرة؟ والـ AppBar؟ والـ tiles؟
+4. <b>من غير أدوات خالص:</b> `debugPrintRebuildDirtyWidgets = true;` في `main` (debug بس) بيطبع كل widget بيتعاد بناؤه في الـ console. كتير جدًا، بس بيوريك اللي محدش متوقعه.
+
+ولما تلاقي widget بيتبني من غير سبب، الأدوات بالترتيب:
+
+| المشكلة | الحل |
+| --- | --- |
+| `context.watch` في build صفحة كاملة | `BlocBuilder` أو `BlocSelector` حوالين الجزء اللي بيتغير بس |
+| الـ widget بيرسم حاجة واحدة من state كبيرة | `BlocSelector` أو `context.select` |
+| الـ state بتتغير في حاجة الـ widget مش بيعرضها | `buildWhen` بيقارن الحقل اللي بيعرضه |
+| widgets جوه الـ builder مش بتعتمد على الـ state | اطلعها بره الـ builder، أو اعملها `const` |
+| Cubit بيعمل emit لـ state متساوية بس مش `==` | Equatable أو freezed (درس «تصميم الـ State») |
+
+والـ `const` مهم أكتر مما بيبان: `const BookCover()` جوه BlocBuilder مابيتبنيش تاني مع كل state، لأن Flutter بيلاقي نفس الـ instance فبيوقف عنده.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>الـ provider في أوطى مكان فوق كل اللي محتاجينه:</b> أوطى من كده في حد مش هيلاقيه، وأعلى من كده الـ Cubit بيعيش أكتر من اللازم وشايل state قديمة. وفي go_router، افتكر إن الـ routes المتداخلة في الـ URL مش متداخلة في الشجرة.
+- <b>الـ Page بتعمل، والـ View بتستخدم:</b> الـ get_it بيتنادى في الـ route أو الـ Page بس. الـ View بتلاقي الـ Cubit بـ `context.read` ومش عارفة جه منين، فالتست بيحط mock بـ `BlocProvider.value`. وده كمان بيمنع الـ ProviderNotFoundException بتاع «الـ context فوق الـ provider».
+- <b>اللي عمل يقفل:</b> singleton في get_it يتحط بـ `.value`، وfactory يتحط بـ `create`، وأي UI مؤقتة (sheet، dialog) بتستعير بـ `.value`. الـ `BlocObserver` اللي بيعدّ الـ Cubits العايشة في درس «Cubit متقدم» بيمسك أي Cubit مابيتقفلش.
+- <b>BlocBuilder ولا BlocSelector ولا buildWhen؟</b> الـ BlocSelector لما بتعرض قيمة واحدة (أوضح من buildWhen لأن اللي بترسمه هو نفسه اللي بتقارنه). الـ buildWhen لما بترسم الـ state كلها بس في حقول الـ widget مش بيعرضها. والـ BlocBuilder العادي في الباقي. وماتعملش أي واحد فيهم قبل ما تقيس.
+- <b>الـ read في الـ callbacks، والـ watch والـ select في الـ build:</b> وبلاش `context.watch` في build صفحة. ولو الفريق عايز شكل واحد، `bloc_lint` فيه rule بتفرض الـ extensions (`prefer_build_context_extensions`) وrule بتمنعها لصالح الـ widgets (`avoid_build_context_extensions`). اختاروا واحدة وخلي الـ CI يحرسها (درس «الـ State management في مشروع حقيقي»).
+- <b>BlocListener للأحداث، والـ redirect والـ builder للحالات:</b> الـ listener مابيشوفش الـ state اللي كانت موجودة لما اتبنى. أي حاجة لازم تحصل «طول ما الحالة كده» مكانها حاجة بتقرا الـ state، مش listener.
+
+<Note kind="interview" title="سؤال interview">
+
+«إيه الفرق بين `BlocProvider` و`BlocProvider.value`، وإمتى تستخدم كل واحد؟» الـ `create` معناها إن الـ provider هو صاحب الـ Cubit: بيعمله lazy أول ما حد يطلبه، وبيقفله لما يتشال من الشجرة. الـ `.value` معناها إن الـ Cubit موجود وليه صاحب تاني، والـ provider بيعرضه بس ومابيقفلهوش. فـ `create` لأي Cubit factory بتاع الـ subtree ده، و`.value` لـ singleton صاحبه get_it، أو لما تدّي Cubit موجود لـ dialog أو bottom sheet (لأنهم routes جديدة مش شايفة الـ providers اللي جوه الصفحة)، أو لـ mock في widget test. ولو عكستهم: `create` لـ singleton بيقفله مع أول صفحة تتشال، و`.value` بـ instance جديد في build بيعمل Cubit مع كل rebuild ومحدش بيقفلهم.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«الـ `context.read` جه بـ ProviderNotFoundException مع إن الـ BlocProvider موجود. إيه الأسباب؟» أشهرها إن الـ context فوق الـ provider: نفس الـ build اللي بيعمل الـ provider بيستخدم الـ context بتاعه، والحل Page وView أو `Builder`. التاني route جديد: dialog أو bottom sheet أو صفحة اتعملها push، كلهم في الـ Navigator جنب الصفحة مش جواها، والحل `BlocProvider.value` للـ UI المؤقتة، أو provider أعلى (ShellRoute) لو الصفحات بتشارك state، أو الأحسن إن الصفحة الجديدة يبقى ليها Cubit بتاعها. والتالت نوع غلط في الـ generic. والـ URL المتداخل في go_router مش معناه widgets متداخلة.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### صفحة المكتبة بتتبني كلها مع كل state
+
+<BeforeAfter>
+
+<Side label="قبل: context.watch في أول الصفحة" kind="before">
+
+```dart
+class LibraryView extends StatelessWidget {
+  const LibraryView({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.watch<LibraryCubit>().state; // the whole page listens
+    final l10n = AppLocalizations.of(context)!;
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(state is LibraryLoaded
+            ? l10n.libraryCount(state.books.length)
+            : l10n.library),
+        actions: [
+          IconButton(
+            onPressed: state is LibraryLoaded && state.isRefreshing
+                ? null
+                : context.read<LibraryCubit>().refresh,
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ),
+      body: switch (state) {
+        LibraryLoading() => const Center(child: CircularProgressIndicator()),
+        LibraryLoaded(:final books) => BookList(books: books),
+        LibraryError(:final failure) => ErrorView(
+            message: failure.localized(l10n),
+            onRetry: context.read<LibraryCubit>().retry,
+          ),
+      },
+    );
+  }
+}
+```
+
+</Side>
+
+<Side label="بعد: كل جزء بيسمع على اللي يخصه" kind="after">
+
+```dart
+class LibraryView extends StatelessWidget {
+  const LibraryView({super.key});
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(
+          title: BlocSelector<LibraryCubit, LibraryState, int?>(
+            selector: (s) => s is LibraryLoaded ? s.books.length : null,
+            builder: (context, count) {
+              final l10n = AppLocalizations.of(context)!;
+              return Text(count == null ? l10n.library : l10n.libraryCount(count));
+            },
+          ),
+          actions: [
+            BlocSelector<LibraryCubit, LibraryState, bool>(
+              selector: (s) => s is LibraryLoaded && s.isRefreshing,
+              builder: (context, refreshing) => IconButton(
+                onPressed: refreshing ? null : context.read<LibraryCubit>().refresh,
+                icon: const Icon(Icons.refresh),
+              ),
+            ),
+          ],
+        ),
+        body: BlocBuilder<LibraryCubit, LibraryState>(
+          builder: (context, state) => switch (state) {
+            LibraryLoading() => const Center(child: CircularProgressIndicator()),
+            LibraryLoaded(:final books) => BookList(books: books),
+            LibraryError(:final failure) => ErrorView(
+                message: failure.localized(AppLocalizations.of(context)!),
+                onRetry: context.read<LibraryCubit>().retry,
+              ),
+          },
+        ),
+      );
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+- <b>الـ Scaffold مابيتبنيش تاني:</b> الـ `LibraryView` نفسها مابتسمعش على حاجة، فالـ `build` بتاعها بيتنادى مرة.
+- <b>العنوان بيتبني لما العدد يتغير بس:</b> كتاب اتغيرت حالته؟ العدد زي ما هو، العنوان مكانه.
+- <b>الزرار بيتبني مرتين في كل refresh:</b> لما يبدأ ولما يخلص. مش مع كل كتاب واصل من الـ stream.
+- <b>الليستة بتتبني مع كل state:</b> وده صح، هي اللي بتعرض الكتب. ولو جوه `BookList` الـ tiles عليها `const` أو keys، Flutter بيعيد استخدام اللي ماتغيرش.
+- <b>بس قيس الأول:</b> في شاشة صغيرة، النسخة اللي قبل مش هتفرق في الأداء خالص. الفرق بيبان لما الصفحة تكبر، والـ stream يطلّع قيم كتير، وDevTools يقولك إن الـ Scaffold بيتبني 30 مرة في الـ sync.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="sm-widgets-1">
+<Ask>في صفحة الكتاب: `build` بيرجّع `BlocProvider.value(value: getIt<BookDetailsCubit>()..load(id), child: const BookView())`، و`BookDetailsCubit` متسجّل factory. المستخدم فتح الكيبورد عشان يكتب ملاحظة، والصفحة رجعت spinner. ليه؟</Ask>
+<Answer>
+
+الكيبورد غيّر الـ MediaQuery فالـ `build` اتنادى تاني، والـ factory عمل `BookDetailsCubit` جديد بيبدأ من Loading وبيبعت طلب جديد، والـ BlocBuilder اتحوّل عليه. والقديم عمره ما هيتقفل لأن `.value` مابيقفلش. الـ Cubit الـ factory يتعمل بـ `BlocProvider(create:)`، اللي بيعمله مرة واحدة وبيقفله لما الصفحة تتشال.
+
+</Answer>
+</Question>
+
+<Question id="sm-widgets-2">
+<Ask>من صفحة الكتاب، ضغطة طويلة بتفتح bottom sheet بينادي `context.read<BookStatusCubit>()`، والـ app بيقع بـ `ProviderNotFoundException` مع إن الـ provider في الـ route بتاع الصفحة. ليه، والحل؟</Ask>
+<Answer>
+
+الـ bottom sheet route جديد بيتحط في الـ Navigator جنب الصفحة، مش جواها، فالـ context بتاعه مش شايف الـ providers اللي جوه الصفحة. الحل: اقرا الـ Cubit بالـ context بتاع الصفحة قبل `showModalBottomSheet`، ولف الـ sheet بـ `BlocProvider.value(value: cubit, ...)`. `.value` مش `create`، لأن الـ sheet بيستعير الـ Cubit، ولو قفله الصفحة هتفضل بـ Cubit مقفول.
+
+</Answer>
+</Question>
+
+<Question id="sm-widgets-3">
+<Ask>`/library/books/:id` route متداخل تحت `/library`، والـ `LibraryCubit` متحط في الـ builder بتاع `/library`. ليه صفحة الكتاب مش لاقياه؟ وإيه الحل الصح؟</Ask>
+<Answer>
+
+التداخل في الـ URL مش تداخل في الشجرة: go_router بيحط صفحة الكتاب في الـ Navigator كـ page لوحدها فوق صفحة المكتبة، جارة ليها مش بنت ليها، فالـ provider اللي بيلف المكتبة مابيلفّهاش. والحل الصح مش إنك تطلّع الـ provider لفوق: صفحة الكتاب تاخد الـ id من الـ path وليها `BookDetailsCubit` بتاعها، فتشتغل كمان من deep link ومن تاب الكتالوج. ولو الاتنين محتاجين بيانات مشتركة، بيسمعوا نفس الـ repository stream. الـ ShellRoute بس لما كذا صفحة بتشارك state في الذاكرة زي flow على خطوات.
+
+</Answer>
+</Question>
+
+<Question id="sm-widgets-4">
+<Ask>`context.select((LibraryCubit c) => /* reading books */ .where(...).toList())` في الـ Home، وDevTools بيقول إن الـ widget بيتبني مع كل تغيير في المكتبة حتى لو ليستة «بقراها» ماتغيرتش. ليه؟</Ask>
+<Answer>
+
+الـ select بيقارن القديم بالجديد بـ `==`، والـ `toList()` بيعمل List جديدة كل مرة، والـ List بتتقارن بالـ identity، فدايمًا مختلفة. اختار قيمة بتتقارن صح (عدد، bool، أو object بـ Equatable)، أو الأحسن خلي `HomeCubit` يشترك في `WatchLibrary` بفلتر `reading` ويرجّع الليستة جاهزة في state بتتقارن صح.
+
+</Answer>
+</Question>
+
+<Question id="sm-widgets-5">
+<Ask>`BlocBuilder` عليه `buildWhen: (_, curr) => curr is LibraryLoaded` عشان «مايظهرش spinner». النت فصل والـ Cubit عمل emit لـ `LibraryError`. المستخدم شايف إيه؟</Ask>
+<Answer>
+
+آخر `LibraryLoaded` قبل الـ error، كأن مفيش حاجة حصلت. الـ buildWhen مابيمنعش الـ state تتغير، بيمنع الـ BlocBuilder يحدّث النسخة اللي شايلها، وأي rebuild للأب بيرسم نفس النسخة القديمة. الـ buildWhen لتوفير rebuilds القيمة المعروضة فيها ماتغيرتش، مش لإخفاء states. الـ «مفيش spinner لو في بيانات» قرار في الـ Cubit أو في الـ switch.
+
+</Answer>
+</Question>
+
+</Quiz>

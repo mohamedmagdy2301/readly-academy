@@ -82,3 +82,26 @@ description: "كل مصطلح بمعناه ومثال من Readly."
 | Optimistic update | الشاشة بتتغير قبل رد السيرفر، ولو فشل بترجع ومعاها رسالة | مسح ملاحظة في `NotesCubit.remove` |
 | Tolerant reader | الـ app بيقرا اللي محتاجه بس، ويتجاهل الحقول الجديدة، وdefault للناقص وfallback للـ enum الجديد | الـ DTOs بحقول nullable و`unknownEnumValue` |
 | Additive change | تغيير في الـ API مابيكسرش النسخ القديمة: حقل أو endpoint جديد optional | إضافة `coverUrl` في `/v1/library` |
+| State | البيانات اللي الشاشة بتترسم منها دلوقتي، والـ UI = f(state) | `LibraryLoaded(books)` |
+| Ephemeral state | state بتخص widget واحدة ومحدش تاني محتاجها، فـ `setState` كفاية ليها | الباسورد ظاهر ولا مخفي في الـ login |
+| Cubit | class بتمسك state واحدة وتطلّع نسخة جديدة منها بـ `emit` لما method تتنادى | `ReadingGoalCubit.increment()` |
+| Bloc | زي الـ Cubit بس الـ input events، وكل نوع event ليه handler وسياسة concurrency | `CatalogSearchBloc` بيستقبل `SearchQueryChanged` |
+| emit | بيطلّع state جديدة للـ stream، وبيتجاهلها لو `==` الحالية، وبيرمي `StateError` بعد `close` | `emit(state.copyWith(isRefreshing: true))` |
+| Value Cubit | Cubit الـ state بتاعته قيمة واحدة (bool أو enum أو رقم) | `ViewModeCubit` بـ `LibraryViewMode` |
+| Action Cubit | Cubit لعملية واحدة بتخلص: idle وinProgress وsuccess وfailure | `RemoveBooksCubit` بـ `ActionStatus` |
+| One-shot effect | حاجة بتحصل مرة واحدة (SnackBar أو navigation) ومش جزء من اللي الشاشة بترسمه | `BlocListener` بـ `listenWhen` على `refreshFailure` |
+| Event transformer | سياسة بتحدد الـ Bloc يعمل إيه لو event جه والقديم لسه شغال | `restartable()` للبحث و`droppable()` للصفحة الجاية |
+| restartable | event جديد بيقفل الـ handler القديم، فالـ emit بتاعه مابيوصلش، بس الطلب نفسه مابيتلغيش | البحث في `CatalogSearchBloc` |
+| droppable | أي event بيوصل والـ handler شغال بيترمي | `NextPageRequested` في الكتالوج |
+| HydratedCubit | Cubit بيحفظ الـ state على الجهاز لوحده ويرجّعها لما الـ app يفتح | `CatalogFiltersCubit` بـ `storagePrefix` ثابت |
+| ReplayCubit | Cubit فيه undo وredo للـ states | `NoteEditorCubit` بحد 50 خطوة |
+| InheritedWidget | widget فوق الشجرة، وأي widget تحتها توصلها بالـ context وتتبني تاني لما تتغير. الأساس اللي provider وflutter_bloc مبنيين عليه | `BlocProvider` تحت الغطا `InheritedProvider` |
+| ChangeNotifier | class في Flutter بتمسك state قابلة للتعديل وبتنادي `notifyListeners()` بإيدك بعد كل تغيير | `LibraryNotifier` في درس «أدوات Flutter وProvider» |
+| provider | package بيوفّر objects للشجرة فوق InheritedWidget، بـ `context.watch` و`read` و`select` | `ChangeNotifierProvider(create: ...)` |
+| Riverpod | state management وDI معًا: الـ providers متعرّفة برا الشجرة والـ state جوه `ProviderScope`، والـ lookup بيتأكد منه الـ compiler | `@riverpod class ReadingGoal extends _$ReadingGoal` |
+| AsyncValue | الـ state بتاعة provider async في Riverpod: `AsyncData` أو `AsyncLoading` أو `AsyncError`، وممكن تشيل البيانات القديمة وهي بتعمل refresh | `switch` على `bookDetailsProvider(id)` في الـ UI |
+| GetX | package بيجمع الـ state (`.obs` و`Obx`) والـ DI (`Get.put` و`Get.find`) والـ routing من غير context | `LibraryController extends GetxController` |
+| MobX | state بـ `@observable` و`@action`، والـ `Observer` بيتتبع لوحده اللي اتقرا جواه | `ReadingGoalStore` بـ mobx_codegen |
+| Reducer | في Redux: function نقية بتاخد الـ state والـ action وترجّع state جديدة | `readingGoalReducer` بيرجّع `GoalRules.up(goal)` مع `GoalIncreased()` |
+| Signal | قيمة reactive صغيرة، وأي `computed` أو widget قرأها بيتحدث لوحده لما تتغير | `signal(20)` لهدف القراية |
+| Strangler migration | نقل state management قديم شاشة شاشة، والجديد جنب القديم، لحد ما القديم يختفي | شاشة المكتبة من GetX لـ Cubit من غير ما الـ data layer تتلمس |

@@ -4,6 +4,7 @@ import LayersLab from "./LayersLab";
 import TokenRefreshLab from "./TokenRefreshLab";
 import OfflineLab from "./OfflineLab";
 import ErrorPipelineLab from "./ErrorPipelineLab";
+import BlocConcurrencyLab from "./BlocConcurrencyLab";
 import EventLoopLab from "./EventLoopLab";
 import StreamMarblesLab from "./StreamMarblesLab";
 import SubscriptionLeakLab from "./SubscriptionLeakLab";
@@ -18,6 +19,7 @@ const LABS: Record<string, React.ComponentType> = {
   "token-refresh": TokenRefreshLab,
   "offline-sync": OfflineLab,
   "error-pipeline": ErrorPipelineLab,
+  "bloc-concurrency": BlocConcurrencyLab,
   "event-loop": EventLoopLab,
   "stream-marbles": StreamMarblesLab,
   "subscription-leak": SubscriptionLeakLab,

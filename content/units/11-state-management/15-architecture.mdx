@@ -1,0 +1,1043 @@
+---
+title: "الـ State management في مشروع حقيقي"
+description: "كل اللي اتعلمته في الوحدة متجمّع في Readly: الـ Cubit مكانه فين في Clean Architecture، وبيتسمّى إزاي، وبيعيش فين وقد إيه، وبيتسجّل إزاي في get_it، وبيكلّم الـ features التانية إزاي، وإيه اللي يتمسك بـ lint وإيه اللي يتمسك في الـ review."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="فندق كبير">
+
+في الفندق، كل حاجة ليها مكان وعمر. <b>الاستقبال والأمن</b> موجودين طول ما الفندق فاتح، وكل النزلا بيتعاملوا مع نفس الموظفين. <b>الدور</b> بتاعك بيتفتح لك من ساعة الـ check-in، ولما تعمل check-out الكارت بتاعك بيتلغي وكل حاجة على الدور ليك بتتشال. <b>الأوضة</b> بتتجهز لما تدخلها، وبتتنضف أول ما تسيبها. و<b>الأباجورة</b> اللي جنب السرير ليها مفتاح لوحدها، ومحدش في الاستقبال محتاج يعرف هي والعة ولا لأ.
+
+والفندق ده بيبوظ بطريقتين. يا إما تحط حاجة في مكان أوسع من اللازم: تخلي مفتاح الأباجورة في الاستقبال، فكل نزيل يقدر يطفيها. يا إما في مكان أضيق: تحط الأمن جوه أوضة واحدة، فلما النزيل يمشي والأوضة تتقفل، الفندق كله يبقى من غير أمن. وفي غلطة تالتة: إن موظف الأوضة 305 يدخل يرتّب الأوضة 306 بنفسه بدل ما يكلّم الاستقبال.
+
+</Analogy>
+
+الـ Cubits في app حقيقي بالظبط كده. في الوحدة دي اتعلمت تكتب كل نوع Cubit لوحده. الدرس ده عن الصورة الكاملة في Readly: كل Cubit <b>مكانه فين</b> في الطبقات، و<b>اسمه وملفه</b> إيه، و<b>بيعيش فين وقد إيه</b> (الـ app كله، ولا طول ما المستخدم داخل، ولا صفحة واحدة، ولا widget واحد)، و<b>بيتسجّل إزاي</b> في get_it، و<b>بيكلّم الـ Cubits التانية إزاي</b> من غير ما يمسكهم. وفي الآخر كتالوج بأشهر الأخطاء وقايمة تراجع بيها أي Cubit في أي PR.
+
+كل قرار من دول ليه سؤال واحد بيحسمه:
+
+| القرار | السؤال اللي بيحسمه |
+| --- | --- |
+| الـ Cubit يعرف مين؟ | لو شلت Flutter كله، الـ Cubit ده يتعمله compile ويتختبر بـ `dart test`؟ |
+| يتحط فين في الشجرة؟ | مين أوطى widget فوق <b>كل</b> اللي محتاجينه؟ |
+| يعيش قد إيه؟ | لو الـ scope ده اتشال، الـ state دي لسه ليها معنى؟ |
+| يتسجّل إزاي؟ | في حد <b>بره</b> شجرة الـ widgets محتاج نفس النسخة؟ |
+| يكلّم Cubit تاني إزاي؟ | مين مصدر الحقيقة للبيانات دي؟ |
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### الـ Cubit مكانه فين في Clean Architecture
+
+الـ Cubit في الـ presentation layer، والسهم بتاعه رايح لجوه بس، زي ما اتفقنا من درس الطبقات في الوحدة 1. هو بيعرف الـ domain (use cases وcontracts وentities وFailure)، ومايعرفش أي حاجة عن الـ data ولا عن Flutter:
+
+| الـ Cubit يعتمد على | مسموح؟ | ليه |
+| --- | --- | --- |
+| use case (`GetLibrary`، `AddBookToLibrary`) | أيوه | ده الطبيعي لما في logic |
+| repository contract (`LibraryRepository`) | أيوه | لما مفيش logic، زي `AuthCubit` و`SyncStatusCubit` (قرار الـ pass-through من درس الـ Domain) |
+| contract بتاع feature تانية من الـ barrel (`BookLookup`) | أيوه | ده الـ public API بتاعها |
+| `Result`، `Failure`، الـ entities | أيوه | لغة الـ domain |
+| `dart:async` (`Stream`، `Timer`، `StreamSubscription`) | أيوه | Dart صافي |
+| `LibraryRepositoryImpl`، DTO، dio، drift، shared_preferences | لأ | تفاصيل الـ data، ولو اتغيرت الشاشة تقع |
+| `BuildContext`، `Navigator`، `GoRouter`، `ScaffoldMessenger` | لأ | الـ Cubit بيوصف «إيه اللي حصل»، والـ UI تقرر «نعمل إيه» |
+| `package:flutter` (`Color`، `ThemeMode`، `TextEditingController`) | لأ | الـ Cubit مابقاش Dart صافي، و`bloc_lint` بيمسكه |
+| `getIt` | لأ | الـ dependencies تتخبى (درس الـ DI) |
+| Cubit تاني | لأ | الـ lifecycle بتاعهم يتربط ببعض (Level 3) |
+
+ويبان ده في أول سطور الملف:
+
+<CodeBlock label="features/library/presentation/library_cubit.dart">
+
+```dart
+import 'dart:async';
+
+import 'package:bloc/bloc.dart'; // not flutter_bloc: the Cubit needs no Flutter
+import 'package:core/core.dart'; // Result, Failure
+
+import '../domain/book.dart';
+import '../domain/get_library.dart';
+import '../domain/library_repository.dart'; // the contract, never the Impl
+import 'library_state.dart';
+
+class LibraryCubit extends Cubit<LibraryState> {
+  LibraryCubit(this._getLibrary, this._repository) : super(const LibraryLoading());
+
+  final GetLibrary _getLibrary;
+  final LibraryRepository _repository;
+  StreamSubscription<List<Book>>? _sub;
+
+  // load(), refresh(), watch() as in the Cubit lesson of unit 5
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `package:bloc` مش `flutter_bloc`:</b> الـ `Cubit` نفسه جاي من `bloc`، و`flutter_bloc` بيعمل له re-export وبيجيب معاه Flutter. الـ Cubit مش محتاج `BlocProvider` ولا `BlocBuilder`، فبيعمل import للي محتاجه بس. وبما إنك بتعمل import لـ `bloc` مباشرة، لازم يبقى مكتوب في `dependencies` في الـ pubspec، وإلا `depend_on_referenced_packages` من درس «حراسة المعمارية» هيعلّم عليه.
+- <b>الاختبار السريع:</b> لو الملف ده اتنقل لـ package Dart صافية من غير Flutter، يتعمله compile؟ لو أيوه، الـ Cubit في مكانه الصح. وده نفس اللي عملناه في درس «أول Cubit سطر بسطر» لما شغّلنا Cubit بـ `dart run`.
+
+### الملفات والأسامي
+
+<CodeBlock label="feature واحدة من جوه">
+
+```text
+lib/features/library/
+├─ domain/            # Book, LibraryRepository, GetLibrary ...
+├─ data/              # LibraryRepositoryImpl, DTOs, drift tables
+└─ presentation/
+   ├─ library_cubit.dart     # LibraryCubit, nothing else
+   ├─ library_state.dart     # sealed LibraryState + its subclasses
+   ├─ library_page.dart      # where the Cubit is born (BlocProvider)
+   ├─ library_view.dart      # reads the Cubit, never creates it
+   └─ widgets/
+      ├─ book_tile.dart
+      └─ sync_badge.dart
+```
+
+</CodeBlock>
+
+| الحاجة | القاعدة | مثال |
+| --- | --- | --- |
+| ملف الـ Cubit | اسم الـ class بالـ snake_case، وفيه الـ Cubit لوحده | `LibraryCubit` في `library_cubit.dart` |
+| ملف الـ state | جنبه بنفس البادئة | `library_state.dart` |
+| الـ states | بادئة الـ feature + الحالة | `LibraryLoading`، `LibraryLoaded`، `LibraryError` |
+| الـ methods | نية المستخدم أو الحدث، مش «غيّر الـ state» | `load()`، `refresh()`، `queryChanged(q)`، مش `setLoading()` |
+| الـ Page | فيها الـ `BlocProvider` بس | `LibraryPage` |
+| الـ View | فيها الـ Builders والـ Listeners، وبتاخد الـ Cubit من الـ context | `LibraryView` |
+
+- <b>الـ Page والـ View:</b> الـ Page هي المكان الوحيد اللي بيتعمل فيه الـ Cubit (بالـ `getIt`، زي ما قلنا في درس الـ DI: الـ composition root والـ routes بس). الـ View مابتعرفش الـ Cubit جه منين، فالـ widget test بيحط فوقها `MockLibraryCubit` بـ `BlocProvider.value` من غير get_it خالص، زي [درس الـ widget tests](/course/testing/widget-tests/).
+- <b>الأسامي مش ذوق بس:</b> الـ rule `prefer_file_naming_conventions` في `bloc_lint` بتعلّم على أي Cubit ملفه مش على اسمه. وده بيفرق لما تدوّر: `library_cubit` في الـ search بيوصلك على طول.
+
+### الـ state في ملف لوحده ولا `part`؟
+
+الاتنين شغالين مع `sealed`، لأن الـ `part` جزء من نفس الـ library، والـ sealed محتاج كل الـ subclasses في نفس الـ library:
+
+<CodeBlock label="اختيار 1: ملف لوحده (الأبسط)">
+
+```dart
+// library_state.dart: the sealed class and all its subclasses live here
+sealed class LibraryState {
+  const LibraryState();
+}
+final class LibraryLoading extends LibraryState { /* ... */ }
+
+// library_cubit.dart
+import 'library_state.dart';
+```
+
+</CodeBlock>
+
+<CodeBlock label="اختيار 2: part (اللي الـ VS Code extension بتاع bloc بيولّده)">
+
+```dart
+// library_cubit.dart
+import 'package:bloc/bloc.dart';
+part 'library_state.dart';
+
+// library_state.dart
+part of 'library_cubit.dart';
+
+sealed class LibraryState {
+  const LibraryState();
+}
+```
+
+</CodeBlock>
+
+| | ملف لوحده | `part` |
+| --- | --- | --- |
+| الـ widget أو التست محتاج الـ states بس | import للـ state بس | لازم import للـ Cubit كله |
+| الـ imports | كل ملف بيعمل import للي محتاجه | الـ imports كلها في ملف الـ Cubit |
+| مع freezed | `library_state.dart` فيه `part 'library_state.freezed.dart'` عادي | الـ part جوه part مش مسموح، فالـ freezed part بيروح لملف الـ Cubit |
+| private helpers مشتركة بين الـ Cubit والـ state | مش ممكن | ممكن (نفس الـ library) |
+
+Readly ماشية بالملف اللي لوحده. المهم إن الفريق يختار واحد ويكتبه، مش كل feature بشكل.
+
+### خريطة الأماكن في Readly
+
+دلوقتي أهم قرار: كل Cubit بيتحط فين. القاعدة: <b>في أوطى مكان فوق كل الـ widgets اللي محتاجاه</b>. أوطى من كده، في حد مش هيلاقيه (`ProviderNotFoundException`). وأعلى من كده، هيعيش أكتر من اللازم ويشيل state قديمة.
+
+<Diagram name="d-sm-scope-map">
+
+الـ scopes الأربعة في Readly. الـ AuthCubit والـ SettingsCubit والـ SyncStatusCubit فوق الـ MaterialApp. الـ ProfileCubit في الـ shell فبيموت مع الـ logout. كل تاب ليه الـ Cubit بتاعه وبيفضل عايش وهو مستخبي، وكل صفحة جوه التاب ليها Cubits بتتقفل لما ترجع منها. والـ BookTileCubit متقطّع لأنه بيتعمل بس لو الـ tile ليه سلوك لوحده يستاهل.
+
+</Diagram>
+
+| الـ scope | بيتحط فين | Cubits في Readly | بيموت إمتى |
+| --- | --- | --- | --- |
+| الـ app | فوق `MaterialApp.router` في `ReadlyApp` | `AuthCubit`، `SettingsCubit`، `SyncStatusCubit` | مع الـ app |
+| الـ shell | في الـ `builder` بتاع `StatefulShellRoute` | `ProfileCubit` (اسم المستخدم وصورته في كل التابات) | مع الـ logout، لأن الـ redirect بيشيل الـ shell كله |
+| الـ branch | الـ route اللي في أول كل تاب | `LibraryCubit`، `CatalogCubit` | مع الـ shell، مش لما تروح تاب تاني (الـ IndexedStack) |
+| الـ route | الـ route اللي اتعمله push | `BookDetailsCubit`، `NotesCubit`، `AddBookCubit`، `LoginCubit` | لما ترجع من الصفحة |
+| الـ widget | جوه الـ `itemBuilder` | `BookTileCubit` لو استاهل (درس «أنواع الـ Cubit (2)») | لما الـ tile يخرج من الشجرة |
+
+وبالكود، من بره لجوه:
+
+<CodeBlock label="الـ app: ReadlyApp">
+
+```dart
+class ReadlyApp extends StatelessWidget {
+  const ReadlyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) => MultiBlocProvider(
+        providers: [
+          // get_it owns these two (the router and resetOnLogout use the same instance)
+          BlocProvider.value(value: getIt<AuthCubit>()),
+          BlocProvider.value(value: getIt<SyncStatusCubit>()),
+          // created and closed here, once for the whole app
+          BlocProvider(create: (_) => getIt<SettingsCubit>()),
+        ],
+        child: BlocListener<AuthCubit, AuthState>(
+          listenWhen: (prev, curr) => prev is Authenticated && curr is! Authenticated,
+          listener: (context, _) => context.read<SettingsCubit>().reset(),
+          child: BlocBuilder<SettingsCubit, SettingsState>(
+            builder: (context, settings) => MaterialApp.router(
+              theme: AppTheme.light,
+              darkTheme: AppTheme.dark,
+              themeMode: settings.themeMode,
+              locale: settings.locale,
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              routerConfig: router,
+            ),
+          ),
+        ),
+      );
+}
+```
+
+</CodeBlock>
+
+ده نفس الـ `ReadlyApp` بتاع [درس الإعدادات](/course/di-scale/settings/) بتعديل واحد: الـ `AuthCubit` بقى `BlocProvider.value`، زي الـ `SyncStatusCubit` في [درس Offline-first](/course/offline/offline/). ليه ده بيفرق هتشوفه في Level 3.
+
+<CodeBlock label="الـ shell والـ branch">
+
+```dart
+StatefulShellRoute.indexedStack(
+  // the shell lives while the user is logged in: session-scoped Cubits go here
+  builder: (context, state, navigationShell) => BlocProvider(
+    create: (_) => getIt<ProfileCubit>()..load(),
+    child: HomeShell(navigationShell: navigationShell),
+  ),
+  branches: [
+    StatefulShellBranch(routes: [
+      GoRoute(
+        path: '/library',
+        // the tab's own Cubit: alive while the tab is hidden
+        builder: (_, __) => BlocProvider(
+          create: (_) => getIt<LibraryCubit>()..load(),
+          child: const LibraryView(),
+        ),
+        routes: [bookRoute],
+      ),
+    ]),
+    // catalog and settings branches as in the go_router lesson
+  ],
+)
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ route: صفحة الكتاب">
+
+```dart
+final bookRoute = GoRoute(
+  path: 'books/:id',
+  builder: (_, state) {
+    final id = state.pathParameters['id']!;
+    return MultiBlocProvider(
+      providers: [
+        BlocProvider(create: (_) => getIt<BookDetailsCubit>()..load(id)),
+        BlocProvider(
+          create: (_) => getIt<NotesCubit>(param1: BookId.fromTrusted(id)),
+        ),
+      ],
+      child: BookDetailsPage(id: id),
+    );
+  },
+);
+```
+
+</CodeBlock>
+
+- <b>الصفحة بتاخد اللي محتاجاه من الـ URL:</b> صفحة الكتاب مابتدورش على `LibraryCubit` فوقها عشان تجيب الكتاب. لو اتفتحت من deep link أو من تاب الكتالوج، الـ `LibraryCubit` ممكن مايكونش موجود أصلًا. الـ id في الـ path، والـ Cubit بتاعها بيحمّل بيه.
+- <b>الـ NotesCubit بياخد الـ BookId من الـ constructor:</b> زي [درس الـ Failure pipeline](/course/api-errors/failure-pipeline/). مش `setBook(id)` بعد ما يتعمل، لأن ده معناه إن في لحظة الـ Cubit موجود ومش عارف هو بتاع أنهي كتاب.
+
+### التسجيل في get_it: factory ولا lazySingleton
+
+في [درس الـ DI](/course/di-scale/di/) القاعدة كانت: الـ Cubit `registerFactory`، والاستثناء الـ AuthCubit. هنا بنكمّلها لكل الحالات:
+
+| الحالة | التسجيل | الـ provider | مين بيقفله |
+| --- | --- | --- | --- |
+| Cubit شاشة أو تاب أو widget | `registerFactory` | `BlocProvider(create: ...)` | الـ BlocProvider لما يتشال |
+| محتاج قيمة من الـ route (id) | `registerFactoryParam` | `BlocProvider(create: ...)` | الـ BlocProvider |
+| حد <b>بره</b> الشجرة محتاج نفس النسخة (الـ router، listener في الـ DI) | `registerLazySingleton` + `dispose` | `BlocProvider.value` | get_it (`reset` أو `resetLazySingleton`) |
+| واحد للـ app بس محدش بره الشجرة محتاجه (`SettingsCubit`) | `registerFactory` | `BlocProvider(create: ...)` فوق الـ app | الـ BlocProvider، مع الـ app |
+
+<CodeBlock label="كل feature بتسجّل الـ Cubits بتاعتها">
+
+```dart
+// packages/feature_library/lib/src/library_di.dart
+void registerLibrary(GetIt getIt) {
+  getIt
+    // ... data sources, repository, use cases (architecture guards lesson)
+    // screen Cubits: a new instance per BlocProvider, closed with it
+    ..registerFactory(() => LibraryCubit(getIt(), getIt()))
+    ..registerFactory(() => BookDetailsCubit(getIt()))
+    ..registerFactory(() => AddBookCubit(getIt()))
+    // the router and the app shell read the same instance
+    ..registerLazySingleton(
+      () => SyncStatusCubit(getIt()),
+      dispose: (cubit) => cubit.close(), // runs on reset / resetLazySingleton
+    );
+}
+
+// packages/feature_notes/lib/src/notes_di.dart
+void registerNotes(GetIt getIt) {
+  getIt.registerFactoryParam<NotesCubit, BookId, void>(
+    (bookId, _) => NotesCubit(getIt(), bookId),
+  );
+}
+```
+
+</CodeBlock>
+
+- <b>الـ registerFactoryParam:</b> بياخد لحد 2 parameters، والتاني `void` لو مش محتاجه. وبتطلبه بـ `getIt<NotesCubit>(param1: bookId)`. ولو بتستخدم injectable، نفس الحكاية بـ `@factoryParam` على الـ parameter في الـ constructor.
+- <b>الـ dispose في الـ lazySingleton:</b> لما الـ logout يعمل `resetLazySingleton` (درس الـ Session)، get_it بينادي `close()` على النسخة القديمة قبل ما يرميها، فالـ subscription بتاعها مايفضلش شغال في الخلفية.
+- <b>الـ singleton بيتسأل عنه سؤال واحد:</b> «مين بره الـ widgets محتاجه؟». الـ `AuthCubit` محتاجه الـ router (`refreshListenable`) والـ `resetOnLogout`. لو الإجابة «ولا حد»، يبقى factory حتى لو بيتعمل مرة واحدة، زي الـ `SettingsCubit`.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### الـ AuthCubit بقى `.value`: مين المالك
+
+الغلطتين بتوع الـ ownership (`create` لـ singleton فبيتقفل مع أول صفحة تتشال والـ app يضرب بعدها بـ `Cannot emit new states after calling close`، و`.value` لـ factory فمحدش بيقفله ويفضل leak) متشرحين بالتفصيل في درس «flutter_bloc بالتفصيل». القاعدة واحدة: <b>اللي عمل الـ Cubit هو اللي يقفله</b>، وفي Readly بتترجم للجدول ده:
+
+| التسجيل | الـ provider الصح | لو عكستهم |
+| --- | --- | --- |
+| `registerFactory` | `BlocProvider(create: ...)` | `.value`: leak، ومحدش بيقفله |
+| `registerLazySingleton` | `BlocProvider.value` | `create`: الـ singleton بيتقفل مع أول صفحة تتشال |
+
+وعشان كده غيرنا الـ `AuthCubit` لـ `.value` في `ReadlyApp`. في درس الإعدادات كان `BlocProvider(create: ...)`، وده شغال عمليًا لأن `ReadlyApp` عايش طول عمر الـ app، فالـ provider عمره ما بيتشال. بس الكود بيقول حاجة غلط: إن الـ provider هو المالك، والحقيقة إن get_it هو المالك (الـ router والـ `resetOnLogout` بيستخدموا نفس النسخة). وأول integration test يعمل `pumpWidget(ReadlyApp(...))` مرتين في نفس الـ process، الـ BlocProvider بتاع التست الأول بيقفل الـ AuthCubit اللي get_it لسه شايله، والتست التاني بيضرب. الـ `.value` بيقول الحقيقة، ومش بيغيّر أي سلوك تاني.
+
+### تاب الكتالوج محتاج يعرف «الكتاب ده عندي؟»
+
+في الكتالوج، عايزين علامة على كل كتاب موجود في مكتبة المستخدم. أسرع حل جه في دماغ حد: ننقل الـ `LibraryCubit` لفوق الـ shell، والكتالوج يعمل `context.watch<LibraryCubit>()` ويدوّر في `books`.
+
+الحل ده بيبوظ 3 حاجات مرة واحدة:
+
+- <b>الـ lifetime:</b> الـ `LibraryCubit` بقى عايش لكل الـ shell، وبيحمّل المكتبة حتى لو المستخدم عمره مافتح تابها.
+- <b>الـ state مش مصممة للسؤال ده:</b> لو `LibraryCubit` في `LibraryLoading` أو `LibraryError`، الكتالوج هيقول «مش عندك» لكل الكتب. والـ refresh في تاب المكتبة بيعيد بناء كل tiles الكتالوج.
+- <b>الحدود:</b> الـ catalog بقت بتعمل import للـ presentation بتاع الـ library. يعني لو حد غيّر شكل `LibraryState`، الكتالوج يقع.
+
+الكتالوج مش محتاج «الـ state بتاعة شاشة المكتبة». محتاج <b>معلومة</b> من الـ library. والمعلومة مكانها الـ domain contract اللي الـ library بتصدّره في الـ barrel، زي `BookLookup` في درس SOLID:
+
+<CodeBlock label="الـ contract بيكبر بـ stream">
+
+```dart
+// feature_library/lib/src/domain/book_lookup.dart (exported by the barrel)
+abstract interface class BookLookup {
+  Future<Result<Book>> findById(BookId id);
+  Stream<Set<BookId>> watchLibraryIds(); // new: what's in the library, live
+}
+
+// feature_catalog/lib/src/presentation/catalog_cubit.dart
+class CatalogCubit extends Cubit<CatalogState> {
+  CatalogCubit(this._searchBooks, this._lookup) : super(const CatalogLoading());
+
+  final SearchBooks _searchBooks;
+  final BookLookup _lookup; // the library's public contract, not LibraryCubit
+  StreamSubscription<Set<BookId>>? _ownedSub;
+  Set<BookId> _owned = const {};
+
+  Future<void> loadFirst(String query) async {
+    _ownedSub ??= _lookup.watchLibraryIds().listen((ids) {
+      _owned = ids; // the next CatalogLoaded starts with it too
+      if (state case final CatalogLoaded loaded) emit(loaded.copyWith(owned: ids));
+    });
+    // ... the pagination lesson's code, emitting CatalogLoaded(..., owned: _owned)
+  }
+
+  @override
+  Future<void> close() async {
+    await _ownedSub?.cancel();
+    return super.close();
+  }
+}
+```
+
+</CodeBlock>
+
+<Diagram name="d-sm-cross-feature">
+
+الـ AddBookCubit مابيقولش للـ LibraryCubit «ضيف الكتاب». بيضيفه في الـ repository، والـ drift بيطلّع الليستة الجديدة على `watchLibrary()`، فالمكتبة بتتحدّث لوحدها. ونفس الـ stream بيوصل للكتالوج عن طريق `BookLookup`.
+
+</Diagram>
+
+دي نفس علامة «في مكتبتك» اللي في درس «أنواع الـ Cubit (2)» (ونفس قاعدة درس «Cubit متقدم»: الاتنين يسمعوا على stream من نفس المصدر)، بس عبر features: المصدر بقى contract من الـ barrel مش `LibraryRepository` نفسه. والـ `owned` يتحط في `CatalogLoaded` بس، لأن قبل الـ loaded مفيش كتب تتعلّم أصلًا. والـ `_owned` بيفتكر آخر قيمة، عشان لو الـ ids وصلت والصفحة الأولى لسه بتحمّل، أول `CatalogLoaded` يطلع بيها بدل ما يستنى تغيير جاي في المكتبة. والاشتراك هنا بيبدأ مع أول بحث (`??=` عشان يحصل مرة واحدة)، بس الـ constructor كمان مقبول زي درس «أنواع الـ Cubit (2)»: ده stream محلي من غير parameters، مش request. وبعدين الـ tile بيسأل بـ `context.select` عن الكتاب بتاعه بس، زي علامة السحابة في درس Offline-first.
+
+ودي الطرق الأربعة لتواصل الـ Cubits، بالترتيب:
+
+| الطريقة | امتى | مثال في Readly |
+| --- | --- | --- |
+| stream من نفس الـ repository أو contract | الاتنين محتاجين نفس البيانات | `LibraryCubit` و`CatalogCubit` على الـ books |
+| `BlocListener` في widget فوق الاتنين | حدث في واحد لازم يحرّك التاني، والاتنين في الـ UI | الـ logout بيعمل `reset()` للـ `SettingsCubit` (درس الإعدادات) |
+| listener في الـ composition root | حاجة مش widget محتاجة تعرف | `resetOnLogout` بيمسح الـ caches (درس الـ Session) |
+| Cubit بياخد Cubit في الـ constructor | أبدًا | |
+
+وليه الأخيرة «أبدًا»؟ ده في كتالوج الـ anti-patterns تحت.
+
+### `bloc lint` علّم على الـ SettingsCubit
+
+دخّلت `bloc_lint` (الجزء الجاي)، وأول تشغيل علّم على `settings_cubit.dart` بـ `avoid_flutter_imports`. الـ `SettingsState` في درس الإعدادات بيشيل `ThemeMode`، وده جاي من `package:flutter/material.dart`. الكود شغال، والتست شغال بـ `flutter test`. فهل نسيب الـ rule؟
+
+الـ rule مش عشان `ThemeMode` نفسه. هي عشان أول import لـ Flutter بيفتح الباب لـ `BuildContext` و`Color` و`TextEditingController` في نفس الملف، ومحدش هيلاحظ الفرق. والحل هنا 10 سطور: enum بتاعك، والـ UI تحوّله:
+
+<CodeBlock label="ThemePreference بدل ThemeMode">
+
+```dart
+// settings/data/settings_store.dart, next to the store contract: pure Dart
+// (settings has no domain folder, see the Settings lesson)
+enum ThemePreference { system, light, dark }
+
+// settings/presentation/theme_preference_ui.dart: the only Flutter-aware part
+extension ThemePreferenceUi on ThemePreference {
+  ThemeMode get themeMode => switch (this) {
+        ThemePreference.system => ThemeMode.system,
+        ThemePreference.light => ThemeMode.light,
+        ThemePreference.dark => ThemeMode.dark,
+      };
+}
+
+// ReadlyApp: SettingsState.theme is a ThemePreference now
+themeMode: settings.theme.themeMode,
+```
+
+</CodeBlock>
+
+- <b>الـ SettingsStore بيحفظ الـ enum:</b> الـ contract بتاعه بقى `ThemePreference get theme` و`saveTheme(ThemePreference)` بدل `ThemeMode`، والـ implementation بيحفظه بـ `name` زي ما كان بيحفظ `ThemeMode`. لو القيم المحفوظة عند المستخدمين هي `'system'` و`'light'` و`'dark'`، نفس الأسامي، فمفيش migration.
+- <b>والـ Locale؟</b> `Locale` جاي من `dart:ui` مش من `package:flutter`، بس هو برضه نوع بتاع الـ UI. لو عايز الـ SettingsCubit Dart صافي 100%، احفظ `languageCode` كـ `String`، والـ UI تعمل `Locale(code)`. ده قرار، مش لازم تعمله في نفس الـ PR.
+- <b>مفيش استثناءات:</b> rule فيها استثناء واحد بتبقى rule فيها عشرة بعد سنة. لو الحل رخيص زي هنا، صلّح الكود مش الـ rule.
+
+### الـ rules دي تتحرس إزاي في الـ CI
+
+الـ analyzer العادي مايعرفش يعني إيه Cubit. الـ `bloc_lint` بيزوّد rules مخصوص للـ bloc، وبيشتغل من الـ CLI بتاع `bloc_tools`:
+
+<CodeBlock label="pubspec.yaml (كل package فيها Cubits)">
+
+```yaml
+dependencies:
+  bloc: ^9.2.0
+  flutter_bloc: ^9.1.1
+dev_dependencies:
+  bloc_lint: ^0.4.0
+```
+
+</CodeBlock>
+
+<CodeBlock label="analysis_options.yaml (root الـ workspace)">
+
+```yaml
+# include as a list needs a recent Dart SDK (3.8+ is safe); older SDKs take one include only
+include:
+  - package:very_good_analysis/analysis_options.yaml
+  - package:bloc_lint/recommended.yaml
+# ... analyzer.errors and linter.rules as in the architecture guards lesson
+```
+
+</CodeBlock>
+
+<CodeBlock label="خطوة جديدة في .github/workflows/ci.yml بعد Analyze">
+
+```yaml
+- name: Bloc lint
+  run: |
+    dart pub global activate bloc_tools
+    bloc lint .
+```
+
+</CodeBlock>
+
+| الـ rule (في الـ recommended) | بتمسك إيه | ليه مهمة في Readly |
+| --- | --- | --- |
+| `avoid_flutter_imports` | import لـ Flutter في ملف اسمه `_cubit.dart` أو `_bloc.dart` بس (ملف `_state.dart` لوحده مش بيتشاف) | الـ Cubit يفضل Dart صافي ويتختبر من غير widgets |
+| `avoid_public_fields` | field public على الـ Cubit | الـ UI تشوف الـ `state` بس، مش متغيرات جانبية |
+| `prefer_void_public_cubit_methods` | method public بترجّع قيمة | النتيجة تروح في الـ state، مش return للـ UI (كتالوج الـ anti-patterns تحت) |
+| `avoid_public_bloc_methods` | method public على Bloc غير `add` | الـ Bloc بيتكلّم بـ events بس (درس الـ Bloc) |
+| `prefer_file_naming_conventions` | Cubit ملفه مش على اسمه | تلاقي أي Cubit من اسمه |
+
+وفي rules تانية مش في الـ recommended، بتفعّلها لو الفريق اتفق عليها: `prefer_cubit` أو `prefer_bloc` (لو الفريق اختار أداة واحدة، زي ما في درس «Cubit ولا Bloc»)، و`prefer_build_context_extensions` أو `avoid_build_context_extensions` (`context.read` ولا `BlocProvider.of`).
+
+والحاجات اللي `bloc_lint` مايعرفهاش، زي «الـ Cubit مايعملش import لـ data أو لـ Cubit تاني»، بتتزوّد على الـ architecture test بتاع [درس «حراسة المعمارية»](/course/quality/architecture-guards/)، بنفس الـ helpers اللي هناك (`allPackages` و`_directive`):
+
+<CodeBlock label="tools/architecture/test/architecture_test.dart (test جديد)">
+
+```dart
+final _cubitFile = RegExp(r'_(cubit|bloc)\.dart$');
+const forbiddenInCubit = ['package:dio/', 'package:drift/', 'package:go_router/', '/data/'];
+
+test('cubits import no infrastructure and no other cubit', () {
+  final violations = <String>[];
+  for (final pkg in allPackages) {
+    final lib = Directory('${pkg.path}/lib');
+    if (!lib.existsSync()) continue;
+    for (final file in lib.listSync(recursive: true).whereType<File>()) {
+      if (!_cubitFile.hasMatch(file.path)) continue;
+      final src = file.readAsStringSync();
+      if (src.contains('getIt')) violations.add('${file.path} -> getIt');
+      for (final m in _directive.allMatches(src)) {
+        final uri = m[1]!;
+        if (forbiddenInCubit.any(uri.contains) || _cubitFile.hasMatch(uri)) {
+          violations.add('${file.path} -> $uri');
+        }
+      }
+    }
+  }
+  expect(violations, isEmpty);
+});
+```
+
+</CodeBlock>
+
+- <b>الـ `_cubitFile.hasMatch(uri)`:</b> ملف Cubit بيعمل import لملف تاني اسمه `_cubit.dart` يبقى Cubit بيعتمد على Cubit. والـ state في `library_state.dart` مش بتتمسك لأن اسمها مش `_cubit`.
+- <b>الـ `getIt` كنص:</b> نفس الـ rule النصية اللي اقترحناها في درس الأخطاء الشائعة. مش محتاج تعرف الـ import جاي منين.
+- <b>الـ test ده بيعتمد على الأسامي:</b> لو حد سمّى Cubit `library_controller.dart`، التست مش هيشوفه. وده بالظبط شغل `prefer_file_naming_conventions`: الـ lint بيضمن الاسم، والتست بيعتمد عليه.
+
+### الـ tile عرض حالة كتاب تاني
+
+`BookTileCubit` لكل كتاب في المكتبة من غير `key`: المستخدم علّم كتاب «خلصته»، الليست اترتبت، والـ spinner ظهر على كتاب تاني. Flutter بيربط الـ elements بالمكان مش بالكتاب، فالـ BlocProvider اللي في نفس المكان فضل بالـ Cubit القديم. الحل (`key: ValueKey(book.id)` على الـ BlocProvider) والسؤال اللي قبله («الـ tile محتاج Cubit أصلًا، ولا `Set<BookId> updating` في `LibraryLoaded` كفاية؟») متشرحين بالكود في درس «أنواع الـ Cubit (2)». اللي يخص الدرس ده: الـ Cubit لكل item هو أوطى scope في الخريطة، ومكانه في الـ review checklist تحت.
+
+### الأداء: الـ scope بيحدد حجم الـ rebuild
+
+مكان الـ `BlocBuilder` في الشجرة هو اللي بيحدد كام widget بيتعاد بناؤه مع كل state. شوية قواعد بتفرق في Readly:
+
+- <b>الـ Builder أوطى ما يمكن:</b> `BlocBuilder<SyncStatusCubit, SyncStatus>` فوق الـ `Scaffold` بتاع المكتبة معناه إن كل الصفحة بتتبني مع كل عملية في الـ sync queue. حطه حوالين الـ badge بس.
+- <b>الـ select للـ items:</b> `context.select((SyncStatusCubit c) => c.state.unsynced.contains(book.id))` جوه كل tile، زي درس Offline-first. الـ tile بيتبني بس لما الإجابة بتاعته هو تتغير.
+- <b>الـ buildWhen للحقول اللي ملهاش دعوة:</b> زرار الـ refresh مايتبنيش لما `refreshFailure` يتغير. أو `BlocSelector` بيختار `isRefreshing` بس.
+- <b>القيم اللي بتتغير بسرعة مش في الـ state:</b> مكان الـ scroll، أو progress تحميل بيتغير 60 مرة في الثانية. ده يا إما يفضل في الـ widget، يا إما يتعمله throttle قبل الـ emit.
+- <b>الـ getters التقيلة:</b> الـ default إن القيم المشتقة getters، زي درس «تصميم الـ State». بس getter بيعمل sort لـ 2000 كتاب وبيتنادى في كل build تمنه كبير. احسبه مرة في الـ Cubit وخزّنه في الـ state، أو `late final` جوه الـ state (والـ constructor ساعتها مايبقاش `const`).
+- <b>التابات العايشة ليها تمن:</b> الـ IndexedStack بيخلي 3 تابات بالـ Cubits والليستات بتاعتهم في الميموري. ده مقبول لـ 3 تابات. لـ 8 تابات فيها صور كتير، فكّر.
+
+وماتخمّنش: افتح DevTools وفعّل عدّاد الـ rebuilds، واعمل الحركة اللي شاكك فيها، وشوف مين اتبنى كام مرة. التفاصيل في درس «flutter_bloc بالتفصيل».
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>كل Cubit جديد بيتسأل 3 أسئلة في الـ review:</b> بيعيش فين؟ مين بيقفله؟ مين مصدر الحقيقة للبيانات اللي فيه؟ لو صاحب الـ PR مش عارف يجاوب، المشكلة في التصميم مش في الكود.
+- <b>الـ scope الأوسع بيبان أسهل، وهو الأغلى:</b> «حطه فوق الـ app وخلاص، كده كل الشاشات توصله» بيحل `ProviderNotFoundException` النهارده، وبيعمل bugs بكرة: state المستخدم القديم بعد الـ logout، وتحميل بيانات لشاشات محدش فتحها، وCubits بتسمع على الـ DB طول عمر الـ app. الـ app scope للحاجات اللي الـ app كله محتاجها فعلًا: الـ session والإعدادات وحالة المزامنة.
+- <b>الـ shell هو الـ «user scope» ببلاش:</b> الـ redirect بيشيل الـ shell مع الـ logout، فأي Cubit متحط فيه بيتقفل لوحده. ده أرخص من lazySingletons وقايمة `resetLazySingleton` لازم تفتكر تزوّد عليها (درس الـ Session اقترح `pushNewScope` في get_it لنفس السبب).
+- <b>Page/View مش رفاهية:</b> هي اللي بتخلي كل widget test يحط `MockCubit` من غير get_it، وبتخلي مكان الـ `BlocProvider` واحد ومعروف. ولو الشاشة محتاجة Cubitين أو تلاتة، الـ Page فيها `MultiBlocProvider`، والـ View مش بتعرف.
+- <b>الاتساق أهم من الاختيار:</b> `part` ولا ملف لوحده، Cubit ولا Bloc، `context.read` ولا `BlocProvider.of`. كل واحد فيهم مقبول. اللي مش مقبول إن كل feature تبقى بشكل. اكتب القرار في ADR قصير، وخلّي الـ lint يفرضه لو في rule ليه.
+- <b>ماتبنيش base Cubit عشان الـ boilerplate:</b> `AsyncCubit<T>` بيوفّر 10 سطور في كل Cubit، وبعد شهرين كل Cubit محتاج حالة مختلفة شوية والـ base مليان flags. ده اتشرح في درس «أنواع الـ Cubit (2)». لو في سلوك بيتكرر فعلًا (زي الـ `isClosed` بعد كل await)، الـ mixin الصغير من درس «Cubit متقدم» أنضف.
+- <b>اعرف امتى تكسر القاعدة:</b> الـ `AuthCubit` والـ `SyncStatusCubit` بيسمعوا على stream في الـ constructor، وده مقبول لأن شغلهم الوحيد إنهم يعكسوا stream طول عمر الـ app، ومفيش شاشة هتنادي `watch()`. الـ Cubit بتاع الشاشة لأ: الشاشة هي اللي بتقرر امتى يحمّل (كتالوج الـ anti-patterns تحت).
+- <b>التست جزء من التصميم:</b> لو الـ Cubit صعب يتختبر (محتاج get_it، أو BuildContext، أو بيعمل request وهو بيتعمل)، ده عرض لمشكلة في التصميم من اللي في كتالوج الـ anti-patterns تحت. التستات نفسها في [درس «تست الـ Cubit»](/course/testing/cubit-tests/) في الوحدة 8.
+
+<Note kind="interview" title="سؤال interview">
+
+«صمّم الـ state management لـ app فيه login وbottom tabs وoffline sync. الـ Cubits بتتحط فين وبتتسجّل إزاي؟» بقسّم حسب العمر. على مستوى الـ app فوق الـ MaterialApp: الـ AuthCubit وحالة المزامنة، `registerLazySingleton` لأن الـ router محتاج نفس النسخة في الـ `refreshListenable`، وبتتحط بـ `BlocProvider.value` لأن get_it هو المالك، والإعدادات factory عادي بـ `create` فوق الـ app. التابات `StatefulShellRoute.indexedStack`، والـ shell نفسه scope للمستخدم: أي Cubit فيه بيتقفل لوحده مع الـ logout لأن الـ redirect بيشيل الـ shell. كل تاب Cubit في أول route فيه، وبيفضل عايش وهو مستخبي. والصفحات اللي بتتعمل push ليها Cubits factory بتاخد الـ id من الـ path بـ `registerFactoryParam`، وبتتقفل لما أرجع. الـ Cubits مابتمسكش بعض: لو محتاجين نفس البيانات بيسمعوا على stream من الـ repository، ولو حدث في واحد لازم يحرّك التاني، BlocListener في الـ UI. وكل ده متحرس بـ `bloc lint` وarchitecture test في الـ CI.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«ليه الـ Cubit مايمسكش reference لـ Cubit تاني؟» عشان الـ lifetime: الـ Cubit التاني ممكن يتقفل قبله (أو مايكونش اتعمل أصلًا في الشاشة دي)، فيبقى ماسك Cubit ميت. وعشان الحدود: الـ presentation بتاع feature بيعرف الـ presentation بتاع feature تانية، فأي تغيير في الـ state بتاعتها يكسرك. وعشان التست: محتاج تعمل الاتنين وتتحكم في الاتنين. البديل إن الاتنين يسمعوا على مصدر الحقيقة (stream من الـ repository أو contract)، أو الـ UI توصّلهم بـ BlocListener.
+
+</Note>
+
+</Level>
+
+<LessonPart title="كتالوج الـ anti-patterns">
+
+### الجدول
+
+| الـ anti-pattern | العَرَض في Readly | البديل | بيتمسك بـ |
+| --- | --- | --- | --- |
+| god Cubit | `LibraryCubit` فيه الليستة والبحث والتحديد ووضع العرض والملاحظات، وأي تعديل بيكسر حاجة تانية | Cubit لكل جزء مستقل في الشاشة | الـ review (ملف فوق 300 سطر، state فيها 12 حقل) |
+| `BuildContext` أو `Navigator` في الـ Cubit | `save(book, context)` بيعمل `context.pop()` | state أو effect، والـ UI تعمل navigate في BlocListener | الـ review، و`avoid_flutter_imports` لو فيه import |
+| Flutter في الـ Cubit أو الـ state | `Color statusColor` في الـ state، `TextEditingController` في الـ Cubit | قيم الـ domain في الـ state، والشكل في extension في الـ UI | `avoid_flutter_imports` لملف الـ Cubit، والـ review لملف الـ state اللي لوحده |
+| methods بترجّع قيم أو fields public | `Future<bool> save()`، `bool isSaving` | كل حاجة في الـ state | `prefer_void_public_cubit_methods`، `avoid_public_fields` |
+| الـ logic في الـ widgets | الفلترة والترتيب والـ validation جوه `build` أو `onPressed` | الـ Cubit (أو الـ domain) يقرر، والـ widget يعرض | الـ review، والتست (الـ logic ده مالوش تست) |
+| request في الـ constructor | `LibraryCubit(...) { load(); }` | الـ provider ينادي `..load()` | الـ review، وتستات بتعدّ الـ calls |
+| `TextEditingController` في الـ state | الـ state مش immutable ومابتتقارنش صح | الـ controller في الـ widget، والـ Cubit ماسك النص (درس الـ Forms) | الـ review، و`avoid_flutter_imports` لو الـ state في ملف الـ Cubit |
+| state بتتعدّل في مكانها | `state.books.add(book); emit(state);` والشاشة مابتتغيرش | list جديدة أو `copyWith` | الـ review، و`List.unmodifiable` بيرمي وقت التشغيل |
+| Cubit ماسك Cubit | `HomeCubit(this._library)` بيسمع على `_library.stream` | stream من الـ repository، أو BlocListener | الـ architecture test فوق |
+| Cubit لكل widget من غير سبب | `ExpandedCubit` لنص «اقرا أكتر» | `setState` أو `ValueNotifier` للـ state المؤقتة | الـ review |
+| lifetime غلط | singleton بـ `create`، أو factory بـ `.value` | الجدول في Level 3 | الـ review، وcrash أو leak |
+| get_it جوه الـ Cubit | `final _repo = getIt<...>()` | constructor injection | الـ architecture test فوق (درس الأخطاء الشائعة) |
+
+والسبعة اللي بيظهروا أكتر في الـ PRs، بالكود:
+
+### god Cubit
+
+<BeforeAfter>
+
+<Side label="قبل: Cubit واحد للشاشة كلها" kind="before">
+
+```dart
+final class LibraryScreenState {
+  final List<Book> books;
+  final bool loading;
+  final Failure? failure;
+  final BookStatus? filter;
+  final String query;
+  final Set<BookId> selected;   // bulk edit
+  final bool isGrid;            // view mode
+  final bool deleting;
+  final Map<BookId, int> notesCount;
+  // ... 6 more fields, one copyWith with 15 params
+}
+
+class LibraryScreenCubit extends Cubit<LibraryScreenState> {
+  // load, refresh, search, setFilter, toggleSelect,
+  // deleteSelected, toggleView, loadNotesCount ...
+}
+```
+
+</Side>
+
+<Side label="بعد: Cubit لكل جزء مستقل" kind="after">
+
+```dart
+// the list: loading, refresh, filter
+class LibraryCubit extends Cubit<LibraryState> { /* ... */ }
+
+// bulk select: which books are checked
+class BookSelectionCubit extends Cubit<Set<BookId>> { /* ... */ }
+
+// list or grid: a value Cubit
+class ViewModeCubit extends Cubit<LibraryViewMode> { /* ... */ }
+
+// the page provides all three
+MultiBlocProvider(
+  providers: [
+    BlocProvider(create: (_) => getIt<LibraryCubit>()..load()),
+    BlocProvider(create: (_) => getIt<BookSelectionCubit>()),
+    BlocProvider(create: (_) => ViewModeCubit()), // no dependencies, no get_it
+  ],
+  child: const LibraryView(),
+)
+```
+
+</Side>
+
+</BeforeAfter>
+
+- <b>العلامة:</b> مش عدد السطور بس. العلامة إن الـ state فيها حقول مالهاش علاقة ببعض: `isGrid` مالوش دعوة بـ `deleting`. وكل emit لأي حاجة بيعيد بناء كل اللي بيسمع.
+- <b>القسمة بتبقى على إيه:</b> «إيه اللي بيتغير مع بعض؟». الـ `books` والـ `loading` والـ `failure` بيتغيروا مع بعض، فهما Cubit واحد. التحديد ووضع العرض كل واحد ليه دورة لوحده.
+- <b>والعكس مش أحسن:</b> Cubit لكل حقل بيخلي الشاشة تجمّع 8 Cubits وتوصّلهم ببعض. الـ form مثلًا Cubit واحد لكل الحقول (درس الـ Forms)، لأن الـ submit محتاجهم كلهم مع بعض.
+
+### الـ Navigator جوه الـ Cubit
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+Future<void> save(Book book, BuildContext context) async {
+  emit(const AddBookSaving());
+  final result = await _addBook(book);
+  if (result is Success && context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(savedSnack);
+    context.pop();
+  }
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+// Cubit: says what happened
+Future<void> save(Book book) async {
+  emit(const AddBookSaving());
+  final result = await _addBook(book);
+  if (isClosed) return;
+  emit(switch (result) {
+    Success() => const AddBookSaved(),
+    Err(:final failure) => AddBookError(failure),
+  });
+}
+
+// UI: decides what to do about it
+BlocListener<AddBookCubit, AddBookState>(
+  listenWhen: (_, curr) => curr is AddBookSaved,
+  listener: (context, _) => context.pop(),
+  child: const AddBookForm(),
+)
+```
+
+</Side>
+
+</BeforeAfter>
+
+الـ Cubit في الـ «قبل» مابقاش يتختبر من غير widget tree، والـ `context` اللي اتبعت ممكن يكون بتاع صفحة اتقفلت. وكمان نفس الـ save لو اتنادى من شاشة تانية (bottom sheet مثلًا) مش عايزة `pop`، مش هينفع. الـ Cubit بيقول «اتحفظ»، وكل شاشة تقرر تعمل إيه.
+
+### methods بترجّع قيم، وfields public
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+class AddBookCubit extends Cubit<AddBookState> {
+  bool isSaving = false; // public, mutable, outside the state
+
+  Future<bool> save(Book book) async {
+    isSaving = true;
+    final result = await _addBook(book);
+    isSaving = false;
+    return result is Success;
+  }
+}
+
+// UI
+onPressed: () async {
+  if (await context.read<AddBookCubit>().save(book)) {
+    context.pop(); // context used across an async gap
+  }
+},
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+class AddBookCubit extends Cubit<AddBookState> {
+  Future<void> save(Book book) async {
+    if (state is AddBookSaving) return; // the state is the flag
+    emit(const AddBookSaving());
+    final result = await _addBook(book);
+    if (isClosed) return;
+    emit(switch (result) {
+      Success() => const AddBookSaved(),
+      Err(:final failure) => AddBookError(failure),
+    });
+  }
+}
+
+// UI: fire and forget, the BlocListener reacts
+onPressed: () => context.read<AddBookCubit>().save(book),
+```
+
+</Side>
+
+</BeforeAfter>
+
+- <b>مصدرين للحقيقة:</b> في الـ «قبل» الـ `bool` اللي راجع بيقول حاجة، والـ state بتقول حاجة تانية (أو ولا حاجة). والـ `isSaving` ماحدش بيسمع عليه، فالزرار مش هيتقفل وهو بيحفظ.
+- <b>الـ Failure راحت فين؟</b> الـ `false` مابيقولش النت فاصل ولا السيرفر رفض. في الـ «بعد» الـ `AddBookError(failure)` بتوصل للـ UI كاملة.
+- <b>الـ lints:</b> `prefer_void_public_cubit_methods` بيمسك الـ `Future<bool>`، و`avoid_public_fields` بيمسك الـ `isSaving`. والـ `use_build_context_synchronously` من lints Dart العادية بيمسك الـ `context.pop()` بعد الـ await.
+
+### request في الـ constructor
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+class LibraryCubit extends Cubit<LibraryState> {
+  LibraryCubit(this._getLibrary, this._repository) : super(const LibraryLoading()) {
+    load(); // any getIt<LibraryCubit>() is a network call
+  }
+}
+
+// BookDetailsCubit can't do the same: it needs an id
+class BookDetailsCubit extends Cubit<BookDetailsState> {
+  BookDetailsCubit(this._getBookDetails) : super(const BookDetailsLoading());
+  Future<void> load(String id) async { /* ... */ }
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+class LibraryCubit extends Cubit<LibraryState> {
+  LibraryCubit(this._getLibrary, this._repository) : super(const LibraryLoading());
+}
+
+// the screen decides when, the same way for every Cubit
+BlocProvider(
+  create: (_) => getIt<LibraryCubit>()..load(),
+  child: const LibraryView(),
+)
+BlocProvider(
+  create: (_) => getIt<BookDetailsCubit>()..load(id),
+  child: BookDetailsPage(id: id),
+)
+```
+
+</Side>
+
+</BeforeAfter>
+
+- <b>التست مش متحكم:</b> تست الـ `refresh()` بـ `seed: () => LibraryLoaded(books)` محتاج الـ Cubit ساكت. لو الـ constructor بينادي `load()`، في request زيادة شغال في الخلفية بيسابق الـ refresh، و`verify(() => getLibrary()).called(1)` بيفشل.
+- <b>شكلين في نفس الـ app:</b> الـ Cubits اللي محتاجة parameter مش هتعرف تحمّل في الـ constructor، فالفريق بيبقى عنده طريقتين، وكل واحد جديد لازم يفتكر أنهي Cubit بأنهي طريقة.
+- <b>الـ lazy بيشتغل صح:</b> `BlocProvider` بيعمل الـ Cubit (ومعاه `..load()`) أول ما حد يطلبه، فلو التاب لسه ماتفتحش، مفيش request.
+
+### state بتتعدّل في مكانها
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+void bookAdded(Book book) {
+  final current = state;
+  if (current is! LibraryLoaded) return;
+  current.books.add(book); // mutates the list the UI is showing
+  emit(current);           // same object: == is true, emit is ignored
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+void bookAdded(Book book) {
+  final current = state;
+  if (current is! LibraryLoaded) return;
+  emit(current.copyWith(books: [...current.books, book])); // a new list
+}
+
+// and the state protects itself
+final class LibraryLoaded extends LibraryState {
+  LibraryLoaded(List<Book> books) : books = List.unmodifiable(books);
+  final List<Book> books;
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+الـ `emit` بيقارن الـ state الجديدة بالقديمة، ولو `==` بيتجاهلها. في الـ «قبل» هي نفس الـ object، فالشاشة مابتتغيرش. ولما حاجة تانية تعمل emit بعدين، الكتاب بيظهر فجأة، فالـ bug شكله عشوائي. والـ `List.unmodifiable` بيخلي أي `add` يرمي error أول ما يحصل، بدل ما يعدّي بهدوء (والتمن إن الـ constructor مابقاش `const`). التفاصيل في درس «تصميم الـ State».
+
+### Flutter في الـ state
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+import 'package:flutter/material.dart';
+
+final class BookDetailsLoaded extends BookDetailsState {
+  const BookDetailsLoaded(this.book, this.statusColor, this.statusLabel);
+  final BookDetails book;
+  final Color statusColor;   // a UI decision inside the state
+  final String statusLabel;  // 'Reading': not localized
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+final class BookDetailsLoaded extends BookDetailsState {
+  const BookDetailsLoaded(this.book);
+  final BookDetails book; // book.status is a BookStatus
+}
+
+// presentation/book_status_ui.dart
+extension BookStatusUi on BookStatus {
+  Color color(ColorScheme scheme) => switch (this) {
+        BookStatus.wantToRead => scheme.outline,
+        BookStatus.reading => scheme.primary,
+        BookStatus.finished => scheme.tertiary,
+      };
+  String localized(AppLocalizations l10n) => switch (this) {
+        BookStatus.wantToRead => l10n.statusWantToRead,
+        BookStatus.reading => l10n.statusReading,
+        BookStatus.finished => l10n.statusFinished,
+      };
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+الـ state بتقول «الكتاب ده بيتقرا»، والـ UI تقرر لونه وكلمته حسب الثيم واللغة الحالية. في الـ «قبل»، لما المستخدم يغيّر الثيم للـ dark أو اللغة للإنجليزي، الـ state القديمة لسه شايلة اللون والكلمة القديمة لحد ما الـ Cubit يحمّل تاني. وده نفس الـ `BookStatusUi` extension اللي ظهر في درس الأخطاء الشائعة.
+
+### Cubit ماسك Cubit
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+class HomeCubit extends Cubit<HomeStats> {
+  HomeCubit(this._library) : super(const HomeStats()) {
+    _sub = _library.stream.listen((s) {
+      if (s is LibraryLoaded) emit(HomeStats.from(s.books));
+    });
+  }
+  final LibraryCubit _library; // whose instance? who closes it?
+  late final StreamSubscription<LibraryState> _sub;
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+class HomeCubit extends Cubit<HomeStats> {
+  HomeCubit(LibraryRepository repository) : super(const HomeStats()) {
+    _sub = repository.watchLibrary().listen((books) => emit(HomeStats.from(books)));
+  }
+  late final StreamSubscription<List<Book>> _sub;
+
+  @override
+  Future<void> close() async {
+    await _sub.cancel();
+    return super.close();
+  }
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+- <b>أنهي نسخة؟</b> الـ `LibraryCubit` factory. لو get_it عمل واحد جديد عشان الـ `HomeCubit`، فده Cubit تاني غير اللي في التاب، محدش نادى `load()` بتاعه، فالإحصائيات فاضية للأبد. ولو اتبعت من الـ context، يبقى الإحصائيات مربوطة بعمر تاب المكتبة.
+- <b>الـ stream اللي بيقول الحقيقة:</b> الـ `LibraryState` فيها loading وerror وrefreshing، وكل ده مالوش دعوة بالإحصائيات. الـ `watchLibrary()` بيطلّع الكتب بس، ومن الـ DB مباشرة.
+- <b>والـ close:</b> أي Cubit بيسمع على stream بيلغي الاشتراك في `close()`، زي درس الـ Cubit في الوحدة 5.
+
+</LessonPart>
+
+<LessonPart title="قايمة مراجعة أي Cubit في PR">
+
+عدّي عليها على أي Cubit جديد أو اتعدّل قبل ما تطلب review. اللي مكتوب قبله «أداة» بيتمسك لوحده (`bloc lint` أو الـ architecture test أو الـ compiler)، والباقي محتاج عينك.
+
+<CheatGrid>
+
+<CheatCard title="الطبقة والـ imports">
+
+- <b>أداة:</b> مفيش import لـ Flutter، والـ Cubit بيعمل import لـ `package:bloc` مش `flutter_bloc`.
+- <b>أداة:</b> مفيش dio ولا drift ولا `data/` ولا `getIt`.
+- <b>أداة:</b> مفيش Cubit تاني في الـ imports.
+- بيعتمد على use cases أو contracts بس، وكلهم جايين من الـ constructor.
+
+</CheatCard>
+
+<CheatCard title="الـ state">
+
+- immutable: كل emit object جديد، والـ lists مابتتعدّلش في مكانها.
+- بتتقارن بالقيمة (Equatable أو freezed أو `==` مكتوب).
+- الـ Failure حقل جنب البيانات لما في بيانات على الشاشة.
+- مفيش `Color` ولا نصوص متترجمة ولا controllers.
+- <b>أداة:</b> الـ switch في الـ UI exhaustive من غير `_`.
+
+</CheatCard>
+
+<CheatCard title="الـ API بتاع الـ Cubit">
+
+- <b>أداة:</b> الـ methods الـ public بترجّع `void` أو `Future<void>`.
+- <b>أداة:</b> مفيش fields public.
+- <b>أداة:</b> اسم الملف على اسم الـ class.
+- أسامي الـ methods نية المستخدم: `load`، `refresh`، `queryChanged`.
+- مفيش request ولا emit في الـ constructor (إلا Cubits الـ app اللي بتعكس stream).
+
+</CheatCard>
+
+<CheatCard title="الـ async والـ lifecycle">
+
+- `isClosed` بعد كل `await` قبل الـ emit.
+- الضغط المتكرر والنتايج القديمة متحاميين (flag أو request id أو transformer).
+- كل `StreamSubscription` و`Timer` بيتلغوا في `close()`.
+- الـ errors اللي مش جزء من الـ state بتتبلّغ بـ `addError`.
+
+</CheatCard>
+
+<CheatCard title="المكان والـ DI">
+
+- متحط في أوطى مكان فوق كل اللي محتاجينه.
+- factory مع `create`، وsingleton مع `.value`. مفيش عكس.
+- الـ singleton ليه سبب: حد بره الشجرة محتاج نفس النسخة، وليه `dispose`.
+- الـ parameters من الـ route بتيجي في الـ constructor (`registerFactoryParam`)، مش setter.
+- Cubit لكل item بس لو الـ item ليه دورة لوحده، ومعاه `ValueKey`.
+
+</CheatCard>
+
+<CheatCard title="الـ UI والتواصل">
+
+- الـ navigation والـ snackbar والـ dialog في BlocListener.
+- الـ BlocBuilder أوطى ما يمكن، والـ items بـ `context.select` أو `BlocSelector`.
+- مفيش فلترة ولا ترتيب ولا validation جوه `build`.
+- الـ Cubits اللي محتاجة نفس البيانات بتسمع على الـ repository، مش على بعض.
+
+</CheatCard>
+
+<CheatCard title="التست">
+
+- blocTest لكل method × كل نتيجة للـ use case.
+- تست للسباق (ضغطتين، نتيجة قديمة) وللـ cleanup بعد `close()`.
+- widget test للـ View بـ `MockCubit`، من غير get_it.
+- التفاصيل في الوحدة 8: «تست الـ Cubit» و«الـ widget tests».
+
+</CheatCard>
+
+</CheatGrid>
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="sm-arch-1">
+<Ask>في درس الإعدادات الـ `AuthCubit` كان متحط فوق الـ app بـ `BlocProvider(create: ...)` وشغال. ليه `ReadlyApp` في الدرس ده بقى يحطه بـ `BlocProvider.value`، وإيه القاعدة اللي بتحسم ده لأي Cubit؟</Ask>
+<Answer>
+
+الـ `AuthCubit` متسجّل `registerLazySingleton`، يعني get_it هو اللي عامله والمالك بتاعه، والـ router والـ `resetOnLogout` بيستخدموا نفس النسخة. الـ `create` معناه «الـ provider هو المالك وهو اللي هيقفله»، وده كان شغال بالصدفة لأن `ReadlyApp` عمره ما بيتشال. بس أول ما الـ provider يتشال (integration test بيعمل `pumpWidget` مرتين مثلًا) هيقفل نسخة get_it لسه بيوزعها. القاعدة: اللي عمل الـ Cubit هو اللي يقفله، يعني lazySingleton مع `.value`، وfactory مع `create` (والعكس leak). التفاصيل في درس «flutter_bloc بالتفصيل».
+
+</Answer>
+</Question>
+
+<Question id="sm-arch-2">
+<Ask>تاب الكتالوج محتاج يعلّم على الكتب اللي في مكتبة المستخدم. زميلك نقل `LibraryCubit` لفوق الـ shell عشان الكتالوج يعمل `context.watch<LibraryCubit>()`. إيه المشاكل، وإيه البديل؟</Ask>
+<Answer>
+
+الـ `LibraryCubit` بقى عايش ويحمّل حتى لو تاب المكتبة ماتفتحش. والكتالوج بقى معتمد على شكل `LibraryState`: لو هي loading أو error هيقول «مش عندك» لكل الكتب، وأي refresh في المكتبة بيعيد بناء الكتالوج. والـ catalog بقت بتعمل import للـ presentation بتاع الـ library. البديل إن الـ library تصدّر المعلومة في contract من الـ domain، زي `BookLookup.watchLibraryIds()`، والـ `CatalogCubit` يسمع عليه ويحط الـ ids في `CatalogLoaded`، والـ tile يسأل بـ `context.select` عن كتابه بس.
+
+</Answer>
+</Question>
+
+<Question id="sm-arch-3">
+<Ask>في PR لقيت `Future<bool> save(Book book)` في `AddBookCubit`، والـ UI بتعمل `if (await cubit.save(book)) context.pop();`. الكود شغال. إيه اللي هتكتبه في الـ review؟</Ask>
+<Answer>
+
+في مصدرين للحقيقة: الـ bool اللي راجع والـ state. والـ `false` مابيقولش السبب (نت ولا سيرفر)، فالـ Failure ضاعت. والـ `context` بيتستخدم بعد await، والصفحة ممكن تكون اتقفلت. الحل `Future<void> save` بيعمل emit لـ `AddBookSaving` ثم `AddBookSaved` أو `AddBookError(failure)`، والـ UI تعمل `pop` في BlocListener. و`prefer_void_public_cubit_methods` في `bloc_lint` بيمسك ده لوحده، فلو بيتكرر يبقى الـ lint مش شغال في الـ CI.
+
+</Answer>
+</Question>
+
+<Question id="sm-arch-4">
+<Ask>كل كتاب في المكتبة ليه `BookTileCubit` بيتعمل في الـ `itemBuilder`. المستخدم علّم كتاب «خلصته»، الليست اترتبت من جديد، والـ spinner ظهر على كتاب تاني. ليه؟</Ask>
+<Answer>
+
+Flutter بيربط الـ element بمكانه في الليست، مش بالكتاب. بعد إعادة الترتيب، الـ BlocProvider اللي في نفس المكان فضل بالـ Cubit القديم (الـ `create` مابيتناداش تاني)، بس الكتاب اللي في المكان ده اتغير. الحل `key: ValueKey(book.id)` على الـ BlocProvider، فالـ Cubit يمشي مع الكتاب. وقبلها اسأل: الـ tile محتاج Cubit أصلًا؟ لو كل اللي بيعمله تغيير الحالة، `Set<BookId> updating` في `LibraryLoaded` أبسط.
+
+</Answer>
+</Question>
+
+<Question id="sm-arch-5">
+<Ask>بعد ما دخّلت `bloc lint` في الـ CI، علّم على `SettingsCubit` بـ `avoid_flutter_imports` عشان `ThemeMode`. الكود شغال والتستات خضرا. تقفل الـ rule للملف ده؟</Ask>
+<Answer>
+
+لأ. الـ rule مش عشان `ThemeMode` نفسه، عشان أول import لـ Flutter بيفتح الباب لـ `BuildContext` و`Color` في نفس الملف من غير ما حد يلاحظ. والحل رخيص: `enum ThemePreference` Dart صافي جنب الـ `SettingsStore` (الـ settings مالهاش domain)، وextension في الـ UI بيحوّله لـ `ThemeMode`. ولو الـ store بيحفظ بالـ `name` ونفس الأسامي، مفيش migration. rule فيها استثناء واحد بتبقى فيها عشرة بعد سنة.
+
+</Answer>
+</Question>
+
+</Quiz>

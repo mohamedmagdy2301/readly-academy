@@ -1,0 +1,795 @@
+---
+title: "تختار state management إزاي: المقارنة الكاملة والـ migration"
+description: "المعايير اللي بتفرق فعلًا، والحلول كلها جنب بعض في جدول واحد، وشجرة قرار ونماذج مشاريع، وإمتى الخلط مقبول، وإزاي تنقل مشروع شغال من GetX أو provider لـ Cubit (أو من Cubit لـ Riverpod) شاشة شاشة، وإزاي تدافع عن اختيارك في interview وفي ADR."
+minutes: 40
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="دفتر الحسابات">
+
+أي محل لازم يعرف معاه كام وعليه كام. المحل الصغير بيكتب في <b>كراسة</b>: سريعة ومش محتاجة تدريب، بس لو صاحب المحل غاب، محدش يفهم الكراسة غيره. الشركة الكبيرة بتستخدم <b>نظام قيود</b>: كل حركة فلوس ليها قيد ومستند ورقم، ومحدش يقدر يغيّر رصيد من غير قيد. أبطأ في الكتابة، بس المراجع يقدر يعرف كل قرش جه منين. وفي <b>شيتات ذكية</b>: تغيّر خانة، وكل الإجماليات تتحدّث لوحدها. سحر، لحد ما رقم يطلع غلط ومحدش يعرف مين غيّر إيه.
+
+والمحاسب الشاطر مش اللي بيقول «النظام الفلاني هو الأحسن». هو اللي بيسأل: الشركة دي حجمها إيه؟ مين هيمسك الدفاتر بعدي؟ المراجع محتاج إيه؟ ولو قرروا يغيّروا النظام في نص السنة، مابيحرقوش الدفاتر القديمة. بيفتحوا النظام الجديد <b>حساب حساب</b>، والاتنين شغالين جنب بعض لحد ما آخر حساب يتنقل.
+
+</Analogy>
+
+الـ state management بالظبط كده. `setState` هي الكراسة. Cubit وBloc وRedux نظام القيود: الـ state مابتتغيرش غير من باب واحد معروف. MobX وsignals وRx بتاع GetX هي الشيتات الذكية: تغيّر قيمة، والـ UI تتحدّث لوحدها. ومفيش واحد فيهم «غلط». في واحد مناسب للمشروع ده والفريق ده.
+
+### الإجابة في سطرين
+
+- <b>كلهم بيحلّوا نفس المشكلة:</b> مكان بره الـ widget يمسك الـ state، ويبلّغ الـ UI لما تتغير. الفرق في: التغيير بيحصل إزاي (صريح ولا ضمني)، والمنطق بيعيش فين، والحل ده مربوط بـ Flutter قد إيه، والفريق يعرف إيه.
+- <b>الاختيار قرار فريق ومشروع، مش قرار library:</b> واختيار Readly (Cubit default وBloc للـ inputs المتزاحمة) جاي من معايير مكتوبة، هنشوفها كلها، ومعاها الحالات اللي كنا هنختار فيها حاجة تانية.
+
+### الدرس ده فين من الوحدة
+
+الوحدة دي كتبت نفس الـ 2 features بكل حل: <b>هدف القراية</b> (رقم بين 5 و200 بخطوة 5، `increase()` و`decrease()`) و<b>شاشة المكتبة</b> (stream من `watchLibrary()` وpull-to-refresh بـ `isRefreshing` و`refreshFailure` من غير ما الليستة تتمسح). الكود نفسه في دروسه:
+
+- [«أدوات Flutter وProvider»](/course/state-management/flutter-builtins/): `setState` و`ValueNotifier` و`ChangeNotifier` وprovider.
+- [«أول Cubit سطر بسطر»](/course/state-management/first-cubit/) و[«Cubit ولا Bloc»](/course/state-management/cubit-vs-bloc/): الـ Cubit والـ Bloc، والقرار بينهم.
+- [«Riverpod من الصفر ومقارنته بالـ Cubit»](/course/state-management/riverpod/): الـ Notifier والـ providers والـ DI.
+- [«GetX وMobX وRedux وsignals»](/course/state-management/other-solutions/): الباقي بعين ناقدة.
+
+الدرس ده مش هيعيد الكود ده. هو بيحطهم جنب بعض بمعايير، وبيعلّمك تختار، وتنقل مشروع شغال من حل لحل من غير ما تكسره. والقرار بين Cubit وBloc نفسه اتحسم في درس «Cubit ولا Bloc»، فهنا بنعاملهم كعيلة واحدة إلا لما الفرق يهم.
+
+</Level>
+
+<Level n="2" title="المعايير اللي بتفرق فعلًا">
+
+قبل الجدول الكبير، لازم نتفق على المعايير. كل معيار هنا معاه سؤال تسأله لأي حل، ومثال من Readly يوضّح ليه بيفرق.
+
+### 1. التغيير صريح ولا ضمني
+
+<b>السؤال:</b> لو قيمة في الـ state طلعت غلط، تقدر تعرف مين غيّرها من غير ما تدوّر في كل الـ project؟
+
+في الـ Cubit، الـ `emit` محمي (`@protected`)، فالباب الوحيد لتغيير الـ state هو methods الـ Cubit نفسه. في الـ Bloc الباب event، وفي Redux الباب action بيعدّي على reducer. في Riverpod الـ `state` بتتغير من methods الـ Notifier. ده التغيير <b>الصريح</b>.
+
+في Rx بتاع GetX وsignals والـ `ValueNotifier`، الـ state عبارة عن خانة ليها `.value`، وأي حد ماسك reference يقدر يكتب فيها. ده التغيير <b>الضمني</b>:
+
+<CodeBlock label="هدف القراية: باب واحد ولا كل الأبواب">
+
+```dart
+// explicit: the only door is a method that knows the rules (min 5, max 200)
+context.read<ReadingGoalCubit>().increase();
+
+// implicit: anyone holding the reference can write anything
+goalController.goal.value = 999; // GetX: no clamp, no log, nothing stops it
+```
+
+</CodeBlock>
+
+- <b>ده مش حكم نهائي:</b> تقدر تخلي الخانة private وتطلّع getter بس، وMobX عنده write policy بتجبر التعديل يبقى جوه `@action`. بس ده انضباط بتفرضه انت، مش حاجة الـ API بيفرضها عليك.
+- <b>في Readly بيفرق امتى:</b> bug «الهدف بقى 999» في Cubit مكانه method واحدة. في خانة مفتوحة، مكانه أي سطر في الـ app كله.
+
+### 2. الـ immutability
+
+<b>السؤال:</b> الـ state بتتبدّل بـ object جديد، ولا بتتعدّل في مكانها؟
+
+Cubit وBloc وRedux وRiverpod مبنيين على state جديدة في كل تغيير، والمقارنة بـ `==` (درس «تصميم الـ State»). MobX وGetX (`RxList`) و`ChangeNotifier` مبنيين على إنك تعدّل في مكانك (`books.add(book)`) والـ library تبلّغ.
+
+- <b>في Readly:</b> الـ `refreshFailure` لازم يظهر SnackBar <b>مرة واحدة</b>. مع state immutable، الـ `listenWhen: (prev, curr) => prev.refreshFailure != curr.refreshFailure` بيقارن نسختين حقيقيتين. مع state بتتعدّل في مكانها، مفيش «قبل» تقارن بيه، فبتحتاج flag زيادة (`failureShown`) أو تمسح القيمة بإيدك بعد ما تعرضها.
+- <b>العكس:</b> التعديل في المكان أسهل في الكتابة، وأسرع للـ lists الضخمة اللي بتتعدّل عنصر عنصر. ده مكسب حقيقي لـ MobX وsignals في شاشات زي محرر بيتغير مع كل حرف.
+
+### 3. التست من غير Flutter
+
+<b>السؤال:</b> الـ logic بتاع الشاشة يتختبر بـ `dart test` في package مافيهاش Flutter؟
+
+ده أهم معيار للكورس ده، لأنه نفس سؤال Clean Architecture: الـ presentation logic تقدر تعيش من غير الـ framework؟
+
+| الحل | الـ logic بيعتمد على | التست |
+| --- | --- | --- |
+| Cubit / Bloc | `package:bloc` (Dart صافي) | `dart test` و`blocTest` |
+| Riverpod | `package:riverpod` (Dart صافي) | `ProviderContainer.test()` |
+| MobX | `package:mobx` (Dart صافي) | الـ store نفسه في test عادي |
+| Redux | `package:redux`، والـ reducer دالة | أسهل حاجة: input وoutput |
+| signals | `signals_core` (Dart صافي) | test عادي |
+| `ValueNotifier` / `ChangeNotifier` | `package:flutter/foundation.dart` | `flutter test` من غير widgets |
+| GetX | `GetxController` بيعمل import لـ Flutter | `flutter test`، ونضافة الـ registry العام بين التستات |
+
+- <b>«من غير Flutter» مش معناها «من غير widget tests»:</b> `ChangeNotifier` وGetX بيتختبروا كويس بـ `flutter test` من غير ما تعمل pump لأي widget. الفرق إن الـ logic مش هينفع يتنقل لـ package Dart صافية، ومش هينفع تشارك نفس الكود مع CLI أو backend بـ Dart.
+- <b>في Readly:</b> قاعدة «الهدف بين 5 و200» اتختبرت في درس «أول Cubit سطر بسطر» بـ `dart run` في ملف واحد. ده المعيار.
+
+### 4. الـ async والـ races
+
+<b>السؤال:</b> لو المستخدم عمل action والقديمة لسه شغالة، مين بيحميك؟
+
+| الحل | الأداة الجاهزة |
+| --- | --- |
+| Cubit | ولا حاجة: flag أو request id أو `Timer` بإيدك (درس «Cubit متقدم») |
+| Bloc | transformer لكل event: sequential، droppable، restartable، وdebounce بـ stream_transform |
+| Riverpod | لما provider يتبني تاني، نتيجة الـ Future القديم بتتجاهل. وفي methods الـ Notifier، `ref.mounted` بعد الـ await بيحمي من الـ dispose بس، مش من invalidate حصل في النص (زي الـ request id في الـ Cubit، ده عليك) |
+| GetX | workers: `debounce` و`ever` و`interval` |
+| MobX | `ObservableFuture` وreactions |
+| Redux | middleware (thunks أو epics) |
+| `ChangeNotifier` / signals | بإيدك تقريبًا |
+
+- <b>في Readly:</b> البحث في الكتالوج. الكلمة القديمة نتيجتها راجعة متأخر وبتغطي على الجديدة. في Cubit حلّيناها بـ request id (درس الـ Cubit في الوحدة 5)، وفي Bloc بـ `restartable`، وفي Riverpod بإن الـ query parameter في الـ provider، فتغييره بيبني provider جديد ويرمي القديم.
+- <b>المعيار ده بيكبر مع الـ app:</b> شاشة فيها زرار واحد مش هتفرق. كتالوج فيه بحث وفلاتر وinfinite scroll هيفرق جدًا.
+
+### 5. التتبع والـ debugging
+
+<b>السؤال:</b> لو مستخدم بعت bug، تقدر تعرف آخر 10 تغييرات في الـ state حصلت إزاي؟
+
+- <b>Cubit وBloc:</b> `BlocObserver` واحد بيشوف كل تغيير في كل Cubit وBloc في الـ app، والـ Bloc بيزوّد السبب (الـ event) في `onTransition`. ده اللي بنبعته breadcrumbs لـ Sentry في [درس «الـ Logging والـ Monitoring»](/course/production/observability/).
+- <b>Riverpod:</b> `ProviderObserver` بيشوف كل provider اتعمل أو اتحدّث أو فشل. نفس الفكرة.
+- <b>Redux:</b> كل تغيير action بيعدّي من مكان واحد، فالـ log كامل بطبيعته. ده أقوى حاجة في Redux.
+- <b>MobX:</b> عنده `spy` بيشوف الـ actions والتغييرات.
+- <b>GetX وsignals و`ChangeNotifier`:</b> مفيش مكان مركزي. لو عايز log، بتحطه في كل controller بإيدك.
+
+### 6. قصة الـ DI
+
+<b>السؤال:</b> الـ state object بياخد الـ repository منين؟ ومين بيقرر عمره؟
+
+| الحل | الـ DI |
+| --- | --- |
+| Cubit / Bloc | مالوش DI. Readly بتستخدم get_it وinjectable، والـ `BlocProvider` بيحدد العمر في الشجرة (درس الـ DI في الوحدة 6) |
+| provider | الشجرة نفسها هي الـ DI |
+| Riverpod | هو نفسه DI: الـ providers بتعتمد على بعض، والتست بيعمل override |
+| GetX | `Get.put` و`Get.find`: service locator عام، مع `Bindings` لكل route |
+| MobX / Redux / signals | مالهمش DI. هتجيب get_it أو provider |
+
+- <b>في Readly:</b> `getIt<LibraryCubit>()` جوه `BlocProvider(create: ...)`. في Riverpod نفس الشاشة مش محتاجة get_it خالص: الـ Notifier بيعمل `ref.watch(libraryRepositoryProvider)`. ده مكسب حقيقي لـ Riverpod: أداة واحدة بدل اتنين. وتمنه إن الـ DI والـ state بقوا متربطين ببعض، فتغيير واحد فيهم بيجر التاني.
+
+### 7. الـ boilerplate والـ codegen
+
+<b>السؤال:</b> كام ملف وكام سطر لشاشة عادية؟ ومحتاج `build_runner` شغال؟
+
+- <b>أقل حاجة:</b> `setState`، GetX، signals. الـ «هدف القراية» بيتكتب في سطور قليلة جدًا.
+- <b>قليل:</b> Cubit (ملف state وملف Cubit)، provider، Riverpod بالـ codegen.
+- <b>أكتر:</b> Bloc (ملف events زيادة)، Redux (actions وreducer وmiddleware وview model لكل شاشة).
+- <b>الـ codegen:</b> MobX محتاجه عمليًا (`mobx_codegen`). Riverpod اختياري بس هو الأسلوب المُوصى بيه (`riverpod_generator`). Bloc اختياري (freezed للـ states لو حبيت). الباقي من غير.
+
+الـ boilerplate تمن بتدفعه مرة وانت بتكتب، والقراية بتدفعها كل مرة حد بيفتح الملف. كود أطول بس كل حاجة فيه صريحة، غالبًا أرخص على المدى الطويل من كود قصير فيه سحر.
+
+### 8. منحنى التعلم
+
+<b>السؤال:</b> واحد جديد في الفريق، هيكتب PR صح في أول أسبوع؟
+
+- `setState` وGetX: ساعات. وده سبب انتشار GetX جدًا.
+- Cubit وprovider: يوم أو اتنين.
+- Bloc وMobX وRedux وsignals: الأساسيات بسرعة، بس عشان تكتب صح محتاج تفهم streams، أو الـ reactivity الضمنية وفخاخها، أو الـ middleware، يعني أسبوع.
+- Riverpod: مفاهيم جديدة (ref، autoDispose، family، الفرق بين watch وread وlisten، والـ codegen)، والـ docs اتغيرت مع كل major. أسبوع أو أكتر عشان تكتب كود مش بس شغال، لكن صح.
+
+بس خلي بالك: السهل في الأول مش معناه السهل في الآخر. GetX سهل تبدأ بيه، وصعب تفهم app كبير مكتوب بيه، لأن كل حاجة ممكن تكلّم كل حاجة من غير context.
+
+### 9. الفريق والسوق
+
+<b>السؤال:</b> تقدر توظّف ناس يعرفوه؟ والفريق الحالي يعرف إيه؟
+
+ده كلام من ملاحظة السوق، مش إحصائية: Bloc وprovider من أكتر الحاجات اللي بتظهر في إعلانات شغل Flutter، وGetX منتشر جدًا في مشاريع الـ freelance والـ agencies، وRiverpod بيزيد خصوصًا في الفرق الجديدة. MobX وRedux أقل بكتير في Flutter، وsignals لسه جديد.
+
+- <b>في فريق صغير:</b> خبرة الفريق الحالية غالبًا بتكسب أي فرق تقني بين الحلول المحترمة.
+- <b>في فريق بيكبر:</b> السؤال يبقى «الناس اللي هنوظفهم السنة الجاية يعرفوا إيه؟»، و«الـ junior هيلاقي إجابة لسؤاله في 5 دقايق؟».
+
+### 10. نضج الـ ecosystem والصيانة
+
+<b>السؤال:</b> الـ package دي هتفضل شغالة مع Flutter الجاي؟ ولو فيها bug، حد هيصلحه؟
+
+الوضع في أكتوبر 2026:
+
+| الـ package | الحالة |
+| --- | --- |
+| `bloc` 9.2 و`flutter_bloc` 9.1 | نشط، وفي tooling حواليه (`bloc_test`، `bloc_lint`) |
+| `provider` 6.1.5 | مستقر، والتغييرات قليلة. وصاحبه هو اللي عمل Riverpod بعده |
+| Riverpod 3.x | نشط جدًا. الـ 3.0 نزلت في سبتمبر 2025 بـ breaking changes (`StateNotifierProvider` وأخواته اتنقلوا لـ `legacy.dart`) |
+| `get` 4.7.3 | آخر stable. الـ 5.0 لسه release candidates بقالها فترة طويلة |
+| `mobx` 2.7.x | مستقر |
+| `flutter_redux` 0.10.0 | آخر إصدار من حوالي 4 سنين. ناضج وصغير، بس النشاط قليل جدًا |
+| `signals` 7.x (آخر نسخة 7.1) | نشط وجديد نسبيًا، والـ API بيتغير بين الـ majors: الـ 7.0 خلّت `builder:` في `SignalBuilder` named وإجباري، وعملت deprecate لـ `Watch` و`.watch(context)` و`SignalsMixin` |
+
+إزاي تقيّم أي package بنفسك:
+
+- <b>آخر إصدار وتوافقه:</b> شغال مع آخر Flutter stable وآخر Dart SDK؟
+- <b>الـ issues:</b> في bugs خطيرة مفتوحة من شهور من غير رد؟
+- <b>الـ maintainers:</b> شخص واحد ولا فريق؟ (الـ bus factor)
+- <b>تاريخ الـ breaking changes:</b> كل major بيكسر نص الكود؟
+- <b>حجم الكود:</b> لو اتساب، تقدر تعمله fork وتصونه؟ `flutter_redux` صغير جدًا، فمخاطرته أقل من حجم رقم الـ «4 سنين».
+
+### 11. الـ fit مع Clean Architecture
+
+ده المعيار اللي بيربط الدرس ده بالكورس كله، وليه سؤالين:
+
+1. <b>الـ presentation logic تقدر تعيش من غير Flutter؟</b> (معيار 3)
+2. <b>الـ domain والـ data يفضلوا مايعرفوش الـ library خالص؟</b>
+
+السؤال التاني هو اللي بيتنسي. أي حل ممكن يتسرّب لجوه لو سبته:
+
+| الحل | التسريب الشائع | الحد الصح |
+| --- | --- | --- |
+| Riverpod | `@riverpod` فوق الـ repository في ملف الـ data، والـ use case بياخد `Ref` | الـ providers في ملف DI أو في الـ presentation، والـ repository class عادي مايعرفش Riverpod |
+| GetX | `Get.find<Dio>()` جوه الـ repository، و`Get.snackbar` جوه الـ controller | constructor injection، والـ UI تعرض الرسايل |
+| MobX | `ObservableList<Book>` جوه الـ entity | الـ entity immutable عادي، والـ store بس فيه observables |
+| signals | `Signal<Book>` جوه الـ domain | الـ domain بيرجّع `Stream` و`Future` و`Result` |
+| Cubit / Bloc | Cubit بيكلّم dio مباشرة | use cases وcontracts (درس «الـ State management في مشروع حقيقي») |
+
+القاعدة لأي حل: <b>الـ domain بيطلّع `Future<Result<T>>` و`Stream<T>`، والـ state library تعيش في الـ presentation والـ composition root بس.</b> لو ده متحقق، تغيير الـ state management بعدين بقى قرار في طبقة واحدة، مش rewrite.
+
+### 12. الأداء ودقة الـ rebuild
+
+<b>السؤال:</b> لما قيمة تتغير، كام widget بيتبني تاني؟
+
+- <b>أدق حاجة:</b> signals وMobX و`Obx` بتاع GetX بيتتبعوا القيم اللي اتقرت في الـ build لوحدهم، فبيبنوا بس اللي قرا القيمة اللي اتغيرت.
+- <b>دقيق لو طلبته:</b> `BlocSelector` و`buildWhen` في Bloc، و`select` في Riverpod وprovider، و`StoreConnector` بـ `distinct: true` في Redux.
+- <b>واسع:</b> `setState` بيعيد `build` الـ widget كله، وكل اللي بيرجّعه بيتبني إلا الـ `const` والـ children اللي اتعدّوا من بره (درس «أدوات Flutter وProvider»).
+
+وليه ده نادرًا ما بيحسم: الـ rebuild في Flutter call لـ `build` بترجّع widgets، وده رخيص. اللي بيتقل فعلًا layout وpaint وصور كبيرة وليستة طويلة من غير `ListView.builder`. وكل الحلول المحترمة فيها طريقة تضيّق الـ rebuild. فقيس الأول بعدّاد الـ rebuilds في DevTools (درس «flutter_bloc بالتفصيل»)، وماتختارش library عشان «أسرع» من غير رقم.
+
+</Level>
+
+<Level n="3" title="المقارنة الكاملة والقرار">
+
+### الجدول الكبير (1): بيشتغل إزاي
+
+الكلمات في الجدولين دول وصف مش درجات. «بإيدك» مش معناها «وحش»، معناها إن الحماية مسؤوليتك.
+
+| | التغيير | شكل الـ state | تست من غير Flutter | الـ async والـ races | التتبع | الـ DI |
+| --- | --- | --- | --- | --- | --- | --- |
+| `setState` / `ValueNotifier` | مباشر من الـ widget أو `.value` | زي ما تحب | لأ | بإيدك، و`mounted` | مفيش | مفيش |
+| provider + `ChangeNotifier` | methods بتنادي `notifyListeners` | mutable غالبًا | محتاج `flutter test` | بإيدك | مفيش مركزي | الشجرة |
+| Cubit | methods بتعمل `emit` (محمي) | immutable و`==` | أيوه | بإيدك: flags وrequest id | `BlocObserver` | بره (get_it) |
+| Bloc | events لـ handlers | immutable و`==` | أيوه | transformer لكل event | `BlocObserver` بالسبب | بره (get_it) |
+| Riverpod | methods الـ Notifier بتغيّر `state` | immutable و`==` | أيوه | rebuild بيرمي القديم، `ref.mounted` | `ProviderObserver` | هو نفسه |
+| GetX | `.value =` أو `update()` | mutable غالبًا | محتاج `flutter test` | workers | ضعيف | `Get.put` / `Get.find` عام |
+| MobX | `@action` بيعدّل observables | mutable observables | أيوه | `ObservableFuture`، reactions | `spy` | بره |
+| Redux | `dispatch(action)` لـ reducer | immutable إجباري | أيوه، الـ reducer دالة | middleware | كل action في مكان واحد | بره |
+| signals | `.value =` | خانات reactive | أيوه (`signals_core`) | بإيدك غالبًا | ضعيف | بره |
+
+### الجدول الكبير (2): بيكلّف إيه
+
+| | الـ boilerplate | الـ codegen | التعلم | السوق | الصيانة (أكتوبر 2026) | الـ Clean fit | دقة الـ rebuild |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `setState` / `ValueNotifier` | أقل حاجة | لأ | دقايق | الكل يعرفه | جزء من Flutter | الـ logic في الـ UI | الـ subtree، أو builder ضيق |
+| provider + `ChangeNotifier` | قليل | لأ | يوم | منتشر، خصوصًا في الكود القديم | 6.1.x مستقر | الـ notifier بيعرف foundation | `Selector` و`select` |
+| Cubit | قليل | اختياري | يوم أو اتنين | منتشر جدًا | نشط | ممتاز | `BlocSelector` |
+| Bloc | متوسط | اختياري | أسبوع | منتشر جدًا | نشط | ممتاز | `BlocSelector` |
+| Riverpod | قليل بالـ codegen | مُوصى بيه | أسبوع وأكتر | بيزيد | نشط جدًا، breaking changes بين الـ majors | كويس لو الـ providers فضلت بره الـ domain | `select` |
+| GetX | أقل حاجة | لأ | ساعات | منتشر في الـ freelance | 4.7.3 stable، والـ 5 لسه RC | ضعيف | تلقائي |
+| MobX | قليل بعد الـ codegen | عمليًا لازم | متوسط | قليل | مستقر | كويس لو الـ stores في الـ presentation | تلقائي |
+| Redux | كتير | لأ | متوسط | قليل في Flutter | `flutter_redux` نشاطه قليل جدًا | كويس | `distinct` |
+| signals | قليل | لأ | ساعات للأساسيات، أسبوع للفخاخ | جديد | نشط، والـ API بيتغير | كويس لو الـ signals فضلت في الـ presentation | أدق حاجة |
+
+### كل واحد بيكسب فين بأمانة
+
+لو هتشتغل في codebase مكتوب بأي حل من دول، لازم تعرف هو كويس في إيه، مش بس عيوبه:
+
+- <b>`setState` و`ValueNotifier`:</b> أحسن حاجة للـ ephemeral state. مفيش dependency، ومفيش ملف زيادة. Readly فيها كتير منهم وده صح.
+- <b>provider:</b> الأساس اللي flutter_bloc نفسه مبني عليه. بسيط، ومفهوم، وأي Flutter dev يعرفه.
+- <b>Cubit:</b> أبسط طريقة لـ state صريحة وimmutable ومتختبرة بـ Dart صافي، ومعاه observer وlint.
+- <b>Bloc:</b> سياسات concurrency باسمها، وسجل بالسبب ورا كل state.
+- <b>Riverpod:</b> async وcaching وDI في أداة واحدة، وcompile-time safety (مفيش `ProviderNotFoundException`)، و`autoDispose` و`family` بيحلّوا مشاكل كتير بكود قليل.
+- <b>GetX:</b> أسرع حاجة توصل بيها لـ app شغال: state وroutes وDI وtranslations وsnackbars من غير context. لـ prototype أو app صغير هيتسلّم ويتنسي، ده مكسب حقيقي.
+- <b>MobX:</b> computed values بتتحدّث لوحدها، ودقة rebuild عالية، ومألوف لأي حد جاي من MobX في الـ web.
+- <b>Redux:</b> أوضح مسار للبيانات: action، وreducer دالة صافية، وstate واحدة. أسهل حاجة في التست والـ debugging.
+- <b>signals:</b> أدق reactivity بأقل كود، وشغال في Dart في أي مكان. ممتاز للأجزاء اللي بتتحدّث بسرعة.
+
+### شجرة القرار
+
+<Diagram name="d-sm-choose-flow">
+
+بتسأل من فوق لتحت، وأول «أيوه» هي اللي بتقرر. لاحظ إن أول سؤال مش تقني: لو في codebase شغال، الإجابة الافتراضية إنك تكمّل بيه. وفي كل الحالات، الحدود بين الطبقات هي اللي بتخلي القرار ده رخيص يتغير بعدين.
+
+</Diagram>
+
+- <b>ليه «في codebase شغال؟» أول سؤال:</b> لأن الـ rewrite ليه تمن ومالوش قيمة للمستخدم. الـ migration بيبقى مبرر لما الألم يتقاس (Level 4)، مش لما library أحدث تطلع.
+- <b>ليه الـ ephemeral تاني سؤال:</b> لأنه مش اختيار «بدل» الحل الأساسي، هو جنبه. حقل الباسورد ظاهر ولا لأ مش محتاج أي library، مهما اخترت.
+- <b>ليه خبرة الفريق قبل التفاصيل التقنية:</b> فريق شاطر في Riverpod هيكتب app أنضف بـ Riverpod من app بـ Bloc اتكتب وهو بيتعلم. بشرط إن الحل نفسه explicit ومتصان، وده السبب إن السؤال مش «الفريق يعرف إيه؟» وبس.
+
+### نماذج مشاريع
+
+| المشروع | الترشيح | ليه |
+| --- | --- | --- |
+| MVP لواحد بيجرب فكرة في شهر | Cubit (أو provider) و`setState` للباقي | سريع كفاية، ولو الفكرة نجحت مش هتعيد الكتابة. GetX مقبول لو الكود هيترمي فعلًا بعد التجربة |
+| agency بتسلّم apps لعملا مختلفين | Cubit/Bloc بـ conventions ثابتة | المطوّر بيتنقل بين المشاريع، والعميل ممكن يسلّم الكود لفريق تاني. الحل المعروف والموثّق أهم من الأشيك |
+| منتج كبير بفرق كتير | Bloc/Cubit بـ bloc_lint، أو Riverpod لو الفرق خبرتها فيه | الصريح والمتتبع والمتحرس بـ lint بيعيش مع 30 مطوّر. والأهم convention واحدة للكل |
+| codebase GetX شغال | كمّل GetX، ووقّف التسريب، وانقل شاشة شاشة لو في ألم مقاس | الـ rewrite الكامل خطر وتمنه عالي. الخطة في LessonPart تحت |
+| real-time تقيل (scores لايف، chat) | Bloc (`emit.forEach` و`restartable`)، أو Riverpod بـ `StreamNotifier` | الاتنين بيقفلوا الـ subscriptions صح لما الـ parameter يتغير. المهم إن الـ streams جاية من الـ repository |
+| بيانات سيرفر كتير بـ caching (feeds، صفحات تفاصيل، invalidate) | Riverpod | `family` و`autoDispose` و`ref.invalidate` بيعملوا cache layer كاملة. في Readly الـ cache هو drift، فالميزة دي أقل أهمية لينا |
+| شاشة UI بتتحدّث بسرعة (محرر، canvas، رسم) | signals أو `ValueNotifier` للجزء ده بس، والحل الأساسي للباقي | الدقة في الـ rebuild هنا بتفرق فعلًا، وده المكان الوحيد اللي الأداء فيه بيحسم |
+| logic متشارك مع CLI أو backend بـ Dart | أي حل Dart صافي: Cubit/Bloc، أو `riverpod`، أو MobX، أو Redux، أو `signals_core` | الـ logic مايعملش import لـ Flutter، فمش GetX ولا `ChangeNotifier` |
+| فريق جاي من React | Riverpod أو Redux أو signals ممكن يبقوا مألوفين | بس ده سبب يساعد، مش سبب يحسم |
+
+### واختيار Readly
+
+Readly اختارت Cubit default وBloc للـ inputs المتزاحمة، والتفصيل بينهم في [درس «Cubit ولا Bloc»](/course/state-management/cubit-vs-bloc/). المعايير اللي حسمت بالترتيب:
+
+1. <b>Clean fit وتست Dart صافي:</b> الكورس كله مبني على إن الـ presentation logic مايعرفش Flutter.
+2. <b>التغيير الصريح والـ immutability:</b> `emit` محمي، وstates بـ `==`، فالـ SnackBar مرة واحدة والـ `listenWhen` صادق.
+3. <b>التتبع:</b> `BlocObserver` واحد لـ Sentry.
+4. <b>الـ DI بره:</b> get_it كان موجود من الوحدة 6، فمش محتاجين أداة تانية تعمله.
+5. <b>نفس الـ package للبسيط والمعقد:</b> Cubit وBloc بنفس الـ widgets والتستات.
+
+وكنا هنختار Riverpod لو: Readly ماكانش فيها drift، وكانت بتعتمد على cache في الذاكرة لبيانات السيرفر، والفريق خبرته فيه. ده مكتوب في الـ ADR تحت.
+
+### الخلط بين الحلول في app واحد
+
+<b>مقبول، وطبيعي:</b>
+
+- <b>built-ins للـ ephemeral، والحل الأساسي للشاشات:</b> `setState` لحقل الباسورد، و`ValueNotifier` لـ «اقرا أكتر»، وCubit لكل شاشة فيها طلبات. ده الوضع في Readly، ومش «خلط» أصلًا.
+- <b>Cubit وBloc:</b> نفس الـ package والـ widgets والـ observer (درس «Cubit ولا Bloc»).
+- <b>`flutter_hooks` للـ controllers:</b> `useTextEditingController` و`useAnimationController` بدل `StatefulWidget` طويل، جنب Cubit للـ logic. الـ hooks هنا بتشيل ephemeral state بس.
+- <b>provider وflutter_bloc:</b> `BlocProvider` مبني على provider، و`context.read` و`context.watch` هما نفس الـ extensions. `MultiProvider` و`MultiBlocProvider` في نفس الشجرة عادي جدًا.
+- <b>اتنين وقت الـ migration:</b> بشرط إن الحدود واضحة، وفي تاريخ نهاية.
+
+<b>smell:</b>
+
+- <b>حلين لنفس نوع الـ state من غير قاعدة:</b> «شاشة المكتبة GetX لأن أحمد كتبها، والكتالوج Riverpod لأن سارة كتبته». كل حد جديد لازم يتعلم الاتنين، وكل feature بشكل.
+- <b>نفس البيانات في store-ين:</b> المستخدم الحالي في `AuthCubit` وفي provider بتاع Riverpod. بعد أول تحديث للبروفايل، واحد فيهم هيبقى قديم. مصدر الحقيقة واحد: stream من الـ repository، والاتنين يسمعوا عليه.
+- <b>حل بيمد إيده جوه التاني:</b> Cubit بيعمل `Get.find<LibraryController>()`، أو Notifier بيقرا Cubit من get_it. كده العمرين اتربطوا ببعض، والتست محتاج الاتنين.
+- <b>نظامين DI بيعملوا نفس الـ type:</b> `LibraryRepository` متسجّل في get_it وفي `Get.put` وفي provider. 3 نسخ بـ 3 أعمار، وbug «الشاشة دي شايفة بيانات قديمة» مضمون.
+
+<CodeBlock label="الـ smell وبديله">
+
+```dart
+// smell: the new Cubit reaches into the old GetX world
+class HomeCubit extends Cubit<HomeState> {
+  HomeCubit() : super(const HomeLoading()) {
+    final legacy = Get.find<LibraryController>(); // hidden dependency, tied lifetimes
+    _sub = legacy.books.stream.listen(_onBooks);
+  }
+  StreamSubscription<List<Book>>? _sub;
+  void _onBooks(List<Book> books) {/* ... */}
+}
+
+// fine: both listen to the same source of truth, injected
+class HomeCubit extends Cubit<HomeState> {
+  HomeCubit(this._repository) : super(const HomeLoading());
+  final LibraryRepository _repository;
+  // watch(): _repository.watchLibrary().listen(...) as in the Cubit lessons
+}
+```
+
+</CodeBlock>
+
+</Level>
+
+<LessonPart title="الـ migration شاشة شاشة">
+
+### القاعدة: strangler، مش rewrite
+
+الـ <b>strangler</b> اسمه من نبات بيطلع حوالين شجرة قديمة، ويكبر واحدة واحدة لحد ما يبقى هو الشجرة. في الكود: الجديد بيتبني جنب القديم، وكل مرة بياخد حتة، والـ app شغال ومتسلّم في كل خطوة. ده نفس أسلوب [درس «Refactor feature قديمة لـ Clean»](/course/production/refactor/) في الوحدة 16، بس على مستوى الـ state management.
+
+<Diagram name="d-sm-strangler">
+
+في النص: شاشتين لسه بـ GetX وشاشتين اتنقلوا لـ Cubit، والاتنين بيسمعوا على نفس `watchLibrary()`. الـ repository هو اللي بيخلّي الاتنين يعيشوا جنب بعض من غير ما يعرفوا بعض.
+
+</Diagram>
+
+الخطوات، لأي اتجاه:
+
+1. <b>وقّف التسريب:</b> مفيش كود جديد بالحل القديم من النهارده. قاعدة في الـ review، ومعاها CI check بيعدّ (تحت).
+2. <b>اعمل جرد:</b> كل شاشة، والـ controller بتاعها، ومين تاني بيقرا منه، وفي تستات ولا لأ.
+3. <b>صوّر السلوك قبل ما تلمس:</b> characterization tests على الـ controller القديم والشاشة، زي درس الـ Refactor.
+4. <b>نزّل الحقيقة للـ repository:</b> لو الـ controller القديم هو مصدر الحقيقة (ليستة الكتب جواه)، انقل الحقيقة لـ stream في الـ repository الأول، والـ controller القديم يبقى مستمع. دي أهم خطوة، وهي اللي بتخلي الباقي ممكن.
+5. <b>ابدأ بالأوراق:</b> شاشة محدش بيقرا منها (تفاصيل كتاب، الإعدادات) قبل الشاشات اللي ليها جيران.
+6. <b>الـ global في الآخر:</b> الـ auth والـ session والـ navigation آخر حاجة، لأن كل الشاشات بتعتمد عليهم.
+7. <b>امسح الـ package:</b> تعريف «خلصنا» إن الـ package اتشالت من `pubspec.yaml`، مش «أغلب الشاشات اتنقلت».
+
+والـ domain والـ data؟ <b>مابيتلمسوش</b>. الـ use cases والـ repositories والـ entities هي هي. ولو لقيت نفسك محتاج تغيّرهم عشان الـ state management الجديد، ده معناه إن القديم كان متسرّب فيهم، وده أول حاجة تتصلح (معيار 11).
+
+### الـ adapter: الحقيقة في الـ repository
+
+تخيل Readly كانت متكتبة بـ GetX من سنتين (ودي حالة شائعة جدًا). الـ `LibraryController` ماسك `RxList<Book>`، وبيحمّل من السيرفر بنفسه، وشاشة الـ Home بتعمل `Get.find<LibraryController>()` عشان تعرض «بتقرا دلوقتي». عايز تنقل الـ Home لـ Cubit. أول خطوة مش في الـ Home:
+
+<CodeBlock label="الخطوة 4: الـ controller القديم بقى مستمع، والـ API بتاعه ماتغيرش">
+
+```dart
+class LibraryController extends GetxController {
+  LibraryController(this._repository, this._refreshLibrary);
+
+  final LibraryRepository _repository; // domain contract, knows nothing about GetX
+  final RefreshLibrary _refreshLibrary;
+  StreamSubscription<List<Book>>? _sub;
+
+  final books = <Book>[].obs; // same public field: old screens keep working
+
+  @override
+  void onInit() {
+    super.onInit();
+    _sub = _repository.watchLibrary().listen(books.assignAll);
+  }
+
+  Future<void> refreshLibrary() => _refreshLibrary(); // writes to drift, the stream does the rest
+
+  @override
+  void onClose() {
+    _sub?.cancel();
+    super.onClose();
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الشاشات القديمة:</b> لسه بتقرا `controller.books` بـ `Obx`. ماتغيرش فيها ولا حرف.
+- <b>الـ Cubit الجديد:</b> بيسمع على نفس `watchLibrary()`، ومايعرفش إن في GetX أصلًا. لما الـ Library نفسها تتنقل، الـ controller ده يتمسح وخلاص.
+- <b>الـ `refreshLibrary`:</b> بقى بيكتب في drift بس، والـ stream بيوصّل للاتنين. نفس فكرة الـ offline-first في الوحدة 4.
+
+ولو مش قادر تنقل الحقيقة دلوقتي (الـ controller معقد ومافيهوش تستات)، في adapter مؤقت في الاتجاه التاني: contract في الـ domain، والـ implementation بتاعه بيقرا من الـ controller القديم.
+
+<CodeBlock label="adapter مؤقت: الـ Rx القديم ورا contract">
+
+```dart
+// domain: what the new code needs, no GetX
+abstract interface class ReadingNowSource {
+  Stream<List<Book>> watchReadingNow();
+}
+
+// TEMPORARY, lives in the composition root, deleted with the controller
+class LegacyReadingNowSource implements ReadingNowSource {
+  LegacyReadingNowSource(this._controller);
+  final LibraryController _controller;
+
+  @override
+  Stream<List<Book>> watchReadingNow() async* {
+    List<Book> reading(List<Book> all) =>
+        all.where((b) => b.status == BookStatus.reading).toList();
+    yield reading(_controller.books); // Rx streams don't replay: start with the current value
+    yield* _controller.books.stream.map(reading);
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `HomeCubit`:</b> بياخد `ReadingNowSource` في الـ constructor. مايعرفش إن وراه GetX.
+- <b>لما الحقيقة تتنقل للـ repository:</b> بتعمل implementation تاني بيقرا من `watchLibrary()`، وتغيّر سطر واحد في الـ DI. الـ `HomeCubit` وتستاته ماتغيروش.
+- <b>الـ `yield` الأول:</b> الـ stream بتاع Rx بيبعت التغييرات الجاية بس، زي الـ broadcast stream في درس «الـ State من الصفر». من غيره الـ Home هتفضل في loading لحد أول تغيير.
+
+### GetX لـ Cubit: الخطة
+
+<b>الخريطة:</b> خريطة الشاشة الواحدة (`GetxController` و`.obs` و`Obx` والـ workers و`onInit`) في [درس «GetX وMobX وRedux وsignals»](/course/state-management/other-solutions/)، ومعاها نقل `LibraryController` في 6 PRs. على مستوى الـ app، دي الحاجات اللي GetX كان شايلها برا الـ state:
+
+| في GetX | في Readly |
+| --- | --- |
+| `Get.put` و`Get.find` و`Bindings` | get_it وinjectable، و`BlocProvider` في الـ route |
+| `Get.to` و`Get.arguments` | go_router والـ path parameters ([درس «go_router والتنقل»](/course/presentation/router/)) |
+| `Get.snackbar` و`Get.dialog` | `BlocListener` بيعرض من الـ UI |
+| `.tr` والـ translations | الـ l10n بتاع Flutter (درس الـ l10n في الوحدة 5) |
+| `GetConnect` | dio وطبقة الـ data (الوحدة 9) |
+
+<b>الترتيب:</b>
+
+1. <b>الـ state الأول، والـ routing في الآخر:</b> `GetMaterialApp` بيبني `MaterialApp` عادي، فـ `BlocProvider` و`BlocBuilder` بيشتغلوا تحته من غير أي مشكلة. فتنقل كل الشاشات لـ Cubits والـ navigation لسه `Get.to`.
+2. <b>الشاشة الجديدة تاخد الـ parameters في الـ constructor:</b> `Get.to(() => BookDetailsPage(id: id))` بدل `Get.arguments`. كده لما الـ routing يتنقل لـ go_router، الصفحة نفسها مش هتتغير.
+3. <b>شاشة شاشة:</b> تفاصيل الكتاب، والإعدادات، والملاحظات، وبعدين المكتبة والكتالوج، وفي الآخر الـ auth.
+4. <b>الـ navigation:</b> go_router بدل `GetMaterialApp`، وكل `Get.to` يبقى `context.go` أو `context.push`. ده PR كبير لوحده، فخليه بعد ما الـ state يخلص.
+5. <b>امسح `get` من الـ pubspec.</b>
+
+<BeforeAfter>
+<Side label="BookDetailsController بـ GetX" kind="before">
+
+```dart
+class BookDetailsController extends GetxController {
+  BookDetailsController(this._getBookDetails);
+  final GetBookDetails _getBookDetails;
+
+  final book = Rxn<Book>();
+  final isLoading = false.obs;
+  final failure = Rxn<Failure>();
+
+  BookId get _id => Get.arguments as BookId; // tied to routing
+
+  @override
+  void onInit() {
+    super.onInit();
+    load();
+  }
+
+  Future<void> load() async {
+    isLoading.value = true;
+    final result = await _getBookDetails(_id);
+    isLoading.value = false;
+    switch (result) {
+      case Success(:final value):
+        book.value = value;
+      case Err(:final failure):
+        this.failure.value = failure;
+        Get.snackbar('Error', '$failure'); // UI from the controller
+    }
+  }
+}
+```
+
+</Side>
+<Side label="BookDetailsCubit" kind="after">
+
+```dart
+class BookDetailsCubit extends Cubit<BookDetailsState> {
+  BookDetailsCubit(this._getBookDetails, this._id)
+      : super(const BookDetailsLoading());
+
+  final GetBookDetails _getBookDetails;
+  final BookId _id; // from the constructor, not from routing
+
+  Future<void> load() async {
+    emit(const BookDetailsLoading());
+    final result = await _getBookDetails(_id);
+    if (isClosed) return;
+    emit(switch (result) {
+      Success(:final value) => BookDetailsLoaded(value),
+      Err(:final failure) => BookDetailsError(failure),
+    });
+  }
+}
+
+// page:
+// BlocProvider(
+//   create: (_) => getIt<BookDetailsCubit>(param1: id)..load(),
+//   child: const BookDetailsView(),
+// )
+```
+
+</Side>
+</BeforeAfter>
+
+- <b>3 خانات بقوا state واحدة:</b> `book` و`isLoading` و`failure` كانوا ممكن يبقوا متناقضين (`isLoading` true و`failure` فيها قيمة قديمة). الـ sealed state مابتسمحش بده (درس «تصميم الـ State»).
+- <b>الـ `Get.arguments` اتشال:</b> ده اللي كان مخلي الـ controller مايتختبرش من غير routing.
+- <b>الـ snackbar راح للـ UI:</b> `BlocListener` في الـ View، زي أي شاشة في Readly.
+- <b>الـ `isClosed`:</b> جديد. GetX ماكانش بيرمي لو كتبت في Rx بعد الـ close، فالـ bug كان ساكت. الـ Cubit بيرمي `StateError`، فبتضيف السطر ده.
+
+### provider وChangeNotifier لـ Cubit: الخطة
+
+ده أسهل migration في الدرس، لأن flutter_bloc مبني على provider. الشجرة نفسها، و`context.read` نفسه. جدول الـ widgets (`ChangeNotifierProvider` ↔ `BlocProvider`، و`Consumer` ↔ `BlocBuilder`، و`Selector` ↔ `BlocSelector`) في [درس «أدوات Flutter وProvider»](/course/state-management/flutter-builtins/). اللي بيتغير فعلًا جوه الـ class:
+
+| في الـ `ChangeNotifier` | في الـ Cubit |
+| --- | --- |
+| fields في الـ notifier | fields في الـ state |
+| `notifyListeners()` | `emit(state.copyWith(...))` |
+| flag `_disposed` بعد الـ await | `if (isClosed) return;` |
+| `dispose()` | `close()` |
+| widget بـ `addListener` عشان SnackBar | `BlocListener` بـ `listenWhen` |
+
+<b>الترتيب:</b>
+
+1. <b>الـ fields بتبقى state:</b> كل field public في الـ notifier هو field في الـ state class. وده وقت ممتاز تسأل: ينفع يتناقضوا؟ لو أيوه، sealed.
+2. <b>الـ methods نفس الأسامي:</b> `refresh()` تفضل `refresh()`. كده الـ callbacks في الـ UI (`onRefresh: context.read<LibraryCubit>().refresh`) بيتغير فيها اسم الـ type بس.
+3. <b>الـ builders:</b> `Consumer` يبقى `BlocBuilder`، وأي `context.watch<LibraryNotifier>().books` يبقى `context.select((LibraryCubit c) => ...)` أو `BlocSelector`.
+4. <b>الـ notifier الـ global الكبير:</b> لو في `AppState extends ChangeNotifier` فوق الـ app فيه كل حاجة، ده مش migration لـ Cubit واحد. ده تقسيم لـ Cubits حسب العمر (درس «الـ State management في مشروع حقيقي»)، وده أهم مكسب في الـ migration كله.
+
+وخلي بالك من فرق واحد في السلوك: `notifyListeners()` بيبلّغ دايمًا، حتى لو مفيش حاجة اتغيرت. الـ `emit` بيتجاهل state `==` للحالية. يعني لو في widget كان بيعتمد على notify من غير تغيير (عشان يعيد animation مثلًا)، هيبطل يشتغل. التستات بتاعة الشاشة هي اللي هتمسك ده.
+
+### Cubit لـ Riverpod: للاكتمال
+
+لو فريق قرر ينقل Readly لـ Riverpod (لأي سبب من اللي في نماذج المشاريع)، نفس الـ strangler. الخريطة سطر بسطر (`emit` ↔ `state =`، و`isClosed` ↔ `ref.mounted`، و`BlocListener` ↔ `ref.listen`، و`blocTest` ↔ `ProviderContainer.test()`) ونسخة Riverpod من هدف القراية والمكتبة في [درس «Riverpod من الصفر ومقارنته بالـ Cubit»](/course/state-management/riverpod/). اللي يخص النقل نفسه حاجتين: الكوبري، والترتيب.
+
+<CodeBlock label="كوبري الـ DI: Riverpod بيقرا اللي get_it بيعمله، لحد ما get_it يتشال">
+
+```dart
+// di/riverpod_bridge.dart: TEMPORARY
+@Riverpod(keepAlive: true)
+LibraryRepository libraryRepository(Ref ref) => getIt<LibraryRepository>();
+```
+
+</CodeBlock>
+
+<b>الترتيب:</b>
+
+1. <b>`ProviderScope` فوق الـ app:</b> بيعيش جنب الـ `MultiBlocProvider` عادي. ولا شاشة بتتغير.
+2. <b>كوبري الـ DI:</b> provider لكل repository وuse case بيقرا من get_it. كده الـ Notifiers الجديدة بتاخد نفس النسخ اللي الـ Cubits بتاخدها.
+3. <b>شاشة شاشة:</b> الـ Cubit يبقى Notifier واحد، و<b>الـ state class نفسها تفضل</b> (`LibraryState` بالـ `isRefreshing` والـ `refreshFailure`): `build()` بيرجّع `LibraryLoading()` وبيشترك في `watchLibrary()` مع `ref.onDispose(sub.cancel)`، و`refresh()` هي هي بـ `ref.mounted` مكان `isClosed`. كده الـ View بيتغير فيها طريقة القراية بس، والـ goldens بتفضل زي ما هي. الشكل الـ idiomatic اللي في درس Riverpod (`libraryBooksProvider` بـ `AsyncValue` و`LibraryRefresh` لوحده) خطوة تانية بعدين، مش جزء من النقل.
+4. <b>get_it في الآخر:</b> لما كل الشاشات تتنقل، الـ providers تبني الـ repositories بنفسها بدل ما تقرا من get_it، وget_it يتشال.
+
+### التستات خضرا طول الطريق
+
+الـ migration من غير تستات اسمه rewrite بعيون مقفولة. كل شاشة بتعدّي على 3 مراحل:
+
+1. <b>قبل:</b> تستات للـ controller القديم بتصوّر سلوكه (بـ `flutter test` في GetX، ومع `tearDown(() => Get.deleteAll(force: true))` عشان الـ registry العام مايوصلش من تست للتاني). وغالبًا أول تست هيكشف حاجة: الـ `BookDetailsController` بيضرب في التست لأنه بيقرا `Get.arguments`، يعني معتمد على الـ routing من غير ما حد يعرف.
+2. <b>أثناء:</b> نفس السيناريوهات تتكتب `blocTest` للـ Cubit الجديد. نفس الـ inputs، ونفس النتايج المتوقعة. لو التست القديم بيقول «لو الطلب فشل، الكتاب مايتمسحش»، الجديد بيقول نفس الجملة بالظبط.
+3. <b>الـ widget والـ golden tests للشاشة:</b> دول أهم حاجة، لأنهم بيختبروا اللي المستخدم شايفه، ومش بيعرفوا الـ state management. بيتغير فيهم سطر الـ setup بس (`BlocProvider.value` بـ `MockCubit` بدل `Get.put(FakeController())`)، والـ finders والـ goldens بيفضلوا زي ما هما. لو الـ golden اتغير، يبقى السلوك اتغير. التفاصيل في [درس الـ Golden tests](/course/testing/golden-tests/).
+
+والتستات القديمة بتتمسح مع الـ controller القديم، في نفس الـ PR، مش قبله.
+
+### تقيس التقدم إزاي
+
+«احنا في نص الـ migration» مش رقم. اعمل script بيطلّع أرقام، وخلّي الـ CI يمنعها تزيد:
+
+<CodeBlock label="tool/migration_progress.sh">
+
+```bash
+#!/usr/bin/env bash
+# Prints migration numbers for the PR summary, fails if legacy usage grew.
+set -eu # no pipefail: grep exits 1 on zero matches, and zero is the goal
+
+legacy_files=$(grep -rl "package:get/" lib | wc -l)
+controllers=$(grep -rl "extends GetxController" lib | wc -l)
+finds=$(grep -ro "Get\.find" lib | wc -l)
+cubits=$(grep -rlE "extends (Cubit|Bloc)<" lib | wc -l)
+
+echo "files importing get: $legacy_files"
+echo "GetX controllers:    $controllers"
+echo "Get.find calls:      $finds"
+echo "Cubits/Blocs:        $cubits"
+
+# Ratchet: the baseline only goes down. Update it in the PR that removes usage.
+baseline=$(cat tool/getx_baseline.txt)
+if [ "$legacy_files" -gt "$baseline" ]; then
+  echo "New GetX usage: $legacy_files files > baseline $baseline"
+  exit 1
+fi
+```
+
+</CodeBlock>
+
+- <b>الـ ratchet:</b> الرقم مسموح ينزل بس. أي PR بيزوّد ملف بيعمل import لـ `get` بيقع في الـ CI. ده «وقّف التسريب» بشكل أوتوماتيك.
+- <b>قيس بالشاشات والـ imports، مش بالسطور:</b> عدد السطور بيتغير لأسباب كتير. عدد الملفات اللي بتعرف الحل القديم هو اللي بيقول فاضل قد إيه.
+- <b>ومعاهم أرقام المستخدم:</b> الـ crash-free rate والـ bugs المفتوحة على الشاشات اللي اتنقلت. لو نزلوا بعد النقل، ده كويس، ولو زادوا، وقّف وافهم ليه قبل الشاشة الجاية.
+- <b>الشاشات الحساسة:</b> لو شاشة زي الدفع خطرها عالي، ممكن تخلي النسختين موجودين ورا feature flag (remote config)، وترجع للقديمة من غير release لو حاجة باظت.
+
+</LessonPart>
+
+<Level n="4" title="قرارات الـ senior">
+
+### امتى الـ migration يستاهل
+
+الـ migration مايتعملش عشان library أحدث طلعت. بيتعمل لما <b>تمن البقاء أكبر من تمن النقل</b>، والتمن ده يبقى مقاس:
+
+- <b>bugs بتتكرر في نفس النوع:</b> 4 bugs في 3 شهور سببها state اتعدلت من مكان غريب، أو emit بعد dispose، أو race. ده معيار 1 و4 بيتكلموا بأرقام.
+- <b>مش قادر تختبر:</b> الـ logic في controllers بتعتمد على routing وregistry عام، والتست بياخد يوم.
+- <b>الـ package بتمنع upgrade:</b> Flutter جديد مش راضي يعمل build، والـ package مافيهاش إصلاح.
+- <b>التوظيف:</b> كل مطوّر جديد بياخد شهر عشان يفهم الـ patterns الخاصة بالمشروع.
+
+ولو مفيش ولا واحدة، الإجابة الصح غالبًا: «الحل الحالي كويس كفاية، خلينا نصلّح الحدود بين الطبقات». الحدود هي اللي بتخلي الـ migration رخيص لما ييجي وقته.
+
+### قرارات
+
+- <b>اختار الحدود، مش الـ library:</b> لو الـ domain والـ data مايعرفوش الـ state management، القرار ده بقى reversible. ده أهم من أي اختيار في الجدول.
+- <b>اكتب القرار وانت بتاخده:</b> ADR فيه البدائل اللي رفضتها وليه. بعد سنة، حد هيقترح Riverpod أو signals، والـ ADR بيفرق بين «حاجة جديدة اتغيرت» و«نفس النقاش تاني».
+- <b>convention واحدة أهم من الاختيار الأمثل:</b> app بحل «كويس» في كل الشاشات أحسن من app بالحل «الأمثل» لكل شاشة لوحدها.
+- <b>حدد عمر للتعايش:</b> اتنين في نفس الوقت مقبول في الـ migration. اتنين لأجل غير مسمى هو الـ smell بتاع Level 3.
+- <b>ماتنقلش وانت بتضيف features:</b> PR فيه «نقل الشاشة لـ Cubit» و«ضيف فلتر جديد» مع بعض مستحيل يتراجع. النقل PR لوحده، سلوكه مطابق للقديم، وتستاته بتثبت ده.
+
+### إزاي تجاوب «ليه اخترت X؟»
+
+في الـ interview وفي الـ ADR، الإجابة القوية ليها نفس الشكل:
+
+| الجزء | السؤال اللي بيجاوبه |
+| --- | --- |
+| السياق | المشروع إيه، والفريق مين، وإيه القيود؟ |
+| المعايير بالترتيب | إيه اللي كان أهم حاجة لينا؟ (مش كل المعايير بنفس الوزن) |
+| البدائل وكسبها | إيه اللي فكرنا فيه، وكان كويس في إيه؟ |
+| القرار | اخترنا إيه بالظبط، ومعاه إيه (الـ ephemeral، والاستثناءات) |
+| التمن | إيه اللي قبلنا نخسره؟ |
+| امتى نراجع | إيه اللي لو اتغير، القرار يتغير؟ |
+
+والإجابات الضعيفة: «لأنه الأحسن»، «لأنه الأشهر»، «لأن Google بتنصح بيه» (الـ docs بتاعة Flutter بتعرض أكتر من حل، والـ architecture guide بتاعها بيستخدم ViewModels بـ `ChangeNotifier` كمثال، مش كحكم)، «لأن ده اللي اتعلمته». الإجابة الضعيفة مافيهاش تمن، والإجابة اللي مافيهاش تمن معناها إن صاحبها مافكرش في البدائل.
+
+<Note kind="interview" title="سؤال interview">
+
+«ليه اخترت Cubit/Bloc في المشروع ده؟» Readly app offline-first، الحقيقة فيها drift بيطلّع streams، والكورس كله مبني على إن الـ presentation logic مايعرفش Flutter. فأهم معيارين كانوا: الـ logic يتختبر بـ `dart test`، والتغيير يبقى صريح. الـ Cubit بيدّيني الاتنين: `emit` محمي، وstates immutable بـ `==`، و`BlocObserver` واحد بيبعت كل تغيير لـ Sentry. والـ Bloc في نفس الـ package للحالات اللي فيها inputs بتتزاحم زي البحث. فكرنا في Riverpod، وهو أقوى في الـ caching والـ DI، بس احنا عندنا get_it وdrift بيعملوا الحاجتين دول، والـ caching بتاعه مكانه مش عندنا. والتمن اللي قبلناه: ملفات أكتر لكل شاشة، والـ concurrency في الـ Cubits بإيدنا. ولو الـ app بقى بيعتمد على بيانات سيرفر من غير DB محلية، أو الفريق اتغير وأغلبه بيعرف Riverpod، هنراجع القرار، وده سهل لأن الـ domain والـ data مايعرفوش bloc.
+
+</Note>
+
+### الـ ADR بتاع Readly
+
+نفس شكل الـ ADR في [درس «التوسّع والـ production»](/course/di-scale/scale/) في الوحدة 6، بس بالأجزاء الزيادة اللي قرار زي ده محتاجها:
+
+<CodeBlock label="docs/adr/007-state-management.md">
+
+```markdown
+# ADR 007: Cubit/Bloc for presentation state
+
+Status: Accepted (2026-10)
+
+## Context
+- Offline-first app: drift is the source of truth and exposes streams.
+- Presentation logic must be testable with plain `dart test` (no Flutter).
+- DI is get_it + injectable; navigation is go_router.
+- Team: 1 senior, 2 mid-level. Two of three have shipped Bloc before.
+
+## Criteria (in order)
+1. Clean Architecture fit: no Flutter in presentation logic, nothing in domain/data.
+2. Explicit, immutable state changes.
+3. One place to observe every change (Sentry breadcrumbs).
+4. Team experience and hiring.
+
+## Options considered
+- provider + ChangeNotifier: simple and well known; mutable state, notify discipline,
+  view models depend on Flutter.
+- Riverpod 3: strong async, caching and DI in one tool; would also replace get_it,
+  codegen, steeper for the team. Its caching overlaps with drift.
+- Cubit/Bloc: explicit emit, immutable states, BlocObserver, bloc_test, bloc_lint.
+- GetX: fastest start; implicit mutation, global locator, Flutter in controllers.
+- MobX / Redux / signals: codegen-heavy / verbose and low activity / young for us.
+
+## Decision
+- Cubit by default. Bloc when inputs race and need different policies (catalog).
+- setState / ValueNotifier for ephemeral widget state.
+- bloc_lint recommended rules in CI.
+
+## Consequences
++ Every state change goes through emit and is visible in one observer.
++ Presentation tests are pure Dart; Cubit <-> Bloc swaps don't touch the UI.
+- More files per screen (state + cubit, + event for Bloc).
+- Concurrency in Cubits is manual (flags, request ids).
+- No built-in request caching: drift streams fill that role.
+
+## Revisit when
+- Most data comes from the server without a local DB.
+- Most of the team (or new hires) know Riverpod better than Bloc.
+- bloc stops supporting the current Flutter stable.
+```
+
+</CodeBlock>
+
+- <b>الـ «Criteria in order»:</b> أهم سطر. من غيره، أي حد يقدر يقول «بس Riverpod أحسن في الـ caching» والنقاش يبدأ من الأول. معاه، الرد: «صح، والـ caching مش في أول 4 معايير عندنا».
+- <b>الـ «Consequences» فيها سالب:</b> ADR مافيهوش تمن، مش ADR، ده إعلان.
+- <b>الـ «Revisit when»:</b> بيحوّل «ليه مانقلناش لـ X؟» لسؤال ليه إجابة: «الشروط دي اتحققت؟».
+
+### خرافات منتشرة
+
+| الخرافة | الحقيقة |
+| --- | --- |
+| «اختيار الـ state management بيحدد جودة الـ app» | الجودة بتيجي من الحدود بين الطبقات، وتصميم الـ state، والتستات. app بـ GetX فيه domain نضيف وتستات أحسن من app بـ Bloc الـ Bloc فيه بيكلّم dio وبيعمل navigation |
+| «X مات» | «مات» معناها مايشتغلش مع Flutter الجاي ومحدش هيصلحه. `flutter_redux` مانزلش من 4 سنين وشغال، لأنه صغير ومستقر. السؤال الصح: في bug بيمنعني؟ وأقدر أصونه لو اتساب؟ |
+| «الأشهر هو الأأمن» | الأشهر معناه ناس أكتر تعرفه وإجابات أكتر على الإنترنت، وده مكسب حقيقي. بس معناه كمان tutorials أكتر بتعلّم استخدام غلط. الشهرة معيار واحد من 12 |
+| «لازم تنقل لأحدث حاجة» | الـ migration تمنه شهور، ومالوش قيمة للمستخدم إلا لو بيحل ألم مقاس |
+| «الـ reactivity الدقيقة يعني app أسرع» | الـ rebuild نادرًا ما بيبقى المشكلة. قيس في DevTools قبل ما تقرر |
+| «لازم حل واحد للـ app كله» | الـ built-ins للـ ephemeral جنب أي حل طبيعي. اللي لازم يبقى واحد: الحل الأساسي للـ app state |
+| «Riverpod هيحل محل Bloc» أو العكس | الاتنين نشطين ومحترمين، وكل واحد بيكسب في حاجات. الاختيار حسب المعايير، مش حسب مين «هيكسب» |
+
+<Note kind="interview" title="سؤال interview">
+
+«دخلت شركة عندها app بـ GetX فيه 60 شاشة، والـ CTO عايز ينقله لـ Bloc. تعمل إيه؟» أول حاجة أسأل: إيه الألم؟ لو في bugs بتتكرر أو مش قادرين نختبر، يبقى في سبب، وأقيسه. بعدين مش rewrite: strangler. وقّف أي GetX جديد بـ CI check بيعدّ الـ imports، ونزّل مصدر الحقيقة للـ repositories عشان الـ controllers القديمة والـ Cubits الجديدة يسمعوا على نفس الـ stream، وابدأ بشاشات مالهاش جيران، وكل شاشة PR لوحده بتستات بتصوّر السلوك قبل النقل، والـ widget tests والـ goldens بتفضل زي ما هي. الـ routing بتاع GetX آخر حاجة، لأن الـ Cubits بتشتغل تحت `GetMaterialApp` عادي. وتعريف «خلصنا» إن `get` اتشال من الـ pubspec. ولو مفيش ألم مقاس، أقترح بدل الـ migration إننا نصلّح الحدود بين الطبقات، وده بيخلّي أي migration بعدين أرخص.
+
+</Note>
+
+</Level>
+
+<Quiz>
+
+<Question id="sm-choose-1">
+<Ask>اذكر سؤالين بتسألهم لأي state management عشان تعرف الـ fit بتاعه مع Clean Architecture. وإيه التسريب الشائع في Riverpod وفي GetX؟</Ask>
+<Answer>
+
+السؤال الأول: الـ presentation logic يتختبر بـ `dart test` من غير Flutter؟ والتاني: الـ domain والـ data مايعرفوش الـ library خالص؟ في Riverpod التسريب الشائع `@riverpod` فوق الـ repository في ملف الـ data، أو use case بياخد `Ref`، والحل إن الـ providers تعيش في ملف DI أو الـ presentation والـ classes نفسها عادية. في GetX التسريب `Get.find` جوه الـ repository (dependency مستخبية) و`Get.snackbar` جوه الـ controller، والحل constructor injection والـ UI تعرض الرسايل.
+
+</Answer>
+</Question>
+
+<Question id="sm-choose-2">
+<Ask>`HomeCubit` جديد محتاج «الكتب اللي بتقراها دلوقتي»، والبيانات دي جوه `LibraryController` بتاع GetX اللي لسه مانتقلش. زميلك كتب `Get.find<LibraryController>()` في الـ constructor. إيه المشكلة، والحل؟</Ask>
+<Answer>
+
+المشكلة إن الـ Cubit بقى معتمد على الـ GetX registry: dependency مستخبية، وعمره بقى مربوط بعمر الـ controller، والتست محتاج الاتنين. ولما الـ Library تتنقل، الـ Home هيتكسر. الحل الأحسن إن الحقيقة تنزل للـ repository (`watchLibrary()`)، والـ controller القديم يبقى مستمع (`listen(books.assignAll)`)، والـ Cubit يسمع على نفس الـ stream. ولو ده مش ممكن دلوقتي: contract في الـ domain (`ReadingNowSource`) وadapter مؤقت في الـ composition root بيقرا من الـ controller، ويبدأ بالقيمة الحالية لأن stream الـ Rx مابيعيدش آخر قيمة. الـ Cubit بياخد الـ contract في الـ constructor ومايعرفش إن وراه GetX.
+
+</Answer>
+</Question>
+
+<Question id="sm-choose-3">
+<Ask>بتنقل شاشة من `ChangeNotifier` لـ Cubit. كل التستات خضرا، بس animation كانت بتتعاد لما المستخدم يدوس «تحديث» بطّلت تشتغل. إيه اللي حصل غالبًا؟</Ask>
+<Answer>
+
+`notifyListeners()` بيبلّغ كل مرة يتنادى، حتى لو مفيش حاجة اتغيرت، فالـ widget كان بيتبني تاني ويعيد الـ animation. الـ `emit` بيتجاهل state `==` للحالية، فلو التحديث رجّع نفس البيانات، مفيش rebuild. الحل إن الحاجة اللي الـ UI بتتفاعل معاها تبقى جزء من الـ state فعلًا (مثلًا `isRefreshing` بيتقلب، أو `refreshedAt`)، والـ animation تتشغل من `BlocListener` على التغيير ده. والدرس: الـ migration لازم يكون معاه widget test للسلوك ده بالظبط، مش بس تستات للـ logic.
+
+</Answer>
+</Question>
+
+<Question id="sm-choose-4">
+<Ask>مشروعين: (أ) agency بتسلّم app لعميل وهيتسلّم لفريق تاني بعد سنة. (ب) app لمحرر ملاحظات فيه canvas بيتحدّث مع كل حركة صباع. ترشّح إيه لكل واحد؟</Ask>
+<Answer>
+
+(أ) Cubit/Bloc بـ conventions ثابتة وbloc_lint: الأهم إن فريق غريب يفهم الكود من غير ما يسأل، والحل المعروف والموثّق والصريح بيكسب. (ب) الحل الأساسي (Cubit مثلًا) لباقي الـ app، وsignals أو `ValueNotifier` للـ canvas بس، لأن ده المكان النادر اللي دقة الـ rebuild فيه بتفرق فعلًا، ومع ذلك تقيس في DevTools قبل ما تقرر. والاتنين مع بعض خلط مقبول: كل واحد ليه نوع state واضح.
+
+</Answer>
+</Question>
+
+<Question id="sm-choose-5">
+<Ask>إزاي تقيس تقدم migration من GetX لـ Cubit؟ وإمتى تقول «خلصنا»؟</Ask>
+<Answer>
+
+بأرقام من الكود، مش بالإحساس: عدد الملفات اللي بتعمل import لـ `package:get/`، وعدد الـ `GetxController`، وعدد الـ `Get.find`، والشاشات اللي اتنقلت من الجرد. وCI check بـ ratchet: الرقم مسموح ينزل بس، فأي GetX جديد بيقع. ومعاهم أرقام المستخدم (crash-free، bugs الشاشات اللي اتنقلت) عشان تعرف إن النقل ماكسرش حاجة. و«خلصنا» يعني `get` اتشال من `pubspec.yaml`، بما فيه الـ routing، مش «أغلب الشاشات اتنقلت».
+
+</Answer>
+</Question>
+
+<Question id="sm-choose-6">
+<Ask>حد في الفريق بيقول: «لازم ننقل من Redux، الـ `flutter_redux` مانزلش من 4 سنين، يعني مات». ترد بإيه؟</Ask>
+<Answer>
+
+«مانزلش من فترة» مش هي «مات». السؤال: شغال مع آخر Flutter stable؟ في bug بيمنعنا؟ ولو اتساب، نقدر نصونه؟ `flutter_redux` صغير جدًا، فلو حصلت مشكلة، fork مقبول. الـ migration يستاهل لما تمن البقاء يبقى أكبر من تمن النقل ويبقى مقاس: bugs بتتكرر، أو مش قادرين نوظّف، أو الـ package بتمنع upgrade. لو مفيش ده، نسيبه ونكتب ADR بالشروط اللي لو اتحققت هننقل. ولو اتحققت، strangler شاشة شاشة، مش rewrite.
+
+</Answer>
+</Question>
+
+</Quiz>

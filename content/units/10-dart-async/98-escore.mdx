@@ -126,7 +126,7 @@ class FollowSyncBus {
 
 #### الـ operators من غير rxdart
 
-مفيش rxdart ولا `stream_transform` في المشروع. فالـ debounce بيتعمل بـ `Timer`، والتجميع بـ `Timer` و`Map` (التفاصيل في درس Escore في وحدة Cubit وBloc). ده شغال، بس كل Cubit بيكتبه من الأول بطريقته، وكل `Timer` لازم يتلغي في `close()` بالإيد. operator زي `debounceTime` جاهز ومتجرّب كان هيشيل الكود ده كله.
+مفيش rxdart ولا `stream_transform` في المشروع. فالـ debounce بيتعمل بـ `Timer`، والتجميع بـ `Timer` و`Map` (التفاصيل في درس Escore في وحدة الـ State management). ده شغال، بس كل Cubit بيكتبه من الأول بطريقته، وكل `Timer` لازم يتلغي في `close()` بالإيد. operator زي `debounceTime` جاهز ومتجرّب كان هيشيل الكود ده كله.
 
 ### عمر الـ subscription: اللي اتعمل صح واللي اتسرّب
 

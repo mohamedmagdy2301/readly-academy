@@ -1,0 +1,1124 @@
+---
+title: "أدوات Flutter وProvider: setState وInheritedWidget وValueNotifier وChangeNotifier"
+description: "الأدوات اللي في Flutter نفسه من الصفر: InheritedWidget وإزاي الـ context بيلاقيه، وInheritedNotifier، وValueNotifier وChangeNotifier والـ builders بتوعهم، وفخ FutureBuilder وStreamBuilder، وبعدين package provider صح، وإن BlocProvider وcontext.read هما provider من تحت. وهدف القراية وشاشة المكتبة مكتوبين بيهم، بأمانة: إيه الحلو وإيه اللي بيوجع."
+minutes: 45
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="لوحة الإعلانات في مدخل العمارة">
+
+في عمارة فيها 10 أدوار، الإدارة عايزة تقول للسكان «المية هتقطع بكرة». الطريقة الأولى: تدّي الورقة لساكن الدور الأول، وهو يدّيها للتاني، وهكذا لحد العاشر. كل دور في النص شايل ورقة مش بتاعته، ولو واحد نسي، اللي فوقه مش هيعرف. ده الـ prop drilling اللي شفناه في الدرس اللي فات.
+
+الطريقة التانية: لوحة إعلانات في المدخل. أي ساكن عايز يعرف حاجة بينزل يبص عليها، من غير ما حد يعدّيله ورق. بس اللوحة لوحدها مش بتجري ورا حد: لو الإعلان اتغير، محدش هيعرف غير لما يبص تاني. فالإدارة بتعمل حاجة زيادة: اللي عايز يتبلّغ بيكتب اسمه في ليستة جنب اللوحة، وأول ما إعلان جديد يتعلق، البواب بيخبّط على الأسامي اللي في الليستة بس.
+
+وفي سؤال تالت محدش بيفكر فيه لحد ما يبوظ: مين اللي علّق اللوحة، ومين هيشيلها لما العمارة تتهد؟ لو محدش مسؤول، هتلاقي لوحات قديمة متعلقة، وبواب بيخبّط على شقق فاضية.
+
+</Analogy>
+
+الحكاية دي هي الـ state management كله، في Flutter وبره Flutter. أي حل هتقابله، من `setState` لحد Riverpod، بيجاوب على 3 أسئلة:
+
+1. <b>الـ widget بيوصل للـ state إزاي؟</b> (اللوحة في المدخل بدل الورقة اللي بتتنقل)
+2. <b>بيعرف إنها اتغيرت إزاي؟</b> (الليستة والبواب)
+3. <b>مين بيعملها ومين بيقفلها؟</b> (مين علّق اللوحة ومين هيشيلها)
+
+وFlutter نفسه، من غير أي package، عنده إجابة لكل سؤال: `InheritedWidget` للوصول، و`Listenable` (ومنه `ValueNotifier` و`ChangeNotifier`) للتبليغ، والـ `State` بتاع StatefulWidget للعمر (`initState` و`dispose`). والـ package اسمها `provider` بتلزق التلاتة في بعض. و`flutter_bloc` اللي هتستخدمه بقية الوحدة مبنية فوق `provider` بالظبط.
+
+### ليه تتعلم الأدوات دي لو هنستخدم Cubit؟
+
+- <b>لأنك بتستخدمها كل يوم من غير ما تاخد بالك:</b> `Theme.of(context)` و`MediaQuery.of(context)` و`Navigator.of(context)` كلهم InheritedWidget. والـ `TextEditingController` و`ScrollController` و`AnimationController` كلهم Listenable.
+- <b>لأن `BlocProvider` و`context.read` و`context.watch` مش سحر:</b> هما provider، وprovider هو InheritedWidget. لما تفهم الطبقة اللي تحت، كل error زي `ProviderNotFoundException` هيبقى ليه معنى.
+- <b>لأن في حاجات Cubit فيها كتير:</b> toggle في widget واحد، أو زرار بيتفعّل لما الـ TextField مايبقاش فاضي. دي ليها أدوات أصغر.
+- <b>لأنك هتشتغل في مشاريع مكتوبة بيها:</b> provider مع ChangeNotifier لسه من أكتر الطرق انتشارًا في Flutter، وفي مشاريع شغالة بيها من سنين.
+
+### الأدوات في جدول
+
+| الأداة | بتحل إيه | مابتحلّش إيه |
+| --- | --- | --- |
+| `setState` | state جوه widget واحد | أي حد بره الـ widget ده (الدرس اللي فات) |
+| `InheritedWidget` | الوصول من أي حتة تحت من غير drilling، وrebuild للي محتاج بس | الـ state نفسها: هو immutable، ولازم حد فوقه يعيد بناءه |
+| `ValueNotifier` و`ChangeNotifier` | object بره الـ widgets يمسك قيمة ويبلّغ اللي سامعين | الوصول ليه، ومين يعمله dispose |
+| `ValueListenableBuilder` و`ListenableBuilder` | يعيد بناء حتة صغيرة لما الـ notifier يبلّغ | مين صاحب الـ notifier |
+| `InheritedNotifier` | InheritedWidget وListenable في widget واحد | الإنشاء والـ dispose |
+| `FutureBuilder` و`StreamBuilder` | يعرض نتيجة async من غير ما تكتب listen وcancel | مين بيعمل الـ Future أو الـ Stream ومتى |
+| `provider` (package) | الإنشاء والـ dispose والوصول والـ select، في سطر | شكل الـ state، والـ async races، والـ logging |
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### InheritedWidget: اللوحة اللي في المدخل
+
+في [درس "الـ State من الصفر"](/course/state-management/state-basics/) الكتب كانت بتتنقل في الـ constructors لحد ما توصل للزرار. الـ `InheritedWidget` هو حل Flutter لده. خلينا نعمله بإيدينا لهدف القراية (20 صفحة، من 5 لـ 200، بخطوة 5):
+
+<CodeBlock label="InheritedWidget بيشيل الهدف">
+
+```dart
+class ReadingGoalScope extends InheritedWidget {
+  const ReadingGoalScope({
+    super.key,
+    required this.pages,
+    required this.onIncrease,
+    required this.onDecrease,
+    required super.child,
+  });
+
+  final int pages;
+  final VoidCallback onIncrease;
+  final VoidCallback onDecrease;
+
+  // listens: the caller rebuilds when pages changes
+  static ReadingGoalScope of(BuildContext context) {
+    final scope = context.dependOnInheritedWidgetOfExactType<ReadingGoalScope>();
+    assert(scope != null, 'No ReadingGoalScope above this context');
+    return scope!;
+  }
+
+  // doesn't listen: for callbacks
+  static ReadingGoalScope read(BuildContext context) =>
+      context.getInheritedWidgetOfExactType<ReadingGoalScope>()!;
+
+  @override
+  bool updateShouldNotify(ReadingGoalScope oldWidget) => oldWidget.pages != pages;
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `dependOnInheritedWidgetOfExactType`:</b> بيرجّع أقرب `ReadingGoalScope` فوق الـ context، و<b>بيسجّل الـ widget ده كـ dependent</b>. يعني «لما الـ scope ده يتغير، ابنيني تاني». ده بالظبط اللي `Theme.of(context)` بيعمله، وعشان كده لما تغيّر الثيم كل اللي نادى `Theme.of` بيتبني.
+- <b>الـ `getInheritedWidgetOfExactType`:</b> نفس البحث، من غير تسجيل. بتاخد الـ widget ومش هتتبني لو اتغير. ده اللي محتاجه جوه `onPressed`: الزرار عايز ينادي `onIncrease`، مش عايز يتبني كل ما الرقم يتغير.
+- <b>البحث مش بيمشي لفوق:</b> كل element في الشجرة شايل جدول بالـ InheritedWidgets اللي فوقه بالنوع بتاعها، فالـ lookup سريع مهما كانت الشجرة عميقة. وعشان كده بالنوع «بالظبط» (`ExactType`): subclass من `ReadingGoalScope` مش هيتلاقي لو طلبت الأب.
+- <b>الـ `updateShouldNotify`:</b> لما الـ scope يتبني تاني بقيمة جديدة، Flutter بيسأله: «الـ dependents محتاجين يعرفوا؟». بنرجّع `true` لو الرقم اتغير بس. الـ callbacks مش داخلة في المقارنة، لأنها functions جديدة في كل build ومش هتبقى `==` أبدًا، ولو قارنّاها كل build هيبقى notify.
+
+بس فيه حاجة ناقصة: الـ `InheritedWidget` <b>immutable</b>. الـ `pages` فيه `final`. مايقدرش يغيّر نفسه. لازم حد فوقه يمسك الرقم الحقيقي ويبنيه من جديد بقيمة جديدة. والحد ده StatefulWidget عادي:
+
+<CodeBlock label="الـ Host: الـ state الحقيقية فوق الـ scope">
+
+```dart
+class ReadingGoalHost extends StatefulWidget {
+  const ReadingGoalHost({super.key, required this.child});
+  final Widget child;
+
+  @override
+  State<ReadingGoalHost> createState() => _ReadingGoalHostState();
+}
+
+class _ReadingGoalHostState extends State<ReadingGoalHost> {
+  int _pages = 20;
+
+  @override
+  Widget build(BuildContext context) {
+    return ReadingGoalScope(
+      pages: _pages,
+      onIncrease: () {
+        if (_pages < 200) setState(() => _pages += 5);
+      },
+      onDecrease: () {
+        if (_pages > 5) setState(() => _pages -= 5);
+      },
+      child: widget.child, // the same instance every build
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="اللي تحت بيقرا من غير ما حد يعدّيله حاجة">
+
+```dart
+class GoalText extends StatelessWidget {
+  const GoalText({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final pages = ReadingGoalScope.of(context).pages; // registers a dependency
+    return Text(AppLocalizations.of(context)!.pagesPerDay(pages));
+  }
+}
+
+class IncreaseButton extends StatelessWidget {
+  const IncreaseButton({super.key});
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+        onPressed: () => ReadingGoalScope.read(context).onIncrease(),
+        icon: const Icon(Icons.add),
+      );
+}
+```
+
+</CodeBlock>
+
+<Diagram name="d-sm-inherited-lookup">
+
+الـ Host بيعمل setState فبيبني ReadingGoalScope بقيمة جديدة. الـ updateShouldNotify بترجّع true، فالـ GoalText (اللي عمل dependOn) بس هو اللي بيتبني. الـ Column اللي في النص مابيتبنيش لأن الـ child هو نفس الـ instance، والزرار ماسجّلش dependency.
+
+</Diagram>
+
+أهم سطر في الـ Host هو `child: widget.child`. الـ child ده اتعمل مرة واحدة بره الـ Host، فلما `setState` يبني الـ scope من جديد، الـ child هو <b>نفس الـ object</b>. وFlutter لما يلاقي نفس الـ widget instance في نفس المكان، مابيبنيهوش تاني. فالـ Scaffold والـ Column وكل اللي في النص مابيتبنوش. اللي بيتبني بس هو اللي سجّل dependency. ده الفرق الكبير بينه وبين رفع الـ state بـ `setState` في الـ shell: هناك أي تغيير كان بيبني كل اللي تحت.
+
+وفي قاعدة هتخبط فيها أول مرة: `ReadingGoalScope.of(context)` جوه `initState` بيرمي error: «dependOnInheritedWidgetOfExactType was called before initState() completed». الـ State لسه مش متركّب في الشجرة بشكل كامل، فمينفعش يسجّل dependency. لو محتاج قيمة من InheritedWidget أول ما الـ State يتعمل، مكانها `didChangeDependencies`، اللي بيتنادى بعد `initState` على طول، وتاني كل ما dependency تتغير.
+
+### ValueNotifier: الـ ValueHolder اللي في Flutter
+
+في درس «الـ State من الصفر» عملنا `ValueHolder` بإيدينا: قيمة، وحد يبلّغ لما تتغير، وتجاهل لو القيمة زي ما هي. Flutter عنده واحد جاهز من زمان اسمه `ValueNotifier`:
+
+<CodeBlock label="lib/features/settings/presentation/reading_goal_notifier.dart">
+
+```dart
+import 'package:flutter/foundation.dart';
+
+class ReadingGoalNotifier extends ValueNotifier<int> {
+  ReadingGoalNotifier() : super(defaultGoal);
+
+  static const defaultGoal = 20;
+  static const min = 5;
+  static const max = 200;
+  static const step = 5;
+
+  void increase() {
+    if (value >= max) return;
+    value += step; // the setter notifies the listeners
+  }
+
+  void decrease() {
+    if (value <= min) return;
+    value -= step;
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `value`:</b> getter وsetter. الـ setter بيقارن القيمة الجديدة بالقديمة بـ `==`، ولو مختلفة بيحفظها وبينادي `notifyListeners()`. نفس فكرة `emit` في الـ Cubit بالظبط، حتى الـ dedupe.
+- <b>الـ import:</b> `package:flutter/foundation.dart`، مش `material`. الـ foundation مافيهاش widgets، بس هي Flutter: الملف ده مش هيشتغل بـ `dart run` زي الـ Cubit، ولازم `flutter test`.
+- <b>القواعد في الـ class:</b> الحدود والخطوة مكانها هنا، مش في الـ widget. نفس قاعدة «أول Cubit سطر بسطر».
+
+وعشان تعرضه، `ValueListenableBuilder` بيسمع ويعيد بناء الـ builder بس:
+
+<CodeBlock label="الـ notifier جوه الـ State، والـ builder بيعرضه">
+
+```dart
+class _ReadingGoalPageState extends State<ReadingGoalPage> {
+  final _goal = ReadingGoalNotifier(); // created once, with the State
+
+  @override
+  void dispose() {
+    _goal.dispose(); // yours to close: nobody else will
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<int>(
+      valueListenable: _goal,
+      builder: (context, pages, child) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            onPressed: pages > ReadingGoalNotifier.min ? _goal.decrease : null,
+            icon: const Icon(Icons.remove),
+          ),
+          Text(AppLocalizations.of(context)!.pagesPerDay(pages)),
+          IconButton(
+            onPressed: pages < ReadingGoalNotifier.max ? _goal.increase : null,
+            icon: const Icon(Icons.add),
+          ),
+        ],
+      ),
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `builder: (context, value, child)`:</b> الـ `value` هي القيمة الحالية. والـ `child` لو باصيته للـ builder، بيتبني مرة واحدة ويتعدّى زي ما هو في كل مرة، نفس فكرة `widget.child` في الـ Host. مفيد لو جوه الـ builder حتة تقيلة مابتعتمدش على القيمة.
+- <b>الـ `dispose`:</b> الـ notifier شايل ليستة listeners، وانت اللي عملته فانت اللي تقفله. لو حد تاني لسه ماسكه أو سامع عليه، هيفضل عايش بعد ما الـ State يموت (والـ leak_tracker في تستات Flutter بيعلّم عليه). وأي حد هيستخدمه بعد الـ dispose (يضيف listener أو ينادي `notifyListeners`) بياخد assertion في الـ debug: «A ReadingGoalNotifier was used after being disposed».
+- <b>المكان:</b> الـ notifier field في الـ State، مش متغير جوه `build`. لو اتعمل في `build`، كل rebuild هيعمل notifier جديد بـ 20.
+
+وفيه ثغرة واحدة في `ValueNotifier` لازم تعرفها: الـ setter بتاع `value` <b>public</b>. أي widget يقدر يكتب `goal.value = 999`، والكود هيعدّي من غير ولا warning، والحد اتكسر. في الـ Cubit، الـ `emit` عليه `@protected` والـ analyzer بيصرّخ. هنقفل الثغرة دي في المستوى التالت.
+
+### ChangeNotifier: أكتر من قيمة
+
+الـ `ValueNotifier` نفسه subclass من `ChangeNotifier`. والـ `ChangeNotifier` هو الأداة العامة: class بتمسك أي حاجة عايزها، ولما تخلّص تغيير بتنادي `notifyListeners()` بنفسك:
+
+<CodeBlock label="التشريح">
+
+```dart
+class SyncBadgeNotifier extends ChangeNotifier {
+  int _pending = 0;
+  bool _syncing = false;
+
+  int get pending => _pending;
+  bool get syncing => _syncing;
+
+  void update({required int pending, required bool syncing}) {
+    _pending = pending;
+    _syncing = syncing;
+    notifyListeners(); // one notification for both fields
+  }
+}
+```
+
+</CodeBlock>
+
+| الـ member | بيعمل إيه |
+| --- | --- |
+| `addListener(fn)` | يضيف function تتنادى مع كل `notifyListeners` |
+| `removeListener(fn)` | يشيلها. لازم نفس الـ function بالظبط، مش lambda جديدة |
+| `notifyListeners()` | ينادي كل الـ listeners بالترتيب، في نفس اللحظة (synchronous) |
+| `dispose()` | يمسح الـ listeners، وبعده أي استخدام assertion |
+
+ولاحظ الفرق عن الـ stream بتاع الـ Cubit: `notifyListeners` <b>synchronous</b>. الـ listener بيتنادى قبل ما السطر اللي بعد `notifyListeners()` يتنفذ. ومفيش قيمة بتتبعت مع التنبيه: الـ listener بيتقاله «حاجة اتغيرت»، وهو يروح يقرا الـ getters بنفسه.
+
+وعشان تعرض ChangeNotifier، `ListenableBuilder` (موجود من Flutter 3.10) بيقبل أي Listenable:
+
+<CodeBlock label="ListenableBuilder">
+
+```dart
+ListenableBuilder(
+  listenable: syncBadge,
+  builder: (context, child) => Badge.count(
+    count: syncBadge.pending,
+    isLabelVisible: syncBadge.pending > 0,
+    child: child,
+  ),
+  child: const Icon(Icons.cloud_sync), // built once
+)
+```
+
+</CodeBlock>
+
+قبل Flutter 3.10 كان نفس الشغل بيتعمل بـ `AnimatedBuilder(animation: syncBadge, ...)`، والاسم كان بيلخبط الناس، فلو شفته في كود قديم مع notifier مالوش علاقة بالـ animation، هو نفس الحاجة. ولو widget محتاج يسمع على أكتر من notifier، `Listenable.merge([a, b])` بيعمل listenable واحد بيبلّغ لما أي واحد فيهم يتغير.
+
+### InheritedNotifier: الاتنين في widget واحد
+
+دلوقتي عندنا أداتين كل واحدة ناقصها حاجة: الـ InheritedWidget بيوصل بس immutable، والـ notifier بيتغير ويبلّغ بس لازم حد يعدّيه. `InheritedNotifier` بيجمعهم:
+
+<CodeBlock label="InheritedNotifier">
+
+```dart
+class ReadingGoalScope extends InheritedNotifier<ReadingGoalNotifier> {
+  const ReadingGoalScope({
+    super.key,
+    required ReadingGoalNotifier super.notifier,
+    required super.child,
+  });
+
+  static ReadingGoalNotifier of(BuildContext context) => context
+      .dependOnInheritedWidgetOfExactType<ReadingGoalScope>()!
+      .notifier!;
+}
+```
+
+</CodeBlock>
+
+- <b>مفيش `updateShouldNotify` تكتبها:</b> الـ InheritedNotifier بيسمع على الـ notifier لوحده، وكل `notifyListeners()` بتعيد بناء الـ dependents. مفيش Host بيعمل `setState`.
+- <b>مين بيعمل الـ notifier ومين بيعمله dispose؟</b> لسه انت. لازم StatefulWidget فوق الـ scope يعمله في الـ State ويقفله في `dispose`.
+- <b>والـ widget اللي عايز يقرا من غير ما يسمع؟</b> لازم تكتب method تانية بـ `getInheritedWidgetOfExactType`.
+
+ولو عدّيت على اللي كتبناه: StatefulWidget يملك الـ notifier ويعمله dispose، وInheritedWidget يوصّله، و`of` بيسمع و`read` مابيسمعش، وbuilder يعيد البناء. ده نفس الـ boilerplate في كل feature. والـ package اللي بتكتبه مرة واحدة اسمها `provider`، وده المستوى الجاي.
+
+### FutureBuilder وStreamBuilder: الفخ المشهور
+
+الـ Streams والـ subscriptions والـ cancel ليهم الوحدة 10 كلها، وأخطاء الـ StreamBuilder مع الـ single-subscription في [درس "عمر الـ subscription"](/course/dart-async/lifecycle/). هنا غلطة واحدة بس، لأنها أشهر غلطة في الأداتين:
+
+<CodeBlock label="الطلب بيتبعت مع كل rebuild">
+
+```dart
+@override
+Widget build(BuildContext context) {
+  return FutureBuilder<Result<Book>>(
+    future: getIt<GetBookDetails>()(widget.bookId), // a NEW Future on every build
+    builder: (context, snapshot) {
+      if (snapshot.connectionState == ConnectionState.waiting) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      // ...
+    },
+  );
+}
+```
+
+</CodeBlock>
+
+الـ `build` بيتنادى كتير: الكيبورد فتح، الثيم اتغير، الأب اتبنى. كل مرة السطر ده بيعمل Future جديد، يعني طلب جديد للسيرفر. والـ `FutureBuilder` لما يلاقي Future غير اللي كان معاه، بيسيب القديم ويرجع لـ `ConnectionState.waiting`، فالـ spinner بيظهر تاني فوق بيانات كانت ظاهرة. المستخدم بيكتب ملاحظة، الكيبورد بيطلع، الصفحة كلها بتعمل flash.
+
+<CodeBlock label="الـ Future يتعمل مرة واحدة">
+
+```dart
+class _BookDetailsPageState extends State<BookDetailsPage> {
+  late final Future<Result<Book>> _book; // created once
+
+  @override
+  void initState() {
+    super.initState();
+    _book = getIt<GetBookDetails>()(widget.bookId);
+  }
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<Result<Book>>(
+        future: _book, // the same Future on every build
+        builder: (context, snapshot) => switch (snapshot) {
+          AsyncSnapshot(hasData: true, :final data?) => switch (data) {
+              Success(:final value) => BookDetailsView(book: value),
+              Err(:final failure) => ErrorView(
+                  message: failure.localized(AppLocalizations.of(context)!),
+                ),
+            },
+          _ => const Center(child: CircularProgressIndicator()),
+        },
+      );
+}
+```
+
+</CodeBlock>
+
+ونفس الكلام بالظبط في `StreamBuilder(stream: repository.watchLibrary())` جوه `build`: كل rebuild بيلغي الـ subscription القديمة ويعمل واحدة جديدة، والـ query في drift بتتنفذ من الأول. الـ stream يتعمل مرة في `initState` (أو `late final` field) ويتعدّى للـ builder.
+
+ولاحظ إن الـ FutureBuilder اللي فوق مافيهوش retry. عشان تعمل retry، لازم `setState(() => _book = ...)` بـ Future جديد، ومعاها رجعنا لنفس مشاكل `setState` في الدرس اللي فات. الأداتين دول ممتازين لعرض نتيجة async بسيطة مالهاش منطق. أول ما يبقى في retry، أو refresh، أو قاعدة، ده مكان state حقيقية.
+
+</Level>
+
+<Level n="3" title="provider، والـ features الحقيقية، واللي بيوجع">
+
+### الـ provider: نفس الأدوات من غير الـ boilerplate
+
+<CodeBlock label="pubspec.yaml">
+
+```yaml
+dependencies:
+  provider: ^6.1.5
+```
+
+</CodeBlock>
+
+الـ package دي معمولة عشان تشيل الـ boilerplate اللي كتبناه في المستوى اللي فات. نفس الهدف بـ provider:
+
+<CodeBlock label="ChangeNotifierProvider بدل Host وInheritedNotifier">
+
+```dart
+class ReadingGoalPage extends StatelessWidget {
+  const ReadingGoalPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ChangeNotifierProvider(
+      create: (_) => ReadingGoalNotifier(), // created lazily, disposed for you
+      child: const ReadingGoalView(),
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `create`:</b> بيتنادى مرة واحدة طول عمر الـ provider، ومش بيتنادى غير لما أول widget يطلب الـ notifier (lazy). ده الـ `initState` اللي كنا بنكتبه.
+- <b>الـ dispose:</b> لما الـ provider يتشال من الشجرة، بينادي `dispose()` على اللي عمله. ده الـ `dispose` اللي كنا بنكتبه.
+- <b>الـ InheritedWidget والـ listening:</b> جوه. الـ provider بيسمع على الـ notifier، ولما يبلّغ، بيعيد بناء اللي طلبه بـ `watch` بس.
+
+وفي `.value` لما الـ object موجود قبل كده وانت مش صاحبه:
+
+<CodeBlock label="create ولا value">
+
+```dart
+// the provider owns it: creates it and disposes it
+ChangeNotifierProvider(create: (_) => LibraryNotifier(...), child: ...)
+
+// someone else owns it (a parent provider, get_it): never disposed here
+ChangeNotifierProvider.value(value: existingNotifier, child: ...)
+```
+
+</CodeBlock>
+
+نفس القاعدة اللي هتشوفها في `BlocProvider` و`BlocProvider.value`، وفي نفس الغلطة: `ChangeNotifierProvider.value(value: LibraryNotifier())` جوه `build` بيعمل notifier جديد كل rebuild، والقديم مابيتعملوش dispose أبدًا.
+
+### القراية: watch وread وselect وConsumer وSelector
+
+<CodeBlock label="ReadingGoalView بـ provider">
+
+```dart
+class ReadingGoalView extends StatelessWidget {
+  const ReadingGoalView({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final pages = context.select((ReadingGoalNotifier g) => g.value);
+    final goal = context.read<ReadingGoalNotifier>();
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          onPressed: pages > ReadingGoalNotifier.min ? goal.decrease : null,
+          icon: const Icon(Icons.remove),
+        ),
+        Text(AppLocalizations.of(context)!.pagesPerDay(pages)),
+        IconButton(
+          onPressed: pages < ReadingGoalNotifier.max ? goal.increase : null,
+          icon: const Icon(Icons.add),
+        ),
+      ],
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+| الطريقة | بتعمل إيه | مكانها |
+| --- | --- | --- |
+| `context.watch<T>()` | بيرجّع الـ object، وبيعيد بناء الـ widget مع كل notify | `build` بس |
+| `context.read<T>()` | بيرجّع الـ object من غير ما يسمع | الـ callbacks (`onPressed`)، و`initState` |
+| `context.select((T x) => ...)` | بيسمع، بس بيعيد البناء لو القيمة المختارة اتغيرت بس | `build` بس |
+| `Consumer<T>(builder: (context, value, child) => ...)` | زي `watch`، بس جوه widget صغير، فاللي بيتبني الـ builder بس | جوه أي build |
+| `Selector<T, S>(selector: (context, x) => ..., builder: ...)` | زي `select`، بس محصور في الـ builder | جوه أي build |
+
+- <b>الـ select بيقارن إزاي؟</b> provider بيقارن القيمة الجديدة بالقديمة بـ `DeepCollectionEquality` من package `collection`. يعني ليستة جديدة بنفس العناصر تعتبر «زي ما هي». بس لو انت عدّلت في نفس الليستة، القديمة والجديدة هما نفس الـ object، فمفيش تغيير يتشاف.
+- <b>الـ watch في callback:</b> `onPressed: () => context.watch<T>()...` بيضرب assertion: «Tried to listen to a value exposed with provider, from outside of the widget tree». الـ callback مابيرسمش حاجة، فمفيش معنى إنه يسمع.
+- <b>الـ watch في widget كبير:</b> بيعيد بناء الـ widget كله مع أي notify. لو اللي محتاج القيمة سطر واحد في صفحة كبيرة، `Consumer` أو `Selector` حواليه بس.
+
+لو الجدول ده شكله مألوف، فده لأنه نفس الجدول بالظبط في [درس "flutter_bloc بالتفصيل"](/course/state-management/flutter-bloc-widgets/). وده مش صدفة.
+
+### MultiProvider وProvider وProxyProvider: الـ provider كـ DI
+
+الـ provider مش بس للـ notifiers. `Provider<T>` بيحط أي object في الشجرة من غير listening، وده بيخليه أداة DI:
+
+<CodeBlock label="الـ dependencies في الشجرة بدل get_it">
+
+```dart
+MultiProvider(
+  providers: [
+    Provider<LibraryRepository>(create: (_) => DriftLibraryRepository(db, api)),
+    ProxyProvider<LibraryRepository, RefreshLibrary>(
+      update: (_, repository, __) => RefreshLibrary(repository),
+    ),
+    ChangeNotifierProvider(
+      create: (context) => LibraryNotifier(
+        context.read<LibraryRepository>(),
+        context.read<RefreshLibrary>(),
+      )..watch(),
+    ),
+  ],
+  child: const LibraryView(),
+)
+```
+
+</CodeBlock>
+
+- <b>الـ `MultiProvider`:</b> شكل أنضف لـ providers جوه بعض. الأول في الليستة هو اللي فوق، فاللي تحته يقدر يقراه بـ `context.read` في الـ `create` بتاعه.
+- <b>الـ `ProxyProvider<A, R>`:</b> object بيعتمد على object تاني من الشجرة. الـ `update` بياخد `(context, a, previous)` وبيتنادى أول مرة، وتاني كل ما `A` يتغير. فيه نسخ لحد 6 dependencies (`ProxyProvider2` ...)، و`ChangeNotifierProxyProvider` لو الناتج notifier.
+- <b>الـ `StreamProvider` و`FutureProvider`:</b> بيحطوا آخر قيمة من stream أو future في الشجرة، وبياخدوا `initialData` إجباري. مناسبين لقيمة بسيطة زي حالة الاتصال، مش لشاشة فيها منطق.
+- <b>في Readly:</b> الـ dependencies في get_it مع injectable ([درس الـ DI في الوحدة 6](/course/di-scale/di/))، والشجرة فيها الـ Cubits بس. ده اختيار، مش قاعدة: فرق كتير بتستخدم provider للاتنين، والـ `RepositoryProvider` في flutter_bloc معمول لده بالظبط.
+
+### الـ BlocProvider هو provider من تحت
+
+افتح source الـ `flutter_bloc` 9.1 وبص على `BlocProvider`. ده تقريبًا كل اللي فيه، مختصر:
+
+<CodeBlock label="flutter_bloc/lib/src/bloc_provider.dart (مختصر)">
+
+```dart
+import 'package:provider/provider.dart';
+
+class BlocProvider<T extends StateStreamableSource<Object?>>
+    extends SingleChildStatelessWidget {
+  // ...
+
+  @override
+  Widget buildWithChild(BuildContext context, Widget? child) {
+    final value = _value;
+    return value != null
+        ? InheritedProvider<T>.value(
+            value: value,
+            startListening: _startListening,
+            lazy: lazy,
+            child: child,
+          )
+        : InheritedProvider<T>(
+            create: _create,
+            dispose: (_, bloc) => bloc.close(),
+            startListening: _startListening,
+            lazy: lazy,
+            child: child,
+          );
+  }
+
+  static VoidCallback _startListening(
+    InheritedContext<StateStreamable<dynamic>?> e,
+    StateStreamable<dynamic> value,
+  ) {
+    final subscription = value.stream.listen(
+      (dynamic _) => e.markNeedsNotifyDependents(),
+    );
+    return subscription.cancel;
+  }
+}
+```
+
+</CodeBlock>
+
+اقرا الكود ده بالراحة، لأنه بيشرح نص الوحدة:
+
+- <b>الـ `InheritedProvider`:</b> نفس الـ widget اللي `ChangeNotifierProvider` مبني عليه. الاتنين InheritedWidget من تحت.
+- <b>الـ `dispose: bloc.close()`:</b> ده اللي بيقفل الـ Cubit لما الصفحة تتقفل. وفي `.value` مفيش `dispose` خالص، وده سبب إن `BlocProvider.value` مابيقفلش.
+- <b>الـ `startListening`:</b> الـ provider بيسمع على `stream` الـ Cubit، ومع كل state جديدة بيقول «الـ dependents محتاجين يتبنوا». في `ChangeNotifierProvider` نفس الحتة بتعمل `addListener` بدل `stream.listen`. يعني الفرق الوحيد بين الاتنين هو <b>مصدر التنبيه</b>: Listenable ولا Stream.
+- <b>الـ `context.read` و`context.watch` و`context.select`:</b> extensions من package provider، وflutter_bloc بتعمل لهم export. فـ `context.watch<LibraryCubit>()` بيعيد بناء الـ widget مع <b>كل</b> state، لأن الـ `startListening` بيبلّغ مع كل حاجة على الـ stream.
+
+<Diagram name="d-sm-provider-layers">
+
+ChangeNotifierProvider وProvider وBlocProvider كلهم مبنيين على InheritedProvider من package provider، واللي مبني على InheritedWidget من Flutter. الفرق بينهم: بيسمعوا على إيه (Listenable ولا Stream ولا مفيش)، وبيقفلوا اللي عملوه إزاي.
+
+</Diagram>
+
+| provider | flutter_bloc | الفرق |
+| --- | --- | --- |
+| `ChangeNotifierProvider` | `BlocProvider` | Listenable ولا Stream، و`dispose()` ولا `close()` |
+| `Provider` | `RepositoryProvider` | تقريبًا مفيش (الـ RepositoryProvider في 9.1 زوّد `dispose`) |
+| `MultiProvider` | `MultiBlocProvider` | مفيش |
+| `Consumer` | `BlocBuilder` | الـ BlocBuilder بيدّيك الـ state مش الـ object، وفيه `buildWhen` |
+| `Selector` | `BlocSelector` | نفس الفكرة |
+| مفيش | `BlocListener` | provider مافيهوش widget لـ side effects، بتكتبه بإيدك (تحت) |
+| `context.read/watch/select` | `context.read/watch/select` | نفس الكود بالظبط |
+
+### الـ feature الأولى: هدف القراية، النسخة النهائية
+
+نقفل ثغرة الـ `value` الـ public. الفكرة: `ChangeNotifier` بـ field private، وبيعمل implement لـ `ValueListenable<int>` عشان لسه يشتغل مع `ValueListenableBuilder` لو حد محتاجه:
+
+<CodeBlock label="ReadingGoalNotifier من غير setter عام">
+
+```dart
+import 'package:flutter/foundation.dart';
+
+class ReadingGoalNotifier extends ChangeNotifier implements ValueListenable<int> {
+  static const defaultGoal = 20;
+  static const min = 5;
+  static const max = 200;
+  static const step = 5;
+
+  int _pages = defaultGoal;
+
+  @override
+  int get value => _pages; // read-only from outside
+
+  void increase() {
+    if (_pages >= max) return;
+    _set(_pages + step);
+  }
+
+  void decrease() {
+    if (_pages <= min) return;
+    _set(_pages - step);
+  }
+
+  void _set(int next) {
+    _pages = next;
+    notifyListeners(); // the only place that notifies
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>`implements ValueListenable<int>`:</b> الـ interface ده فيه `value` getter بس، والـ `addListener` و`removeListener` جايين من `ChangeNotifier`. فالـ class بيتعرض بـ `ValueListenableBuilder` أو بـ provider عادي.
+- <b>الـ `_set`:</b> مكان واحد بيغيّر وبيبلّغ. ده الـ `emit` بتاعك، مكتوب بإيدك. ومفيش dedupe هنا لأن الـ guards بتمنع التكرار.
+- <b>والـ UI:</b> زي `ReadingGoalView` اللي فوق بالظبط.
+
+حط ده جنب `ReadingGoalCubit` في [درس "أول Cubit سطر بسطر"](/course/state-management/first-cubit/): نفس عدد السطور تقريبًا، ونفس الـ guards، ونفس الـ UI مع تغيير أسماء. للـ feature دي، الفرق شبه معدوم، والـ notifier نفسه مش محتاج أي package (provider للـ UI بس). اللي الـ Cubit بيكسبه هنا: `emit` محمي بالـ analyzer، و`onChange` و`BlocObserver` بيشوفوا كل تغيير، وملف Dart خالص بيشتغل بـ `dart test`. ولـ feature بالحجم ده، ده مش كتير.
+
+### الـ feature التانية: المكتبة بـ ChangeNotifier
+
+نفس سلوك `LibraryCubit` في [درس "Cubit ولا Bloc"](/course/state-management/cubit-vs-bloc/) بالظبط: بيسمع على `watchLibrary()`، وفيه pull-to-refresh بـ use case `RefreshLibrary`، والليستة بتفضل ظاهرة وهو بيعمل refresh (`isRefreshing`)، ولو الـ refresh فشل بيظهر SnackBar مرة واحدة (`refreshFailure`) والليستة ماتتمسحش. ونفس `LibraryState` الـ sealed من غير ولا حرف تغيير:
+
+<CodeBlock label="lib/features/library/presentation/library_notifier.dart">
+
+```dart
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
+
+class LibraryNotifier extends ChangeNotifier {
+  LibraryNotifier(this._repository, this._refreshLibrary);
+
+  final LibraryRepository _repository;
+  final RefreshLibrary _refreshLibrary;
+  StreamSubscription<List<Book>>? _sub;
+  bool _disposed = false; // ChangeNotifier has no public "isDisposed"
+
+  LibraryState _state = const LibraryLoading();
+  LibraryState get state => _state;
+
+  void _set(LibraryState next) {
+    if (_disposed) return;
+    _state = next;
+    notifyListeners();
+  }
+
+  void watch() {
+    _sub?.cancel();
+    _sub = _repository.watchLibrary().listen(
+      (books) => _set(switch (_state) {
+        final LibraryLoaded s => s.copyWith(books: books), // keeps isRefreshing
+        _ => LibraryLoaded(books),
+      }),
+      onError: (Object error) => _set(LibraryError(CacheFailure('$error'))),
+    );
+  }
+
+  Future<void> refresh() async {
+    final current = _state;
+    if (current is! LibraryLoaded || current.isRefreshing) return; // one at a time
+    _set(current.copyWith(isRefreshing: true));
+    final result = await _refreshLibrary();
+    if (_disposed) return;
+    final refreshFailure = switch (result) {
+      Success() => null,
+      Err(:final failure) => failure,
+    };
+    if (_state case final LibraryLoaded s) {
+      _set(s.copyWith(isRefreshing: false, refreshFailure: refreshFailure));
+    }
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _sub?.cancel();
+    super.dispose();
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>state واحدة immutable:</b> مش `books` و`isLoading` و`error` كـ fields منفصلة. الـ notifier شايل `LibraryState` واحدة، وبيستبدلها كلها. ده أهم قرار في الملف، ومش الشكل المنتشر للـ ChangeNotifier (هتشوف المنتشر في «قبل وبعد» تحت).
+- <b>الـ `_disposed`:</b> الـ Cubit عنده `isClosed`. الـ ChangeNotifier مالوش getter public يقولك اتعمله dispose ولا لأ، فبتعمل flag بنفسك. ومن غيره: المستخدم ساب الشاشة والـ refresh لسه شغال، فالـ `notifyListeners` بعد الـ await بيضرب assertion في الـ debug.
+- <b>الـ `_sub` والـ cancel في `dispose`:</b> نفس الـ Cubit بالظبط، مفيش أداة بتعملها عنك.
+- <b>الـ `refreshFailure` بيتمسح لوحده:</b> الـ `copyWith` مابيعملش `?? this` للـ failure، فأي `_set` بعده بيمسحه. نفس السلوك في الـ Cubit.
+
+<CodeBlock label="الشاشة">
+
+```dart
+class LibraryPage extends StatelessWidget {
+  const LibraryPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ChangeNotifierProvider(
+      create: (_) => getIt<LibraryNotifier>()..watch(),
+      child: const RefreshFailureListener(child: LibraryView()),
+    );
+  }
+}
+
+class LibraryView extends StatelessWidget {
+  const LibraryView({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.watch<LibraryNotifier>().state;
+    final notifier = context.read<LibraryNotifier>();
+    return switch (state) {
+      LibraryLoading() => const Center(child: CircularProgressIndicator()),
+      LibraryError(:final failure) => ErrorView(
+          message: failure.localized(AppLocalizations.of(context)!),
+          onRetry: notifier.watch,
+        ),
+      LibraryLoaded(:final books) => RefreshIndicator(
+          onRefresh: notifier.refresh, // the Future ends with the refresh
+          child: BookList(books: books),
+        ),
+    };
+  }
+}
+```
+
+</CodeBlock>
+
+والـ SnackBar؟ هنا أول مكان provider فعلًا ناقصه حاجة. مفيش `BlocListener`. فبتكتبه بإيدك:
+
+<CodeBlock label="BlocListener بإيدك">
+
+```dart
+class RefreshFailureListener extends StatefulWidget {
+  const RefreshFailureListener({super.key, required this.child});
+  final Widget child;
+
+  @override
+  State<RefreshFailureListener> createState() => _RefreshFailureListenerState();
+}
+
+class _RefreshFailureListenerState extends State<RefreshFailureListener> {
+  late final LibraryNotifier _notifier;
+  Failure? _shown;
+
+  @override
+  void initState() {
+    super.initState();
+    _notifier = context.read<LibraryNotifier>(); // read (no listening) is fine here
+    _notifier.addListener(_onChange);
+  }
+
+  void _onChange() {
+    final state = _notifier.state;
+    final failure = state is LibraryLoaded ? state.refreshFailure : null;
+    if (failure != null && !identical(failure, _shown)) {
+      final l10n = AppLocalizations.of(context)!;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(failure.localized(l10n))));
+    }
+    _shown = failure; // show each failure once
+  }
+
+  @override
+  void dispose() {
+    _notifier.removeListener(_onChange); // or the callback outlives the widget
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `addListener` في `initState`:</b> مش في `build`. لو اتعمل في build، كل rebuild هيضيف listener جديد، والـ SnackBar هيظهر مرتين وتلاتة.
+- <b>الـ `removeListener` في `dispose`:</b> بنفس الـ function (`_onChange`)، مش lambda جديدة. ده نفس قانون الـ `cancel` في الوحدة 10.
+- <b>الـ `_shown`:</b> الـ listener بيتنادى مع كل notify، مش لما الـ failure يتغير بس. الـ `listenWhen` بتاع `BlocListener` كان بيعمل المقارنة دي عنك.
+
+وزرار الـ refresh في الـ AppBar، اللي بيعرض loading وهو شغال:
+
+```dart
+final refreshing = context.select(
+  (LibraryNotifier n) => switch (n.state) {
+    LibraryLoaded(:final isRefreshing) => isRefreshing,
+    _ => false,
+  },
+);
+```
+
+### الحساب بأمانة
+
+| | ChangeNotifier وprovider | Cubit وflutter_bloc |
+| --- | --- | --- |
+| الـ dependencies | provider بس (أو صفر لو InheritedNotifier بإيدك) | bloc وflutter_bloc (وflutter_bloc جواها provider) |
+| تغيير الـ state | `_set` كتبتها انت، وأي method ممكن تغيّر field وتنسى تبلّغ | `emit`، محمي بالـ analyzer |
+| بعد الـ await | flag `_disposed` بإيدك | `isClosed` جاهز |
+| الـ dedupe | لو عايزه تكتبه | `emit` بيقارن بـ `==` |
+| الـ subscription | بإيدك في `dispose` | بإيدك في `close` (أو `emit.forEach` في Bloc) |
+| SnackBar مرة واحدة | StatefulWidget وaddListener وremoveListener ومقارنة | `BlocListener` بـ `listenWhen` |
+| تاريخ التغييرات | مفيش: الـ listener بيتقاله «اتغيرت» من غير قبل وبعد | `onChange(Change)` فيه القديم والجديد، و`BlocObserver` للـ app كله |
+| التستات | `flutter test` وبتعد الـ notifications بـ addListener | `dart test` و`blocTest` بيقارن ليستة الـ states |
+| الـ Flutter imports | `foundation` (مش UI، بس Flutter) | `package:bloc` بس، Dart خالص |
+| الكود | ملف الـ notifier تقريبًا نفس طول الـ Cubit، والـ listener widget زيادة | ملف الـ Cubit والـ BlocListener سطرين |
+
+الخلاصة اللي هتتكرر في الوحدة: <b>الـ ChangeNotifier المنضبط بيبقى Cubit مكتوب بإيدك.</b> state واحدة immutable، ومكان واحد بيغيّرها، وguard بعد الـ await. كل ده ممكن تعمله بـ ChangeNotifier، بس محدش بيجبرك. والـ Cubit بيجبرك.
+
+### اللي بيوجع في الواقع
+
+الكود اللي فوق مكتوب بانضباط. الكود اللي هتلاقيه في مشاريع حقيقية غالبًا مش كده، والمشاكل دي بتتكرر:
+
+<b>1. نسيت `notifyListeners`</b>
+
+```dart
+void toggleFavorite(BookId id) {
+  _favorites.add(id); // the field changed, nobody was told
+}
+```
+
+مفيش error ولا warning. القلب مابيتلوّنش، لحد ما أي notify تاني ييجي من مكان تاني، فيتلوّن فجأة. في الـ Cubit، مفيش طريقة تغيّر الـ state من غير `emit`، لأن الـ state immutable والـ field الوحيد هو `state`.
+
+<b>2. الـ state قابلة للتعديل من بره</b>
+
+```dart
+class LibraryNotifier extends ChangeNotifier {
+  List<Book> books = []; // public and mutable
+}
+
+// somewhere in a widget
+context.read<LibraryNotifier>().books.removeWhere((b) => b.id == id);
+```
+
+نفس غلطة «الاتجاه الواحد» في الدرس اللي فات، بس هنا الـ API نفسه بيعزمك عليها. ولو عملتها `UnmodifiableListView` أو private بـ getter، انت بتعيد اختراع الـ state الـ immutable.
+
+<b>3. notify وانت بتبني</b>
+
+```dart
+@override
+Widget build(BuildContext context) {
+  // reload() starts with _set(const LibraryLoading()): a sync notify mid-build
+  context.read<LibraryNotifier>().reload();
+  return const LibraryList();
+}
+```
+
+```text
+setState() or markNeedsBuild() called during build.
+```
+
+الـ `notifyListeners` synchronous، فلو اتنادى وFlutter بيبني، الـ provider (وهو فوق الـ widget اللي بيتبني) بيتعلّم «محتاج build» في نص الـ build. والحل إن البداية تبقى في `create` (`..watch()`) زي ما عملنا، مش في `build`. (لاحظ إن `watch()` بتاعتنا مش هتضرب الـ error ده لأنها مابتعملش notify غير لما الـ stream يبعت بعدين، بس هتعمل subscription جديدة مع كل build، وده bug تاني.) ولو ناديت method فيها emit من `build` في Cubit، الـ error ده غالبًا مش هيظهر، لأن الـ stream بيوصّل في microtask بعد ما الـ build يخلص. بس الغلطة نفسها موجودة: الـ method بتتنادى مع كل rebuild. فالـ error هنا في صالحك، بيمسكها بدري.
+
+<b>4. الـ async races بإيدك</b>
+
+refresh واحد في المرة: كتبنا `isRefreshing` guard. بحث بيكتبه المستخدم بسرعة: محتاج request id ترمي بيه الردود القديمة، زي `CatalogSearchCubit` في [درس الـ Cubit في الوحدة 5](/course/presentation/cubit/). ده نفس الشغل في الـ Cubit بالظبط. الفرق إن الـ Bloc عنده transformers (`droppable` و`restartable`) بتحل ده في سطر، وفي ChangeNotifier مفيش مكافئ.
+
+<b>5. مفيش تاريخ</b>
+
+المستخدم بيقول «الليستة اختفت بعد الـ refresh». في Cubit بتفتح الـ logs وتلاقي سطر من `BlocObserver.onChange`: `LibraryLoaded(12 books, refreshing) -> LibraryError(...)`، فبتعرف الـ state اتغيرت من إيه لإيه. في ChangeNotifier، الـ listener بيعرف إن «حاجة اتغيرت» بس. لو عايز logs، تكتبها جوه `_set` في كل notifier، ومفيش مكان واحد للـ app كله.
+
+<b>6. الـ dispose</b>
+
+`ChangeNotifierProvider(create:)` بيعمل dispose عنك. بس أي notifier بتعمله بإيدك (field في State، أو في get_it كـ singleton) مسؤوليتك. والاستخدام بعد الـ dispose assertion في الـ debug، وفي الـ release ساكت.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+### الأدوات دي كفاية امتى في Readly؟
+
+| الحالة في Readly | الأداة | ليه مش Cubit |
+| --- | --- | --- |
+| الباسورد ظاهر ولا مخفي | `setState` | widget واحد، مفيش منطق (الدرس اللي فات) |
+| «اقرا المزيد» في وصف الكتاب في صفحة التفاصيل | `ValueNotifier<bool>` في الـ State | عشان يتبني النص بس، مش الصفحة كلها |
+| زرار «احفظ» في الملاحظة يتفعّل لما النص مايبقاش فاضي | `ListenableBuilder` على الـ `TextEditingController` | الـ controller أصلًا Listenable |
+| الـ router يعيد الـ redirect لما الـ auth يتغير | `ChangeNotifier` كـ `refreshListenable` | go_router بياخد Listenable، زي [درس «go_router والتنقل» في الوحدة 5](/course/presentation/router/) |
+| صفحة التفاصيل، المكتبة، البحث، الـ login | Cubit | فيها طلبات وأخطاء وقواعد وتستات |
+
+<CodeBlock label="ValueNotifier محلي لـ toggle">
+
+```dart
+class _BookDescriptionState extends State<BookDescription> {
+  final _expanded = ValueNotifier(false);
+
+  @override
+  void dispose() {
+    _expanded.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: _expanded,
+      builder: (context, expanded, _) => GestureDetector(
+        onTap: () => _expanded.value = !expanded,
+        child: Text(
+          widget.text,
+          maxLines: expanded ? null : 4,
+          overflow: expanded ? TextOverflow.visible : TextOverflow.ellipsis,
+        ),
+      ),
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="زرار بيتفعّل من الـ TextEditingController">
+
+```dart
+ListenableBuilder(
+  listenable: _controller, // TextEditingController is a ValueNotifier<TextEditingValue>
+  builder: (context, _) => FilledButton(
+    onPressed: _controller.text.trim().isEmpty ? null : _save,
+    child: Text(AppLocalizations.of(context)!.save),
+  ),
+)
+```
+
+</CodeBlock>
+
+- <b>الـ `ValueNotifier` المحلي مكان `setState`:</b> مش أحسن دايمًا. الفرق إن `setState` بيعيد بناء الـ `build` كله، والـ builder بيعيد بناء الحتة اللي جواه بس. في widget صغير زي ده الفرق مش محسوس، فـ `setState` تمام برضه. في صفحة كبيرة فيها حتة واحدة بتتغير كتير، الـ builder بيفرق.
+- <b>الـ TextEditingController مثال مثالي:</b> انت أصلًا عندك Listenable. نقل النص لـ Cubit عشان تفعّل زرار بيعمل نسختين من النص، ولازم تزامنهم.
+- <b>الحد:</b> أول ما يبقى في `await`، أو `Failure`، أو قاعدة عايز تختبرها، أو أكتر من widget بعيد عن بعض محتاجين نفس القيمة، ده مكان Cubit. نفس جدول «الـ state دي مكانها فين؟» في الدرس اللي فات.
+
+### provider لسه ينفع في 2026؟
+
+بأمانة: أيوه. provider 6.1.5 package مستقرة، وصفحة «Simple app state management» في الـ docs الرسمية بتاعة Flutter لسه بتشرح بيها، والـ architecture guide الرسمي بيستخدم ViewModels من نوع `ChangeNotifier`. والراجل اللي كاتبها (Remi Rousselet) عمل بعدها Riverpod عشان يحل مشاكلها، وده [درس لوحده](/course/state-management/riverpod/) بعد الـ Bloc.
+
+| الحلو فعلًا | اللي بيوجع فعلًا |
+| --- | --- |
+| zero dependencies لو بالأدوات اللي في Flutter، وpackage واحدة صغيرة لو provider | الـ state mutable بطبيعتها، والانضباط عليك |
+| رسمي ومشروح في docs Flutter، وأي Flutter developer يفهمه | `notifyListeners` بتتنسى، ومفيش حاجة بتمسكها |
+| بسيط: class وmethods وgetters، من غير مفاهيم جديدة | مفيش تاريخ للتغييرات ومفيش observer للـ app كله |
+| `Selector` و`select` بيدّوك rebuilds مضبوطة | الـ races والـ dispose بإيدك (والـ Cubit كمان، بس عنده `isClosed`) |
+| سهل تنقل منه لـ flutter_bloc: نفس الشجرة ونفس `context.read` | الـ notifier بيعمل import لـ Flutter، فالتست `flutter test` مش `dart test` |
+| مناسب جدًا لـ app صغير أو prototype | مفيش `BlocListener`، فالـ side effects بإيدك |
+
+ليه Readly مختارة Cubit؟ مش لأن ChangeNotifier غلط. لأن كل اللي كتبناه في «الـ feature التانية» عشان نخلي الـ notifier منضبط (state واحدة immutable، و`_set` واحدة، و`_disposed`، وlistener widget للـ SnackBar) هو بالظبط اللي الـ Cubit بيدّيهولك جاهز ومقفول. وفي فريق، الحاجة اللي الـ API بيجبر عليها أحسن من الحاجة اللي الـ code review لازم يمسكها.
+
+ولو دخلت مشروع شغال بـ provider وChangeNotifier؟ ماتعيدش كتابته. طبّق نفس القواعد: state واحدة immutable في كل notifier، وsetter واحد private، وguard بعد الـ await، و`Selector` بدل `watch` في الـ widgets الكبيرة. ولو قررتوا تنقلوا لـ Cubit، النقل بيتعمل feature feature لأن الاتنين عايشين في نفس الشجرة، وده موضوع [درس «تختار state management إزاي»](/course/state-management/choosing/) في آخر الوحدة.
+
+<Note kind="interview" title="سؤال interview">
+
+«إيه علاقة provider بالـ InheritedWidget، وإيه علاقة flutter_bloc بالـ provider؟» الـ InheritedWidget هو آلية Flutter إن widget يوصل لـ data فوقه في الشجرة بـ `dependOnInheritedWidgetOfExactType`، وبيتسجل كـ dependent فيتبني تاني لما `updateShouldNotify` ترجع true. بس هو immutable ومالوش lifecycle. الـ provider بيلف ده في `InheritedProvider`: بيعمل الـ object بـ `create` (lazy)، وبيعمله dispose، وبيسمع عليه بـ `startListening`، وبيدّيك `context.read` و`watch` و`select`. والـ `BlocProvider` في flutter_bloc هو `InheritedProvider` بـ `dispose: bloc.close()` و`startListening` بيسمع على `bloc.stream`. فالـ `context.read<LibraryCubit>()` هو provider، و`context.watch` على Cubit بيعيد البناء مع كل state.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«ChangeNotifier ولا Cubit؟» الاتنين object بره الـ widgets بيمسك state ويبلّغ. الـ ChangeNotifier من Flutter نفسه، بسيط، ومن غير dependencies، بس الـ state فيه mutable بطبيعتها، و`notifyListeners` يدوي وبيتنسى، ومفيش `isDisposed`، ومفيش تاريخ للتغييرات ولا observer عام، وبيعمل import لـ Flutter. الـ Cubit بيجبرك على state immutable واحدة بتتغير بـ `emit` بس (محمي)، وبيقارن بـ `==`، وعنده `isClosed` و`onChange` و`BlocObserver`، وDart خالص فبيتختبر بـ `dart test` و`blocTest`. لـ toggle أو controller، ChangeNotifier أو ValueNotifier كفاية. لشاشة فيها طلبات وأخطاء في فريق، Cubit. والـ ChangeNotifier المنضبط بيطلع Cubit مكتوب بإيدك.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### الـ ChangeNotifier المنتشر والـ ChangeNotifier المنضبط
+
+نفس شاشة المكتبة. «المنتشر» هو الشكل اللي هتلاقيه في tutorials ومشاريع كتير. «المنضبط» هو `LibraryNotifier` بتاعنا مختصر.
+
+<BeforeAfter>
+
+<Side label="المنتشر: fields منفصلة وnotify في كل حتة" kind="before">
+
+```dart
+class LibraryNotifier extends ChangeNotifier {
+  List<Book> books = [];
+  bool isLoading = true;
+  bool isRefreshing = false;
+  Failure? error;
+
+  Future<void> refresh() async {
+    isRefreshing = true;
+    notifyListeners();
+    final result = await _refreshLibrary();
+    isRefreshing = false;
+    if (result case Err(:final failure)) {
+      error = failure;
+    }
+    notifyListeners(); // after dispose? assertion
+  }
+}
+
+// in build:
+if (notifier.error != null) {
+  ScaffoldMessenger.of(context).showSnackBar(...);
+}
+```
+
+</Side>
+
+<Side label="المنضبط: state واحدة وsetter واحد" kind="after">
+
+```dart
+class LibraryNotifier extends ChangeNotifier {
+  LibraryState _state = const LibraryLoading();
+  LibraryState get state => _state;
+  bool _disposed = false;
+
+  void _set(LibraryState next) {
+    if (_disposed) return;
+    _state = next;
+    notifyListeners();
+  }
+
+  Future<void> refresh() async {
+    final current = _state;
+    if (current is! LibraryLoaded || current.isRefreshing) return;
+    _set(current.copyWith(isRefreshing: true));
+    final result = await _refreshLibrary();
+    if (_disposed) return;
+    // ... _set(... refreshFailure ...)
+  }
+}
+
+// SnackBar: RefreshFailureListener, once per failure
+```
+
+</Side>
+
+</BeforeAfter>
+
+- <b>حالات مستحيلة:</b> في المنتشر ممكن `isLoading` و`error` و`books` مليانة في نفس الوقت. مين بيكسب في الـ UI؟ اللي اتكتب أول في الـ if. في المنضبط، الـ sealed state بتقول إن الشاشة في حالة واحدة بس.
+- <b>الـ error مابيتمسحش:</b> في المنتشر، refresh نجح بعد واحد فشل، والـ `error` لسه فيه القديم.
+- <b>الـ SnackBar في build:</b> بيحاول يظهر SnackBar والشجرة بتتبني (assertion)، ولو عدّى، هيظهر مع كل rebuild طول ما `error` مش null.
+- <b>refreshين مع بعض:</b> في المنتشر مفيش guard، فسحبة وضغطة على زرار الـ refresh في الـ AppBar بيبعتوا طلبين، والأول اللي يخلص بيقفل الـ indicator والتاني لسه شغال.
+- <b>الـ notify بعد الـ dispose:</b> المنضبط عنده `_disposed`.
+
+بص على المنضبط تاني: state immutable، وsetter واحد محمي، وguard بعد الـ await، والـ SnackBar في listener منفصل. ده Cubit، بس مكتوب بإيدك. وده بالظبط سبب الدرس الجاي: [«أول Cubit سطر بسطر»](/course/state-management/first-cubit/). هناك هتكتب `ReadingGoalCubit` بنفس قواعد هدف القراية، وتشوف إن كل حاجة كتبناها هنا بإيدنا (الـ `_set`، والـ dedupe، والـ `_disposed`) موجودة جاهزة، ومعاها `onChange` اللي مالوش مقابل هنا، وتشغّله في Dart من غير Flutter خالص، حاجة الـ ChangeNotifier مايقدرش يعملها.
+
+### الملفات في Readly
+
+<Journey>
+
+<Step file="lib/features/settings/presentation/reading_goal_page.dart">
+
+لو اتكتب بـ provider: `ChangeNotifierProvider(create: ...)` فوق `ReadingGoalView`، والـ view بيقرا بـ `context.select` وبينادي بـ `context.read`. في Readly نفسها، الملف ده بيستخدم `ReadingGoalCubit` و`BlocProvider` بنفس الشكل بالظبط.
+
+</Step>
+
+<Step file="lib/features/library/presentation/pages/book_details_page.dart">
+
+الـ `BookDescription` بـ `ValueNotifier<bool>` محلي، وبيتعمله dispose مع الـ State. ده built-in حقيقي في Readly، مش مثال.
+
+</Step>
+
+<Step file="lib/features/notes/presentation/note_editor_page.dart">
+
+زرار الحفظ جوه `ListenableBuilder` على الـ `TextEditingController`. الـ NotesCubit بياخد النص وقت الحفظ بس.
+
+</Step>
+
+<Step file="lib/router/app_router.dart">
+
+`StreamListenable extends ChangeNotifier` بيحوّل stream الـ AuthCubit لـ `refreshListenable` بتاع go_router.
+
+</Step>
+
+</Journey>
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="sm-builtins-1">
+<Ask>صفحة تفاصيل الكتاب فيها `FutureBuilder(future: getIt<GetBookDetails>()(id), ...)` جوه `build`. المستخدم فتح الكيبورد عشان يكتب ملاحظة، فالصفحة عملت flash لـ spinner، والـ logs فيها طلبين للسيرفر. ليه؟ والحل؟</Ask>
+<Answer>
+
+الـ `build` اتنادى تاني لما الكيبورد فتح (الصفحة بتقرا `MediaQuery`، والكيبورد غيّر الـ `viewInsets`)، والسطر ده عمل Future جديد، يعني طلب جديد. والـ `FutureBuilder` لما يلاقي Future غير اللي معاه بيرجع لـ `ConnectionState.waiting`، فالـ builder رجّع spinner. الحل إن الـ Future يتعمل مرة واحدة في `initState` ويتخزن في field (`late final`)، والـ builder ياخد الـ field. ولو الصفحة محتاجة retry أو refresh، ده مكان Cubit مش FutureBuilder. ونفس الكلام لـ `StreamBuilder(stream: repo.watchLibrary())` جوه build.
+
+</Answer>
+</Question>
+
+<Question id="sm-builtins-2">
+<Ask>في `InheritedWidget`، إيه الفرق بين `dependOnInheritedWidgetOfExactType` و`getInheritedWidgetOfExactType`؟ ولما `updateShouldNotify` ترجع true، مين بالظبط بيتبني تاني؟</Ask>
+<Answer>
+
+الاتنين بيرجّعوا أقرب widget من النوع ده فوق الـ context. الـ `dependOn...` كمان بيسجّل الـ widget كـ dependent، فيتبني تاني لما الـ InheritedWidget يتغير، ومكانه `build` (أو `didChangeDependencies`، مش `initState`). الـ `getInherited...` مابيسجّلش، فمكانه الـ callbacks. ولما `updateShouldNotify` ترجع true، اللي بيتبني هو الـ dependents بس، مش كل اللي تحت. الـ widgets اللي في النص مابتتبنيش لو الـ child اللي اتعدّى هو نفس الـ instance. وده نفس `context.watch` و`context.read` في provider وflutter_bloc.
+
+</Answer>
+</Question>
+
+<Question id="sm-builtins-3">
+<Ask>`final selected = ValueNotifier<List<BookId>>([]);` والزرار بيعمل `selected.value.add(id)`. الـ `ValueListenableBuilder` مابيتبنيش تاني. ليه؟ والحل؟</Ask>
+<Answer>
+
+الـ `add` عدّل الليستة نفسها، ومانداش الـ setter بتاع `value` أصلًا، فمفيش `notifyListeners`. وحتى لو عملت `selected.value = selected.value` بعد الـ add، الـ setter بيقارن القديم بالجديد بـ `==`، والاتنين نفس الـ object، فهيتجاهل. الحل ليستة جديدة: `selected.value = [...selected.value, id];`. ده نفس قاعدة الـ Cubit: الـ state بتتستبدل، مابتتعدّلش، والـ emit لنفس الـ object المعدّل بيتجاهل.
+
+</Answer>
+</Question>
+
+<Question id="sm-builtins-4">
+<Ask>زميلك كتب `ChangeNotifierProvider.value(value: LibraryNotifier(repo, refresh)..watch(), child: ...)` جوه `build` بتاع صفحة. إيه اللي هيحصل؟</Ask>
+<Answer>
+
+مع كل rebuild للصفحة، notifier جديد بيتعمل، وبيبدأ subscription جديدة على `watchLibrary()`، والـ state بترجع `LibraryLoading` (spinner ثانية). والـ `.value` معناه «مش انا صاحبه»، فمابيعملش `dispose` لأي notifier قديم، فالقديم بيفضل سامع على الـ database للأبد: leak، وكل واحد زيادة بيعمل شغل. الصح `ChangeNotifierProvider(create: (_) => ...)`: بيتعمل مرة، وبيتعمله dispose لما الصفحة تتقفل. نفس قاعدة `BlocProvider` و`BlocProvider.value` بالظبط.
+
+</Answer>
+</Question>
+
+<Question id="sm-builtins-5">
+<Ask>في flutter_bloc، `context.watch<LibraryCubit>()` بيعيد بناء الـ widget إمتى بالظبط؟ واشرح إزاي ده شغال من تحت.</Ask>
+<Answer>
+
+مع كل state جديدة الـ Cubit يعمل لها emit. الـ `BlocProvider` بيبني `InheritedProvider` من package provider، بـ `startListening` بيعمل `bloc.stream.listen` ومع كل قيمة بينادي `markNeedsNotifyDependents`. والـ `context.watch` extension من provider بيعمل `dependOnInheritedWidget` من تحت، فالـ widget بقى dependent وبيتبني مع كل تنبيه. عشان كده لو محتاج حتة من الـ state بس، `context.select` أو `BlocSelector`، ولو الـ widget كبير، `BlocBuilder` حوالين الحتة اللي محتاجاها.
+
+</Answer>
+</Question>
+
+</Quiz>

@@ -1,0 +1,29 @@
+---
+title: "التطبيق والمهام"
+description: "مهام وحدة الـ State management في Readly: من أدوات Flutter لأول Cubit في Dart لوحده لحد Bloc بـ transformers، ونفس الشاشة بـ Riverpod، ونقل شاشة من GetX، وقرار مكتوب في ADR."
+type: "practice"
+---
+
+<Tasks>
+<Task id="wc-1">اعمل ملف `bin/streams_playground.dart` في Readly (من غير Flutter) فيه `StreamController` عادي وواحد broadcast، واشترك فيهم مرتين، وشوف مين بيرمي error ومين لأ. وبعدين اعمل `ReadingGoalCubit` وشغّله بـ `dart run` واطبع كل state من الـ `stream` (درسي «الـ State من الصفر» و«أول Cubit سطر بسطر»).</Task>
+<Task id="wc-2">ضيف `onChange` في `ReadingGoalCubit` يطبع الـ state القديمة والجديدة، وجرّب تعمل emit لنفس القيمة مرتين، وتعمل emit بعد `close()`، واكتب في الـ PR اللي حصل في كل حالة وليه.</Task>
+<Task id="wc-13">اكتب «هدف القراية» مرة بـ `ValueNotifier` ومرة بـ `ChangeNotifier` و`provider` في branch لوحده، وخلي إظهار الباسورد في الـ login `ValueNotifier` محلي. واكتب في الـ PR: أنهي واحد فيهم يفضل في Readly وليه، وإيه اللي صعب تختبره فيهم (درس «أدوات Flutter وProvider»).</Task>
+<Task id="wc-3">راجع كل state في Readly وحدد شكلها: sealed ولا class واحدة بـ status. اكتب في `docs/state-design.md` سطر لكل Cubit فيه الشكل اللي اخترته وليه، وصلّح أي `copyWith` مش بيعرف يمسح حقل nullable (درس «تصميم الـ State»).</Task>
+<Task id="wc-4">اعمل `ViewModeCubit` (ليستة ولا grid) و`LibraryFilterCubit` (فلتر بالـ `BookStatus`) و`BookSelectionCubit` للاختيار المتعدد في المكتبة، مع زرار «اختار الكل» و«امسح المختار» (درس «أنواع الـ Cubit (1)»).</Task>
+<Task id="wc-5">حوّل «ضيف لمكتبتي» في صفحة تفاصيل الكتاب لـ action Cubit لوحده بالحالات الأربعة (idle وinProgress وsuccess وfailure)، منفصل عن الـ Cubit اللي بيحمّل الصفحة، والزرار يتقفل وقت الإرسال، والـ SnackBar يظهر مرة واحدة بس.</Task>
+<Task id="wc-6">خلي `LibraryCubit` يسمع على `watchLibrary()` بدل ما يحمّل مرة واحدة، واتأكد إن الـ subscription بيتلغي في `close()`. وبعدين خلي شاشة الـ Home تعرض «بقرا دلوقتي» من نفس الـ stream، من غير ما أي Cubit يمسك reference لـ Cubit تاني (درس «أنواع الـ Cubit (2)» ودرس «Cubit متقدم»).</Task>
+<Task id="wc-7">ارسم خريطة الـ providers في Readly: إيه اللي على مستوى الـ app، وإيه على مستوى الـ shell، وإيه لكل route. وبعدين افتح Flutter DevTools وعدّ الـ rebuilds في شاشة المكتبة وانت بتعمل refresh، وقلّلها بـ `buildWhen` و`BlocSelector` (درس «flutter_bloc بالتفصيل»).</Task>
+<Task id="wc-8">اعمل «ثبّت الملاحظة فوق» بـ optimistic update ونمط latest لكل ملاحظة، مع rollback لآخر قيمة السيرفر أكدها لو الطلب فشل، ورسالة الفشل تظهر مرة واحدة (بـ `failureId` في الـ state أو بـ effect، واكتب ليه اخترت ده). (حالة الكتاب نفسها مش محتاجة ده: drift والـ sync queue هما الـ optimism.) واكتب blocTest للحالتين (درس «Cubit متقدم» ودرس «تست الـ Cubit» في الوحدة 8).</Task>
+<Task id="wc-9">خلي فلاتر وترتيب الكتالوج `HydratedCubit` بـ `storagePrefix` ثابت، وزوّد version للـ JSON المحفوظ واكتب migration من الشكل القديم. وامسح الـ storage بتاعه مع الـ logout. وضيف undo لمحرر الملاحظات بـ `ReplayCubit` بحد 50 خطوة (درس «Cubit بيفتكر ويرجع»).</Task>
+<Task id="wc-10">اكتب `CatalogSearchBloc` بدل `CatalogSearchCubit` في branch لوحده: debounce وrestartable بدل الـ request id، والشاشة مايتغيرش فيها غير أسامي الأنواع في الـ provider والـ builder، والسطر اللي بيبعت الـ event. وقارن عدد السطور والتستات بين النسختين، واكتب رأيك في الـ PR: هتعمل merge ولا لأ، وليه (درسي «الـ Bloc من الصفر» و«Cubit ولا Bloc»).</Task>
+<Task id="wc-11">ضيف `bloc_lint` بالـ recommended rules للـ CI، وصلّح كل warning طلع. واعمل `AppBlocObserver` واحد بيسجّل الـ transitions والـ errors في الـ logger، ولو عندك أكتر من observer اجمعهم بـ `MultiBlocObserver`.</Task>
+<Task id="wc-14">في branch تجريبي، اكتب شاشة المكتبة بـ Riverpod 3 (watch وpull-to-refresh والـ SnackBar لو الـ refresh فشل) جنب نسخة الـ Cubit، واكتب تست لكل نسخة. قارن السطور، والـ DI، والتستات، واكتب رأيك في صفحة واحدة. ماتعملش merge (درس «Riverpod من الصفر»).</Task>
+<Task id="wc-15">خد نسخة GetX من «هدف القراية» من درس «GetX وMobX وRedux وsignals»، أو شاشة من مشروع حقيقي عندك بـ GetX، وانقلها لـ Cubit خطوة خطوة بالـ playbook بتاع درس «تختار state management إزاي»، والتستات خضرا في كل commit. وبعدين اكتب ADR جديد في `docs/adr/` بقرار Readly في الـ state management: الـ default، وامتى Bloc، والبدائل اللي اترفضت وليه.</Task>
+<Task id="wc-12">عدّي على كل Cubit في Readly بالـ checklist بتاعة درس «الـ State management في مشروع حقيقي»، وافتح issue لكل مشكلة لقيتها: Cubit بيعرف Flutter، أو method public بترجّع قيمة، أو state بتتعدل في مكانها، أو Cubit بيمسك Cubit تاني.</Task>
+</Tasks>
+
+<Deliverable>كل شاشة في Readly ليها Cubit بنوع واضح وstate شكلها متختار عن قصد، ومفيش emit بعد close، ولا SnackBar بيتكرر، ولا subscription مش بيتلغي. الفلاتر بتفضل بعد ما الـ app يتقفل، والملاحظات فيها undo، والبحث متكتب مرة بـ Bloc وانت عارف تقول ليه هتختار أنهي نسخة. والـ CI بيشغّل bloc_lint، وقرار الـ state management مكتوب في ADR بالبدائل اللي اترفضت.</Deliverable>
+
+<ReviewQuestion>اختار شاشة واحدة في Readly واحكي قصة الـ state بتاعتها كاملة: الـ Cubit من أنهي نوع، والـ state شكلها إيه وليه، ومتوفرة فين في الشجرة، وإيه اللي بيحصل لو المستخدم داس مرتين أو قفل الشاشة والطلب لسه راجع. وبعدين قول: لو كانت Bloc، أو Riverpod، أو GetX، إيه اللي كان هيتغير؟ وكان يستاهل ولا لأ؟</ReviewQuestion>
+
+<LogBox id="log-state-management" />

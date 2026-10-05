@@ -1,0 +1,794 @@
+---
+title: "أول Cubit سطر بسطر"
+description: "نبني ReadingGoalCubit من الصفر: في Dart لوحده الأول من غير Flutter، وبعدين على الشاشة بـ BlocProvider وBlocBuilder. وكل حتة في الـ Cubit: state وemit وstream وclose وonChange وonError، ودورة حياته، وأخطاء أول مرة."
+minutes: 40
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="ريموت التكييف">
+
+التكييف عنده درجة حرارة حالية، مكتوبة على الشاشة الصغيرة بتاعته: 24. الريموت فيه زرارين، + و-. لما تدوس +، الريموت مابيكتبش 25 على الشاشة بنفسه. هو بيبعت للتكييف «زوّد»، والتكييف هو اللي بيقرر: لو كان على 30 (أقصى حاجة)، مش هيعمل حاجة. لو لأ، بيغيّر لـ 25 وبيعرضها.
+
+وأي حد في الأوضة معاه ريموت تاني، أو بيبص على الشاشة، بيشوف نفس الرقم. ولو فصلت التكييف من الكهربا، الريموت لسه في إيدك، بس أي زرار تدوسه مالوش لازمة.
+
+</Analogy>
+
+الـ Cubit هو التكييف ده بالظبط:
+
+- <b>الدرجة الحالية</b> هي الـ `state`.
+- <b>الزراير</b> هي الـ methods: `increase()` و`decrease()`. الـ UI بتناديها، ومابتغيّرش الرقم بنفسها.
+- <b>التكييف هو اللي بيقرر:</b> الحد الأقصى والأدنى قاعدة جوه الـ Cubit، مش في الريموت.
+- <b>الشاشة اللي بتعرض الرقم</b> هي الـ `stream`: أي حد سامع بيعرف إن الرقم اتغير.
+- <b>الفصل من الكهربا</b> هو `close()`: بعده مفيش تغيير تاني.
+
+في [درس "الـ State من الصفر"](/course/state-management/state-basics/) عملنا `ValueHolder` بإيدينا وقلنا إنه تقريبًا الـ Cubit، وفي [الدرس اللي فات](/course/state-management/flutter-builtins/) كتبنا نفس الهدف بـ `ValueNotifier` و`ChangeNotifier`. هنا هنكتب Cubit حقيقي، ونفتح كل سطر فيه، ونشغّله في Dart من غير Flutter خالص، وبعدين نحطه على الشاشة.
+
+### اللي هنبنيه
+
+في تاب الإعدادات في Readly، المستخدم بيحدد <b>هدف القراية اليومي</b>: كام صفحة في اليوم. زرار - وزرار +، والرقم في النص. القواعد:
+
+- الهدف الافتراضي 20 صفحة.
+- الزيادة والنقصان 5 صفحات في المرة.
+- أقل حاجة 5، وأكتر حاجة 200.
+
+أصغر من إنه يبقى feature، وكفاية عشان يبقى فيه قواعد حقيقية. ده الـ «counter» الوحيد في الوحدة، بس بقواعد Readly. ودرس «تست الـ Cubit» في الوحدة 8 والدروس الجاية هنا هتشتغل على `LibraryCubit` وأخواته.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### الخطوة 1: مشروع Dart فاضي
+
+مش هنبدأ من Flutter. هنبدأ من مشروع Dart عادي، عشان تشوف بعينك إن الـ Cubit مالوش أي علاقة بالـ widgets:
+
+<CodeBlock label="terminal">
+
+```bash
+dart create goal_demo
+cd goal_demo
+dart pub add bloc
+```
+
+</CodeBlock>
+
+`dart create` بيعمل مشروع console فيه `bin/goal_demo.dart` (الـ main) وفولدر `lib/`. والـ `bloc` هي الـ package الوحيدة اللي محتاجينها، وهي Dart بس: الـ dependency الوحيدة بتاعتها `meta`.
+
+### الخطوة 2: أول Cubit
+
+<CodeBlock label="lib/reading_goal_cubit.dart">
+
+```dart
+import 'package:bloc/bloc.dart';
+
+class ReadingGoalCubit extends Cubit<int> {
+  ReadingGoalCubit() : super(20);
+
+  static const min = 5;
+  static const max = 200;
+  static const step = 5;
+
+  void increase() => emit((state + step).clamp(min, max));
+  void decrease() => emit((state - step).clamp(min, max));
+}
+```
+
+</CodeBlock>
+
+10 سطور، وكل واحد فيهم ليه معنى:
+
+- <b>`extends Cubit<int>`:</b> الـ `int` هو نوع الـ state. الـ Cubit ده شايل رقم واحد بس: عدد الصفحات. ممكن يبقى `Cubit<bool>` أو `Cubit<BookStatus>` أو `Cubit<LibraryState>`، والنوع ده بيمشي معاك في كل حتة: الـ `state` نوعها `int`، والـ `stream` نوعه `Stream<int>`، والـ `BlocBuilder` هيبقى `BlocBuilder<ReadingGoalCubit, int>`.
+- <b>`super(20)`:</b> الـ <b>initial state</b>. الـ Cubit عمره ما بيبقى من غير state، من أول لحظة في حياته. ولو مش عارف الـ state الأولى، دي علامة إن النوع محتاج حالة اسمها «لسه مش عارف» (زي `LibraryLoading`)، مش إنك تعمل `int?`.
+- <b>الـ `static const`:</b> القواعد في مكان واحد. والـ UI هتحتاجهم كمان عشان تعرف تقفل الزرار، فخليناهم public.
+- <b>`state`:</b> getter بيرجّع القيمة الحالية. بتقراه في أي وقت، من جوه الـ Cubit أو من بره.
+- <b>`emit(...)`:</b> الطريقة الوحيدة لتغيير الـ state. بيحط القيمة الجديدة، وبيبلّغ كل اللي سامعين. وهو `@protected`: المفروض محدش يناديه غير الـ Cubit نفسه.
+- <b>`clamp(min, max)`:</b> لو الرقم الجديد طلع برا الحدود، بيرجّعه لأقرب حد. الـ `clamp` على `int` بحدود `int` بيرجّع `int`.
+- <b>الـ methods بترجّع `void`:</b> النتيجة مش بترجع لللي نادى، النتيجة بتطلع في الـ state. هنرجع للقاعدة دي في المستوى الرابع.
+
+### الخطوة 3: شغّله
+
+<CodeBlock label="bin/goal_demo.dart">
+
+```dart
+import 'package:goal_demo/reading_goal_cubit.dart';
+
+Future<void> main() async {
+  final cubit = ReadingGoalCubit();
+  print('initial: ${cubit.state}');
+
+  final sub = cubit.stream.listen((pages) => print('stream: $pages'));
+
+  cubit.increase();
+  cubit.increase();
+  print('state now: ${cubit.state}');
+  cubit.decrease();
+
+  await Future<void>.delayed(Duration.zero);
+  await sub.cancel();
+  await cubit.close();
+  print('closed: ${cubit.isClosed}');
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="dart run">
+
+```text
+initial: 20
+state now: 30
+stream: 25
+stream: 30
+stream: 25
+closed: true
+```
+
+</CodeBlock>
+
+اقرا الـ output ده بالراحة، لأن فيه 4 حاجات هتفضل معاك طول ما بتكتب Cubits:
+
+- <b>الـ 20 ماظهرتش على الـ stream:</b> الـ initial state موجودة في `state` من أول لحظة، بس عمرها ما بتعدّي على الـ stream. محدش «اتبلّغ» بيها، لأنها مااتغيرتش.
+- <b>«state now: 30» طلعت قبل أي «stream»:</b> الـ `emit` بيغيّر `state` <b>في نفس السطر</b>. بعد `increase()` على طول، `cubit.state` بقت 25. أما الـ stream فبيوصّل للمستمعين بعدها بشوية (microtask)، زي ما شفنا في الـ Streams في درس «الـ State من الصفر». يعني جوه الـ Cubit، `state` دايمًا آخر حاجة اتعملها emit.
+- <b>الـ `Future.delayed(Duration.zero)`:</b> بيدّي فرصة للـ stream يوصّل اللي في الطابور قبل ما نلغي الاشتراك. من غيره، الـ `cancel` كان هيحصل والقيم لسه ماوصلتش، ومش هتشوف أي سطر «stream».
+- <b>الـ `close()`:</b> بيقفل الـ StreamController اللي جوه. وبعده `isClosed` بقت `true`. في Dart لوحده، انت اللي بتقفل. في Flutter، الـ `BlocProvider` هيقفل عنك.
+
+### الخطوة 4: 50 ضغطة على +
+
+المستخدم فضل داسس على + لحد ما الرقم وقف. إيه اللي حصل جوه؟
+
+<CodeBlock label="bin/taps.dart">
+
+```dart
+Future<void> main() async {
+  final cubit = ReadingGoalCubit();
+  var emitted = 0;
+  final sub = cubit.stream.listen((_) => emitted++);
+
+  for (var i = 0; i < 50; i++) {
+    cubit.increase(); // 50 taps on "+"
+  }
+
+  await Future<void>.delayed(Duration.zero);
+  print('state: ${cubit.state}, emitted: $emitted');
+  await sub.cancel();
+  await cubit.close();
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="dart run bin/taps.dart">
+
+```text
+state: 200, emitted: 36
+```
+
+</CodeBlock>
+
+من 20 لـ 200 فيه 36 خطوة. الـ 14 ضغطة الباقيين كل واحدة فيهم عملت `emit(200)` والـ state أصلًا 200. والـ Cubit <b>بيتجاهل أي emit لـ state بتساوي الحالية</b> (بـ `==`): مفيش تغيير، ومفيش حاجة على الـ stream، ومفيش rebuild في الـ UI. ده شغال هنا لأن `200 == 200` في `int`. مع class انت عامله، `==` الافتراضي بيقارن الـ identity، وده موضوع [درس "تصميم الـ State"](/course/state-management/state-design/) كله.
+
+### تشريح الـ Cubit
+
+كل اللي في `Cubit` (وده كله جاي من `BlocBase` اللي الـ Cubit والـ Bloc الاتنين بيورثوه):
+
+| الـ member | بيعمل إيه | مين يستخدمه |
+| --- | --- | --- |
+| `Cubit(initialState)` | بيبدأ بـ state، ومن غير ما يطلّعها على الـ stream | الـ subclass في `super(...)` |
+| `state` | القيمة الحالية، بتتحدّث فورًا مع كل emit | أي حد |
+| `stream` | broadcast stream بالـ states الجديدة بس | الـ `BlocBuilder` والـ `BlocListener` والتستات |
+| `emit(state)` | يغيّر الـ state ويبلّغ، ويتجاهل لو `==` الحالية | الـ Cubit نفسه بس (`@protected`) |
+| `isClosed` | الـ Cubit اتقفل ولا لأ | الـ Cubit بعد أي `await` |
+| `close()` | يقفل الـ stream، وبعدها أي emit بيرمي error | الـ `BlocProvider`، أو انت في Dart والتستات |
+| `onChange(change)` | بيتنادى قبل كل تغيير، فيه القديم والجديد | override للـ logging |
+| `addError(error, [stackTrace])` | يبلّغ عن error من غير ما يغيّر الـ state | الـ Cubit نفسه (`@protected`) |
+| `onError(error, stackTrace)` | بيتنادى مع أي error: من `addError`، أو من `emit` نفسه | override للـ logging |
+
+آخر 3 هنفتحهم في المستوى التالت. الأول نحط الـ Cubit على الشاشة.
+
+### الخطوة 5: نفس الـ Cubit في Flutter
+
+الملف نفسه بيتنقل زي ما هو لـ Readly، في `lib/features/settings/presentation/reading_goal_cubit.dart`. ونزوّد `flutter_bloc`:
+
+<CodeBlock label="pubspec.yaml">
+
+```yaml
+dependencies:
+  bloc: ^9.2.0
+  flutter_bloc: ^9.1.1
+```
+
+</CodeBlock>
+
+<CodeBlock label="lib/features/settings/presentation/reading_goal_page.dart">
+
+```dart
+class ReadingGoalPage extends StatelessWidget {
+  const ReadingGoalPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocProvider(
+      create: (_) => ReadingGoalCubit(),
+      child: const ReadingGoalView(),
+    );
+  }
+}
+
+class ReadingGoalView extends StatelessWidget {
+  const ReadingGoalView({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return Scaffold(
+      appBar: AppBar(title: Text(l10n.dailyGoalTitle)),
+      body: Center(
+        child: BlocBuilder<ReadingGoalCubit, int>(
+          builder: (context, pages) => Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                onPressed: pages > ReadingGoalCubit.min
+                    ? () => context.read<ReadingGoalCubit>().decrease()
+                    : null,
+                icon: const Icon(Icons.remove),
+              ),
+              Text(
+                l10n.pagesPerDay(pages),
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+              IconButton(
+                onPressed: pages < ReadingGoalCubit.max
+                    ? () => context.read<ReadingGoalCubit>().increase()
+                    : null,
+                icon: const Icon(Icons.add),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>`BlocProvider(create: ...)`:</b> بيعمل الـ Cubit، وبيحطه في الشجرة عشان أي widget تحته يوصله، و<b>بيقفله لوحده</b> لما الـ widget يتشال (الصفحة تتقفل). والـ `create` lazy: مش بيتنادى غير أول ما حد يطلب الـ Cubit.
+- <b>ليه widgetين (`Page` و`View`)؟</b> الـ `Page` بيوفّر الـ Cubit، والـ `View` بيستخدمه. الـ `context` اللي في `build` بتاع الـ `View` تحت الـ `BlocProvider`، فيقدر يلاقيه. لو حطيتهم في `build` واحد، الـ `context` هيبقى فوق الـ provider، وهتشوف الـ error ده بعد شوية تحت.
+- <b>`BlocBuilder<ReadingGoalCubit, int>`:</b> بيبني أول مرة من `state`، وبيسمع على الـ `stream`، ومع كل state جديدة بينادي `builder` تاني. الـ `pages` هي الـ state نفسها، من نوع `int`.
+- <b>`context.read<ReadingGoalCubit>()`:</b> بيدوّر لفوق على أقرب `ReadingGoalCubit` ويرجّعه، <b>من غير ما يسمع</b>. ده اللي محتاجه عشان تنادي method. وهو جوه closure (`() => ...`) فبيتنادى وقت الضغطة، مش وقت الـ build.
+- <b>الزرار بيتقفل من الـ state:</b> `onPressed: null` بيخلي الزرار disabled. لاحظ إن ده عرض بس: الـ UI بتقرا القاعدة عشان تشكّل الزرار، بس القاعدة نفسها لسه جوه الـ Cubit. وهنشوف ليه ده مهم في المستوى الرابع.
+- <b>الـ `pagesPerDay`:</b> key في ملف الـ ARB بـ placeholder، زي [درس الترجمة في الوحدة 5](/course/presentation/l10n/). مفيش نصوص hardcoded حتى في مثال صغير.
+
+ده كل اللي محتاجه عشان أول شاشة. `BlocListener` و`BlocSelector` و`context.watch` و`context.select` وامتى كل واحد، ليهم [درس "flutter_bloc بالتفصيل"](/course/state-management/flutter-bloc-widgets/) كامل.
+
+</Level>
+
+<Level n="3" title="تحت الغطا: الدورة والـ hooks والحالات الصعبة">
+
+### دورة حياة الـ Cubit
+
+<Diagram name="d-sm-cubit-lifecycle">
+
+الـ Cubit بيتولد بـ state ابتدائية مابتطلعش على الـ stream. كل emit بينادي onChange ويغيّر الـ state ويبعتها على الـ stream. الـ emit لنفس الـ state بيتجاهل من غير أي hook. وبعد close، أي emit بيعدّي على onError ويرمي StateError.
+
+</Diagram>
+
+1. <b>الإنشاء:</b> الـ constructor بياخد الـ initial state. وفي اللحظة دي `BlocObserver.onCreate` بيتنادى (الـ observer اللي بيشوف كل الـ Cubits في الـ app، ليه مكان في [درس "Cubit متقدم"](/course/state-management/cubit-advanced/)).
+2. <b>الحياة:</b> كل `emit` لـ state مختلفة: `onChange` بيتنادى، وبعدين `state` بتتغير، وبعدين القيمة بتتبعت على الـ stream.
+3. <b>الـ state المتكررة:</b> مفيش `onChange`، ومفيش stream، ومفيش أي أثر.
+4. <b>القفل:</b> `close()` بينادي `BlocObserver.onClose`، وبيقفل الـ stream، فكل المستمعين بياخدوا `onDone`.
+5. <b>بعد القفل:</b> أي `emit` بيرمي `StateError`. والـ `state` لسه بيرجّع آخر قيمة، بس مفيش حاجة هتتغير تاني.
+
+### emit بعد close: أشهر crash في الـ Cubits
+
+القاعدة الأخيرة دي ممكن تبان بعيدة، لحد ما الـ Cubit يعمل أي حاجة async. خلينا نزوّد ميزة: زرار «اقترح عليّا» بيحسب الهدف من متوسط صفحاتك في آخر 30 يوم. الحساب ده بيقرا من الـ database، فهو use case بيرجّع Future:
+
+<CodeBlock label="ReadingGoalCubit بـ use case">
+
+```dart
+class ReadingGoalCubit extends Cubit<int> {
+  ReadingGoalCubit(this._suggestDailyGoal) : super(defaultGoal);
+
+  final SuggestDailyGoal _suggestDailyGoal;
+
+  static const defaultGoal = 20;
+  static const min = 5;
+  static const max = 200;
+  static const step = 5;
+
+  // increase(), decrease() as before
+
+  Future<void> useSuggested() async {
+    final result = await _suggestDailyGoal();
+    emit(switch (result) {
+      Success(:final value) => value.clamp(min, max),
+      Err() => state, // a Cubit<int> has no place for an error
+    });
+  }
+}
+```
+
+</CodeBlock>
+
+المستخدم داس «اقترح عليّا»، والحساب بياخد ثانية، وفي الثانية دي رجع لورا. الـ `BlocProvider` قفل الـ Cubit. الحساب خلص، والـ Cubit عمل `emit`:
+
+<CodeBlock label="نفس الحكاية في dart run">
+
+```dart
+final cubit = ReadingGoalCubit(SlowSuggestDailyGoal()); // answers after 300ms
+final pending = cubit.useSuggested(); // the user tapped "suggest"
+await cubit.close();                  // ...and left the page
+await pending;
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ output">
+
+```text
+Unhandled exception:
+Bad state: Cannot emit new states after calling close
+#0      BlocBase.emit (package:bloc/src/bloc_base.dart:100:9)
+#1      ReadingGoalCubit.useSuggested (...)
+```
+
+</CodeBlock>
+
+في الـ app، ده بيطلع في الـ console أحمر، وبيوصل Sentry كـ crash، مع إن المستخدم ماشافش أي حاجة غلط. والحل سطر واحد <b>بعد كل `await`</b>:
+
+<CodeBlock label="isClosed بعد كل await">
+
+```dart
+Future<void> useSuggested() async {
+  final result = await _suggestDailyGoal();
+  if (isClosed) return; // the page is gone: nobody to tell
+  emit(switch (result) {
+    Success(:final value) => value.clamp(min, max),
+    Err() => state,
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>بعد كل await، مش بعد أول واحد بس:</b> لو الـ method فيها 3 awaits، الـ Cubit ممكن يتقفل في أي واحدة فيهم.
+- <b>مش قبل الـ await:</b> قبل الـ await الـ Cubit أكيد مفتوح، لأن الـ UI لسه منادياه دلوقتي.
+- <b>الـ `Err() => state`:</b> الخطأ مالوش مكان في `Cubit<int>`. الـ emit لنفس الـ state هيتجاهل، فالشاشة مش هتعرف إن الاقتراح فشل، ومفيش طريقة تعرض loading وهو بيحسب. ده بالظبط الحد اللي `Cubit<int>` بيوقف عنده. لما الشاشة تحتاج «بيحسب» و«فشل»، الـ state لازم تبقى class، وده [درس "تصميم الـ State"](/course/state-management/state-design/).
+- <b>الطريقة دي مش الوحيدة:</b> لو في أكتر من طلب ممكن يشتغلوا مع بعض (المستخدم داس مرتين)، `isClosed` مش كفاية، ومحتاج تقرر: تتجاهل التانية، ولا تلغي الأولى، ولا ترتبهم؟ ده [درس "Cubit متقدم"](/course/state-management/cubit-advanced/).
+
+ولما الـ Cubit بقى بياخد use case في الـ constructor، الـ `create` بقى `(_) => getIt<ReadingGoalCubit>()`، والـ Cubit متسجّل `registerFactory`، زي [درس الـ DI في الوحدة 6](/course/di-scale/di/).
+
+### onChange: تشوف كل تغيير
+
+<CodeBlock label="override لـ onChange">
+
+```dart
+import 'dart:developer';
+
+@override
+void onChange(Change<int> change) {
+  super.onChange(change); // required: the BlocObserver hears it through here
+  log('${change.currentState} -> ${change.nextState}', name: 'ReadingGoal');
+}
+```
+
+</CodeBlock>
+
+- <b>`Change<int>`:</b> فيه `currentState` (القديمة) و`nextState` (الجديدة).
+- <b>بيتنادى قبل التغيير:</b> جوه `onChange`، الـ `state` لسه القديمة. لو قريت `state` هناك هتلاقيها `change.currentState`.
+- <b>الـ `super.onChange` إجباري:</b> الـ method عليها `@mustCallSuper`، والـ super هو اللي بيبلّغ الـ `BlocObserver`. لو نسيته، الـ logging العام للـ app مش هيشوف الـ Cubit ده.
+- <b>`log` من `dart:developer` مش `debugPrint`:</b> الـ `debugPrint` من Flutter، والـ Cubit مابيعملش import لـ Flutter.
+
+في الواقع نادرًا ما هتعمل override لـ `onChange` في Cubit واحد. الـ logging مكانه `BlocObserver` واحد للـ app كله. بس لما تعمل debug لـ Cubit معين، السطرين دول بيقولولك كل اللي حصل بالترتيب.
+
+### onError وaddError: error من غير ما الـ state تتغير
+
+الـ use case رجّع اقتراح 750 صفحة في اليوم. الـ `clamp` هيخليه 200 والمستخدم مش هيلاحظ، بس 750 معناها إن في bug في الحساب. عايز تعرف بيه من غير ما تبوّظ الشاشة:
+
+<CodeBlock label="بلّغ وكمّل">
+
+```dart
+Success(:final value) => _checked(value),
+
+int _checked(int value) {
+  if (value < min || value > max) {
+    addError(StateError('suggested goal out of range: $value'));
+  }
+  return value.clamp(min, max);
+}
+```
+
+</CodeBlock>
+
+- <b>`addError`:</b> مابيغيّرش الـ state، ومابيطلعش على الـ stream، والـ UI مش هتعرف بيه خالص. كل اللي بيعمله إنه بينادي `onError`.
+- <b>`onError`:</b> بيبلّغ الـ `BlocObserver.onError`، واللي هيبعته لـ Sentry ([درس «الـ Logging والـ Monitoring» في الوحدة 16](/course/production/observability/)). وتقدر تعمل override ليه زي `onChange`، برضه بـ `super`.
+- <b>الـ emit بيعدّي من هنا كمان:</b> الـ `StateError` بتاع emit بعد close اللي فوق عدّى على `onError` الأول، وبعدين اترمى. فلو عندك observer، هتشوفه هناك.
+- <b>مش للـ Failures العادية:</b> النت فاصل مش bug، دي حالة المستخدم لازم يشوفها، يعني state. الـ `addError` للحاجات اللي «مش المفروض تحصل».
+
+### الـ emit مش ممنوع، هو warning
+
+<CodeBlock label="من بره الـ Cubit">
+
+```dart
+final cubit = ReadingGoalCubit(suggest);
+cubit.emit(999); // compiles, runs, and skips every rule
+```
+
+</CodeBlock>
+
+<CodeBlock label="dart analyze">
+
+```text
+warning - The member 'emit' can only be used within instance members of subclasses of 'BlocBase'. - invalid_use_of_protected_member
+warning - The member 'emit' can only be used within 'package:bloc/src/bloc.dart' or a test. - invalid_use_of_visible_for_testing_member
+```
+
+</CodeBlock>
+
+`@protected` في Dart مش زي `private`. ده annotation الـ analyzer بيطلّع عليه warning، بس الكود بيشتغل عادي، و999 هتظهر على الشاشة. والـ warnings في مشروع كبير بتتجاهل. خليها error:
+
+<CodeBlock label="analysis_options.yaml">
+
+```yaml
+analyzer:
+  errors:
+    invalid_use_of_protected_member: error
+    invalid_use_of_visible_for_testing_member: error
+```
+
+</CodeBlock>
+
+### أخطاء أول مرة
+
+<b>1. الـ Cubit بيتعمل في `build`</b>
+
+<CodeBlock label="state بترجع لـ 20 كل شوية">
+
+```dart
+@override
+Widget build(BuildContext context) {
+  return BlocProvider.value(
+    value: ReadingGoalCubit(suggest), // a new Cubit on every build
+    child: const ReadingGoalView(),
+  );
+}
+```
+
+</CodeBlock>
+
+الـ build بيتنادى كل ما حاجة فوقه تتغير: الكيبورد، الثيم، اللغة. كل مرة Cubit جديد بـ 20، فالمستخدم بيزوّد لـ 50، يقلب الموبايل، يلاقيها 20. والـ `BlocProvider.value` مابيقفلش اللي اتدّاله، فكل Cubit قديم بيفضل مفتوح: leak. الصح `BlocProvider(create: ...)`، والـ `create` بيتنادى مرة واحدة طول عمر الـ provider.
+
+<b>2. `context.read` عشان تعرض الـ state</b>
+
+<CodeBlock label="الرقم مابيتغيرش">
+
+```dart
+Text('${context.read<ReadingGoalCubit>().state}') // reads once, never listens
+```
+
+</CodeBlock>
+
+الـ `read` بيجيب الـ Cubit مرة ومابيسمعش. الرقم بيتعرض صح أول مرة، وبعدين بيفضل زي ما هو مهما دست. أي حاجة بتتعرض من الـ state لازم تبقى جوه `BlocBuilder` (أو `context.watch` في build، وليه تفاصيل في درس flutter_bloc). والـ `read` للـ callbacks بس.
+
+<b>3. الـ provider والـ context في نفس الـ build</b>
+
+<CodeBlock label="ProviderNotFoundException">
+
+```dart
+@override
+Widget build(BuildContext context) {
+  return BlocProvider(
+    create: (_) => ReadingGoalCubit(suggest),
+    child: IconButton(
+      // this context belongs to the widget ABOVE the BlocProvider
+      onPressed: () => context.read<ReadingGoalCubit>().increase(),
+      icon: const Icon(Icons.add),
+    ),
+  );
+}
+```
+
+</CodeBlock>
+
+```text
+Error: Could not find the correct Provider<ReadingGoalCubit> above this ReadingGoalPage Widget
+```
+
+الـ `context` هو مكان الـ widget اللي `build` بتاعه شغال، والـ `BlocProvider` لسه هيتحط <b>تحته</b>. والـ `read` بيدوّر لفوق بس، فمش هيلاقيه. الحل اللي استخدمناه: `Page` بيوفّر و`View` بيستخدم. والحل التاني `Builder` بيدّيك context جديد تحت الـ provider، وتفاصيله في درس flutter_bloc.
+
+<b>4. القاعدة في الـ widget</b>
+
+<CodeBlock label="الـ UI بتقرر بدل الـ Cubit">
+
+```dart
+onPressed: () {
+  final cubit = context.read<ReadingGoalCubit>();
+  if (cubit.state < 200) cubit.increase(); // the rule lives in the UI now
+},
+```
+
+</CodeBlock>
+
+الـ Cubit بقى بيصدّق أي حد يناديه. لو شاشة تانية (الـ onboarding مثلًا) نادت `increase()` من غير الـ if، الحد اتكسر. القاعدة مكانها الـ Cubit، والـ UI تقرا الـ constants بس عشان تشكّل الزرار.
+
+<b>5. نسيت `close` بره Flutter</b>
+
+في `dart run` وفي التستات مفيش `BlocProvider` يقفل عنك. Cubit مش مقفول معناه StreamController مفتوح، وأي subscription أو timer جواه شغال. في التستات بنكتبها `addTearDown(cubit.close)` أول ما نعمل الـ Cubit، زي [درس "تست الـ Cubit" في الوحدة 8](/course/testing/cubit-tests/).
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+### guard صريح ولا تعتمد على الـ ==؟
+
+الـ `clamp` شغال لأن الـ Cubit بيتجاهل الـ state المتكررة. بس ده معناه إن سلوك `increase()` عند الحد معتمد على تفصيلة في `emit`، مش مكتوب في الـ method نفسها. والتفصيلة دي ليها استثناء صغير: أول emit في حياة الـ Cubit بيعدّي حتى لو بيساوي الـ initial state. النسخة اللي هنثبّت عليها بتقول القاعدة بصوت عالي:
+
+<CodeBlock label="lib/features/settings/presentation/reading_goal_cubit.dart">
+
+```dart
+class ReadingGoalCubit extends Cubit<int> {
+  ReadingGoalCubit(this._suggestDailyGoal) : super(defaultGoal);
+
+  final SuggestDailyGoal _suggestDailyGoal;
+
+  static const defaultGoal = 20;
+  static const min = 5;
+  static const max = 200;
+  static const step = 5;
+
+  void increase() {
+    if (state >= max) return; // at the limit: nothing to do
+    emit(state + step);
+  }
+
+  void decrease() {
+    if (state <= min) return;
+    emit(state - step);
+  }
+
+  void reset() => emit(defaultGoal);
+
+  Future<void> useSuggested() async {
+    final result = await _suggestDailyGoal();
+    if (isClosed) return;
+    if (result case Success(:final value)) emit(_checked(value));
+  }
+
+  int _checked(int value) {
+    if (value < min || value > max) {
+      addError(StateError('suggested goal out of range: $value'));
+    }
+    return value.clamp(min, max);
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ guard بيوصف القرار:</b> «عند الحد مفيش حاجة تحصل» مكتوبة في السطر، مش مستنتجة من سلوك `emit`. واللي هيقرا الكود بعد 6 شهور مش محتاج يعرف إن `emit` بيتجاهل الـ duplicates.
+- <b>الـ dedupe شبكة أمان:</b> مش بنشيله ومش بنحاربه. هو اللي بيوفّر rebuilds لما state جديدة تطلع زي القديمة بالظبط، وده بيحصل كتير مع البيانات اللي جاية من stream.
+- <b>الـ `if (result case Success(...))`:</b> لو فشل، مفيش emit خالص بدل emit لنفس الـ state. نفس النتيجة، بس من غير ما تعتمد على الـ dedupe.
+
+### `Cubit<int>` كفاية لحد امتى؟
+
+الـ state رقم واحد شغالة طول ما الشاشة محتاجة رقم واحد. أول ما تحتاج حاجة تانية جنبه، زي «بيحسب الاقتراح» أو «الاقتراح فشل» أو «اتحفظ؟»، الـ `int` مايقدرش يشيلها. ساعتها قدامك اختيارين: class بحقول (`ReadingGoalState(pages, isSuggesting, suggestFailure)`)، أو sealed hierarchy. والاختيار بينهم بالظبط هو [درس "تصميم الـ State"](/course/state-management/state-design/). والـ Cubits اللي state بتاعتها قيمة واحدة (`Cubit<bool>`، `Cubit<LibraryViewMode>`) ليها مكانها في [درس "أنواع الـ Cubit (1)"](/course/state-management/cubit-types/) كنوع مستقل اسمه value Cubit.
+
+وفي حاجة الـ Cubit ده لسه مابيعملهاش: الرقم بيرجع 20 كل ما الـ app يتقفل ويفتح. حفظه في `SettingsStore` (درس الإعدادات في الوحدة 6) حل، و`HydratedCubit` حل تاني بيحفظ الـ state لوحده. المقارنة في [درس "Cubit بيفتكر ويرجع"](/course/state-management/hydrated-replay/).
+
+### شكل الـ API بتاع الـ Cubit
+
+- <b>الـ methods بتوصف نية المستخدم:</b> `increase()` و`decrease()` و`reset()` و`useSuggested()`. مش `setGoal(int)` اللي بتخلي الـ UI تحسب الرقم الجاي وتبعته، فالقاعدة تهرب للـ widget. لو في Slider فعلًا بيبعت رقم، اسمها `goalChanged(int pages)` والـ Cubit هو اللي يعمل clamp.
+- <b>الـ methods بترجّع `void` أو `Future<void>`:</b> النتيجة في الـ state، مش في return value. لو `increase()` رجّعت `bool` «اتزود ولا لأ»، هتلاقي widget بيعمل if عليها، وبقى في طريقين للحقيقة. والـ `Future<void>` مسموح عشان الـ UI تستنى (زي `RefreshIndicator` في درس الـ Cubit في الوحدة 5)، بس مش عشان ترجّع داتا.
+- <b>مفيش public fields:</b> الـ `_suggestDailyGoal` private. أي حاجة الـ UI محتاجة تعرفها تبقى في الـ state، والثوابت `static const`.
+
+القواعد التلاتة دي موجودة كـ lint rules في bloc_lint (`prefer_void_public_cubit_methods` و`avoid_public_fields` و`avoid_public_bloc_methods` للـ Bloc)، وهنفعّلها في الـ CI في [درس "الـ State management في مشروع حقيقي"](/course/state-management/architecture/).
+
+### الـ Cubit من غير Flutter مكسب، مش صدفة
+
+الـ ReadingGoalCubit اشتغل في `dart run` قبل ما يشوف widget. ده معناه إن تست القاعدة بيبقى كده:
+
+<CodeBlock label="test/features/settings/presentation/reading_goal_cubit_test.dart">
+
+```dart
+test('never goes above max, however many taps', () {
+  final cubit = ReadingGoalCubit(FakeSuggestDailyGoal());
+  addTearDown(cubit.close);
+
+  for (var i = 0; i < 100; i++) {
+    cubit.increase();
+  }
+
+  expect(cubit.state, ReadingGoalCubit.max);
+});
+```
+
+</CodeBlock>
+
+مفيش `pumpWidget`، ومفيش emulator، وبيخلص في ملي ثانية. وعشان يفضل كده، ملف الـ Cubit بيعمل import لـ `package:bloc/bloc.dart` بس، مش `flutter_bloc` ولا `material`. لو لقيت نفسك محتاج `BuildContext` أو `Colors` جوه Cubit، ده علامة إن حاجة من شغل الـ UI دخلت مكان غلط. وكل أشكال تست الـ Cubit (blocTest، والوقت، والـ race conditions) في [درس "تست الـ Cubit" في الوحدة 8](/course/testing/cubit-tests/).
+
+<Note kind="interview" title="سؤال interview">
+
+«إيه اللي بيحصل لو عملت emit لنفس الـ state مرتين؟» الـ Cubit بيقارن بـ `==` مع الـ state الحالية، ولو متساويين بيتجاهل الـ emit: مفيش `onChange`، ومفيش حاجة على الـ stream، ومفيش rebuild. (الاستثناء الوحيد أول emit في عمر الـ Cubit.) ده بيوفّر rebuilds، بس ليه وش تاني: لو الـ state class من غير `==` مكتوب، المقارنة بالـ identity، فـ object جديد بنفس البيانات هيعمل rebuild، ونفس الـ object بعد ما عدّلت فيه هيتجاهل والشاشة مش هتتحدث. عشان كده الـ states بتبقى immutable وبـ value equality (Equatable أو freezed أو records). ومش بعتمد على الـ dedupe كـ logic: لو في حد، بكتبه guard صريح.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«ليه بنعمل `if (isClosed) return` بعد الـ await في الـ Cubit؟» لأن الـ Cubit ممكن يتقفل وهو مستني: المستخدم خرج من الشاشة، والـ `BlocProvider` عمل `close()`. أي `emit` بعد القفل بيرمي `StateError: Cannot emit new states after calling close`، وبيعدّي على `onError` فبيوصل Sentry كـ crash مع إن مفيش مشكلة حقيقية. الـ check لازم بعد كل await، مش أول واحد بس. وده بيحل مشكلة «الشاشة اتقفلت» بس. لو في طلبين شغالين مع بعض على نفس الـ Cubit، محتاج سياسة concurrency (ignore أو restart أو queue) أو Bloc بـ transformer.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### نفس الشاشة بـ setState وبـ Cubit
+
+<BeforeAfter>
+
+<Side label="setState: القاعدة والـ UI في نفس الـ State" kind="before">
+
+```dart
+class _ReadingGoalPageState extends State<ReadingGoalPage> {
+  int _pages = 20;
+
+  Future<void> _useSuggested() async {
+    final result = await getIt<SuggestDailyGoal>()();
+    if (!mounted) return;
+    if (result case Success(:final value)) {
+      setState(() => _pages = value.clamp(5, 200));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Row(children: [
+        IconButton(
+          onPressed: _pages > 5
+              ? () => setState(() => _pages -= 5)
+              : null,
+          icon: const Icon(Icons.remove),
+        ),
+        Text('$_pages'),
+        IconButton(
+          onPressed: _pages < 200
+              ? () => setState(() => _pages += 5)
+              : null,
+          icon: const Icon(Icons.add),
+        ),
+      ]);
+}
+```
+
+</Side>
+
+<Side label="Cubit: الـ widget بيعرض وبيطلب" kind="after">
+
+```dart
+// the rules, in pure Dart: see ReadingGoalCubit above
+
+class ReadingGoalView extends StatelessWidget {
+  const ReadingGoalView({super.key});
+
+  @override
+  Widget build(BuildContext context) =>
+      BlocBuilder<ReadingGoalCubit, int>(
+        builder: (context, pages) {
+          final cubit = context.read<ReadingGoalCubit>();
+          return Row(children: [
+            IconButton(
+              onPressed: pages > ReadingGoalCubit.min
+                  ? cubit.decrease
+                  : null,
+              icon: const Icon(Icons.remove),
+            ),
+            Text('$pages'),
+            IconButton(
+              onPressed: pages < ReadingGoalCubit.max
+                  ? cubit.increase
+                  : null,
+              icon: const Icon(Icons.add),
+            ),
+          ]);
+        },
+      );
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+- <b>القواعد اتنقلت:</b> 5 و200 و5 مكتوبين مرة واحدة في الـ Cubit بأسماء، بدل ما يبقوا أرقام متكررة في الـ widget.
+- <b>الـ `mounted` بقى `isClosed`:</b> نفس الفكرة، بس في مكان يتختبر من غير widget.
+- <b>الـ `cubit.decrease` من غير closure:</b> هنا الـ `read` في الـ builder بيجيب الـ Cubit نفسه، والـ Cubit مابيتغيرش طول عمر الـ provider، فالـ tear-off آمن. اللي ماينفعش يتقري بـ `read` في build هو الـ <b>state</b>، زي الغلطة رقم 2.
+- <b>الـ widget بقى StatelessWidget:</b> مفيش `State` يتعمل له dispose، ومفيش حاجة تضيع لو اتبنى تاني.
+
+### الملفات في Readly
+
+<Journey>
+
+<Step file="lib/features/library/domain/usecases/suggest_daily_goal.dart">
+
+الـ use case بيحسب متوسط الصفحات من الـ repository بتاع المكتبة وبيرجّع `Result<int>`. مكانه domain المكتبة، لأن الإعدادات feature من غير domain (درس الإعدادات في الوحدة 6). والـ Cubit مايعرفش جاي منين.
+
+</Step>
+
+<Step file="lib/features/settings/presentation/reading_goal_cubit.dart">
+
+الـ Cubit: الـ state `int`، والقواعد، و`isClosed` بعد الـ await. import لـ `package:bloc/bloc.dart` بس.
+
+</Step>
+
+<Step file="lib/di/setup.dart">
+
+`registerFactory<ReadingGoalCubit>(() => ReadingGoalCubit(getIt()))`: كل مرة الصفحة تتفتح، Cubit جديد.
+
+</Step>
+
+<Step file="lib/features/settings/presentation/reading_goal_page.dart">
+
+الـ `ReadingGoalPage` بيعمل `BlocProvider(create: (_) => getIt<ReadingGoalCubit>())`، والـ `ReadingGoalView` بيعرض بـ `BlocBuilder` وبينادي بـ `context.read`.
+
+</Step>
+
+<Step file="test/features/settings/presentation/reading_goal_cubit_test.dart">
+
+تستات القواعد في Dart: الحدود، والاقتراح برا الحدود، والـ emit بعد close مابيرميش.
+
+</Step>
+
+</Journey>
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="sm-first-1">
+<Ask>الكود ده بيطبع إيه وبأي ترتيب؟ `final c = ReadingGoalCubit(); c.stream.listen((p) => print('stream $p')); c.increase(); print('state ${c.state}');`</Ask>
+<Answer>
+
+`state 25` الأول، وبعدها `stream 25`. الـ `emit` بيغيّر `state` في نفس السطر، أما الـ stream فبيوصّل للمستمعين بعدها في microtask. والـ 20 (الـ initial state) مش هتتطبع خالص، لأنها مابتعدّيش على الـ stream.
+
+</Answer>
+</Question>
+
+<Question id="sm-first-2">
+<Ask>الـ state 200، والمستخدم داس + تاني. في نسخة الـ `clamp`، و`emit(200)` اتنادى. إيه اللي بيحصل؟ وليه النسخة النهائية فيها guard صريح؟</Ask>
+<Answer>
+
+الـ Cubit بيقارن 200 بـ 200 بـ `==`، فبيتجاهل الـ emit: مفيش `onChange`، ولا حاجة على الـ stream، ولا rebuild. الـ guard الصريح (`if (state >= max) return;`) بيكتب القرار في الـ method نفسها بدل ما يعتمد على تفصيلة في `emit` (اللي ليها استثناء في أول emit)، فاللي بيقرا الكود يفهم السلوك من غير ما يعرف داخل الـ bloc.
+
+</Answer>
+</Question>
+
+<Question id="sm-first-3">
+<Ask>المستخدم داس «اقترح عليّا» ورجع لورا قبل ما الحساب يخلص. ظهر `Bad state: Cannot emit new states after calling close`. ليه، والحل إيه؟</Ask>
+<Answer>
+
+الـ `BlocProvider` قفل الـ Cubit لما الصفحة اتقفلت، والـ use case رجع بعدها، فالـ `emit` اتنادى على Cubit مقفول فرمى `StateError` (وعدّى على `onError` الأول). الحل `if (isClosed) return;` بعد كل `await` في الـ Cubit، قبل أي emit.
+
+</Answer>
+</Question>
+
+<Question id="sm-first-4">
+<Ask>`Text('${context.read<ReadingGoalCubit>().state}')` بيعرض 20، وبعد ما المستخدم بيدوس + بيفضل 20. ليه؟</Ask>
+<Answer>
+
+لأن `context.read` بيجيب الـ Cubit مرة ومابيسجّلش الـ widget كمستمع، فمحدش بيعيد بناءه لما الـ state تتغير. أي حاجة بتتعرض من الـ state لازم تبقى جوه `BlocBuilder` (أو `context.watch`/`BlocSelector`). الـ `read` للـ callbacks، زي `onPressed`.
+
+</Answer>
+</Question>
+
+<Question id="sm-first-5">
+<Ask>`addError` بيعمل إيه بالظبط؟ وامتى تستخدمه بدل ما تعمل emit لـ state فيها خطأ؟</Ask>
+<Answer>
+
+بينادي `onError` بس، ومنه `BlocObserver.onError` (اللي بيوصّل لـ Sentry). مابيغيّرش الـ state، ومابيطلعش على الـ stream، والـ UI مش بتعرف بيه. تستخدمه للحاجات اللي «مش المفروض تحصل» وعايز تعرف بيها من غير ما المستخدم يتأثر، زي اقتراح 750 صفحة من حساب فيه bug. أما الـ Failure العادية زي النت فاصل، فالمستخدم لازم يشوفها، فمكانها الـ state.
+
+</Answer>
+</Question>
+
+</Quiz>

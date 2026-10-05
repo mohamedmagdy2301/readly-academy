@@ -1,0 +1,624 @@
+---
+title: "الـ State من الصفر"
+description: "يعني إيه state أصلًا، وامتى setState كفاية وامتى بيبوظ، والـ Streams في 10 دقايق، والتدفق في اتجاه واحد، وخريطة حلول الـ state management الرئيسية (Provider وRiverpod وBloc وGetX وMobX وRedux وsignals) وأنهي درس بيغطي كل واحد، وخريطة packages الـ bloc."
+minutes: 40
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="ورقة على مكتبك وسبورة المكتب">
+
+انت شغال في مكتب مع فريق. في حاجات بتكتبها على ورقة صغيرة جنبك: الصفحة اللي وقفت عندها في ملف، أو إن القلم الأحمر معاك. محدش غيرك محتاجها، ولو رميت الورقة آخر اليوم مفيش مشكلة.
+
+وفي حاجات مكتوبة على سبورة في نص المكتب: مين في إجازة، والمشروع وصل لفين، وأنهي عميل مستني رد. دي الفريق كله بيبص عليها. ولو كل واحد نقلها على ورقته وبقى يعدّل في نسخته، بعد يومين هيبقى في خمس نسخ مختلفة، ومحدش عارف أنهي فيهم الصح.
+
+والسبورة ليها قاعدة: <b>واحد بس</b> اللي بيكتب عليها، والباقي بيقروا. لو حد عايز يغيّر حاجة، بيطلب منه، وهو اللي بيمسح ويكتب. فأي حد يبص عليها في أي لحظة بيشوف نفس الحقيقة.
+
+</Analogy>
+
+### يعني إيه state؟
+
+الـ <b>state</b> هي أي معلومة لو اتغيرت، الشاشة لازم تتغير معاها. الكتب اللي في المكتبة state. إن الطلب لسه بيحمّل state. إن الباسورد ظاهر ولا مخفي state. حتى مكان الـ scroll في الليستة state.
+
+والفكرة اللي Flutter كله مبني عليها جملة واحدة: `UI = f(state)`. الشاشة مش حاجة بتعدّل فيها بإيدك («خبّي الـ spinner، وحط الكتب في الليستة»). الشاشة <b>نتيجة</b> بتطلع من الـ state. انت بتغيّر الـ state، وFlutter بيعيد يرسم الـ widgets اللي بتعتمد عليها. لو الـ state فيها `loading: true`، الـ build بيرجّع spinner. لو فيها كتب، بيرجّع ليستة. مفيش خطوة في النص اسمها «امسح الـ spinner».
+
+ده بيخلي السؤال الحقيقي في أي شاشة مش «أرسم إيه؟»، السؤال: <b>الـ state دي بتاعة مين، ومين المسموح له يغيّرها؟</b> والوحدة دي كلها إجابة على السؤال ده.
+
+### نوعين من الـ state
+
+الـ docs بتاعة Flutter بتقسم الـ state لنوعين، وده نفس الورقة والسبورة:
+
+| المعلومة في Readly | مين محتاجها | النوع |
+| --- | --- | --- |
+| الباسورد ظاهر ولا مخفي في شاشة الـ login | الـ TextField ده بس | ephemeral |
+| مكان الـ scroll في ليستة الكتالوج | الليستة نفسها | ephemeral |
+| الـ animation بتاعة زرار «ضيف للمكتبة» | الزرار | ephemeral |
+| نتايج البحث، وهل البحث شغال، وهل فشل | شاشة الكتالوج كلها، ومنطق فيه debounce وطلبات | screen state |
+| كتب المكتبة وحالة كل كتاب | المكتبة، والـ Home، وصفحة التفاصيل | app state |
+| المستخدم عامل login ولا لأ | الـ router وكل شاشة | app state |
+| اللغة والثيم | الـ app كله | app state |
+
+- <b>الـ ephemeral state (الورقة):</b> معلومة صغيرة، widget واحد بس بيحتاجها، ومفيش فيها business logic، ولو ضاعت لما الشاشة تتقفل محدش يزعل. مكانها جوه الـ widget نفسه.
+- <b>الـ app state (السبورة):</b> أكتر من مكان بيقراها، أو فيها قواعد وطلبات وأخطاء، أو لازم تعيش أطول من widget واحد. دي محتاجة مكان واحد يمسكها، ومالك واحد يغيّرها.
+
+والصف اللي في النص (screen state) مهم: معلومة شاشة واحدة بس هي اللي بتعرضها، بس فيها منطق حقيقي: طلب للسيرفر، وأخطاء، وrace conditions. دي برضه مكانها بره الـ widget، لأن الـ widget مكان سيئ للمنطق، زي ما هنشوف حالًا.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### setState: الـ state جوه الـ widget
+
+أبسط مكان للـ state هو الـ widget نفسه. ده الباسورد في شاشة الـ login:
+
+<CodeBlock label="ephemeral state: مكانها الصح setState">
+
+```dart
+class PasswordField extends StatefulWidget {
+  const PasswordField({super.key, required this.onChanged});
+  final ValueChanged<String> onChanged;
+
+  @override
+  State<PasswordField> createState() => _PasswordFieldState();
+}
+
+class _PasswordFieldState extends State<PasswordField> {
+  bool _obscure = true; // lives as long as this State object
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      obscureText: _obscure,
+      onChanged: widget.onChanged,
+      decoration: InputDecoration(
+        suffixIcon: IconButton(
+          icon: Icon(_obscure ? Icons.visibility : Icons.visibility_off),
+          onPressed: () => setState(() => _obscure = !_obscure),
+        ),
+      ),
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ widget والـ State حاجتين:</b> `PasswordField` نفسه مجرد config مابيتغيرش، وFlutter بيعمل منه نسخة جديدة كل ما الأب يتبني. الـ `_PasswordFieldState` هو اللي بيعيش: Flutter بيعمله مرة واحدة وبيحتفظ بيه طول ما الـ widget في نفس المكان في الشجرة. عشان كده `_obscure` حقل فيه، مش متغير جوه `build`.
+- <b>الـ setState بيعمل إيه بالظبط:</b> بينفّذ الـ function اللي بتديهاله، وبعدين بيعلّم الـ widget إنه «محتاج يتبني تاني». في الـ frame الجاي، Flutter بينادي `build` تاني، فالأيقونة تتغير. لو غيّرت `_obscure` من غير `setState`، القيمة هتتغير والشاشة مش هتعرف.
+- <b>الـ onChanged لبره:</b> النص نفسه بيطلع للأب، لأن الأب (والـ LoginCubit في [درس الـ Forms في الوحدة 5](/course/presentation/forms/)) هو اللي محتاجه. أما ظاهر ولا مخفي، فمحدش غير الحقل ده محتاجه.
+
+ده استخدام صح 100% لـ `setState`، ومش محتاج Cubit. لو حطيت `obscure` في الـ `LoginFormState`، الـ Cubit هيعرف حاجة عن شكل الشاشة مالهاش علاقة بالـ login، وأي تست للـ Cubit هيبقى فيه حقل ملوش لازمة.
+
+### setState لحد ما يبوظ
+
+دلوقتي خلينا نبني حاجة أكبر بنفس الأداة. شاشة المكتبة في Readly، بـ `setState`، زي الكود اللي شفناه في أول درس في الكورس:
+
+<CodeBlock label="الخطوة 1: شاشة واحدة، ماشي الحال">
+
+```dart
+class _LibraryPageState extends State<LibraryPage> {
+  List<Book> _books = [];
+  bool _loading = true;
+  Failure? _failure;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final result = await getIt<GetLibrary>()();
+    if (!mounted) return; // the page may be gone by now
+    setState(() {
+      _loading = false;
+      switch (result) {
+        case Success(:final value):
+          _books = value;
+        case Err(:final failure):
+          _failure = failure;
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_failure case final failure?) {
+      return ErrorView(message: failure.localized(AppLocalizations.of(context)!), onRetry: _load);
+    }
+    return BookList(books: _books);
+  }
+}
+```
+
+</CodeBlock>
+
+شغال. بس بص على 3 حاجات صغيرة: `if (!mounted)` لازم بعد كل `await` (من غيرها: `setState() called after dispose()`)، و`_failure` مابيتمسحش لو عملت retry ونجح (bug مستخبي)، والـ `_load` في الـ retry مابيرجّعش `_loading` لـ true. كل ده مسؤوليتك، في كل شاشة.
+
+وبعدين جه طلب جديد: تاب الـ Home عايز يعرض «بتقرا دلوقتي 3 كتب». الكتب في `_LibraryPageState`، والـ Home تاب تاني. الاتنين مش شايفين بعض. الحل الوحيد مع `setState`: <b>ترفع الـ state</b> (lifting state up) لأقرب أب مشترك بينهم، وهو الـ shell اللي فيه التابات:
+
+<CodeBlock label="الخطوة 2: الـ state طلعت للـ shell">
+
+```dart
+class _HomeShellState extends State<HomeShell> {
+  List<Book> _books = [];
+  bool _loading = true;
+  int _tab = 0;
+
+  // ...the same _load(), now in the shell
+
+  void _onStatusChanged(BookId id, BookStatus status) {
+    setState(() {
+      _books = [
+        for (final b in _books) b.id == id ? b.copyWith(status: status) : b,
+      ];
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return IndexedStack(
+      index: _tab,
+      children: [
+        HomeTab(books: _books),           // needs one number from it
+        LibraryTab(
+          books: _books,
+          loading: _loading,
+          onStatusChanged: _onStatusChanged,
+        ),
+        const SettingsTab(),
+      ],
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+وجوه `LibraryTab`، الكتب بتتنقل لـ `BookList`، و`BookList` بتنقلها لكل `BookTile`، والـ `onStatusChanged` بيتنقل في نفس الطريق لحد زرار «خلصته» في الـ tile. `LibraryTab` و`BookList` مش محتاجين `onStatusChanged` في حاجة، بس لازم ياخدوه في الـ constructor عشان يعدّوه. ده اسمه <b>prop drilling</b>: بيانات بتعدّي على widgets مالهاش دعوة بيها.
+
+<Diagram name="d-sm-lifting">
+
+مع setState، الكتب بتعيش في الـ HomeShell، وبتنزل لتحت عن طريق widgets مش محتاجاها، والتغيير بيطلع لفوق بـ callback. مع Cubit متوفّر فوق الشجرة، كل widget بيقرا اللي محتاجه بس، والـ widgets اللي في النص مابتعرفش حاجة.
+
+</Diagram>
+
+وبعدين طلب تالت: صفحة تفاصيل الكتاب (route تاني خالص، مش جوه الـ shell) فيها زرار «خلصته». دلوقتي لازم الصفحة ترجّع النتيجة بـ `context.pop(newStatus)`، والـ tile يستناها ويناديه الـ callback. ولو صفحة التفاصيل فتحت صفحة الملاحظات، والملاحظات غيّرت حاجة في الكتاب؟ سلسلة pops. وأي حتة في السلسلة دي نسيت، المكتبة بتعرض «بقراه» والتفاصيل بتعرض «خلصته»: <b>نسختين من الحقيقة</b>.
+
+### حدود setState بالظبط
+
+| المشكلة | شكلها في Readly | ليه بتحصل |
+| --- | --- | --- |
+| رفع الـ state | الكتب طلعت من المكتبة للـ shell عشان الـ Home يشوفها | الـ state محبوسة في widget، والـ widgets التانية مش شايفاها |
+| الـ prop drilling | `onStatusChanged` بيعدّي على 3 widgets عشان يوصل لزرار | مفيش طريق للـ data غير الـ constructors |
+| المنطق في الـ widget | الـ load، والـ mounted، والـ retry، وقاعدة «مسموح يخلّص الكتاب؟» جوه الـ State | `setState` مكان للـ state، مش للمنطق، بس مفيش مكان تاني |
+| التست | عشان تختبر «الـ retry بيمسح الخطأ» لازم widget test كامل بـ pump وmocks | المنطق ملزوق في الـ UI |
+| عمر الـ state | تقفل صفحة التفاصيل، اللي فيها بيضيع | الـ State object بيموت مع الـ widget |
+| rebuilds زيادة | أي تغيير في كتاب واحد بيعيد بناء الـ shell، وكل تاب وكل widget بياخد `books` | الـ state فوق، فكل اللي بيستلمها تحتها بيتبني |
+
+ولا واحدة من دول عيب في `setState`. هو معمول للورقة اللي على مكتبك، وبيشتغل ممتاز ليها. المشكلة إننا بنستخدمه للسبورة.
+
+وFlutter نفسه عنده حل للـ prop drilling اسمه `InheritedWidget` (نفس اللي ورا `Theme.of(context)`)، والـ package اسمها `provider` بتلفّه، و`flutter_bloc` مبنية فوقها. ده وأدوات Flutter التانية (`ValueNotifier` و`ChangeNotifier`) موضوع [الدرس الجاي](/course/state-management/flutter-builtins/) كله.
+
+### الـ Streams في 10 دقايق
+
+قبل ما نكتب Cubit، لازم تفهم حاجة واحدة: الـ Cubit في الآخر <b>قيمة حالية + stream من القيم الجاية</b>. فلو الـ stream مش واضح، الـ Cubit هيبان سحر.
+
+الـ `Future` قيمة واحدة هتيجي بعدين: `Future<List<Book>>` يعني «هيجيلك ليستة كتب مرة واحدة، أو error». الـ `Stream` قيم كتير بتيجي على مدار الوقت: `Stream<List<Book>>` يعني «كل ما المكتبة تتغير هيجيلك ليستة جديدة، لحد ما الـ stream يتقفل».
+
+<Diagram name="d-sm-stream">
+
+الـ Future بيطلّع قيمة واحدة ويخلص. الـ Stream بيطلّع قيم كتير على مدار الوقت لحد ما يتقفل. والـ Cubit stream من الـ states، بس الـ state الابتدائية مش بتعدّي عليه، واللي يسمع متأخر مابيشوفش اللي فات، فبيقرا `state` الأول.
+
+</Diagram>
+
+<CodeBlock label="bin/streams.dart: شغّله بـ dart run">
+
+```dart
+import 'dart:async';
+
+Future<void> main() async {
+  final pages = StreamController<int>();
+  pages.add(10); // no listener yet: buffered
+
+  final sub = pages.stream.listen(
+    (p) => print('read $p pages'),
+    onDone: () => print('done'),
+  );
+  pages.add(25);
+  print('added two');
+
+  await pages.close();
+  await sub.cancel();
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ output">
+
+```text
+added two
+read 10 pages
+read 25 pages
+done
+```
+
+</CodeBlock>
+
+- <b>الـ StreamController:</b> الطرف اللي بيكتب. `add` بيبعت قيمة، و`addError` بيبعت error، و`close` بيقول «خلاص مفيش تاني».
+- <b>الـ stream:</b> الطرف اللي بيتقري. اللي بيسمع مايقدرش يبعت حاجة، وده نفس قاعدة السبورة: واحد بيكتب، والباقي بيقروا.
+- <b>الـ listen:</b> بيرجّع `StreamSubscription`، وده الخيط اللي بيربطك بالـ stream. `onDone` بيتنادى لما الـ stream يتقفل.
+- <b>الـ «added two» طلعت الأول:</b> الـ stream مابيوصّلش القيمة في نفس اللحظة. بيحطها في طابور (microtask) وبيكمّل الكود اللي بعد `add` الأول. افتكر النقطة دي، هتقابلها تاني في الـ Cubit.
+- <b>الـ 10 ماضاعتش:</b> الـ controller العادي (single-subscription) بيخزّن القيم لحد ما حد يسمع، بس بيسمح بمستمع واحد بس. مستمع تاني هيرمي `Bad state: Stream has already been listened to`، زي ما شفنا في [درس «Dart اللي هتحتاجه» في الوحدة 1](/course/foundations/dart/).
+
+ولو أكتر من حد محتاج يسمع، في نوع تاني:
+
+<CodeBlock label="broadcast: كذا مستمع، ومفيش ذاكرة">
+
+```dart
+final syncs = StreamController<String>.broadcast();
+syncs.add('lost'); // nobody is listening: gone forever
+
+final a = syncs.stream.listen((e) => print('A: $e'));
+final b = syncs.stream.listen((e) => print('B: $e'));
+syncs.add('synced 3 books');   // A and B
+await Future<void>.delayed(Duration.zero);
+
+await a.cancel();
+syncs.add('synced 1 book');    // B only
+```
+
+</CodeBlock>
+
+| | single-subscription | broadcast |
+| --- | --- | --- |
+| عدد المستمعين | واحد بس | أي عدد |
+| قيمة اتبعتت قبل أي listen | بتستنى لحد ما حد يسمع | بتضيع |
+| مستمع جه متأخر | مفيش (مسموح بواحد) | بيشوف اللي جاي بس، مش اللي فات |
+| أمثلة | قراية ملف، response بيتقري حتة حتة | أحداث الـ sync، و<b>الـ stream بتاع أي Cubit</b> |
+
+### الـ cancel: كل listen ليه نهاية
+
+أي `listen` بيفضل شغال لحد ما الـ stream يتقفل أو انت تعمل `cancel()`. لو الشاشة اتقفلت والـ subscription لسه شغالة، الـ callback هيتنادى على widget مش موجود (وتشوف `setState() called after dispose()`)، والـ objects اللي الـ callback ماسكها مش هتتمسح من الـ memory. ده leak.
+
+<CodeBlock label="الـ listen في initState، والـ cancel في dispose">
+
+```dart
+class _SyncBadgeState extends State<SyncBadge> {
+  StreamSubscription<int>? _sub;
+  int _pending = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _sub = widget.pendingChanges.listen((n) => setState(() => _pending = n));
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel(); // without this: callbacks after dispose, and a leak
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Badge.count(count: _pending);
+}
+```
+
+</CodeBlock>
+
+وفي طريقتين تانيين هتشوفهم كتير: `await for (final books in repository.watchLibrary()) { ... }` بيسمع جوه async function لحد ما الـ stream يخلص، و`async*` مع `yield` بيعمل stream من function:
+
+<CodeBlock label="stream من function">
+
+```dart
+Stream<int> countdown(int from) async* {
+  for (var i = from; i > 0; i--) {
+    await Future<void>.delayed(const Duration(seconds: 1));
+    yield i; // one value on the stream
+  }
+}
+```
+
+</CodeBlock>
+
+### اعمل Cubit بإيدك في 20 سطر
+
+دلوقتي عندك كل القطع. عايزين مكان واحد بره الـ widgets يمسك قيمة، ويقول لأي حد مهتم إنها اتغيرت، وماحدش يغيّرها غيره:
+
+<CodeBlock label="ValueHolder: الفكرة من غير أي package">
+
+```dart
+class ValueHolder<T> {
+  ValueHolder(this._value);
+
+  final _controller = StreamController<T>.broadcast();
+  T _value;
+
+  T get value => _value;               // what is it now?
+  Stream<T> get stream => _controller.stream; // tell me when it changes
+
+  void set(T next) {
+    if (next == _value) return;        // nothing changed: nobody is told
+    _value = next;
+    _controller.add(next);
+  }
+
+  Future<void> close() => _controller.close();
+}
+```
+
+</CodeBlock>
+
+بص على الـ class ده كويس، لأنه تقريبًا الكود الحقيقي اللي جوه الـ `Cubit`. لو فتحت source الـ `bloc` هتلاقي `BlocBase` فيه `StreamController<State>.broadcast()`، و`state` getter، و`stream` getter، و`emit` بيتجاهل الـ state لو بتساوي الحالية، و`close` بيقفل الـ controller. الفرق إن `emit` هناك `@protected`: ماحدش من بره يقدر يناديه، فالـ class نفسه بس اللي يقرر الـ state الجاية. وفوق ده hooks للـ logging والأخطاء، هنفتحها سطر سطر في [درس "أول Cubit سطر بسطر"](/course/state-management/first-cubit/).
+
+وفي الـ UI، اللي هيعرض `ValueHolder` محتاج `StreamBuilder` بياخد `initialData: holder.value` (عشان الـ broadcast مابيفتكرش)، وحد يعمل `close` لما الشاشة تتقفل، وطريقة توصّل الـ holder للـ widgets من غير prop drilling. والتلاتة دول بالظبط اللي `flutter_bloc` بتعمله: `BlocBuilder` و`BlocProvider`.
+
+</Level>
+
+<Level n="3" title="التدفق في اتجاه واحد وخريطة الـ packages">
+
+### الـ unidirectional data flow
+
+الفكرة اللي ورا الـ Cubit مش الـ stream، الفكرة <b>الاتجاه</b>. الداتا بتمشي في دايرة في اتجاه واحد بس:
+
+1. الـ UI بتعرض الـ state الحالية.
+2. المستخدم عمل حاجة، فالـ UI بتقول للـ Cubit «حصل كذا» (بتنادي method: `markAsFinished(id)`).
+3. الـ Cubit بيقرر، وبيكلّم الـ use case لو محتاج.
+4. الـ Cubit بيعمل emit لـ state <b>جديدة</b>.
+5. الـ UI بتتبني تاني من الـ state الجديدة. ونرجع لـ 1.
+
+والقواعد اللي بتطلع من الدايرة دي:
+
+- <b>الـ UI مابتعدّلش الـ state أبدًا.</b> مابتعملش `state.books.add(book)`. بتطلب، والـ Cubit يقرر.
+- <b>مالك واحد لكل state.</b> مفيش اتنين بيكتبوا على نفس السبورة.
+- <b>الـ state مابتتعدّلش، بتتستبدل.</b> كل تغيير = object جديد. ده اللي بيخلي سؤال «في حاجة اتغيرت؟» إجابته `==` بسيطة.
+
+### لما الاتجاه يتكسر
+
+<CodeBlock label="الـ widget عدّل في الـ state بنفسه">
+
+```dart
+// inside BookTile
+onPressed: () {
+  final state = context.read<LibraryCubit>().state as LibraryLoaded;
+  state.books.removeWhere((b) => b.id == book.id); // mutates the Cubit's list!
+},
+```
+
+</CodeBlock>
+
+اللي هيحصل: الليستة اللي جوه الـ Cubit اتغيرت فعلًا، بس مفيش emit، فمحدش اتبلّغ. الشاشة لسه بتعرض الكتاب. بعد شوية، أي emit تاني (refresh مثلًا) هيعيد البناء، والكتاب هيختفي فجأة من غير سبب واضح. ولو الـ `BlocSelector` في الـ Home بيعد الكتب، هيفضل على الرقم القديم لأن مفيش emit يصحّيه. وأسوأ حاجة: الحذف ماوصلش للـ repository خالص، فلما الـ app يفتح تاني الكتاب راجع. bug من ده بياخد يوم عشان تلاقيه، لأن مفيش سطر واحد «غلط» في الـ Cubit نفسه.
+
+الصح إن الـ tile يطلب، والـ Cubit هو اللي يمسح من الـ repository ويعمل emit لليستة جديدة. وموضوع «ليه الليستة لازم تبقى جديدة، وإزاي تمنع الغلطة دي من الأساس» هو أول حاجة في [درس "تصميم الـ State"](/course/state-management/state-design/).
+
+### الـ stream مابيفتكرش: وده سبب وجود state
+
+بما إن stream الـ Cubit broadcast، أي widget بيتبني بعد آخر emit مش هيشوف أي حاجة على الـ stream لحد الـ emit الجاي. لو الـ `BlocBuilder` كان بيسمع على الـ stream بس، تاب الـ Home اللي بتفتحه لأول مرة بعد ما الكتب اتحمّلت كان هيفضل فاضي لحد ما كتاب يتغير.
+
+عشان كده الـ Cubit عنده الاتنين: `state` (اللي موجود دلوقتي، بتقراه في أي لحظة) و`stream` (اللي جاي). والـ `BlocBuilder` بيبني أول مرة من `state`، وبعدين يسمع على الـ `stream` للتغييرات. ونفس السبب إن الـ state الابتدائية اللي في الـ constructor مش بتعدّي على الـ stream خالص: هي موجودة في `state` من أول لحظة، ومحدش محتاج «يتبلّغ» بيها.
+
+### خريطة حلول الـ state management
+
+الـ `ValueHolder` اللي فوق، والدايرة اللي في اتجاه واحد، هما نفس الفكرة اللي كل حلول الـ state management في Flutter مبنية عليها: مكان بره الـ widget يمسك الـ state ويبلّغ بالتغيير، وطريقة الـ widget يوصله بيها. الفرق بينهم في التفاصيل: مين بيغيّر الـ state، وبيبلّغ إزاي، ومين بيقفل. دي العيلات الرئيسية اللي هتقابلها:
+
+| العيلة | الفكرة في سطر | الدرس |
+| --- | --- | --- |
+| أدوات Flutter نفسه | `setState`، و`InheritedWidget` للوصول، و`ValueNotifier` و`ChangeNotifier` للتبليغ، من غير أي package | [«أدوات Flutter وProvider»](/course/state-management/flutter-builtins/) |
+| provider | بيلف الـ InheritedWidget: إنشاء وdispose ووصول بـ `context.read/watch/select`، وغالبًا مع ChangeNotifier | [«أدوات Flutter وProvider»](/course/state-management/flutter-builtins/) |
+| Bloc وCubit | الـ state immutable بتتغير بـ `emit` بس، والـ Cubit بـ methods والـ Bloc بـ events. ده اختيار Readly | من [«أول Cubit سطر بسطر»](/course/state-management/first-cubit/) لحد [«Cubit ولا Bloc»](/course/state-management/cubit-vs-bloc/) |
+| Riverpod | providers global بتتعرف بره الشجرة، وNotifier وAsyncValue، وبيعمل DI كمان | [«Riverpod من الصفر ومقارنته بالـ Cubit»](/course/state-management/riverpod/) |
+| GetX | controllers و`.obs` و`Obx`، ومعاه routing وDI من غير context | [«GetX وMobX وRedux وsignals»](/course/state-management/other-solutions/) |
+| MobX | observables وactions وcomputed بـ code generation، والـ UI بتسمع لوحدها على اللي بتقراه | [«GetX وMobX وRedux وsignals»](/course/state-management/other-solutions/) |
+| Redux | store واحد للـ app كله، وactions، وreducers pure | [«GetX وMobX وRedux وsignals»](/course/state-management/other-solutions/) |
+| signals | قيم reactive صغيرة (`signal` و`computed` و`effect`) بتبلّغ اللي قراها بس | [«GetX وMobX وRedux وsignals»](/course/state-management/other-solutions/) |
+
+والاختيار بينهم، والنقل من واحد للتاني في مشروع شغال، ليه [«تختار state management إزاي»](/course/state-management/choosing/). تركيز الوحدة على الـ Cubit والـ Bloc، لأنهم اللي هتكتبه في Readly، وأغلب الدروس عنهم. بس كل حل في الجدول هيتكتب بنفس الـ features (هدف القراية وشاشة المكتبة)، عشان تقارن بعينك.
+
+### خريطة الـ packages
+
+اسم «bloc» بيتقال على مجموعة packages، كل واحدة ليها شغلة. مش هتنزّلهم كلهم من أول يوم:
+
+| الـ package | فيها إيه | محتاجة Flutter؟ | امتى تنزّلها في Readly | الدرس |
+| --- | --- | --- | --- | --- |
+| `bloc` | `Cubit` و`Bloc` و`BlocObserver` | لأ، Dart بس | من أول Cubit | «أول Cubit سطر بسطر» |
+| `flutter_bloc` | `BlocProvider` و`BlocBuilder` و`BlocListener` و`BlocSelector` و`context.read` | أيوه | من أول شاشة | «flutter_bloc بالتفصيل» |
+| `bloc_test` | `blocTest` و`MockCubit` و`whenListen` | لأ | dev_dependency، من أول تست | «تست الـ Cubit» في الوحدة 8 |
+| `hydrated_bloc` | `HydratedCubit`: الـ state بتتحفظ وترجع بعد قفل الـ app | الـ Cubit لأ، بس الـ setup في `main` بياخد مسار من `path_provider` | لما state تانية غير الـ settings محتاجة تفتكر | «Cubit بيفتكر ويرجع» |
+| `replay_bloc` | `ReplayCubit`: undo وredo | لأ | لما يبقى في undo حقيقي، زي محرر الملاحظات | «Cubit بيفتكر ويرجع» |
+| `bloc_concurrency` | `sequential` و`droppable` و`restartable` و`concurrent` | لأ | مع أول `Bloc` بس، مالهاش لازمة مع Cubit | «الـ Bloc من الصفر» |
+| `bloc_lint` | قواعد lint للـ blocs، وبتشتغل بـ `bloc lint .` من `bloc_tools` | لأ | dev_dependency، لما الفريق يكبر | «الـ State management في مشروع حقيقي» |
+
+<CodeBlock label="pubspec.yaml: البداية">
+
+```yaml
+dependencies:
+  bloc: ^9.2.0
+  flutter_bloc: ^9.1.1
+
+dev_dependencies:
+  bloc_test: ^10.0.0
+```
+
+</CodeBlock>
+
+- <b>ليه `bloc` لوحدها لو `flutter_bloc` بتجيبها؟</b> عشان ملفات الـ Cubit تعمل import لـ `package:bloc/bloc.dart` بس، مش `flutter_bloc`. كده الـ Cubit مايقدرش يلمس `BuildContext` ولا أي widget حتى لو حد حاول، وبيتختبر بـ `dart test` من غير Flutter. القاعدة دي اسمها `avoid_flutter_imports` في bloc_lint.
+- <b>الـ equatable والـ freezed مش من العيلة:</b> بس هتستخدمهم مع الـ states كتير. ليهم مكانهم في درس «تصميم الـ State».
+- <b>كل package بتدخل بسبب:</b> مش «يمكن نحتاجها». زي ما شفنا في [درس «الأخطاء الشائعة» في الوحدة 7](/course/quality/anti-patterns/): packages قبل ما تحتاجها بتتقل الـ build وبتلخبط اللي جاي بعدك.
+
+### Cubit ولا Bloc، في جملة
+
+<b>الـ Cubit:</b> بتنادي method، وهو بيعمل emit لـ state. <b>الـ Bloc:</b> بتبعت event (object)، وهو بيستقبله في handler وبيعمل emit لـ state.
+
+<CodeBlock label="نفس الطلب بالطريقتين">
+
+```dart
+// Cubit: a method call
+context.read<LibraryCubit>().markAsFinished(book.id);
+
+// Bloc: an event object
+context.read<LibraryBloc>().add(BookMarkedAsFinished(book.id));
+```
+
+</CodeBlock>
+
+الاتنين نفس الدايرة ونفس الـ state ونفس الـ widgets. الـ Bloc بيزوّد طبقة الـ events، ودي بتدّيك تتبّع لكل event وتحكم في الـ concurrency بـ transformers جاهزة، مقابل كود أكتر. التفاصيل كاملة والقرار في [درس "Cubit ولا Bloc"](/course/state-management/cubit-vs-bloc/). ومن «أول Cubit سطر بسطر» لحد درس «الـ Bloc من الصفر»، كل حاجة هنكتبها Cubit.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+### الـ state دي مكانها فين؟
+
+ده أول سؤال قبل أي سطر، والإجابة بتمشي بالترتيب ده:
+
+| السؤال | لو الإجابة أيوه | مثال في Readly |
+| --- | --- | --- |
+| widget واحد بس محتاجها، ومفيش فيها منطق ولا طلبات؟ | `setState` أو controller جوه الـ State | الباسورد ظاهر، الـ tab المفتوح في صفحة التفاصيل |
+| شاشة واحدة، بس فيها طلبات أو أخطاء أو قواعد؟ | Cubit للشاشة، بيتعمل وبيتقفل معاها | البحث في الكتالوج، صفحة التفاصيل |
+| أكتر من شاشة محتاجة نفس البيانات؟ | الـ repository stream هو الحقيقة، وكل شاشة ليها Cubit بيسمع عليه | المكتبة والـ Home وعداد «بتقرا دلوقتي» |
+| الـ app كله محتاجها وبتعيش طول الـ session؟ | Cubit على مستوى الـ app فوق الـ router | الـ AuthCubit، والـ SettingsCubit، والـ SyncStatusCubit |
+
+لاحظ الصف التالت: الحل مش «Cubit واحد كبير للكتب تشيله كل الشاشات». الحقيقة بتاعة البيانات في Readly هي الـ database (درس الـ Offline-first في الوحدة 4)، والـ repository بيطلّعها كـ `watchLibrary()`. كل Cubit بيمسك <b>الـ view</b> بتاعة الشاشة بتاعته على الحقيقة دي. فالمكتبة وصفحة التفاصيل مابيتكلموش مع بعض خالص، ومع ذلك عمرهم ما هيختلفوا. ده موضوع «أنواع الـ Cubit (2)» بالتفصيل.
+
+### الحاجات اللي مكانها مش الـ Cubit
+
+- <b>الـ controllers:</b> `TextEditingController` و`ScrollController` و`AnimationController` و`FocusNode` objects بتاعة الـ UI. محتاجة `dispose`، وبعضها محتاج `TickerProvider` من الـ widget. مكانها الـ State، والـ Cubit بياخد القيم منها (النص، الـ index) مش الـ objects نفسها.
+- <b>الـ BuildContext وأي حاجة من Flutter:</b> الـ Cubit مابيعرفش Navigator ولا ScaffoldMessenger. هو بيطلّع state، والـ UI تقرر تعمل navigation أو snackbar (بـ `BlocListener`).
+- <b>الـ ephemeral state اللي ملهاش منطق:</b> نقلها لـ Cubit بيكبّر الكود ومابيكسبش حاجة. «كله في Cubit» مش architecture، هو نوع تاني من الفوضى.
+
+### الـ setState مش عدو
+
+الغلط الشائع عند الناس اللي لسه متعلمين Cubit إنهم يعتبروا أي `setState` كود قديم. Readly فيها `setState` في أماكن كتير وده صح: حقل الباسورد، وexpand لوصف الكتاب، وصفحة الـ onboarding. والعكس كمان غلط: لو لقيت `if (!mounted)` بعد `await` في widget، أو `Navigator.pop(result)` بيرجّع بيانات عشان شاشة تانية تحدّث نفسها، يبقى الـ state دي عدّت حدود الورقة، ومكانها بقى بره.
+
+### ليه bloc في الكورس ده؟
+
+في Flutter أكتر من طريقة لنفس الفكرة: `ValueNotifier` و`ChangeNotifier` اللي في Flutter نفسه، و`provider`، وRiverpod، وغيرهم. كلهم بيحلّوا نفس المشكلة: مكان بره الـ widget يمسك الـ state ويبلّغ بالتغيير. Readly اختارت bloc لـ 3 أسباب: الـ Cubit pure Dart فبيتختبر من غير Flutter وبيقعد في طبقة الـ presentation من غير ما يعرف widgets، والـ state بتتغير من مكان واحد بس (`emit` protected)، وفي `BlocObserver` واحد بيشوف كل تغيير في الـ app (هتشوفه في [درس «الـ Logging والـ Monitoring» في الوحدة 16](/course/production/observability/)). ده مش معناه إن الباقي غلط. معناه إن الفريق اختار حاجة واحدة وماشي عليها في كل الـ features. وعشان الاختيار ده يبقى عن فهم مش تعوّد، الوحدة بتقارن بإنصاف في آخرها: Riverpod، وGetX وMobX وRedux وsignals، وبعدين إزاي تختار، وكل واحد بمميزاته الحقيقية.
+
+<Note kind="interview" title="سؤال interview">
+
+«إيه الفرق بين ephemeral state وapp state، وامتى setState كفاية؟» الـ ephemeral معلومة widget واحد بس محتاجها ومفيش فيها منطق، زي إن الباسورد ظاهر أو الـ tab المفتوح، ومكانها `setState`. الـ app state أكتر من مكان بيقراها، أو فيها طلبات وأخطاء وقواعد، أو لازم تعيش أطول من widget واحد، زي المستخدم الحالي أو كتب المكتبة. لو استخدمت `setState` للنوع التاني بتقع في lifting state وprop drilling، والمنطق بيتلزق في الـ UI فمش هتعرف تختبره من غير widget test، وبتلاقي نسختين من نفس البيانات بيختلفوا. والعلامة إن الـ state عدّت الحدود: `mounted` بعد await، وcallbacks بتعدّي على widgets مش محتاجاها، وpop بيرجّع بيانات عشان شاشة تحدّث نفسها.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«الـ Cubit علاقته إيه بالـ Stream؟» الـ Cubit جواه `StreamController.broadcast()`. الـ `emit` بيحدّث القيمة الحالية وبيضيفها على الـ stream، والـ `state` بيرجّع القيمة الحالية، والـ `close` بيقفل الـ controller. ولأن الـ stream broadcast ومابيفتكرش، أي حد بيبدأ يسمع متأخر بيقرا `state` الأول وبعدين يسمع على الجاي، وده اللي `BlocBuilder` بيعمله. وعشان كده الـ state الابتدائية مش بتعدّي على الـ stream، وتست الـ Cubit لازم يسمع قبل ما ينادي الـ method.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### عداد «بتقرا دلوقتي» في الـ Home
+
+نفس الطلب اللي كسر `setState` فوق: الـ Home عايز يعرض عدد الكتب اللي بتتقري، والمكتبة بتغيّر حالة الكتاب.
+
+<BeforeAfter>
+
+<Side label="setState: الـ state في الـ shell، والكل بيعدّيها" kind="before">
+
+```dart
+// HomeShell owns the books, passes them down
+HomeTab(books: _books),
+LibraryTab(
+  books: _books,
+  loading: _loading,
+  onStatusChanged: _onStatusChanged,
+),
+
+// HomeTab
+Text('${books.where((b) => b.status == BookStatus.reading).length}'),
+
+// LibraryTab -> BookList -> BookTile
+onPressed: () => onStatusChanged(book.id, BookStatus.finished),
+```
+
+</Side>
+
+<Side label="Cubit: كل widget بياخد اللي محتاجه" kind="after">
+
+```dart
+// HomeShell: no books, no callbacks
+const HomeTab(), const LibraryTab(),
+
+// HomeTab: rebuilds only when the count changes
+BlocSelector<LibraryCubit, LibraryState, int>(
+  selector: (s) => switch (s) {
+    LibraryLoaded(:final books) =>
+      books.where((b) => b.status == BookStatus.reading).length,
+    _ => 0,
+  },
+  builder: (context, count) => Text('$count'),
+),
+
+// BookTile: asks, doesn't mutate
+onPressed: () =>
+    context.read<LibraryCubit>().markAsFinished(book.id),
+```
+
+</Side>
+
+</BeforeAfter>
+
+- <b>الـ HomeShell بقى غبي:</b> مابيمسكش كتب ولا بيعدّي callbacks. لو زوّدت تاب رابع محتاج الكتب، مش هتلمسه.
+- <b>الـ widgets اللي في النص اختفت من الحكاية:</b> `LibraryTab` و`BookList` مابقوش ياخدوا `onStatusChanged`.
+- <b>المنطق راح مكان يتختبر:</b> `markAsFinished` في الـ Cubit، والتست بتاعها `dart test` من غير أي widget.
+- <b>الـ rebuild بقى أصغر:</b> الـ `BlocSelector` بيعيد بناء الرقم بس، وبس لما الرقم نفسه يتغير.
+
+بس قبل الـ `LibraryCubit` والـ `BlocProvider`، الدرس الجاي بيبص على الأدوات اللي في Flutter نفسه للمشكلة دي (`InheritedWidget` و`ValueNotifier` و`ChangeNotifier`) وpackage `provider` اللي flutter_bloc مبنية فوقها، ويكتب بيهم هدف القراية وشاشة المكتبة. وبعده «أول Cubit سطر بسطر»: نبني Cubit صغير سطر سطر، ونشغّله في Dart من غير Flutter الأول.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="sm-basics-1">
+<Ask>في شاشة إضافة ملاحظة، في زرار بيفتح ويقفل معاينة للملاحظة قبل الحفظ. الحالة دي (المعاينة مفتوحة ولا لأ) مكانها `setState` ولا الـ NotesCubit؟</Ask>
+<Answer>
+
+`setState`. ده ephemeral state: widget واحد بس محتاجه، ومفيش فيه طلبات ولا قواعد، ولو ضاع لما الشاشة تتقفل محدش يزعل. نقله للـ Cubit بيخلي الـ Cubit يعرف حاجة عن شكل الشاشة، وبيزوّد حقل في كل تست من غير فايدة. لو بعدين بقى في قاعدة (مثلًا المعاينة لازم تتقفل بعد الحفظ)، ساعتها نفكر تاني.
+
+</Answer>
+</Question>
+
+<Question id="sm-basics-2">
+<Ask>إيه هو الـ prop drilling، وليه بيبقى مشكلة حتى لو الكود شغال؟</Ask>
+<Answer>
+
+إن بيانات أو callbacks بتعدّي في constructors widgets مش محتاجاها، بس عشان توصل لـ widget تحتهم. الكود شغال، بس أي widget في النص بقى مربوط بحاجة مالهاش علاقة بيه: لو الـ callback اتغير شكله، بتعدّل 3 ملفات. ولو عايز تحرّك الـ widget لمكان تاني، لازم تنقل معاه السلسلة كلها. والحل إن الـ state تبقى متوفّرة فوق الشجرة (InheritedWidget، وده اللي `BlocProvider` بيعمله)، وكل widget ياخد اللي محتاجه بس.
+
+</Answer>
+</Question>
+
+<Question id="sm-basics-3">
+<Ask>عملت `StreamController.broadcast()`، وبعتت عليه قيمة، وبعدين عملت listen. المستمع هيستلم القيمة دي؟ ولو كان controller عادي؟</Ask>
+<Answer>
+
+في الـ broadcast لأ: القيمة اتبعتت ومكانش في حد سامع، فضاعت. في الـ controller العادي (single-subscription) أيوه: بيخزّن القيم لحد أول listen، بس بيسمح بمستمع واحد بس. وده سبب إن الـ Cubit عنده `state` جنب الـ `stream`: الـ stream بتاعه broadcast، فاللي بيبدأ متأخر بيقرا `state` الأول.
+
+</Answer>
+</Question>
+
+<Question id="sm-basics-4">
+<Ask>widget عمل `listen` على stream في `initState` ومعملش `cancel`. إيه اللي ممكن يحصل لما المستخدم يقفل الشاشة؟</Ask>
+<Answer>
+
+الـ subscription بتفضل شغالة. أول قيمة تيجي، الـ callback بينادي `setState` على State اتعمله dispose، فيطلع `setState() called after dispose()`. والـ callback ماسك الـ State، فالـ State ومعاها كل اللي بتمسكه مابيتمسحوش من الـ memory: leak. الحل `cancel()` في `dispose()`. والـ Cubit بنفس القاعدة: أي `listen` جواه بيتلغي في `close()`، والـ `BlocBuilder` بيعمل الـ cancel عنك.
+
+</Answer>
+</Question>
+
+<Question id="sm-basics-5">
+<Ask>`BookTile` عمل `(cubit.state as LibraryLoaded).books.removeWhere(...)`. ليه ده غلط مع إن الكتاب «اتمسح» من الليستة فعلًا؟</Ask>
+<Answer>
+
+لأنه كسر الاتجاه الواحد: الـ UI عدّلت الـ state بنفسها بدل ما تطلب. مفيش emit، فمحدش اتبلّغ والشاشة لسه بتعرض الكتاب، لحد ما emit تاني ييجي ويخفيه فجأة. والـ selectors اللي بتقارن الليستة هتشوفها «زي ما هي» لأنها نفس الـ object. والأهم إن الحذف ماوصلش للـ repository، فالكتاب راجع لما الـ app يفتح. الصح: `context.read<LibraryCubit>().remove(id)`، والـ Cubit يمسح من الـ repository ويعمل emit لليستة جديدة.
+
+</Answer>
+</Question>
+
+</Quiz>

@@ -1,0 +1,745 @@
+---
+title: "الـ Bloc من الصفر: الـ events والـ transformers"
+description: "بدل ما الـ UI تنادي methods، بتبعت events. وكل نوع event بيقول هيتعامل إزاي مع اللي قبله: يستنى دوره، يترمي، يلغي القديم، ولا يشتغل جنبه."
+minutes: 40
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="ورق الطلبات في المطبخ">
+
+في مطعم صغير، بتنادي الجرسون وتقوله «هات شاي»، وهو بيروح يجيبه. ده الـ Cubit: نداء مباشر لـ method.
+
+في مطعم كبير، الطلب بيتكتب على ورقة وتتحط على شباك المطبخ. الورقة فيها <b>اللي حصل</b> («ترابيزة 4 طلبت شاي»)، مش أوامر للطباخ. والمطبخ عنده قاعدة لكل نوع ورقة: أطباق الترابيزات المختلفة بتتعمل مع بعض، والحسابات بتتعمل بالدور، وورقة «نضّف ترابيزة 4» لو جت والترابيزة بتتنضف أصلًا بتترمي، ولو الزبون غيّر طلبه، الورقة الجديدة بتلغي القديمة. والورق كله بيتحفظ، فلو حصلت مشكلة تعرف مين طلب إيه وبأنهي ترتيب. ده الـ <b>Bloc</b>.
+
+</Analogy>
+
+الفرق كله بيبان في سطر واحد في الـ UI:
+
+| | Cubit | Bloc |
+| --- | --- | --- |
+| الـ UI بتقول | `cubit.queryChanged('flutter')` | `bloc.add(SearchQueryChanged('flutter'))` |
+| اللي بيوصل | نداء function | object بيوصف اللي حصل |
+| مين بيقرر التوقيت | انت، بإيدك جوه الـ method | الـ transformer بتاع نوع الـ event |
+| اللي بيتسجّل | الـ state قبل وبعد | الـ state قبل وبعد، والـ event اللي سببها |
+
+الـ Bloc هو Cubit زائد حاجتين بس: <b>الـ input بقى objects</b> (فتقدر تسجّلها وتتتبعها)، و<b>الـ input بقى stream</b> (فتقدر تشكّله: تأخّره، ترمي منه، تلغي القديم). وكل اللي اتعلمته في الدروس اللي فاتت شغال زي ما هو: الاتنين بيورثوا من `BlocBase`، فالـ `state` والـ `stream` والـ `close` والـ `onChange` والـ `BlocBuilder` والـ `BlocObserver` والـ `blocTest` واحد.
+
+<Diagram name="d-sm-bloc-flow">
+
+في الـ Bloc، الـ UI بتعمل add لـ event. الـ event بيعدّي على onEvent، وبعدين على الـ transformer اللي بيقرر إمتى يشتغل، وبعدين الـ handler بيعمل await وemit. والـ state الجديدة بتعدّي على onTransition (اللي فيه الـ event) وonChange، لحد الـ BlocBuilder. وتحت، الـ Cubit: method بتعمل emit على طول.
+
+</Diagram>
+
+### الـ Bloc موجود ليه أصلًا؟
+
+افتكر الـ `CatalogSearchCubit` بتاع [درس الـ Cubit](/course/presentation/cubit/) في الوحدة 5. عشان البحث يشتغل صح، كتبنا بإيدنا 4 حاجات: `Timer` للـ debounce، و`_latestRequest` عشان النتيجة القديمة ماتغطيش على الجديدة، و`isClosed` بعد الـ await، و`close()` بيلغي الـ timer. كل واحدة فيهم مكان ممكن يقع فيه bug، وكل واحدة محتاجة تست.
+
+في الـ Bloc، الأربعة دول بيبقوا سطر واحد: `transformer: debounceRestartable(350ms)`. ولما مستخدم يبلّغ عن bug، الـ log بيقولك الـ events اللي حصلت بالترتيب، يعني خطوات المستخدم نفسها.
+
+والتمن: كود أكتر (class لكل event)، وأفكار جديدة (Emitter، transformers، streams). علشان كده الـ default في الكورس Cubit، والـ Bloc لما يستاهل. القرار نفسه بالتفصيل في الدرس الجاي «Cubit ولا Bloc».
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### التجهيز
+
+<CodeBlock label="pubspec.yaml">
+
+```yaml
+dependencies:
+  flutter_bloc: ^9.1.0       # brings package:bloc with it
+  bloc_concurrency: ^0.3.0   # concurrent, sequential, droppable, restartable
+  stream_transform: ^2.1.0   # debounce, throttle, switchMap for custom transformers
+```
+
+</CodeBlock>
+
+الـ `Bloc` نفسه موجود في `package:bloc` اللي جاي مع flutter_bloc. الـ bloc_concurrency والـ stream_transform بتنزّلهم بس لما تحتاج transformers، وده هيحصل في Level 3.
+
+### الـ events: بتحكي اللي حصل
+
+<CodeBlock label="features/catalog/presentation/catalog_search_event.dart">
+
+```dart
+sealed class CatalogSearchEvent {
+  const CatalogSearchEvent();
+}
+
+final class SearchQueryChanged extends CatalogSearchEvent {
+  const SearchQueryChanged(this.query);
+  final String query;
+}
+```
+
+</CodeBlock>
+
+- <b>الـ sealed:</b> الـ compiler عارف كل الـ events بتاعة الـ Bloc ده، فلو عملت `switch` عليهم ونسيت واحد، الكود مش هيعمل compile. هنستخدم ده في Level 3.
+- <b>الـ final class والـ const constructor:</b> الـ event زي الـ state، immutable. اتبعت خلاص، محدش يعدّل فيه.
+- <b>مش محتاج `==`:</b> الـ blocTest بيقارن الـ states مش الـ events. الـ Equatable للـ events مش ضروري غير لو بتقارنهم انت في حاجة.
+
+والاسم أهم حاجة في الـ event. القاعدة: <b>الـ event بيوصف اللي حصل في الـ UI، بفعل في الماضي، والـ Bloc هو اللي يقرر يعمل إيه</b>:
+
+| وحش | كويس | ليه |
+| --- | --- | --- |
+| `FetchBooks` | `SearchQueryChanged` | الـ UI مش بتأمر بطلب. المستخدم كتب، والـ Bloc يقرر يبحث ولا لأ (أقل من حرفين؟ مايبحثش) |
+| `LoadNextPage` | `NextPageRequested` | لو الصفحات خلصت، الـ Bloc يتجاهله. الأمر بيفترض إنه هيتنفذ |
+| `SetLoading` | (مالوش وجود) | ده setter للـ state مش حاجة حصلت. الـ loading قرار الـ Bloc |
+| `ShowError` | (مالوش وجود) | نفس الكلام: الـ UI مابتقولش للـ Bloc يعرض إيه |
+| `Refresh` | `LibraryRefreshRequested` | بيقول مين وإيه، فالـ log يتقري لوحده |
+
+الصيغة اللي بيستخدمها فريق bloc نفسه: <b>اسم الحاجة + اللي حصلها في الماضي</b> (`QueryChanged`، `PageRequested`، `BookRemoved`). وفايدتها بتبان في الـ log: `SearchQueryChanged → SearchQueryChanged → NextPageRequested` بيتقري زي قصة اللي المستخدم عمله.
+
+### أول Bloc سطر بسطر
+
+نفس الـ `CatalogSearchState` بتاع درس الـ Cubit، من غير ولا تغيير: `SearchIdle` و`SearchLoading` و`SearchLoaded` و`SearchError`. ده أول حاجة لازم تلاحظها: <b>الـ states مالهاش دعوة بـ Cubit ولا Bloc</b>.
+
+<CodeBlock label="features/catalog/presentation/catalog_search_bloc.dart (أول نسخة)">
+
+```dart
+class CatalogSearchBloc extends Bloc<CatalogSearchEvent, CatalogSearchState> {
+  CatalogSearchBloc(this._searchBooks) : super(const SearchIdle()) {
+    on<SearchQueryChanged>(_onQueryChanged);
+  }
+
+  final SearchBooks _searchBooks;
+
+  Future<void> _onQueryChanged(
+    SearchQueryChanged event,
+    Emitter<CatalogSearchState> emit,
+  ) async {
+    final query = event.query.trim();
+    if (query.length < 2) {
+      emit(const SearchIdle());
+      return;
+    }
+    emit(const SearchLoading());
+    final result = await _searchBooks(SearchParams(query: query, page: 1));
+    emit(switch (result) {
+      Success(:final value) => SearchLoaded(value.items), // PagedResult since the Pagination lesson
+      Err(:final failure) => SearchError(failure),
+    });
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>`Bloc<CatalogSearchEvent, CatalogSearchState>`:</b> نوعين بدل واحد. الأول اللي داخل (events)، والتاني اللي خارج (states). الـ Cubit عنده التاني بس.
+- <b>`super(const SearchIdle())`:</b> الـ initial state، زي الـ Cubit بالظبط.
+- <b>`on<SearchQueryChanged>(...)`:</b> بتسجّل handler لنوع event. التسجيل بيحصل في الـ constructor، ولكل نوع handler واحد بس: لو سجّلت نفس النوع مرتين بيرمي error. ولو عملت `add` لـ event مالوش handler، بيرمي `StateError` بيقولك إنك نسيت تسجّله. (الاتنين checks في debug، فبتلاقيهم أول ما تشغّل.)
+- <b>الـ handler private:</b> `_onQueryChanged` مش جزء من الـ API. الـ API بتاع الـ Bloc كله `add` و`state` و`stream`.
+- <b>`Emitter<CatalogSearchState> emit`:</b> الـ emit هنا parameter جاي للـ handler ده بالذات، مش `this.emit` بتاع الـ Cubit. ده اللي بيخلّي الـ Bloc يتحكم فيه: يقفله لما الـ handler يخلص، أو يلغيه لما event أحدث ييجي. (الـ Bloc عنده `emit` على الـ class نفسها، بس معلّم `@visibleForTesting`، ماتستخدموش.)
+- <b>مفيش `isClosed`:</b> لما الـ Bloc يتقفل، بيلغي الـ emitters بتوع الـ handlers اللي لسه شغالة، فأي `emit` بعد الـ await بيتجاهل بهدوء. في الـ Cubit نفس الموقف كان بيرمي `StateError`، فكنا محتاجين `if (isClosed) return;` بعد كل await.
+
+### الـ UI
+
+<CodeBlock label="الـ provider والـ view">
+
+```dart
+// catalog_search_page.dart
+BlocProvider(
+  create: (_) => getIt<CatalogSearchBloc>(),
+  child: const CatalogSearchView(),
+)
+
+// catalog_search_view.dart: its context is below the provider
+class CatalogSearchView extends StatelessWidget {
+  const CatalogSearchView({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        TextField(
+          onChanged: (text) =>
+              context.read<CatalogSearchBloc>().add(SearchQueryChanged(text)),
+        ),
+        Expanded(
+          child: BlocBuilder<CatalogSearchBloc, CatalogSearchState>(
+            builder: (context, state) => switch (state) {
+              SearchIdle() => const SearchHint(),
+              SearchLoading() => const Center(child: CircularProgressIndicator()),
+              SearchLoaded(:final books) => BookList(books: books),
+              SearchError(:final failure) =>
+                ErrorView(message: failure.localized(AppLocalizations.of(context)!)),
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ BlocBuilder هو هو:</b> نفس الـ switch اللي كان مع الـ Cubit. اتغير اسم النوع بس.
+- <b>الـ `add` مابترجعش حاجة:</b> `void`. الـ UI بتبعت الـ event وتمشي، ومش بتستنى نتيجة. ده فرق حقيقي هيقابلنا في الدرس الجاي مع `RefreshIndicator` اللي محتاج Future.
+- <b>الـ view في widget لوحده:</b> عشان الـ `context` بتاعه يبقى تحت الـ BlocProvider. لو حطيت الـ Column في نفس الـ build اللي فيه الـ provider، `context.read` هيدوّر فوق الـ provider ويرمي `ProviderNotFoundException`، زي ما شفنا في درس «flutter_bloc بالتفصيل».
+
+والتسجيل في get_it زي أي Cubit: `@injectable` (يعني factory)، عشان كل شاشة تاخد Bloc جديد يتقفل معاها.
+
+### الـ handler لازم يستنى كل اللي جواه
+
+الـ Bloc بيعتبر الـ handler خلص لما الـ Future بتاعه يخلص. وبعدها الـ emitter بيتقفل. فلو في شغل async جوه الـ handler ماعملتلوش await، الـ emit بتاعه هييجي بعد ما الـ emitter اتقفل:
+
+<CodeBlock label="غلط: الـ handler رجع قبل النتيجة">
+
+```dart
+void _onQueryChanged(SearchQueryChanged event, Emitter<CatalogSearchState> emit) {
+  _searchBooks(SearchParams(query: event.query, page: 1)).then((result) {
+    emit(SearchLoaded(/* ... */)); // AssertionError: emit was called after an
+                                   // event handler completed normally
+  });
+}
+```
+
+</CodeBlock>
+
+الـ error ده بيظهر في debug بس (assertion)، وبيقولك بالظبط إن في future من غير await. ونفس الـ error لو عملت emit من جوه `Timer`، أو من `stream.listen` جوه الـ handler. القاعدة: <b>الـ handler يبقى `async` ويعمل `await` لكل حاجة</b>، ولو عندك stream، فيه أدوات مخصوص ليه، الجزء الجاي. والـ lint `unawaited_futures` بيمسك الـ Future اللي من غير await جوه handler `async`، بس مش في handler عادي مش `async` زي اللي فوق، فدي عليك انت.
+
+### الـ streams: `emit.forEach` و`emit.onEach`
+
+في درس الـ Cubit كان عندنا `_sub = _repository.watchLibrary().listen(...)` و`close()` بيلغيه. في الـ Bloc مفيش subscription تمسكها بإيدك:
+
+<CodeBlock label="features/library/presentation/library_bloc.dart">
+
+```dart
+sealed class LibraryEvent {
+  const LibraryEvent();
+}
+final class LibrarySubscriptionRequested extends LibraryEvent {
+  const LibrarySubscriptionRequested();
+}
+
+class LibraryBloc extends Bloc<LibraryEvent, LibraryState> {
+  LibraryBloc(this._repository) : super(const LibraryLoading()) {
+    on<LibrarySubscriptionRequested>(_onSubscriptionRequested, transformer: restartable());
+  }
+
+  final LibraryRepository _repository;
+
+  Future<void> _onSubscriptionRequested(
+    LibrarySubscriptionRequested event,
+    Emitter<LibraryState> emit,
+  ) async {
+    await emit.forEach<List<Book>>(
+      _repository.watchLibrary(),
+      onData: (books) => LibraryLoaded(books),
+      // message is for logs only, the UI shows failure.localized
+      onError: (error, stackTrace) => LibraryError(CacheFailure('$error')),
+    );
+  }
+}
+
+// UI
+BlocProvider(
+  create: (_) => getIt<LibraryBloc>()..add(const LibrarySubscriptionRequested()),
+  child: const LibraryView(),
+)
+```
+
+</CodeBlock>
+
+- <b>`emit.forEach`:</b> بيسمع على الـ stream، ومع كل قيمة بينادي `onData` ويعمل emit للـ state اللي رجعت. الـ Future بتاعه بيفضل مفتوح طول ما الـ stream شغال، فالـ handler مابيخلصش، والـ emitter مابيتقفلش.
+- <b>بيتلغي لوحده:</b> لما الـ Bloc يتقفل، أو لما الـ handler يتلغي (بسبب `restartable` لما ييجي `LibrarySubscriptionRequested` تاني)، الـ subscription بيتلغي. مفيش `close()` تكتبه، ومفيش subscription تنسى تلغيها.
+- <b>الـ `onError`:</b> بيحوّل الـ error اللي جاي من الـ stream لـ state. لو ماحطّتهوش، الـ error بيطلع من الـ handler نفسه ويوصل `onError` بتاع الـ Bloc.
+- <b>الـ `restartable()` هنا:</b> لو اتبعت الـ event مرتين، مش عايزين subscriptionين على نفس الـ stream. الأحدث يلغي القديم. ده أول transformer، وهنفهمه كويس في Level 3.
+
+والـ `emit.onEach` نفس الفكرة، بس الـ `onData` بيرجّع `void`، يعني انت اللي تقرر تعمل emit ولا لأ، أو تعمل حاجة تانية خالص. مثال من درس «الأخطاء في الشاشة» في الوحدة 9: لما النت يرجع، اعمل refresh لوحدك:
+
+<CodeBlock label="stream بيتحول لـ event">
+
+```dart
+on<LibraryConnectivityWatched>((event, emit) async {
+  await emit.onEach<void>(
+    _network.onOnline,
+    onData: (_) {
+      if (state case LibraryLoaded(refreshFailure: NetworkFailure())) {
+        add(const LibraryRefreshRequested());
+      }
+    },
+  );
+});
+```
+
+</CodeBlock>
+
+هنا الـ stream مابيعملش emit خالص، بيبعت event للـ Bloc نفسه. ده من المرات القليلة اللي `add` من جوه الـ Bloc بيبقى منطقي: الـ refresh بيعدّي على نفس الـ handler ونفس الـ transformer بتوعه، وبيتسجّل في الـ log كأن المستخدم طلبه.
+
+### `emit.isDone`
+
+`emit.isDone` بيبقى `true` لما الـ handler خلص، أو اتلغى (الـ Bloc اتقفل، أو transformer زي `restartable` لغاه). الـ emit بعدها بيتجاهل أصلًا، فمش محتاج تشيّك عشان الـ emit. بتشيّك عشان <b>ماتعملش شغل مالوش لازمة</b>:
+
+<CodeBlock label="ماتبدأش طلب تاني لـ handler اتلغى">
+
+```dart
+Future<void> _onBookOpened(BookOpened event, Emitter<BookDetailsState> emit) async {
+  final book = await _getBookDetails(event.id);
+  if (emit.isDone) return; // the user opened another book: skip the author request
+  final author = await _getAuthor(/* ... */);
+  // ...
+}
+```
+
+</CodeBlock>
+
+</Level>
+
+<Level n="3" title="الـ concurrency: مين يشتغل وإمتى">
+
+### الـ default: كله مع بعض
+
+الـ `CatalogSearchBloc` اللي كتبناه فوق فيه نفس الـ bug بتاع درس الـ Cubit بالظبط. المستخدم كتب «flu» ووقف، فاتبعت بحث. كمّل «flutter»، فاتبعت بحث تاني. البحث التاني رجع الأول واتعرض، وبعده رجع بحث «flu» البطيء وعمل emit فوق النتيجة الصح.
+
+ليه؟ لأن الـ default في الـ Bloc إن الـ events من نفس النوع <b>بتشتغل مع بعض (concurrent)</b>: كل event بيبدأ الـ handler بتاعه على طول، من غير ما يستنى اللي قبله ولا يلغيه. يعني الـ Bloc لوحده مش بيحل الـ race condition. اللي بيحلها إنك <b>تختار</b> transformer.
+
+### الـ transformers الأربعة
+
+الـ transformer هو القاعدة اللي بتقول: event جه والـ handler بتاع event قبله لسه شغال، أعمل إيه؟
+
+<CodeBlock label="الاستخدام">
+
+```dart
+import 'package:bloc_concurrency/bloc_concurrency.dart';
+
+on<SearchQueryChanged>(_onQueryChanged, transformer: restartable());
+on<NextPageRequested>(_onNextPage, transformer: droppable());
+on<NoteSaved>(_onNoteSaved, transformer: sequential());
+on<BookCoverLoaded>(_onCoverLoaded, transformer: concurrent()); // same as no transformer
+```
+
+</CodeBlock>
+
+| الـ transformer | event جه والقديم شغال | تحت الغطا | في Readly |
+| --- | --- | --- | --- |
+| `concurrent()` | الاتنين يشتغلوا مع بعض (الـ default) | merge | تحميل غلاف كل كتاب لوحده |
+| `sequential()` | الجديد يستنى دوره في طابور | asyncExpand | حفظ تعديلات ملاحظة بالترتيب |
+| `droppable()` | الجديد يترمي ومايشتغلش | exhaustMap | الصفحة الجاية في الكتالوج، زرار «حفظ» |
+| `restartable()` | القديم يتلغى والجديد يبدأ | switchMap | البحث، تغيير الفلتر، `watch` بـ parameters |
+
+<Diagram name="d-sm-transformers">
+
+تلات events (A وB وC) اتبعتوا ورا بعض بفرق 0.4 ثانية، وكل handler بياخد 1.5 ثانية. concurrent: التلاتة شغالين مع بعض. sequential: كل واحد بيستنى اللي قبله، فـ C بيخلص بعد 4.5 ثانية. droppable: B وC اترموا لأن A كان شغال. restartable: B لغى A، وC لغى B، وC بس اللي كمّل.
+
+</Diagram>
+
+الكلام ده بيتفهم أحسن لما تشوفه. في المعمل ده كل ضغطة بتبعت event الـ handler بتاعه بياخد حوالي 1.5 ثانية. اختار transformer، و<b>جرّب تدوس 3 مرات ورا بعض في كل وضع</b>، وبص على الـ timeline: مين اشتغل، مين خلص، مين اترمى، ومين اتلغى. وبعدين جرّب تدوس ضغطة وتستنى لحد ما تخلص وبعدين التانية: هتلاقي الأربعة بيتصرفوا زي بعض. الفرق كله في اللي بيحصل لما event ييجي والقديم <b>لسه شغال</b>.
+
+<Lab name="bloc-concurrency" />
+
+كل واحد فيهم بيحل مشكلة، وبيعمل مشكلة لو اتحط في المكان الغلط:
+
+- <b>`concurrent()`:</b> مناسب لما الـ events مستقلة عن بعض: كل غلاف كتاب بيتحمّل لوحده، ومش مهم مين يخلص الأول. <b>الخطر:</b> لو الاتنين بيكتبوا على نفس الحاجة، آخر واحد يخلص هو اللي يكسب، مش آخر واحد اتبعت. ده بالظبط bug البحث.
+- <b>`sequential()`:</b> مناسب لما الترتيب مهم: المستخدم عدّل الملاحظة 3 مرات ورا بعض، لازم تتحفظ بنفس الترتيب، وإلا نسخة قديمة تكتب فوق الجديدة. <b>الخطر:</b> لو المستخدم بيدوس أسرع من الـ handler، الطابور بيطوّل، وآخر ضغطة بتستنى كل اللي قبلها.
+- <b>`droppable()`:</b> مناسب لما event وهو شغال يبقى أي event زيه ملوش لازمة: الـ scroll بيبعت `NextPageRequested` مع كل pixel، وكلهم بيترموا لحد ما الصفحة توصل. ده نفس شغل الـ `_loadingMore` flag في [درس الـ Pagination](/course/presentation/pagination/) في الوحدة 5. ونفسه للضغطة المتكررة على «حفظ». <b>الخطر:</b> الـ event اللي اترمى راح. لو كان فيه معلومة جديدة (كلمة بحث جديدة)، رميه غلط.
+- <b>`restartable()`:</b> مناسب لما الأحدث بس هو اللي يهم: البحث، الفلتر، الـ watch اللي بيتغير بالـ parameters. <b>الخطر:</b> اسمه بيوحي إنه بيلغي الشغل، وهو مش بيلغيه. الجزء الجاي.
+
+### الـ restartable مابيلغيش الطلب
+
+لما event جديد ييجي، الـ `restartable` بيلغي الـ <b>subscription</b> على الـ handler القديم، فالـ emitter بتاعه بيتقفل و`emit.isDone` بيبقى `true`. بس الـ handler نفسه Future شغال في Dart، ومحدش يقدر يوقفه من بره. الطلب لـ Open Library لسه رايح، والرد هيرجع، والـ handler هيكمّل، والـ emit بتاعه بس هو اللي هيتجاهل.
+
+يعني الـ restartable بيحل مشكلة <b>الشاشة</b> (النتيجة القديمة مش هتظهر)، مش مشكلة <b>الشبكة</b> (الطلب القديم لسه بيستهلك bandwidth). ولو عايز الاتنين:
+
+- <b>`emit.isDone` قبل أي خطوة غالية:</b> لو الـ handler فيه طلبين ورا بعض، شيّك بينهم زي ما شفنا في Level 2، فالطلب التاني مايتبعتش أصلًا.
+- <b>الإلغاء الحقيقي في الـ data layer:</b> بالـ `CancelScope` بتاع [درس «الطلبات المتقدمة»](/course/api-errors/advanced-requests/) في الوحدة 9. الـ Bloc مايعرفش dio، زي الـ Cubit بالظبط.
+
+وفي أغلب الحالات، تجاهل النتيجة كفاية. نفس الكلام اللي قلناه عن الـ request id في الوحدة 5.
+
+### الـ transformer لكل handler لوحده
+
+ده أكتر سوء فهم بيوقع فيه الناس مع الـ Bloc. صفحة الكتاب فيها حاجتين: تغيير حالة القراءة، وشيل الكتاب من المكتبة:
+
+<CodeBlock label="sequential على كل handler لوحده">
+
+```dart
+on<BookStatusChanged>(_onStatusChanged, transformer: sequential());
+on<BookRemoved>(_onRemoved, transformer: droppable());
+```
+
+</CodeBlock>
+
+المستخدم غيّر الحالة لـ «خلصته» (طلب بياخد ثانية)، وبعدها على طول داس «شيل من المكتبة» (طلب بياخد 200ms). الـ `sequential` بيرتّب الـ `BookStatusChanged` <b>مع بعضهم بس</b>. الـ `BookRemoved` في handler تاني بـ transformer تاني، فبيشتغل على طول، جنب تغيير الحالة. الشيل خلص الأول، وبعدين طلب الحالة وصل السيرفر على كتاب اتشال، فرجع 404، وظهر للمستخدم SnackBar «حصلت مشكلة» على حاجة هو نفسه عملها.
+
+كل `on<E>` ليه stream events بتاعه، والـ transformer بيشتغل على الـ stream ده بس. لو عايز ترتيب <b>بين</b> أنواع مختلفة، خليهم كلهم handler واحد:
+
+<CodeBlock label="handler واحد للـ sealed class كلها">
+
+```dart
+BookDetailsBloc(/* use cases */) : super(const BookDetailsLoading()) {
+  on<BookDetailsEvent>(
+    (event, emit) => switch (event) {
+      BookDetailsRequested e => _onRequested(e, emit),
+      BookStatusChanged e => _onStatusChanged(e, emit),
+      BookRemoved e => _onRemoved(e, emit),
+    },
+    transformer: sequential(), // one queue for every event of this Bloc
+  );
+}
+```
+
+</CodeBlock>
+
+- <b>الـ sealed بيحميك:</b> لو حد زوّد `BookRated` ونسي يضيفه في الـ switch، الكود مش هيعمل compile.
+- <b>التمن:</b> كل الـ events بقت بالدور، حتى اللي مالهاش دعوة ببعض. لو ده مشكلة، يبقى الأنواع دي محتاجة handlers منفصلة فعلًا، والسؤال يبقى: أنهي events بس اللي لازم تترتب مع بعض؟
+
+### الـ debounce والـ throttle: transformer بتاعك
+
+الـ transformer مش سحر، ده function:
+
+```dart
+typedef EventTransformer<E> = Stream<E> Function(Stream<E> events, EventMapper<E> mapper);
+// EventMapper<E> = Stream<E> Function(E event): runs the handler for one event
+```
+
+بياخد stream الـ events، وfunction بتحوّل كل event لـ "شغل الـ handler"، ويرجّع stream. يعني أي حاجة تقدر تعملها على stream، تقدر تعملها على الـ events قبل ما توصل للـ handler. والـ stream_transform فيها اللي محتاجينه:
+
+<CodeBlock label="core/bloc/transformers.dart">
+
+```dart
+import 'package:bloc/bloc.dart';
+import 'package:bloc_concurrency/bloc_concurrency.dart';
+import 'package:stream_transform/stream_transform.dart';
+
+/// Waits for a pause, then runs only the latest event and ignores older handlers.
+EventTransformer<E> debounceRestartable<E>(Duration duration) =>
+    (events, mapper) => events.debounce(duration).switchMap(mapper);
+
+/// At most one event per [duration], and none while one is running.
+EventTransformer<E> throttleDroppable<E>(Duration duration) =>
+    (events, mapper) => droppable<E>().call(events.throttle(duration), mapper);
+```
+
+</CodeBlock>
+
+- <b>`events.debounce(duration)`:</b> بيمسك كل event، ولو جه بعده event قبل ما المدة تخلص، بيرمي القديم ويبدأ يعد من الأول. أول ما المستخدم يقف 350ms، آخر event بس هو اللي بيعدّي. ده الـ `Timer` بتاع الـ Cubit، من غير timer تلغيه في `close`.
+- <b>`.switchMap(mapper)`:</b> ده اللي `restartable()` بيعمله من جوه: event جديد عدّى من الـ debounce، فالـ handler القديم يتلغي. ده الـ `_latestRequest` بتاع الـ Cubit، من غير رقم تزوّده وتقارنه.
+- <b>الـ throttle:</b> أول event يعدّي، واللي بعده في نفس المدة بيترموا. مركّب على `droppable` عشان لو الـ handler أطول من المدة، ماتبدأش نسخة تانية. مثال: زرار «تحديث» في المكتبة. الـ `droppable` لوحده بيمنع refresh وهو شغال، بس لو الـ refresh رجع من الكاش في 50ms، 10 ضغطات هيبقوا 10 طلبات. الـ throttle بثانيتين بيخليهم واحد.
+- <b>التركيب:</b> الـ transformers functions، فممكن تلف واحد جوه التاني زي `droppable<E>().call(...)`. مش محتاج تكتب الـ exhaustMap بإيدك.
+
+والـ Bloc النهائي هو أول نسخة بالظبط، بسطر واحد زيادة في الـ constructor (النسخة الكاملة في «قبل وبعد» تحت):
+
+```dart
+on<SearchQueryChanged>(
+  _onQueryChanged,
+  transformer: debounceRestartable(const Duration(milliseconds: 350)),
+);
+```
+
+الـ handler نفس أول نسخة حرف بحرف. اللي اتغير سطر الـ transformer بس. ومقارنة بالـ Cubit: مفيش `Timer`، ومفيش `_latestRequest`، ومفيش `isClosed`، ومفيش `close()`. الأربع آليات بقوا سطر واحد اسمه بيقول هو بيعمل إيه.
+
+<Note kind="warn" title="الـ onEvent بيشوف كل حاجة">
+
+الـ `onEvent` (والـ `BlocObserver.onEvent`) بيتنادى جوه `add`، <b>قبل</b> الـ transformer. يعني الـ 7 حروف اللي المستخدم كتبهم في «flutter» هيتسجلوا 7 events في الـ log، حتى لو الـ debounce عدّى واحد بس. ونفس الكلام لـ `NextPageRequested` من الـ scroll: مئات الـ events في الـ log. لو ده بيملا الـ logs، قلّل الـ add من الـ UI نفسها (زي ما ماتبعتش `NextPageRequested` غير لما المسافة الفاضلة تقل عن 500px)، أو سجّل `onTransition` بس.
+
+</Note>
+
+### `Bloc.transformer`: الـ default للـ app كله
+
+لو مش عاجبك إن الـ default `concurrent`، تقدر تغيّره للـ app كله في الـ bootstrap، جنب `Bloc.observer` بتاع [درس الـ Observability](/course/production/observability/) في الوحدة 16:
+
+<CodeBlock label="bootstrap">
+
+```dart
+Bloc.observer = AppBlocObserver(logger);
+Bloc.transformer = sequential(); // any on<E> without a transformer is now a queue
+```
+
+</CodeBlock>
+
+- <b>الميزة:</b> مفيش handler هيعمل race بالغلط لأن حد نسي يكتب transformer. الأسوأ إن حاجة تبقى أبطأ، مش غلط.
+- <b>العيب:</b> الإعداد ده static وبعيد عن الكود. اللي بيقرا `on<NoteSaved>(_onNoteSaved)` مش هيعرف إنه sequential غير لو فتح الـ bootstrap.
+- <b>فخ التستات:</b> الـ bootstrap مش بيشتغل في الـ unit tests، فالتستات بتشتغل بالـ `concurrent` الأصلي والـ app بالـ `sequential`. التست أخضر والسلوك في الـ app مختلف. لو غيّرته، غيّره كمان في `flutter_test_config.dart` أو في `setUpAll`.
+
+رأيي: اكتب الـ transformer جنب كل `on<E>` بوضوح، حتى لو `concurrent()`. السطر ده بيقول للي بيعمل review إنك فكرت في السؤال.
+
+### زرار المسح: لما الـ debounce يأخّر حاجة لازم تحصل فورًا
+
+في الـ search box زرار ✕. المستخدم داسه، فالـ UI عملت `add(const SearchQueryChanged(''))`. الـ debounce هيستنى 350ms قبل ما يعمل `SearchIdle`، فالنتايج القديمة فاضلة على الشاشة تحت box فاضي. أول فكرة: event تاني `SearchCleared` بـ handler لوحده من غير debounce:
+
+```dart
+on<SearchQueryChanged>(_onQueryChanged, transformer: debounceRestartable(_delay));
+on<SearchCleared>((event, emit) => emit(const SearchIdle()));
+```
+
+وده فيه bug: لو بحث كان شغال لحظة المسح، هو في handler تاني، فالـ `SearchCleared` مالغاهوش. الـ Idle ظهر، وبعد نص ثانية البحث رجع وعمل `SearchLoaded` فوقه. نفس اللي شفناه في جزء «الـ transformer لكل handler لوحده» فوق.
+
+الحل: handler واحد بـ `restartable`، والـ debounce جواه بـ `Future.delayed` و`emit.isDone`:
+
+<CodeBlock label="المسح فوري، والكتابة بـ debounce">
+
+```dart
+CatalogSearchBloc(this._searchBooks) : super(const SearchIdle()) {
+  on<CatalogSearchEvent>(_onEvent, transformer: restartable());
+}
+
+Future<void> _onEvent(CatalogSearchEvent event, Emitter<CatalogSearchState> emit) async {
+  switch (event) {
+    case SearchCleared():
+      emit(const SearchIdle()); // restartable already cancelled any running search
+    case SearchQueryChanged(:final query):
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+      if (emit.isDone) return; // another event came during the pause
+      await _search(query.trim(), emit);
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ restartable بيعمل الشغل كله:</b> أي event جديد، كتابة أو مسح، بيلغي اللي قبله. فالمسح بيوقف أي بحث شغال، والكتابة بتلغي الانتظار اللي قبلها.
+- <b>الـ `emit.isDone` بعد الـ delay ضروري:</b> الـ restartable مابيوقفش الـ handler القديم، فاكر؟ من غير السطر ده، كل حرف المستخدم كتبه هيكمّل بعد الـ 350ms ويبعت طلب، والـ emits بس هي اللي هتتجاهل. السطر ده هو اللي بيخلّيه debounce بجد.
+- <b>إمتى تختار ده بدل الـ transformer؟</b> لما يبقى عندك أكتر من event لازم يلغوا بعض. لو event واحد، `debounceRestartable` أوضح.
+
+### التتبع: onEvent وonTransition وonDone
+
+دي الحاجة اللي مالهاش مقابل في الـ Cubit. ترتيب الـ hooks لـ event واحد:
+
+1. <b>`onEvent(event)`:</b> لحظة الـ `add`، قبل الـ transformer.
+2. الـ handler بيشتغل، ومع كل `emit`:
+3. <b>`onTransition(transition)`:</b> فيه `currentState` و`event` و`nextState`. يعني «كنا فين، وإيه اللي حصل، ورحنا فين».
+4. <b>`onChange(change)`:</b> نفس اللي في الـ Cubit: قبل وبعد بس.
+5. <b>`onDone(event, [error, stackTrace])`:</b> لما الـ handler يخلص، ولو خلص بـ exception بيجيلك الـ error. (موجود من bloc 9.1، في الـ Bloc بس.)
+
+وكل hook منهم موجود override في الـ Bloc نفسه، ومتاح في الـ `BlocObserver` للـ app كله. الـ `AppBlocObserver` بتاع درس الـ Observability بيكبر بـ methodين:
+
+<CodeBlock label="AppBlocObserver وهو بيكبر">
+
+```dart
+class AppBlocObserver extends BlocObserver {
+  AppBlocObserver(this._logger);
+  final AppLogger _logger;
+
+  @override
+  void onEvent(Bloc<dynamic, dynamic> bloc, Object? event) {
+    super.onEvent(bloc, event);
+    // type names only: NoteSaved carries the user's own text
+    _logger.info('${bloc.runtimeType} ← ${event.runtimeType}');
+  }
+
+  @override
+  void onTransition(Bloc<dynamic, dynamic> bloc, Transition<dynamic, dynamic> transition) {
+    super.onTransition(bloc, transition);
+    _logger.info('${bloc.runtimeType}: ${transition.currentState.runtimeType} '
+        '--${transition.event.runtimeType}--> ${transition.nextState.runtimeType}');
+  }
+
+  // onChange and onError stay as they were: they cover Cubits too
+}
+```
+
+</CodeBlock>
+
+والـ log لبحث واحد بقى بيقول:
+
+```text
+CatalogSearchBloc ← SearchQueryChanged
+CatalogSearchBloc ← SearchQueryChanged
+CatalogSearchBloc: SearchIdle --SearchQueryChanged--> SearchLoading
+CatalogSearchBloc: SearchLoading --SearchQueryChanged--> SearchError
+```
+
+- <b>السبب جنب النتيجة:</b> الـ Cubit كان هيقول `SearchLoading → SearchError` بس. هنا عارف إن اللي وصّلنا هنا `SearchQueryChanged` مش `NextPageRequested`. في شاشة فيها 6 events، ده الفرق بين تخمين وتشخيص.
+- <b>الـ log يبقى تست:</b> الـ events اللي في الـ breadcrumbs على Sentry هي نفسها الـ `act` في blocTest. بتنسخ الترتيب، وبتعيد الـ bug في تست، وبعدين بتصلحه.
+- <b>الأخطاء بتوصل لوحدها:</b> exception طلعت من handler بتعدّي على `onError` بتاع الـ Bloc والـ observer، وبعدين بتترمي تاني. في الـ Cubit، زي ما قال درس الـ Observability، exception من method مابتعدّيش على `onError` غير لو عملت `addError` بإيدك.
+
+ولو عندك أكتر من observer (logger وanalytics مثلًا)، الـ `MultiBlocObserver` من bloc 9.2 بيجمعهم، وده في درس «Cubit متقدم».
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>الـ transformer قرار، مش default:</b> في الـ code review، كل `on<E>` لازم يبقى جنبه transformer، أو سبب مكتوب ليه concurrent. السؤال اللي تسأله: «لو المستخدم بعت الـ event ده مرتين ورا بعض والأول لسه شغال، المفروض يحصل إيه؟». لو الإجابة مش واضحة، ده bug مستني.
+- <b>الـ event نية المستخدم، مش setter:</b> `StateUpdated(newState)` أو `SetLoading()` بيحولوا الـ Bloc لـ Cubit بخطوة زيادة، وبيضيّعوا فايدة الـ log. لو لقيت نفسك بتعمل event لكل field في الـ state، غالبًا الـ Cubit كان أنسب.
+- <b>ماتعملش `add` لنفسك عشان خطوة داخلية:</b> لو الـ handler محتاج يعمل نفس شغل handler تاني، نادي private method. الـ `add` من جوه بيعدّي على transformer وبيتسجّل كأنه من المستخدم، فاحتفظ بيه للحالات اللي ده مقصود فيها، زي الـ connectivity فوق.
+- <b>الـ API بتاع الـ Bloc هو `add` بس:</b> مفيش public methods ولا public fields. الـ bloc_lint عنده `avoid_public_bloc_methods` في الـ recommended بيمسك ده. لو محتاج قيمة من الـ Bloc، تبقى في الـ state.
+- <b>Bloc مع Bloc زي Cubit مع Cubit:</b> مايمسكش reference لـ Bloc تاني، ومايسمعش على الـ stream بتاعه. الاتنين يسمعوا stream من نفس الـ repository، أو الـ UI بـ BlocListener تعمل add للتاني. نفس القاعدة اللي في درس «Cubit متقدم».
+- <b>مش كل شاشة:</b> Bloc لصفحة بتعمل load مرة وزرارين هيبقى 3 ملفات بدل 2، وكود أكتر من غير أي مكسب. الدرس الجاي كله عن القرار ده.
+
+<Note kind="interview" title="سؤال interview">
+
+«إيه الفرق بين droppable وrestartable، وإمتى كل واحد؟» الاتنين بيتعاملوا مع event جه والقديم لسه شغال. الـ droppable بيرمي الجديد ويكمّل القديم: مناسب لما الجديد مافيهوش معلومة زيادة، زي `NextPageRequested` من الـ scroll أو ضغطة «حفظ» متكررة. الـ restartable بيلغي القديم ويشغّل الجديد: مناسب لما الأحدث هو اللي يهم، زي البحث والفلتر. وخلي بالك إن الـ restartable بيقفل الـ emitter بتاع القديم بس، والـ Future نفسه بيكمّل، فالطلب لسه رايح. لو عايز توفّر الشغل، `emit.isDone` قبل الخطوات الغالية، والإلغاء الحقيقي في الـ data layer.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«ليه البحث بالـ Bloc مش محتاج request id؟» لأن `restartable` (أو `switchMap` في transformer الـ debounce) بيلغي الـ emitter بتاع الـ handler القديم أول ما event أحدث يعدّي. فالنتيجة القديمة لما ترجع، الـ emit بتاعها بيتجاهل. الـ request id في الـ Cubit كان بيعمل نفس الحاجة بإيدك. والـ default في الـ Bloc `concurrent`، فمن غير transformer، الـ bug نفسه موجود. الـ Bloc مش بيحل الـ race لوحده، الـ transformer هو اللي بيحله.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### الـ CatalogSearchCubit بقى CatalogSearchBloc
+
+نفس الـ state، ونفس الـ use case، ونفس السلوك: debounce 350ms، والنتيجة القديمة ماتغطيش على الجديدة، ومفيش emit بعد القفل.
+
+<BeforeAfter>
+
+<Side label="Cubit (الوحدة 5): 4 آليات بإيدك" kind="before">
+
+```dart
+class CatalogSearchCubit extends Cubit<CatalogSearchState> {
+  CatalogSearchCubit(this._searchBooks) : super(const SearchIdle());
+
+  final SearchBooks _searchBooks;
+  Timer? _debounce;
+  int _latestRequest = 0;
+
+  void queryChanged(String input) {
+    _debounce?.cancel();
+    final query = input.trim();
+    if (query.length < 2) {
+      _latestRequest++;
+      emit(const SearchIdle());
+      return;
+    }
+    _debounce = Timer(const Duration(milliseconds: 350), () => _search(query));
+  }
+
+  Future<void> _search(String query) async {
+    final requestId = ++_latestRequest;
+    emit(const SearchLoading());
+    final result = await _searchBooks(SearchParams(query: query, page: 1));
+    if (isClosed || requestId != _latestRequest) return;
+    emit(switch (result) {
+      Success(:final value) => SearchLoaded(value.items),
+      Err(:final failure) => SearchError(failure),
+    });
+  }
+
+  @override
+  Future<void> close() {
+    _debounce?.cancel();
+    return super.close();
+  }
+}
+```
+
+</Side>
+
+<Side label="Bloc: سطر transformer واحد" kind="after">
+
+```dart
+sealed class CatalogSearchEvent {
+  const CatalogSearchEvent();
+}
+final class SearchQueryChanged extends CatalogSearchEvent {
+  const SearchQueryChanged(this.query);
+  final String query;
+}
+
+class CatalogSearchBloc extends Bloc<CatalogSearchEvent, CatalogSearchState> {
+  CatalogSearchBloc(this._searchBooks) : super(const SearchIdle()) {
+    on<SearchQueryChanged>(
+      _onQueryChanged,
+      transformer: debounceRestartable(const Duration(milliseconds: 350)),
+    );
+  }
+
+  final SearchBooks _searchBooks;
+
+  Future<void> _onQueryChanged(
+    SearchQueryChanged event,
+    Emitter<CatalogSearchState> emit,
+  ) async {
+    final query = event.query.trim();
+    if (query.length < 2) {
+      emit(const SearchIdle());
+      return;
+    }
+    emit(const SearchLoading());
+    final result = await _searchBooks(SearchParams(query: query, page: 1));
+    emit(switch (result) {
+      Success(:final value) => SearchLoaded(value.items),
+      Err(:final failure) => SearchError(failure),
+    });
+  }
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+- <b>عدد السطور قريب:</b> الـ Bloc مش أقصر بكتير، لأن الـ event class أخدت مكان الـ Timer. المكسب مش في الطول، المكسب إن مفيش state داخلية (`_debounce` و`_latestRequest`) تغلط فيها.
+- <b>فرق صغير في السلوك:</b> في الـ Cubit، المسح لأقل من حرفين بيظهر `SearchIdle` فورًا. في الـ Bloc، بيعدّي على الـ debounce كمان، فبيظهر بعد 350ms. لو ده مهم، الحل في جزء «زرار المسح» في Level 3.
+
+<CodeBlock label="التست: نفس blocTest، بس act بيعمل add">
+
+```dart
+blocTest<CatalogSearchBloc, CatalogSearchState>(
+  'searches once after the user stops typing',
+  setUp: () => when(() => search(any())).thenAnswer(
+    (_) async => Success(PagedResult(items: [book], hasMore: false)),
+  ),
+  build: () => CatalogSearchBloc(search),
+  act: (bloc) => bloc
+    ..add(const SearchQueryChanged('fl'))
+    ..add(const SearchQueryChanged('flu'))
+    ..add(const SearchQueryChanged('flutter')),
+  wait: const Duration(milliseconds: 400),
+  expect: () => [isA<SearchLoading>(), isA<SearchLoaded>()],
+  verify: (_) => verify(() => search(any())).called(1),
+);
+```
+
+</CodeBlock>
+
+الـ `wait` هنا بيستنى 400ms حقيقية، بكل العيوب اللي شفناها في [درس «تست الـ Cubit»](/course/testing/cubit-tests/) في الوحدة 8. والحل نفسه: الـ `debounce` بتاع stream_transform بيستخدم `Timer`، فتست الـ `fakeAsync` بتاع الدرس ده بيشتغل على الـ Bloc زي ما هو، بعد ما تبدّل `cubit.queryChanged(x)` بـ `bloc.add(SearchQueryChanged(x))`. وتست الـ race (الـ «flu» البطيء) كمان: لو شلت الـ transformer، هيفشل، وده اللي بيثبت إن الـ transformer هو اللي حامي الشاشة.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="sm-bloc-1">
+<Ask>كتبت `on<SearchQueryChanged>(_onQueryChanged)` من غير transformer. المستخدم كتب «flu» ووقف، وبعدين «flutter». ممكن نتيجة «flu» تظهر في الآخر؟ وليه؟</Ask>
+<Answer>
+
+أيوه. الـ default في الـ Bloc إن الـ events من نفس النوع بتشتغل `concurrent`: كل handler بيبدأ من غير ما يستنى ولا يلغي اللي قبله. فلو طلب «flu» أبطأ، بيعمل emit بعد «flutter». الحل `restartable()` أو transformer بـ debounce وswitchMap، فالـ emitter القديم يتقفل أول ما الجديد يبدأ.
+
+</Answer>
+</Question>
+
+<Question id="sm-bloc-2">
+<Ask>handler فيه `_searchBooks(params).then((r) => emit(...))` من غير await. إيه اللي هيحصل؟</Ask>
+<Answer>
+
+الـ handler هيرجع على طول، فالـ Bloc يعتبره خلص ويقفل الـ emitter. ولما النتيجة ترجع، الـ emit هيضرب assertion إنه اتنادى بعد ما الـ handler خلص. القاعدة: الـ handler يبقى `async` ويعمل await لكل شغل جواه، وللـ streams `emit.forEach` أو `emit.onEach`.
+
+</Answer>
+</Question>
+
+<Question id="sm-bloc-3">
+<Ask>`on<BookStatusChanged>(..., transformer: sequential())` و`on<BookRemoved>(..., transformer: sequential())`. المستخدم غيّر الحالة وبعدها على طول شال الكتاب. هل الشيل هيستنى تغيير الحالة؟</Ask>
+<Answer>
+
+لأ. كل `on<E>` ليه stream events لوحده، والـ transformer بيرتّب الـ events من نفس النوع بس. الاتنين هيشتغلوا مع بعض. لو عايز ترتيب بينهم، سجّل handler واحد `on<BookDetailsEvent>` بـ `sequential()` واعمل switch على الـ sealed class جواه.
+
+</Answer>
+</Question>
+
+<Question id="sm-bloc-4">
+<Ask>البحث بـ `restartable()`. المستخدم كتب 5 كلمات بسرعة. كام طلب هيروح لـ Open Library فعلًا، وكام نتيجة هتظهر؟</Ask>
+<Answer>
+
+5 طلبات هيروحوا، لأن الـ restartable بيقفل الـ emitter بتاع الـ handler القديم بس، ومابيوقفش الـ Future ولا الطلب. ونتيجة واحدة بس هتظهر (الأخيرة)، لأن emits القدام بتتجاهل. عشان تقلل الطلبات: debounce قبل الـ switchMap، أو `Future.delayed` و`emit.isDone` جوه الـ handler. والإلغاء الحقيقي للطلب مكانه الـ data layer.
+
+</Answer>
+</Question>
+
+<Question id="sm-bloc-5">
+<Ask>إيه اللي الـ `onTransition` بيقوله ومش موجود في الـ `onChange`؟ وإزاي ده بيساعد في bug report؟</Ask>
+<Answer>
+
+الـ `onTransition` فيه الـ event اللي سبّب التغيير جنب الـ state قبل وبعد، والـ `onChange` فيه قبل وبعد بس. في الـ log، ده بيقولك ليه الـ state اتغيرت، مش بس إنها اتغيرت. والـ events بالترتيب هي خطوات المستخدم، فبتنسخها في `act` بتاع blocTest وتعيد الـ bug في تست قبل ما تصلحه.
+
+</Answer>
+</Question>
+
+</Quiz>

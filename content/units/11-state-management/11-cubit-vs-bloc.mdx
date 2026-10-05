@@ -1,0 +1,506 @@
+---
+title: "Cubit ولا Bloc: الفرق والقرار"
+description: "الفرق الحقيقي بينهم في كل حاجة، ونفس الـ feature مكتوبة بالطريقتين، وإزاي تختار، وإزاي تنقل من واحد للتاني من غير ما تلمس الـ UI، وأسئلة الـ interview عنهم."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="المكالمة ونظام التذاكر">
+
+عندك مشكلة في الشقة. لو اللمبة اتحرقت، بتكلم الكهربائي: «تعالى غيّر اللمبة». نداء مباشر، وهو بيعمل. ده الـ <b>Cubit</b>.
+
+بس في عمارة فيها طلبات كتير بتيجي ورا بعض، المكالمات بتلخبط. الساكن بيتصل 5 مرات عشان نفس التكييف، وواحد طلب تغيير ميعاد وبعدين غيّره تاني، وواحد عايز يعرف مين طلب إيه امبارح. هنا بيعملوا <b>نظام تذاكر</b>: كل طلب ورقة ليها نوع، والنظام عنده قاعدة لكل نوع (التذكرة المكررة تترمي، والميعاد الجديد يلغي القديم، وطلبات الدفع بالدور)، وكل التذاكر محفوظة. ده الـ <b>Bloc</b>.
+
+والمهم: نفس العمارة فيها الاتنين. اللمبة لسه بمكالمة. التذاكر للطلبات اللي بتتزاحم. القرار <b>لكل نوع طلب</b>، مش للعمارة كلها.
+
+</Analogy>
+
+### الإجابة في سطرين
+
+- <b>الفرق:</b> في الـ Cubit، الـ UI بتنادي methods، والـ method بتعمل emit. في الـ Bloc، الـ UI بتبعت events، وكل نوع event ليه handler و<b>سياسة concurrency</b> (transformer)، وكل event بيتسجّل مع الـ state اللي سببها.
+- <b>امتى ده وامتى ده:</b> Cubit لأغلب الشاشات، وده الـ default في الكورس. Bloc لما الـ inputs بتيجي أسرع من الرد ومحتاجة سياسات مختلفة (بحث، infinite scroll، streams بتتغير)، أو لما محتاج سجل بالسبب ورا كل state.
+
+باقي الدرس بيثبت السطرين دول بالكود.
+
+### اللي مشترك بينهم (أكتر مما تتخيل)
+
+الاتنين بيورثوا من `BlocBase<State>`. يعني:
+
+- `state` و`stream` و`close()` و`isClosed` و`onChange` و`onError` و`addError`: نفس الحاجة.
+- كل widgets الـ flutter_bloc: `BlocProvider` و`BlocBuilder` و`BlocSelector` و`BlocListener` و`BlocConsumer` و`context.read/watch/select`. مابتفرقش معاهم.
+- الـ `BlocObserver` بيشوف الاتنين، والـ `blocTest` بيختبر الاتنين.
+- الـ states نفسها: نفس الـ sealed classes، ونفس قواعد درس «تصميم الـ State».
+- الـ packages التانية ليها نسختين: `HydratedCubit` و`HydratedBloc`، `ReplayCubit` و`ReplayBloc`.
+
+يعني الفرق كله في <b>ناحية الـ input</b>: إزاي الطلب بيدخل، وإزاي بيتنظّم مع اللي قبله. الـ output (states) واحد.
+
+</Level>
+
+<Level n="2" title="المقارنة كاملة">
+
+### الجدول
+
+| | Cubit | Bloc |
+| --- | --- | --- |
+| الـ input | methods: `cubit.refresh()` | events: `bloc.add(LibraryRefreshRequested())` |
+| الـ emit | `emit(state)` من أي method | `emit(state)` جوه handler بس (`Emitter`) |
+| الملفات | state + cubit | event + state + bloc |
+| الكود | أقل: method لكل action | أكتر: class لكل event + تسجيل `on<E>` |
+| الـ concurrency | بإيدك: flag، request id، Timer | `transformer:` لكل event: concurrent، sequential، droppable، restartable |
+| الـ debounce | `Timer` تلغيه في `close` | transformer بـ stream_transform |
+| الـ streams | `listen` وتلغي الـ subscription في `close` | `emit.forEach` بيتلغي لوحده |
+| emit بعد القفل | `StateError`، فلازم `isClosed` بعد كل await | الـ emitter بيتلغي والـ emit بيتجاهل |
+| الـ method ترجّع Future | أيوه، والـ UI تستناها (`RefreshIndicator`) | `add` بترجع `void`، تستنى state من الـ stream |
+| التتبع | `onChange`: قبل وبعد | `onEvent` و`onTransition`: قبل، والسبب، وبعد |
+| exception في الكود | من method مابتعدّيش على `onError`، لازم `addError` | من handler بتروح `onError` والـ observer لوحدها |
+| التست | `blocTest` + `act: (c) => c.refresh()` | `blocTest` + `act: (b) => b.add(...)` |
+| الـ mocks في widget tests | `MockCubit` | `MockBloc` |
+| منحنى التعلم | ساعة: methods وemit | أطول: events، Emitter، transformers، streams |
+| الـ debugging | breakpoint في الـ method، والـ stack trace بيوصل للـ UI | الـ event بيعدّي على stream، فالـ stack trace بيقف عند الـ handler |
+| الـ widgets والـ observer والـ hydrated/replay | نفسها | نفسها |
+
+أهم 4 صفوف، لأنهم اللي بيفرقوا في الشغل اليومي:
+
+- <b>الـ concurrency:</b> ده الفرق الحقيقي. في الـ Cubit، كل race condition بتحلها بآلية بتكتبها بإيدك، وكل آلية ليها مكان تغلط فيه وتست لازم تكتبه. في الـ Bloc بتختار سياسة باسمها، وهي متستّة في الـ package. بس خلي بالك: الـ default في الـ Bloc `concurrent`، يعني من غير transformer مفيش حماية، زي ما شفنا في درس «الـ Bloc من الصفر».
+- <b>الـ return value:</b> `RefreshIndicator(onRefresh: cubit.refresh)` سطر واحد في الـ Cubit، لأن `refresh` بترجع Future بيخلص لما التحديث يخلص. في الـ Bloc، `add` مابترجعش حاجة، فلازم تستنى state معينة من الـ stream. هنشوفه في الكود تحت.
+- <b>التتبع:</b> الـ Cubit مش «مايتتبعش». الـ `onChange` في الـ observer بيقولك `LibraryCubit: LibraryLoading → LibraryError`. اللي ناقصه <b>ليه</b>. في شاشة فيها 2 actions، ليه واضحة. في شاشة فيها 6 events بيتزاحموا، هي اللي بتفرق.
+- <b>الأخطاء:</b> bug في handler بيوصل الـ observer لوحده، ومعاه الـ `onDone` بالـ error. في الـ Cubit، الـ exception اللي طلعت من method بعد await بتروح للـ `PlatformDispatcher.onError` (وSentry بيمسكها هناك، زي درس الـ Observability)، بس الـ `BlocObserver.onError` مش هيشوفها.
+
+### نفس الـ feature بالطريقتين: المكتبة
+
+شاشة المكتبة بتعمل حاجتين: بتسمع على الكتب من drift (offline-first زي الوحدة 4)، وفيها pull-to-refresh بيجيب من السيرفر ويكتب في drift، والـ stream بيعمل الباقي. الـ state هي `LibraryState` بتاعة درس الـ Cubit في الوحدة 5 بالظبط، بـ `isRefreshing` و`refreshFailure`، ومش هتتغير ولا حرف في الطريقتين.
+
+<CodeBlock label="بالـ Cubit">
+
+```dart
+class LibraryCubit extends Cubit<LibraryState> {
+  LibraryCubit(this._repository, this._refreshLibrary) : super(const LibraryLoading());
+
+  final LibraryRepository _repository;
+  final RefreshLibrary _refreshLibrary; // pulls from the server into drift
+  StreamSubscription<List<Book>>? _sub;
+
+  void watch() {
+    _sub?.cancel();
+    _sub = _repository.watchLibrary().listen(
+      (books) => emit(switch (state) {
+        final LibraryLoaded s => s.copyWith(books: books), // keeps isRefreshing
+        _ => LibraryLoaded(books),
+      }),
+      onError: (Object error) => emit(LibraryError(CacheFailure('$error'))),
+    );
+  }
+
+  Future<void> refresh() async {
+    final current = state;
+    if (current is! LibraryLoaded || current.isRefreshing) return; // one at a time
+    emit(current.copyWith(isRefreshing: true));
+    final result = await _refreshLibrary();
+    if (isClosed) return;
+    final refreshFailure = switch (result) {
+      Success() => null,
+      Err(:final failure) => failure,
+    };
+    if (state case final LibraryLoaded s) {
+      emit(s.copyWith(isRefreshing: false, refreshFailure: refreshFailure));
+    }
+  }
+
+  @override
+  Future<void> close() async {
+    await _sub?.cancel();
+    return super.close();
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="بالـ Bloc">
+
+```dart
+sealed class LibraryEvent {
+  const LibraryEvent();
+}
+final class LibrarySubscriptionRequested extends LibraryEvent {
+  const LibrarySubscriptionRequested();
+}
+final class LibraryRefreshRequested extends LibraryEvent {
+  const LibraryRefreshRequested();
+}
+
+class LibraryBloc extends Bloc<LibraryEvent, LibraryState> {
+  LibraryBloc(this._repository, this._refreshLibrary) : super(const LibraryLoading()) {
+    on<LibrarySubscriptionRequested>(_onSubscriptionRequested, transformer: restartable());
+    on<LibraryRefreshRequested>(_onRefreshRequested, transformer: droppable());
+  }
+
+  final LibraryRepository _repository;
+  final RefreshLibrary _refreshLibrary;
+
+  Future<void> _onSubscriptionRequested(
+    LibrarySubscriptionRequested event,
+    Emitter<LibraryState> emit,
+  ) =>
+      emit.forEach<List<Book>>(
+        _repository.watchLibrary(),
+        onData: (books) => switch (state) {
+          final LibraryLoaded s => s.copyWith(books: books),
+          _ => LibraryLoaded(books),
+        },
+        onError: (error, _) => LibraryError(CacheFailure('$error')),
+      );
+
+  Future<void> _onRefreshRequested(
+    LibraryRefreshRequested event,
+    Emitter<LibraryState> emit,
+  ) async {
+    final current = state;
+    if (current is! LibraryLoaded) return;
+    emit(current.copyWith(isRefreshing: true));
+    final result = await _refreshLibrary();
+    final refreshFailure = switch (result) {
+      Success() => null,
+      Err(:final failure) => failure,
+    };
+    if (state case final LibraryLoaded s) {
+      emit(s.copyWith(isRefreshing: false, refreshFailure: refreshFailure));
+    }
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ UI: الفرق في 3 أماكن بس">
+
+```dart
+// Cubit
+BlocProvider(create: (_) => getIt<LibraryCubit>()..watch(), child: const LibraryView())
+RefreshIndicator(
+  onRefresh: context.read<LibraryCubit>().refresh, // returns a Future that ends with the refresh
+  child: BookList(books: books),
+)
+
+// Bloc
+BlocProvider(
+  create: (_) => getIt<LibraryBloc>()..add(const LibrarySubscriptionRequested()),
+  child: const LibraryView(),
+)
+RefreshIndicator(
+  onRefresh: () {
+    final bloc = context.read<LibraryBloc>()..add(const LibraryRefreshRequested());
+    // add() returns void: wait for the state that says the refresh is over
+    return bloc.stream.firstWhere((s) => s is! LibraryLoaded || !s.isRefreshing);
+  },
+  child: BookList(books: books),
+)
+
+// everything else (BlocBuilder, BlocListener for refreshFailure, BlocSelector for the
+// AppBar button) is the same code with LibraryBloc instead of LibraryCubit
+```
+
+</CodeBlock>
+
+| | Cubit | Bloc |
+| --- | --- | --- |
+| subscription وclose | بإيدك: `_sub` و`cancel` في `close` | `emit.forEach` |
+| refresh واحد في المرة | `current.isRefreshing` في أول سطر | `droppable()` |
+| بعد الـ await | `if (isClosed) return;` | مش محتاج |
+| الـ pull-to-refresh | سطر واحد | `firstWhere` على الـ stream |
+| ملفات وكود | ملفين، 45 سطر | 3 ملفات، 55 سطر |
+
+النتيجة بأمانة: <b>تعادل تقريبًا</b>. الـ Bloc شال 3 حاجات يدوية (الـ subscription، والـ flag، والـ isClosed)، والتمن events وUI أصعب سنة في الـ refresh. وخلي بالك إن الـ `isRefreshing` لسه موجود في الـ Bloc، لأن زرار الـ AppBar محتاجه يعرض حالته، فالـ droppable ماوفّرش field، وفّر سطر. لشاشة زي دي، الكورس بيختار Cubit: أبسط في القراية، وأي حد في الفريق يفهمه من أول مرة.
+
+### والـ feature اللي الـ Bloc بيكسب فيها: البحث
+
+في درس «الـ Bloc من الصفر» حطينا الـ `CatalogSearchCubit` جنب الـ `CatalogSearchBloc`. الخلاصة:
+
+| | Cubit | Bloc |
+| --- | --- | --- |
+| الـ debounce | `Timer _debounce` + cancel في كل حرف + cancel في `close` | `debounceRestartable(350ms)` |
+| النتيجة القديمة | `_latestRequest` بيزيد وبيتقارن بعد الـ await | الـ switchMap بيقفل الـ emitter القديم |
+| بعد القفل | `isClosed` | مش محتاج |
+| state داخلية ممكن تغلط فيها | `_debounce` و`_latestRequest` | ولا حاجة |
+
+وهنا الفرق بيكبر مع كل حاجة بتتضاف. ضيف للكتالوج فلتر باللغة (`restartable`)، وinfinite scroll (`droppable`)، وpull-to-refresh: في الـ Cubit دول 3 flags وrequest id واحد لازم كلهم يتفقوا مع بعض، وكل method بتشيّك على flags التانيين، زي ما شفنا في درس الـ Pagination لما الـ `_loadingMore` والـ `_latestRequest` اتداخلوا. في الـ Bloc، كل event جنبه سياسته في سطر.
+
+</Level>
+
+<Level n="3" title="القرار">
+
+<Diagram name="d-sm-cubit-or-bloc">
+
+بتسأل من فوق لتحت، وأول «أيوه» هي اللي بتقرر. لو محتاج سجل بالـ events نفسها، Bloc. لو الـ actions بتخلص قبل اللي بعدها، أو flag واحد بيحل التزاحم، Cubit. غير كده، الـ inputs بتتزاحم وكل نوع محتاج سياسة: Bloc بـ transformer لكل event.
+
+</Diagram>
+
+### الـ Bloc بيستاهل لما
+
+- <b>الـ inputs بتيجي أسرع من الرد:</b> كتابة في search box، scroll بيبعت كل pixel، slider. هنا debounce وdroppable وrestartable بيوفّروا كود يدوي كتير.
+- <b>أكتر من نوع input بيتزاحموا، وكل نوع محتاج سياسة مختلفة:</b> بحث (يلغي القديم) + صفحات (ترمي المكرر) + حفظ (بالدور). في Cubit دول flags بتتشابك. في Bloc كل واحد سطر.
+- <b>stream بيتغير بالـ parameters:</b> تسمع على `watchBooks(filter)`، والفلتر بيتغير. `emit.forEach` مع `restartable` بيلغي الـ subscription القديم ويفتح الجديد لوحده.
+- <b>محتاج سجل بالسبب:</b> شاشة دفع، أو flow فيه خطوات المستخدم مهمة للـ audit أو للدعم، أو bugs بتحصل بترتيب معين ومحتاج تعيدها. الـ events في الـ breadcrumbs هي نفسها الـ `act` في التست.
+
+### الـ Cubit كفاية لما
+
+- <b>الـ actions بطيئة ونادرة:</b> زرار، فتح شاشة، toggle. كل واحدة بتخلص قبل اللي بعدها في الاستخدام العادي.
+- <b>التزاحم بيتحل بحاجة واحدة واضحة:</b> flag `_saving` يمنع الضغط المتكرر، أو `status` في الـ state. نمط درس الـ Cubit في الوحدة 5.
+- <b>الشاشة بتعرض stream ثابت:</b> `AuthCubit` و`SyncStatusCubit` بيسمعوا stream من الـ repository ويعرضوه. subscription واحد وclose.
+- <b>الـ UI محتاجة Future من الـ action:</b> `RefreshIndicator`، أو `await cubit.save()` قبل ما تعمل pop. ممكن في Bloc، بس أصعب.
+
+### Readly كلها
+
+| في Readly | الاختيار | ليه |
+| --- | --- | --- |
+| `ReadingGoalCubit`، وضع العرض list/grid، فلتر الحالة | Cubit | قيمة بتتغير بضغطة، مفيش async |
+| `LoginCubit`، `AddBookCubit` | Cubit | submit واحد، والضغط المتكرر بـ status |
+| `BookDetailsCubit` | Cubit | load مرة وactions قليلة |
+| `LibraryCubit` | Cubit (والـ Bloc مقبول) | stream واحد وrefresh، شفناهم الاتنين فوق |
+| `AuthCubit`، `SettingsCubit`، `SyncStatusCubit` | Cubit | بيسمعوا stream من repository ويعرضوه |
+| `NotesCubit` | Cubit، وBloc لو ضفت autosave وانت بتكتب | الـ autosave يعني debounce + حفظ بالترتيب |
+| الكتالوج: بحث + فلاتر + infinite scroll | Bloc | 3 أنواع inputs بتتزاحم، وكل نوع سياسة |
+
+يعني من 10 حاجات، واحدة بس Bloc، وواحدة «حسب». ده الطبيعي في أغلب الـ apps. والـ `CatalogSearchCubit` اللي في الوحدة 5 مش غلط: شغال ومتستّ. بنقلّه لـ Bloc لما الكتالوج يكبر بالفلاتر والـ scroll، مش قبلها.
+
+### الاتنين في نفس الـ app
+
+مفيش أي مشكلة، ومفيش أي setup زيادة. نفس الـ package، ونفس الـ widgets:
+
+<CodeBlock label="Cubits وBloc جنب بعض">
+
+```dart
+MultiBlocProvider(
+  providers: [
+    BlocProvider(create: (_) => getIt<CatalogBloc>()..add(const CatalogStarted())),
+    BlocProvider(create: (_) => getIt<ViewModeCubit>()),
+  ],
+  child: const CatalogView(),
+)
+```
+
+</CodeBlock>
+
+- <b>الـ observer واحد:</b> `onChange` و`onError` بيشتغلوا للاتنين، و`onEvent` و`onTransition` و`onDone` للـ Bloc بس. الـ log بيبقى فيه سطور Cubits (قبل وبعد) وسطور Bloc (بالسبب) مع بعض.
+- <b>التواصل بينهم نفس القواعد:</b> Cubit مايمسكش Bloc ولا العكس. الاتنين يسمعوا stream من نفس الـ repository، أو الـ UI تعمل الربط بـ `BlocListener`: لما `ViewModeCubit` يتغير، الـ listener يعمل `add` للـ `CatalogBloc` لو محتاج.
+- <b>الـ DI واحد:</b> الاتنين `@injectable` (factory) للشاشات، و`@lazySingleton` بس لما كود بره الشجرة محتاج نفس النسخة (زي الـ `AuthCubit`)، زي ما في درس «أنواع الـ Cubit (2)».
+
+الـ Bloc مش «ترقية» للمشروع كله. هو أداة لـ feature معينة، جنب Cubits في باقي الـ app.
+
+### بتنقل Cubit لـ Bloc من غير ما تلمس الـ UI
+
+ده بيحصل كتير: الـ Cubit بدأ بسيط، وكبر بفلاتر وscroll، وبقى فيه 4 flags. النقل ممكن يحصل في PR مايلمسش ولا شاشة، بشرط واحد: <b>الـ UI بتعرف حاجتين بس عن الـ Cubit: الـ state، والـ methods اللي بتناديها</b>. لو في widget بيقرا field من الـ Cubit (`cubit.currentQuery`) أو بيعمل logic، صلّح ده الأول. ده نفس سبب rule الـ `avoid_public_fields` في bloc_lint.
+
+الخطوات على الـ `LibraryCubit` اللي فوق:
+
+1. <b>الـ states:</b> ولا تغيير. ده اللي بيخلي كل الـ builders والـ listeners والـ golden tests تفضل زي ما هي.
+2. <b>event لكل public method:</b> `watch()` بقت `LibrarySubscriptionRequested`، و`refresh()` بقت `LibraryRefreshRequested`. الاسم بيقول اللي حصل، مش اسم الـ method.
+3. <b>جسم كل method بقى handler:</b> وانت بتنقل، شيل الآليات اليدوية: الـ `isClosed` يتمسح، والـ subscription يبقى `emit.forEach`، والـ flag يبقى transformer، والـ Timer يبقى debounce transformer.
+4. <b>كوبري مؤقت عشان الـ UI ماتتغيرش:</b>
+
+<CodeBlock label="library_cubit.dart: كوبري لحد ما الـ call sites تتنقل">
+
+```dart
+// The old file stays, so every import in the UI still works.
+export 'library_bloc.dart';
+
+import 'library_bloc.dart';
+
+// TEMPORARY: same type, old name. context.read<LibraryCubit>() finds the LibraryBloc.
+typedef LibraryCubit = LibraryBloc;
+```
+
+</CodeBlock>
+
+<CodeBlock label="في الـ LibraryBloc: الـ methods القديمة بتبعت events">
+
+```dart
+// TEMPORARY bridge, removed in the next PR
+@Deprecated('Use add(const LibrarySubscriptionRequested())')
+void watch() => add(const LibrarySubscriptionRequested());
+
+@Deprecated('Use add(const LibraryRefreshRequested())')
+Future<void> refresh() async {
+  add(const LibraryRefreshRequested());
+  await stream.firstWhere((s) => s is! LibraryLoaded || !s.isRefreshing);
+}
+```
+
+</CodeBlock>
+
+- <b>الـ typedef:</b> `LibraryCubit` بقى اسم تاني لنفس النوع، فـ `BlocBuilder<LibraryCubit, LibraryState>` و`context.read<LibraryCubit>()` و`getIt<LibraryCubit>()` كلهم بيلاقوا الـ Bloc. ولا ملف UI اتغير.
+- <b>الـ methods القديمة:</b> بتعمل `add` بس. والـ `refresh` بتفضل ترجع Future بيخلص مع التحديث، فالـ `RefreshIndicator` شغال زي ما هو.
+- <b>الـ `@Deprecated`:</b> كل call site بيطلع تحذير في الـ IDE، فدي قايمة الشغل للـ PR الجاي. والـ bloc_lint هيشتكي من `avoid_public_bloc_methods`، وده كويس: تذكير إن الكوبري ده مش مكانه يفضل.
+
+5. <b>التستات:</b> تستات الـ blocTest بيتغير فيها الـ `act` بس: `act: (c) => c.refresh()` بقت `act: (b) => b.add(const LibraryRefreshRequested())`. الـ `expect` زي ما هو، لأن الـ states زي ما هي، وده اللي بيثبت إن السلوك ماتغيرش. والـ widget tests: الـ mock يبقى `class MockLibraryBloc extends MockBloc<LibraryEvent, LibraryState> implements LibraryBloc {}`، والـ `whenListen` زي ما هو.
+6. <b>الـ PR التاني:</b> بدّل الـ call sites لـ `add`، وامسح الكوبري والـ typedef والملف القديم. Find and replace تقريبًا.
+
+والعكس ممكن بنفس الطريقة: Bloc اتعمل بدري ومالوش لازمة، ترجّعه Cubit، وكل handler يبقى method. الـ states هي العقد بين الـ UI والـ logic، وطول ما العقد ثابت، اللي ورا مش فارق مع الشاشة.
+
+### الفريق والـ conventions
+
+الكارثة مش إنك تختار غلط، الكارثة إن كل واحد في الفريق يختار بمزاجه. فيه 3 أشكال شائعة:
+
+| الـ convention | معناها | مناسبة لـ |
+| --- | --- | --- |
+| Cubit default، Bloc باستثناء مكتوب | Cubit لكل حاجة، والـ Bloc لازم سببه يبقى في الـ PR (من القايمة اللي فوق) | أغلب الفرق، والكورس |
+| Bloc في كل حاجة | كل شاشة Bloc، حتى البسيطة، عشان كل الكود شبه بعض | فرق كبيرة عايزة شكل واحد وعندها tooling |
+| Cubit بس | مفيش Bloc خالص، والـ concurrency بالأنماط اليدوية | فرق صغيرة، أو app مافيهوش بحث وstreams كتير |
+
+والـ bloc_lint (اللي هنحطه في الـ CI في درس «الـ State management في مشروع حقيقي») بيخلّي الـ convention قاعدة مش نصيحة:
+
+- <b>الـ recommended:</b> `include: package:bloc_lint/recommended.yaml` فيه `avoid_public_bloc_methods` و`avoid_public_fields` و`prefer_void_public_cubit_methods` و`avoid_flutter_imports` و`prefer_file_naming_conventions`. دول مفيدين في أي convention.
+- <b>`prefer_cubit`:</b> بيحذّر من أي Bloc. للفرق اللي بتقول «Cubit بس» أو «Cubit default» وعايزة كل Bloc يبقى قرار واعي.
+- <b>`prefer_bloc`:</b> العكس، بيحذّر من أي Cubit. للفرق اللي اختارت «Bloc في كل حاجة».
+
+اكتب القرار في ملف في الـ repo (ADR صغير): الـ default، وإمتى الاستثناء، ومثال. بعد 6 شهور، حد جديد هيسأل «ليه الكتالوج بس Bloc؟»، والإجابة تبقى مكتوبة.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+### خرافات منتشرة
+
+| الخرافة | الحقيقة |
+| --- | --- |
+| «Bloc للـ apps الكبيرة، وCubit للصغيرة» | القرار لكل feature، مش لحجم الـ app. الـ app الكبير أغلب شاشاته load وactions، يعني Cubits. وapp صغير فيه بحث واحد معقد ممكن يبقى فيه Bloc |
+| «الـ Cubit مايتتبعش» | الـ `onChange` في الـ observer بيسجّل اسم الـ Cubit والـ state قبل وبعد. اللي ناقصه السبب، ولو محتاجه في method معينة، سجّله فيها |
+| «الـ Cubit مايعرفش concurrency» | يعرف، بإيدك: flag، request id، Timer، `CancelableOperation`، زي درس «Cubit متقدم». الفرق إنه يدوي مش إنه مستحيل |
+| «الـ Bloc بيحل الـ race conditions لوحده» | الـ default `concurrent`، والـ transformer لكل handler لوحده. من غير transformer صح، نفس الـ bugs |
+| «الـ restartable بيلغي الطلب» | بيقفل الـ emitter بس. الطلب بيكمّل والنتيجة بتتجاهل |
+| «الـ Bloc أتقل في الأداء» | الفرق stream صغير لكل event. ده لا شيء جنب طلب شبكة أو frame بيترسم |
+| «لازم تختار واحد للمشروع كله» | نفس الـ package ونفس الـ widgets ونفس الـ observer. خليط عادي جدًا |
+| «Bloc يعني Clean Architecture» | ده state management في الـ presentation بس. ممكن Bloc بيكلّم dio مباشرة، وده مش clean، وممكن Cubit بيكلّم use cases، وده clean |
+
+ومثال على خرافة «الـ Bloc بيحل الـ race لوحده» من الكتالوج: `SearchQueryChanged` بـ `restartable` و`NextPageRequested` بـ `droppable`، في handlers منفصلة. المستخدم نزل للصفحة 3، والطلب لسه راجع، فكتب كلمة جديدة. الـ restartable بتاع البحث مالغاش handler الصفحة، لأنه في handler تاني. الصفحة 3 القديمة رجعت بعد نتايج الكلمة الجديدة واتزوّدت تحتها. نفس bug درس الـ Pagination بالظبط، ومحتاج guard:
+
+<CodeBlock label="الـ guard لسه لازم بين handlers مختلفة">
+
+```dart
+Future<void> _onNextPage(NextPageRequested event, Emitter<CatalogState> emit) async {
+  final current = state;
+  if (current is! CatalogLoaded || current.hasReachedEnd) return;
+  final result = await _searchBooks(SearchParams(query: _query, page: _page + 1));
+  if (!identical(state, current)) return; // a new query or a refresh happened meanwhile
+  // ...append the page as before
+}
+```
+
+</CodeBlock>
+
+الـ `identical` بيسأل: الـ state لسه هي نفس الـ object اللي بدأت منه؟ لو أي handler تاني عمل emit في النص، يبقى الصفحة دي بتاعة ليستة قديمة. ده request id من غير رقم. يعني الـ Bloc بيشيل التزاحم <b>جوه</b> نوع الـ event، والتزاحم <b>بين</b> الأنواع لسه عليك (أو handler واحد بـ sealed switch زي درس «الـ Bloc من الصفر»).
+
+### قرارات
+
+- <b>ابدأ Cubit، وانقل لما الألم يظهر:</b> النقل رخيص لو الـ UI مابتعرفش غير الـ state والـ calls، زي ما شفنا. فمفيش داعي تدفع تمن الـ Bloc مقدمًا «عشان لو كبر». العلامة إن الوقت جه: تاني flag في نفس الـ Cubit، أو method بتشيّك على flags methods تانية، أو bug race اتصلّح مرتين.
+- <b>ماتختارش عشان الـ interview أو الموضة:</b> «احنا بنستخدم Bloc» مش ميزة لوحدها. الميزة إنك تقدر تقول ليه في كل شاشة.
+- <b>الـ Bloc لازم يستخدم مميزاته:</b> Bloc كل handlers بتوعه `concurrent` من غير سبب، وكل events بتوعه setters، هو Cubit بتمن أعلى. لو مافيش transformer واحد مقصود ولا الـ log بيفرق، ارجع Cubit.
+- <b>الـ states هي العقد:</b> استثمر في تصميم الـ state (درس «تصميم الـ State»)، لأنها اللي بتعيش مع الـ UI والتستات والـ goldens. الـ Cubit أو الـ Bloc اللي وراها تفصيلة تتبدّل.
+
+<Note kind="interview" title="سؤال interview">
+
+«إيه الفرق بين Cubit وBloc، وبتختار إمتى؟» الاتنين `BlocBase`، يعني نفس الـ state والـ stream والـ widgets والتستات. الفرق في الـ input: الـ Cubit بياخد method calls، والـ Bloc بياخد events، وكل نوع event ليه handler وtransformer بيحدد بيتعامل إزاي مع event جه والقديم شغال (concurrent، sequential، droppable، restartable). وكل event بيتسجّل في `onTransition` مع الـ state قبل وبعد. أنا بستخدم Cubit default لأنه أبسط ويكفي أغلب الشاشات، وBloc لما الـ inputs بتتزاحم وكل نوع محتاج سياسة، زي بحث مع infinite scroll، أو لما محتاج سجل بالسبب. ومش بحسبها بحجم الـ app، بحسبها لكل feature.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«ليه مش Bloc في كل حاجة عشان الكود كله يبقى شبه بعض؟» ده convention مقبول لو الفريق اختاره، وbloc_lint عنده `prefer_bloc` يفرضه. بس تمنه: ملف events لكل شاشة، وevent لكل زرار، والـ `RefreshIndicator` محتاج `firstWhere` بدل سطر. ولو أغلب الـ handlers هتبقى `concurrent` والـ events setters، يبقى دفعت التمن من غير المكسب. أنا أفضّل Cubit default، والـ Bloc لما يكسب حاجة محددة: transformers أو تتبع. والتناسق بيجي من تصميم الـ states والـ layers، مش من نوع الـ class.
+
+</Note>
+
+</Level>
+
+<LessonPart title="أسئلة interview">
+
+<Note kind="interview" title="«إزاي تعمل debounce للبحث في Cubit وفي Bloc؟»">
+
+في الـ Cubit: `Timer` بيتلغي ويتعمل من جديد مع كل حرف، ويتلغي في `close`، ومعاه request id عشان النتيجة القديمة ماتغطيش على الجديدة، و`isClosed` بعد الـ await. في الـ Bloc: transformer بـ stream_transform، `(events, mapper) => events.debounce(d).switchMap(mapper)`. الـ debounce بيعدّي آخر event بعد الوقفة، والـ switchMap بيقفل emitter الـ handler القديم، فمفيش request id ولا timer ولا isClosed. والتست في الحالتين بـ fakeAsync عشان تختبر الـ 350ms بالظبط من غير ما تستنى وقت حقيقي.
+
+</Note>
+
+<Note kind="interview" title="«عندك Cubit في production بقى معقد. تنقله لـ Bloc إزاي من غير ما تكسر حاجة؟»">
+
+الـ states ماتتغيرش، لأنها العقد مع الـ UI والتستات. بعمل event لكل public method، وبنقل جسم كل method لـ handler، وأنا بنقل بشيل الآليات اليدوية: flags تبقى transformers، والـ subscription يبقى `emit.forEach`، والـ isClosed يتمسح. في PR أول بسيب كوبري: typedef بالاسم القديم، وmethods قديمة `@Deprecated` بتعمل add، فولا شاشة بتتغير. تستات الـ blocTest بيتغير فيها الـ act بس، والـ expect زي ما هو، وده دليل إن السلوك ماتغيرش. وفي PR تاني ببدّل الـ call sites وأمسح الكوبري.
+
+</Note>
+
+<Note kind="interview" title="«الـ BlocObserver بيشوف إيه من الـ Cubit وإيه من الـ Bloc؟»">
+
+من الاتنين: `onCreate` و`onChange` (قبل وبعد) و`onError` (اللي اتعمله addError) و`onClose`. من الـ Bloc بس: `onEvent` لحظة الـ add (قبل الـ transformer، فبيشوف حتى الـ events اللي هتترمي)، و`onTransition` فيه الـ event جنب الـ state قبل وبعد، و`onDone` لما الـ handler يخلص ومعاه الـ error لو حصل. وexception من handler بتوصل `onError` لوحدها، لكن exception من method في Cubit لأ. والـ log بيسجّل `runtimeType` بس، لأن الـ events والـ states ممكن يبقى فيها بيانات المستخدم.
+
+</Note>
+
+<Note kind="interview" title="«ليه add مابترجعش Future؟ وإزاي تعمل pull-to-refresh مع Bloc؟»">
+
+لأن الـ event بيدخل stream، وممكن الـ transformer يأخّره (sequential) أو يرميه (droppable) أو يلغيه بعدين (restartable)، فمفيش Future واحد صادق يرجع. الـ UI بتعرف النتيجة من الـ state. للـ `RefreshIndicator`: `add` وبعدين `bloc.stream.firstWhere((s) => s is! LibraryLoaded || !s.isRefreshing)`، يعني استنى الـ state اللي بتقول إن التحديث خلص. ولو الـ state مالهاش field زي `isRefreshing`، ده إشارة إن الـ state ناقصها معلومة الـ UI محتاجاها أصلًا.
+
+</Note>
+
+<Note kind="interview" title="«عندك Bloc فيه restartable للبحث وdroppable للصفحات. ممكن يحصل race؟»">
+
+أيوه. كل `on<E>` ليه stream لوحده، والـ transformer بيتحكم في الـ events من نوعه بس. فلو الصفحة 3 بتاعة كلمة قديمة لسه راجعة والمستخدم كتب كلمة جديدة، الـ restartable بتاع البحث مش هيلغي handler الصفحة، والصفحة القديمة هتتزوّد تحت النتايج الجديدة. الحل guard بعد الـ await (`identical(state, current)`، أو مقارنة الـ query)، أو handler واحد للـ sealed events كلها بـ transformer واحد لو الكل لازم يلغي بعض.
+
+</Note>
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="sm-vs-1">
+<Ask>شاشة «هدف القراية»: stepper بيزوّد ويقلل عدد الصفحات في اليوم، وزرار «حفظ». Cubit ولا Bloc؟ وليه؟</Ask>
+<Answer>
+
+Cubit. الـ actions بطيئة ونادرة، والزيادة والنقصان sync، والحفظ submit واحد والضغط المتكرر بيتمنع بـ status في الـ state. مفيش inputs بتتزاحم ولا محتاج سجل بالسبب، فالـ events هتبقى كود زيادة من غير مكسب.
+
+</Answer>
+</Question>
+
+<Question id="sm-vs-2">
+<Ask>method في Cubit عملت throw بعد await، وhandler في Bloc عمل throw. أنهي واحد هيوصل `BlocObserver.onError`؟</Ask>
+<Answer>
+
+الـ handler بتاع الـ Bloc: الـ Bloc بيمسك الـ exception، ويبعتها لـ `onError` (وللـ observer) ولـ `onDone`، وبعدين يرميها تاني. الـ method بتاعة الـ Cubit لأ: الـ exception بتروح للـ zone (`PlatformDispatcher.onError`)، والـ observer مش هيشوفها غير لو عملت `addError` بإيدك.
+
+</Answer>
+</Question>
+
+<Question id="sm-vs-3">
+<Ask>نقلت `LibraryCubit` لـ `LibraryBloc`، وكتبت `RefreshIndicator(onRefresh: () async => bloc.add(const LibraryRefreshRequested()))`. إيه المشكلة؟</Ask>
+<Answer>
+
+`add` بترجع `void` على طول، فالـ Future بيخلص فورًا والـ spinner بتاع الـ RefreshIndicator بيختفي قبل ما التحديث يبدأ تقريبًا. لازم تستنى الـ state اللي بتقول إن التحديث خلص: `await bloc.stream.firstWhere((s) => s is! LibraryLoaded || !s.isRefreshing)`. في الـ Cubit ده كان مجاني لأن `refresh()` بترجع Future.
+
+</Answer>
+</Question>
+
+<Question id="sm-vs-4">
+<Ask>إيه الشرط اللي بيخلّي نقل Cubit لـ Bloc مايلمسش الـ UI؟ وإيه اللي بيخلّي الـ `context.read<LibraryCubit>()` يفضل شغال بعد النقل؟</Ask>
+<Answer>
+
+الشرط إن الـ UI ماتعرفش عن الـ Cubit غير الـ state والـ methods اللي بتناديها، والـ states ماتتغيرش. والـ `context.read<LibraryCubit>()` بيفضل شغال بـ `typedef LibraryCubit = LibraryBloc;` في الملف القديم: نفس النوع باسم تاني، فالـ provider بيلاقيه. ومعاه methods مؤقتة `@Deprecated` بتعمل `add`، لحد ما الـ call sites تتنقل في PR تاني.
+
+</Answer>
+</Question>
+
+<Question id="sm-vs-5">
+<Ask>زميلك بيقول: «الـ app بتاعنا كبير، يبقى لازم Bloc في كل الشاشات». ترد بإيه؟</Ask>
+<Answer>
+
+القرار لكل feature مش لحجم الـ app. أغلب شاشات أي app كبير بتعمل load وكام action، والـ Cubit أبسط ليها. الـ Bloc بيستاهل في الشاشات اللي فيها inputs بتتزاحم (بحث، scroll، streams بتتغير) أو محتاجة سجل بالسبب. ولو الفريق عايز Bloc في كل حاجة عشان التناسق، ده convention مقبول (والـ `prefer_bloc` بيفرضه)، بس لازم يبقى قرار واعي بتمنه، مش افتراض إن الكبير لازمه Bloc.
+
+</Answer>
+</Question>
+
+<Question id="sm-vs-6">
+<Ask>`CatalogBloc` فيه `on<SearchQueryChanged>` بـ `restartable()` و`on<NextPageRequested>` بـ `droppable()`. المستخدم كتب كلمة جديدة والصفحة 3 بتاعة الكلمة القديمة لسه بتحمّل. إيه اللي ممكن يحصل، والحل؟</Ask>
+<Answer>
+
+الصفحة 3 القديمة ممكن ترجع بعد نتايج الكلمة الجديدة وتتزوّد تحتها، لأن الـ restartable بيلغي handlers البحث بس، والصفحة في handler تاني بـ transformer تاني. الحل guard بعد الـ await في handler الصفحة: لو `!identical(state, current)` (أو الـ query اتغير)، تجاهل النتيجة. أو handler واحد للـ sealed events كلها لو كل الأنواع لازم تلغي بعض.
+
+</Answer>
+</Question>
+
+</Quiz>

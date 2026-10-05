@@ -1,0 +1,803 @@
+---
+title: "Cubit بيفتكر ويرجع: HydratedCubit وReplayCubit"
+description: "الـ HydratedCubit بيحفظ الـ state ويرجّعها بعد ما الـ app يتقفل، والـ ReplayCubit بيدّيك undo وredo. الاتنين بسطر واحد في الأول، والتفاصيل هي اللي بتفرق: تحفظ إيه، وإزاي الـ JSON يعيش مع الـ versions، وإيه اللي بيحصل لو اتبوظ، والـ undo يرجع لحد فين."
+minutes: 40
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="الـ bookmark والأستيكة">
+
+بتقرا رواية بالليل ونمت. الصبح بتفتح الكتاب على نفس الصفحة، لأن الـ <b>bookmark</b> كان جواه. مش محتاج تفتكر انت كنت فين: الكتاب نفسه فاكر. بس الـ bookmark بيحفظ «انت فين»، مش «كنت حاسس بإيه وانت بتقرا». لو حطيت فيه ورقة مكتوب عليها «كنت مستني الفصل الجاي يحمّل»، الصبح هتلاقي الورقة دي ومالهاش أي معنى.
+
+وانت بتكتب ملاحظة على هامش الكتاب بالقلم الرصاص، غلطت في كلمة، فمسحتها بـ <b>الأستيكة</b> ورجعت للي كان قبلها. والأستيكة بترجّع اللي على الورقة بس: لو كنت بعت صورة الصفحة لصاحبك، المسح مش هيرجّع الصورة.
+
+</Analogy>
+
+في Readly الاتنين موجودين:
+
+- <b>الـ HydratedCubit هو الـ bookmark:</b> المستخدم رتّب الكتالوج «الأحدث» واختار «كتب بالعربي بس». قفل الـ app وفتحه بكرة: لازم يلاقي نفس الاختيارات. والمسودة اللي كان بيكتبها وجاله تليفون والنظام قفل الـ app، لازم يلاقيها. بس الـ loading والـ errors والـ tokens مالهمش مكان في الـ bookmark.
+- <b>الـ ReplayCubit هو الأستيكة:</b> في محرر الملاحظات، undo وredo للنص ولـ «ده اقتباس» ولرقم الصفحة. بس الـ undo بيرجّع الـ state، مش اللي اتبعت للسيرفر أو اتكتب في drift.
+
+في درس «Settings: feature من غير domain» في الوحدة 6 اخترنا `SettingsStore` فوق shared_preferences، وقلنا إن `hydrated_bloc` بديل. الدرس ده هيوريك البديل ده بالكامل، وفي الآخر هتعرف تختار بينهم.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### التركيب
+
+<CodeBlock label="pubspec.yaml">
+
+```yaml
+dependencies:
+  flutter_bloc: ^9.1.0
+  hydrated_bloc: ^11.0.0
+  replay_bloc: ^0.3.0
+  path_provider: ^2.1.0
+```
+
+</CodeBlock>
+
+- <b>الـ hydrated_bloc:</b> بيحفظ الـ state في box بتاع `hive_ce` (نسخة مجتمعية من Hive) على الجهاز. مش محتاج تتعامل مع hive نفسه.
+- <b>الـ replay_bloc:</b> مالوش storage. الـ history في الذاكرة بس.
+- <b>الـ path_provider:</b> عشان نعرف نحط الـ box فين.
+
+### الـ storage قبل أي Cubit
+
+<CodeBlock label="main.dart">
+
+```dart
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  HydratedBloc.storage = await HydratedStorage.build(
+    storageDirectory: kIsWeb
+        ? HydratedStorageDirectory.web
+        : HydratedStorageDirectory((await getApplicationSupportDirectory()).path),
+  );
+  configureDependencies();
+  runApp(const ReadlyApp());
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `ensureInitialized`:</b> الـ path_provider بيكلّم الـ platform (Android/iOS) عشان يعرف المسار، وده محتاج الـ binding يبقى جاهز قبل `runApp`.
+- <b>الـ `HydratedStorage.build`:</b> بيفتح الـ box مرة واحدة ويحمّله. بعدها <b>القراية sync</b>، وده اللي بيخلّي الـ Cubit يبدأ بالـ state المحفوظة من أول frame، من غير ما الشاشة ترمش.
+- <b>الـ `getApplicationSupportDirectory` مش `getTemporaryDirectory`:</b> مثال الـ README بتاع الـ package بيستخدم الـ temporary، بس ده فولدر cache: Android وiOS مسموح لهم يمسحوه لما المساحة تقل. يعني المستخدم ممكن يفتح الـ app يلاقي الفلاتر والمسودة راحوا من غير سبب. الـ support directory مكانه الطبيعي بيانات الـ app اللي مش ملفات للمستخدم.
+- <b>الـ `HydratedStorageDirectory.web`:</b> على الويب مفيش فولدرات، والـ box بيتحفظ في IndexedDB.
+- <b>قبل أي HydratedCubit:</b> الـ Cubit بيقرا `HydratedBloc.storage` في الـ constructor. لو لسه null، بيرمي `StorageNotFound` على طول. فالسطر ده قبل `configureDependencies()` وقبل `runApp`.
+
+### أول HydratedCubit: فلاتر الكتالوج
+
+<CodeBlock label="catalog_filters.dart">
+
+```dart
+enum CatalogSort { relevance, newest, title }
+
+final class CatalogFilters extends Equatable {
+  const CatalogFilters({
+    this.sort = CatalogSort.relevance,
+    this.language,
+    this.onlyWithCovers = false,
+  });
+
+  final CatalogSort sort;
+  final String? language; // 'ar', 'en', or null for any language
+  final bool onlyWithCovers;
+
+  CatalogFilters copyWith({CatalogSort? sort, bool? onlyWithCovers}) => CatalogFilters(
+        sort: sort ?? this.sort,
+        language: language,
+        onlyWithCovers: onlyWithCovers ?? this.onlyWithCovers,
+      );
+
+  @override
+  List<Object?> get props => [sort, language, onlyWithCovers];
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="catalog_filters_cubit.dart">
+
+```dart
+class CatalogFiltersCubit extends HydratedCubit<CatalogFilters> {
+  CatalogFiltersCubit() : super(const CatalogFilters());
+
+  void sortChanged(CatalogSort sort) => emit(state.copyWith(sort: sort));
+
+  void languageChanged(String? language) => emit(CatalogFilters(
+        sort: state.sort,
+        language: language, // null is a real value here: "any language"
+        onlyWithCovers: state.onlyWithCovers,
+      ));
+
+  void coversToggled() => emit(state.copyWith(onlyWithCovers: !state.onlyWithCovers));
+
+  void reset() => emit(const CatalogFilters());
+
+  @override
+  String get storagePrefix => 'catalog_filters'; // why: Level 3
+
+  @override
+  CatalogFilters? fromJson(Map<String, dynamic> json) => CatalogFilters(
+        sort: CatalogSort.values.asNameMap()[json['sort']] ?? CatalogSort.relevance,
+        language: json['language'] as String?,
+        onlyWithCovers: json['onlyWithCovers'] as bool? ?? false,
+      );
+
+  @override
+  Map<String, dynamic>? toJson(CatalogFilters state) => {
+        'sort': state.sort.name,
+        'language': state.language,
+        'onlyWithCovers': state.onlyWithCovers,
+      };
+}
+```
+
+</CodeBlock>
+
+- <b>الـ methods عادية خالص:</b> `emit` زي أي Cubit. مفيش `save()` ولا `await`. الحفظ بيحصل لوحده.
+- <b>الـ `toJson`:</b> بيتنادى مع كل emit، وبيرجّع `Map` يتكتب في الـ box. الـ enum بالاسم مش بالـ index، زي الـ ThemeMode في درس الـ Settings: لو حد غيّر ترتيب الـ enum، القيمة المحفوظة ماتبوظش.
+- <b>الـ `fromJson`:</b> بيتنادى مرة واحدة في الـ constructor لو في حاجة محفوظة. ولاحظ إنه مش بيثق في أي حاجة: `asNameMap()[...] ?? default` بدل `byName` اللي بيرمي لو الاسم مش موجود، و`as bool? ?? false` بدل `as bool`.
+- <b>الـ `languageChanged` مش بيستخدم copyWith:</b> لأن `null` هنا معناها «أي لغة»، والـ copyWith العادي مايعرفش يفرّق بين «مابعتّش قيمة» و«بعت null». دي مشكلة الـ copyWith مع الحقول الـ nullable اللي في درس «تصميم الـ State».
+
+<Diagram name="d-sm-hydration">
+
+فوق: وقت الإنشاء، الـ hydrate بيقرا من الـ box بشكل sync ويحوّل بالـ fromJson، فالـ state المحفوظة موجودة قبل أول frame. ولو الـ fromJson رمى، الخطأ بيروح للـ onError والـ BlocObserver، والـ Cubit بيبدأ بالـ initial. تحت: مع كل emit، الـ onChange بينادي toJson ويكتب في الـ box من غير ما يستنى.
+
+</Diagram>
+
+### استخدامه في الكتالوج
+
+الفلاتر Cubit صغير لوحده، والبحث `CatalogCubit` تاني. الاتنين على نفس الشاشة، والربط بـ `BlocListener` زي التواصل بين الـ Cubits في درس «Cubit متقدم»:
+
+<CodeBlock label="catalog_page.dart">
+
+```dart
+MultiBlocProvider(
+  providers: [
+    BlocProvider(create: (_) => getIt<CatalogFiltersCubit>()),
+    BlocProvider(create: (_) => getIt<CatalogCubit>()),
+  ],
+  child: BlocListener<CatalogFiltersCubit, CatalogFilters>(
+    listener: (context, filters) => context.read<CatalogCubit>().filtersChanged(filters),
+    child: const CatalogView(),
+  ),
+)
+```
+
+</CodeBlock>
+
+والبحث الأول؟ الـ `CatalogCubit` محتاج الفلاتر المحفوظة من أول طلب، والـ listener مش هيشتغل عليها لأنها الـ state الأولى، مش تغيير. فالـ `CatalogView` لما يبدأ أول بحث بياخدها من `context.read<CatalogFiltersCubit>().state` ويبعتها مع الـ query.
+
+ليه Cubit لوحده للفلاتر ومش حقل جوه `CatalogState`؟ لأن الـ `HydratedCubit` بيحفظ الـ state كلها. لو الفلاتر جوه `CatalogState`، يبقى `toJson` لازم يطلّع الفلاتر بس، و`fromJson` لازم يبني `CatalogState` كاملة فيها كتب فاضية وloading مزيفة. أسهل بكتير: Cubit صغير كل اللي فيه يستاهل يتحفظ.
+
+### أول ReplayCubit: undo في محرر الملاحظات
+
+<CodeBlock label="note_draft.dart">
+
+```dart
+final class NoteDraft extends Equatable {
+  const NoteDraft({this.text = '', this.isQuote = false, this.page});
+  final String text;
+  final bool isQuote; // a quote from the book, or the reader's own thought
+  final int? page;
+
+  @override
+  List<Object?> get props => [text, isQuote, page];
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="note_editor_cubit.dart">
+
+```dart
+class NoteEditorCubit extends ReplayCubit<NoteDraft> {
+  NoteEditorCubit() : super(const NoteDraft(), limit: 50);
+
+  void textCommitted(String text) {
+    if (text == state.text) return; // no change, no undo step
+    emit(NoteDraft(text: text, isQuote: state.isQuote, page: state.page));
+  }
+
+  void quoteToggled() =>
+      emit(NoteDraft(text: state.text, isQuote: !state.isQuote, page: state.page));
+
+  void pageChanged(int? page) {
+    if (page == state.page) return;
+    emit(NoteDraft(text: state.text, isQuote: state.isQuote, page: page));
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="أزرار undo وredo">
+
+```dart
+BlocBuilder<NoteEditorCubit, NoteDraft>(
+  builder: (context, _) {
+    // canUndo/canRedo live on the cubit, not in the state;
+    // they change with every emit/undo/redo, and those rebuild us
+    final cubit = context.read<NoteEditorCubit>();
+    return Row(
+      children: [
+        IconButton(
+          onPressed: cubit.canUndo ? cubit.undo : null,
+          icon: const Icon(Icons.undo),
+        ),
+        IconButton(
+          onPressed: cubit.canRedo ? cubit.redo : null,
+          icon: const Icon(Icons.redo),
+        ),
+      ],
+    );
+  },
+)
+```
+
+</CodeBlock>
+
+- <b>كل `emit` خطوة undo:</b> الـ ReplayCubit بيسجّل كل emit في history. الـ `undo()` بيرجّع الـ state اللي قبلها، والـ `redo()` بيرجّع اللي اترجع منها.
+- <b>الـ `limit: 50`:</b> من غيره الـ history مالهاش حد. 50 نسخة من ملاحظة 2000 حرف ده 100 ألف حرف في الذاكرة، مش مشكلة. بس من غير حد، جلسة كتابة ساعة ممكن تبقى آلاف النسخ.
+- <b>الـ `if (text == state.text) return;`:</b> مش تجميل. هنشوف في Level 3 إن الـ ReplayCubit بيسجّل الخطوة حتى لو الـ state ماتغيرتش.
+- <b>اسمها `textCommitted` مش `textChanged`:</b> لو كل حرف عمل emit، كل حرف هيبقى خطوة undo، والمستخدم هيدوس undo 40 مرة عشان يرجع جملة. ده أهم قرار في الـ ReplayCubit، وهو أول حاجة في Level 3.
+
+</Level>
+
+<Level n="3" title="التفاصيل اللي بتوجع">
+
+### تحفظ إيه، وإيه اللي عمره ما يتحفظ
+
+القاعدة: <b>احفظ اختيارات المستخدم، ماتحفظش حالة الشغل ولا البيانات اللي ليها مصدر تاني</b>.
+
+| الحاجة | تتحفظ؟ | ليه |
+| --- | --- | --- |
+| الفلاتر والترتيب، التاب الأخير، list ولا grid | أيوه | اختيار المستخدم، صغير، ومالوش مصدر تاني |
+| الـ reading goal (صفحات في اليوم) | أيوه | نفس الكلام، وأصغر |
+| مسودة ملاحظة لسه ماتحفظتش | أيوه، متشفرة، وتتمسح بعد الحفظ | المستخدم كتبها ومش عايزها تضيع لو النظام قفل الـ app |
+| `isLoading`، `isRefreshing`، `saving` | أبدًا | الـ app هيفتح على spinner لطلب مات من امبارح |
+| `failure`، رسالة error | أبدًا | المستخدم هيفتح يلاقي «مفيش نت» وهو على wifi |
+| نتايج البحث، كتب المكتبة | لأ | المكتبة مصدرها drift، والبحث بيقدم، والـ JSON هيبقى كبير ويتكتب مع كل emit |
+| الـ tokens، الباسورد | أبدًا | الـ box ملف عادي على الجهاز، ومش متشفر by default. الـ tokens مكانها الـ secure storage زي درس الـ Session |
+
+ولو الـ state بتاعتك sealed فيها حالات شغل وError، الـ `toJson` يقدر يرجّع `null`. مثال: Cubit لميعاد تذكير القراية اليومي، بيعدّي على `ReminderScheduling` وهو بيجدول الـ notification:
+
+<CodeBlock label="null معناها «ماتكتبش»">
+
+```dart
+@override
+Map<String, dynamic>? toJson(ReminderState state) => switch (state) {
+      ReminderReady(:final hour) => {'hour': hour},
+      ReminderScheduling() || ReminderError() => null, // keep the last good value on disk
+    };
+```
+
+</CodeBlock>
+
+الـ `null` من `toJson` معناها «مفيش حاجة تتكتب المرة دي»، فآخر قيمة كويسة بتفضل محفوظة. والـ `null` من `fromJson` معناها «مش هعرف أقرا ده»، فالـ Cubit بيبدأ بالـ initial state.
+
+### الـ JSON بيعيش أطول من الكود
+
+الـ JSON اللي اتكتب في نسخة 1.4 هيتقري في نسخة 1.9. وفي النص، حد غيّر اسم حقل، أو ضاف حقل، أو شال قيمة من الـ enum. أمثلة حقيقية من فلاتر الكتالوج:
+
+- نسخة 1 كانت بتحفظ `'lang': 'ar'`، ونسخة 2 غيّرتها لـ `'language'`.
+- نسخة 2 شالت `CatalogSort.popular` لأن Open Library بطّل يدعمه.
+- مستخدم رجع لنسخة أقدم (beta tester، أو restore من backup) فلقى JSON من نسخة أحدث.
+
+الحل: رقم version جوه الـ JSON، والـ `fromJson` بيعرف يقرا كل نسخة قديمة:
+
+<CodeBlock label="versioning وmigration في fromJson">
+
+```dart
+static const _version = 2;
+
+@override
+Map<String, dynamic>? toJson(CatalogFilters state) => {
+      'v': _version,
+      'sort': state.sort.name,
+      'language': state.language,
+      'onlyWithCovers': state.onlyWithCovers,
+    };
+
+@override
+CatalogFilters? fromJson(Map<String, dynamic> json) {
+  final v = json['v'] as int? ?? 1; // v1 didn't write a version
+  if (v > _version) return null;    // written by a newer app: don't guess, start fresh
+  final json2 = v == 1 ? _migrateV1(json) : json;
+  return CatalogFilters(
+    // 'popular' was removed in v2: unknown names fall back to relevance
+    sort: CatalogSort.values.asNameMap()[json2['sort']] ?? CatalogSort.relevance,
+    language: json2['language'] as String?,
+    onlyWithCovers: json2['onlyWithCovers'] as bool? ?? false,
+  );
+}
+
+// v1: {'sort': 'newest', 'lang': 'ar'}
+static Map<String, dynamic> _migrateV1(Map<String, dynamic> json) => {
+      'sort': json['sort'],
+      'language': json['lang'],
+    };
+```
+
+</CodeBlock>
+
+- <b>الـ migration بيحصل لوحده:</b> أول ما `fromJson` يرجّع state، الـ hydrated_bloc بيكتبها تاني بالـ `toJson` الجديد. يعني بعد أول فتحة الـ box فيه v2.
+- <b>النسخة الأحدث:</b> `null` وابدأ من الأول. أحسن من إنك تقرا حقل معناه اتغير وتعرض حاجة غلط.
+- <b>القيم المجهولة:</b> fallback للـ default مش exception. الفلتر اللي ضاع مش مشكلة، الـ crash مشكلة.
+- <b>التست هو الضمان:</b> خلي في التست JSON حقيقي من كل نسخة (copy من الـ box أو من الـ toJson القديم)، واختبر إن `fromJson` بيقراه. ده أرخص تست في الـ feature، وأهم واحد.
+
+### الـ fromJson رمى: البيانات القديمة بتضيع
+
+لو الـ `fromJson` رمى exception (مثلًا `json['sort'] as String` والقيمة `null`)، اللي بيحصل جوه الـ hydrated_bloc بالترتيب:
+
+1. الخطأ بيروح لـ `onError` بتاع الـ Cubit، ومنه لـ `BlocObserver.onError`، فـ Sentry هيعرف بيه عن طريق الـ `AppBlocObserver` بتاع درس الـ Observability.
+2. الـ Cubit بيبدأ بالـ initial state.
+3. الخطوة الجاية بيقررها الـ `HydrationErrorBehavior`:
+
+| السلوك | اللي بيحصل | مناسب لـ |
+| --- | --- | --- |
+| `overwrite` (الـ default) | الـ initial state بتتكتب فورًا مكان القديمة، وأي emit بعدها بيتحفظ عادي | بيانات رخيصة: الفلاتر، التاب الأخير |
+| `retain` | ولا emit بيتحفظ طول عمر الـ Cubit ده، فالـ JSON القديم بيفضل زي ما هو | بيانات غالية: مسودة. لو نسخة جاية صلّحت الـ fromJson، هتقراها |
+
+<CodeBlock label="اختيار السلوك">
+
+```dart
+// HydratedCubit: a named constructor parameter
+NoteDraftCubit(...) : super(
+        const NoteDraft(),
+        onHydrationError: (error, stackTrace) => HydrationErrorBehavior.retain,
+      );
+
+// HydratedMixin: a parameter of hydrate()
+hydrate(onError: (error, stackTrace) => HydrationErrorBehavior.retain);
+```
+
+</CodeBlock>
+
+الـ `retain` ليه تمن: المستخدم بيكمّل يستخدم الـ app، وكل اللي بيغيّره في الجلسة دي مش بيتحفظ. فهو مناسب لما خسارة الجلسة أهون من خسارة القديم. والأحسن من الاتنين إن الـ `fromJson` مايرميش أصلًا، زي ما عملنا فوق: كل `as` nullable ومعاه fallback، فالـ exception تبقى لـ bug حقيقي بس.
+
+### الـ storagePrefix: الـ obfuscation بيمسح بيانات المستخدمين
+
+الـ hydrated_bloc بيحفظ كل Cubit تحت مفتاح اسمه الـ `storageToken`، وده `storagePrefix + id`. والـ `storagePrefix` الـ default بتاعه `runtimeType.toString()`، يعني `'CatalogFiltersCubit'`. وده بيبوظ في 3 حالات:
+
+- <b>الـ `--obfuscate`:</b> في الـ release، أسامي الـ classes بتتحول لحروف قصيرة، والحروف دي ممكن تتغير من build للتاني. نسخة 1.4 حفظت تحت `'xY'`، ونسخة 1.5 بتدوّر تحت `'qB'`. كل update المستخدمين بيفقدوا الفلاتر، ومفيش error.
+- <b>الـ rename:</b> حد غيّر اسم الـ class لـ `CatalogFilterCubit` في refactor. نفس النتيجة.
+- <b>debug وrelease:</b> نفس الموبايل، الـ build الـ debug بيقرا مفتاح والـ release مفتاح تاني. تجرب في الـ debug وكله تمام، والـ release ماسك حاجة تانية.
+
+الحل سطر واحد في كل HydratedCubit: `String get storagePrefix => 'catalog_filters';`. string ثابت، مكتوب بإيدك، وعمره ما يتغير. ولو غيّرته، يبقى ده migration ولازم تتعامل معاه. وخلي بالك إن مفيش حاجة بتمنع اتنين Cubits ياخدوا نفس الـ prefix، فلو حصل، هيكتبوا فوق بعض.
+
+### الـ id: كذا نسخة من نفس الـ Cubit
+
+مسودة الملاحظة الجديدة بتخص كتاب. المستخدم بدأ يكتب على «Matilda»، وراح لـ «Fantastic Mr Fox» يكتب حاجة تانية. لو الـ Cubit بمفتاح واحد، المسودتين هيكتبوا فوق بعض. الـ `id` بيخلّي لكل كتاب مفتاح:
+
+<CodeBlock label="NoteDraftCubit: مسودة لكل كتاب">
+
+```dart
+@injectable
+class NoteDraftCubit extends HydratedCubit<NoteDraft> {
+  NoteDraftCubit(@factoryParam this._bookId) : super(const NoteDraft());
+
+  final BookId _bookId;
+
+  @override
+  String get storagePrefix => 'note_draft';
+
+  @override
+  String get id => _bookId.value; // token: 'note_draftOL45804W'
+
+  void textCommitted(String text) =>
+      emit(NoteDraft(text: text, isQuote: state.isQuote, page: state.page));
+
+  // after AddNote succeeded: the draft has done its job
+  Future<void> discard() async {
+    emit(const NoteDraft());
+    await clear();
+  }
+
+  @override
+  NoteDraft? fromJson(Map<String, dynamic> json) => NoteDraft(
+        text: json['text'] as String? ?? '',
+        isQuote: json['isQuote'] as bool? ?? false,
+        page: json['page'] as int?,
+      );
+
+  @override
+  Map<String, dynamic>? toJson(NoteDraft state) =>
+      {'text': state.text, 'isQuote': state.isQuote, 'page': state.page};
+}
+
+// on the add-note screen
+BlocProvider(create: (_) => getIt<NoteDraftCubit>(param1: bookId))
+```
+
+</CodeBlock>
+
+- <b>الـ `id` بيتقري جوه الـ constructor بتاع الـ super:</b> الـ hydrate بيحصل وقت `super(...)`. الـ `this._bookId` بيتعيّن قبلها لأنه في الـ parameters، فشغال. بس لو الـ id معتمد على حاجة بتتعيّن في body الـ constructor بتاعك، الـ hydrate هيشوفها فاضية ويقرا مفتاح غلط.
+- <b>الـ `clear()`:</b> بيمسح المحفوظ بس، ومابيغيّرش الـ state اللي في الذاكرة. ولو حصل emit بعده، الـ state هتتكتب تاني. علشان كده الـ `discard` بيعمل emit للفاضية الأول، وبعدين `clear`، فمفيش حاجة تفضل على الـ disk.
+- <b>المفاتيح بتتراكم:</b> كل كتاب كتبت عليه مسودة وسبتها ليه مفتاح. ده صغير، بس اعرف إنه موجود، والـ logout تحت بيمسحهم كلهم.
+
+### الـ logout: مسح كل حاجة
+
+في درس الـ Session في الوحدة 6، الـ logout بيمسح الـ tokens وdrift والـ caches والـ singletons. الـ hydrated storage مكان خامس: مسودات المستخدم القديم وفلاتره لسه في الـ box.
+
+<CodeBlock label="di/setup.dart: سطر زيادة في resetOnLogout">
+
+```dart
+void resetOnLogout() {
+  getIt<AuthCubit>().stream.where((s) => s is Unauthenticated).listen((_) async {
+    PaintingBinding.instance.imageCache.clear();
+    await getIt.resetLazySingleton<CatalogRepository>();
+    await HydratedBloc.storage.clear(); // every hydrated cubit's saved state, all keys
+  });
+}
+```
+
+</CodeBlock>
+
+وفي فخ: الـ Cubits اللي لسه عايشة (زي Cubit على مستوى الـ app متسجّل `lazySingleton`) لسه شايلة الـ state القديمة في الذاكرة، وأول emit هيكتبها تاني في الـ box الفاضي. فالـ Cubits دي لازم تتقفل وتتعمل من جديد بـ `resetLazySingleton` في نفس المكان، أو يبقى عندها method بترجّع الـ initial state وتتنادى هناك. الـ Cubits اللي على مستوى الشاشة مفيش مشكلة فيها: متسجلة factory، والـ redirect للـ login بيقفلها.
+
+### storage متشفر لـ Cubit واحد
+
+المسودة كلام المستخدم نفسه، والـ box ملف عادي. من hydrated_bloc 10 تقدر تدي Cubit معين storage غير الـ global، ومن 11 ده بقى parameter بالاسم: `super(initial, storage: ...)`. فنعمل box تاني متشفر للمسودات بس:
+
+<CodeBlock label="main.dart: storage تاني متشفر">
+
+```dart
+Future<List<int>> loadHydratedKey(FlutterSecureStorage secure) async {
+  final saved = await secure.read(key: 'hydrated_key');
+  if (saved != null) return base64Decode(saved);
+  final key = List<int>.generate(32, (_) => Random.secure().nextInt(256));
+  await secure.write(key: 'hydrated_key', value: base64Encode(key));
+  return key;
+}
+
+// in main(), after the global storage (not on web: no folders there)
+final support = await getApplicationSupportDirectory();
+final secureHydrated = await HydratedStorage.build(
+  storageDirectory: HydratedStorageDirectory(p.join(support.path, 'secure_hydrated')),
+  encryptionCipher: HydratedAesCipher(await loadHydratedKey(const FlutterSecureStorage())),
+);
+getIt.registerSingleton<Storage>(secureHydrated, instanceName: 'secureHydrated');
+```
+
+</CodeBlock>
+
+<CodeBlock label="NoteDraftCubit بياخده">
+
+```dart
+NoteDraftCubit(
+  @factoryParam this._bookId,
+  @Named('secureHydrated') Storage storage,
+) : super(
+        const NoteDraft(),
+        storage: storage,
+        onHydrationError: (_, __) => HydrationErrorBehavior.retain,
+      );
+```
+
+</CodeBlock>
+
+- <b>المفتاح في الـ secure storage:</b> 32 byte عشوائي، بيتعمل أول مرة ويتحفظ. والـ box نفسه في فولدر لوحده، عشان مايتلخبطش مع الـ box العادي.
+- <b>المفتاح ممكن يضيع:</b> زي ما شفنا في درس التخزين المحلي في الوحدة 3، الـ backup على Android بيرجّع ملفات الـ app من غير مفتاح الـ Keystore. اعتبر المسودات المتشفرة حاجة ممكن تضيع: لف الـ build في `try`، ولو فشل، امسح الفولدر ده وابني من جديد. مسودة ضاعت أهون من app مابيفتحش.
+- <b>الـ logout:</b> `clear()` على الاتنين: سطر زيادة في `resetOnLogout` اللي فوق، `await getIt<Storage>(instanceName: 'secureHydrated').clear();`.
+
+### الـ HydratedMixin: لما مش عايز تغيّر الـ extends
+
+الـ `HydratedCubit` هو `Cubit` + `HydratedMixin` + نداء `hydrate()` في الـ constructor. لو الـ Cubit بتاعك بيعمل extends لحاجة تانية، أو عايز تتحكم امتى الـ hydrate يحصل، استخدم الـ mixin مباشرة. الـ `ReadingGoalCubit` بتاع درس «أول Cubit سطر بسطر» زي ما هو (`Cubit<int>`)، ومعاه الـ mixin. ده البديل للـ `SettingsStore` اللي اقترحه الدرس ده:
+
+<CodeBlock label="ReadingGoalCubit بيفتكر الهدف">
+
+```dart
+class ReadingGoalCubit extends Cubit<int> with HydratedMixin {
+  ReadingGoalCubit(this._suggestDailyGoal) : super(defaultGoal) {
+    hydrate(); // required with the mixin: without it nothing is read or written
+  }
+
+  final SuggestDailyGoal _suggestDailyGoal;
+
+  static const defaultGoal = 20;
+  static const min = 5;
+  static const max = 200;
+  static const step = 5;
+
+  // increase(), decrease(), useSuggested() exactly as in lesson 2
+
+  @override
+  String get storagePrefix => 'reading_goal';
+
+  @override
+  int? fromJson(Map<String, dynamic> json) {
+    final pages = json['pagesPerDay'] as int?;
+    return pages?.clamp(min, max); // an old max of 500 must not break today's rules
+  }
+
+  @override
+  Map<String, dynamic>? toJson(int state) => {'pagesPerDay': state};
+}
+```
+
+</CodeBlock>
+
+نسيان `hydrate()` مابيبانش وانت بتعمل الـ Cubit: بيبدأ بالـ initial كأن مفيش حاجة محفوظة. والـ error بيظهر بعدين، مع أول emit: `LateInitializationError`، لأن الـ storage ماتعيّنش أصلًا. وخلي بالك إن الـ `fromJson` هنا بيطبّق قواعد النهارده على بيانات امبارح: لو الـ max اتغير، القيمة المحفوظة بتتقص.
+
+### التستات
+
+التستات الكاملة في [درس تست الـ Cubit في الوحدة 8](/course/testing/cubit-tests/). اللي جديد مع الـ HydratedCubit حاجتين:
+
+<CodeBlock label="test/features/catalog/presentation/catalog_filters_cubit_test.dart">
+
+```dart
+class MockStorage extends Mock implements Storage {}
+
+void main() {
+  late Storage storage;
+
+  setUp(() {
+    storage = MockStorage();
+    when(() => storage.write(any(), any<dynamic>())).thenAnswer((_) async {});
+    HydratedBloc.storage = storage; // without it: StorageNotFound in the constructor
+  });
+
+  test('restores the saved filters', () {
+    when(() => storage.read('catalog_filters'))
+        .thenReturn({'v': 2, 'sort': 'newest', 'language': 'ar', 'onlyWithCovers': true});
+    expect(
+      CatalogFiltersCubit().state,
+      const CatalogFilters(sort: CatalogSort.newest, language: 'ar', onlyWithCovers: true),
+    );
+  });
+
+  test('reads v1 json', () {
+    final cubit = CatalogFiltersCubit();
+    expect(
+      cubit.fromJson({'sort': 'newest', 'lang': 'ar'}),
+      const CatalogFilters(sort: CatalogSort.newest, language: 'ar'),
+    );
+  });
+
+  test('toJson and fromJson round-trip', () {
+    final cubit = CatalogFiltersCubit();
+    const filters = CatalogFilters(sort: CatalogSort.title, onlyWithCovers: true);
+    expect(cubit.fromJson(cubit.toJson(filters)!), filters);
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `storage.read('catalog_filters')`:</b> المفتاح هو الـ storageToken بالظبط. التست ده كمان بيحمي الـ `storagePrefix`: لو حد شاله، التست هيقع.
+- <b>الـ mock `Storage` مش `HydratedStorage` حقيقي:</b> مفيش hive ولا فولدرات في التست. الـ `read` اللي مالوش stub بيرجّع `null` (يعني «مفيش حاجة محفوظة»)، والـ `write` محتاج stub لأنه بيرجّع `Future`.
+
+### الـ ReplayCubit: كل emit خطوة، فاختار إمتى تعمل emit
+
+لو الـ `TextField` بينادي الـ Cubit مع كل حرف، كل حرف خطوة undo. والـ undo اللي بيمسح حرف حرف محدش بيستخدمه. المحررات الحقيقية بتجمّع الكتابة في «checkpoints»: لما المستخدم يقف عن الكتابة شوية، أو يسيب الحقل، أو يغيّر حاجة تانية (اقتباس، رقم صفحة).
+
+<CodeBlock label="الـ TextField بيعمل checkpoint لما المستخدم يقف">
+
+```dart
+class _NoteTextFieldState extends State<NoteTextField> {
+  final _controller = TextEditingController();
+  Timer? _pause;
+
+  void _onChanged(String text) {
+    _pause?.cancel();
+    _pause = Timer(const Duration(milliseconds: 700), () {
+      context.read<NoteEditorCubit>().textCommitted(text); // one undo step per pause
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocListener<NoteEditorCubit, NoteDraft>(
+      // undo/redo changed the text: the field follows the cubit
+      listenWhen: (prev, curr) => curr.text != _controller.text,
+      listener: (context, draft) => _controller.value = TextEditingValue(
+        text: draft.text,
+        selection: TextSelection.collapsed(offset: draft.text.length),
+      ),
+      child: TextField(
+        controller: _controller,
+        onChanged: _onChanged,
+        onTapOutside: (_) => _commitNow(),
+        maxLines: null,
+      ),
+    );
+  }
+
+  void _commitNow() {
+    _pause?.cancel();
+    context.read<NoteEditorCubit>().textCommitted(_controller.text);
+  }
+
+  @override
+  void dispose() {
+    _pause?.cancel();
+    _controller.dispose();
+    super.dispose();
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ TextField بيمسك النص وهو بيتكتب، والـ Cubit بيمسك الـ checkpoints:</b> نفس فكرة درس الـ Forms في الوحدة 5: الـ controller بيمشي ورا الـ Cubit بـ BlocListener لما الـ Cubit هو اللي يغيّر النص (هنا: undo وredo).
+- <b>الـ `listenWhen`:</b> وهو بيكتب، الـ checkpoint بيوصل بنفس النص اللي في الـ controller، فالـ listener مابيشتغلش ومابيحركش الـ cursor.
+- <b>زرار undo قبل الـ checkpoint:</b> المستخدم كتب وداس undo على طول قبل الـ 700ms. الـ `onTapOutside` بيشتغل مع لمسة الصباع (pointer down)، والـ `onPressed` بتاع الزرار بيشتغل لما الصباع يترفع. فالـ `_commitNow` بيعمل checkpoint للي اتكتب الأول، وبعدين الـ undo يرجع منه.
+
+### الـ ReplayCubit بيسجّل حتى لو مفيش تغيير
+
+دي من الـ source بتاع replay_bloc: الـ `emit` بيضيف الخطوة للـ history الأول، وبعدين بينادي الـ emit الأصلي. والـ emit الأصلي بيتجاهل الـ state لو `==` الحالية. يعني `emit(state)` بيعمل خطوة undo فاضية: المستخدم يدوس undo، ومفيش حاجة تتغير، ويدوس تاني عشان يرجع فعلًا.
+
+علشان كده الـ `if (text == state.text) return;` في `textCommitted`. وده سبب كمان إن الـ state لازم يكون ليها equality صح (Equatable هنا): من غيرها، كل `NoteDraft` جديدة «مختلفة» حتى لو نفس القيم، وكل نسخة هتتسجل.
+
+### الـ shouldReplay والـ clearHistory: الـ loading مش خطوة
+
+تعديل ملاحظة موجودة: الـ Cubit بيبدأ `NoteEditorLoading`، بيجيب الملاحظة، وبيعمل emit لـ `NoteEditorReady(draft)`. المستخدم داس undo أول ما فتح: الشاشة رجعت loading للأبد. والـ loading نفسه اتسجّل كخطوة.
+
+<CodeBlock label="NoteEditorCubit لملاحظة موجودة">
+
+```dart
+sealed class NoteEditorState extends Equatable {
+  const NoteEditorState();
+  @override
+  List<Object?> get props => [];
+}
+final class NoteEditorLoading extends NoteEditorState {
+  const NoteEditorLoading();
+}
+final class NoteEditorReady extends NoteEditorState {
+  const NoteEditorReady(this.draft);
+  final NoteDraft draft;
+  @override
+  List<Object?> get props => [draft];
+}
+
+class NoteEditorCubit extends ReplayCubit<NoteEditorState> {
+  NoteEditorCubit(this._getNote) : super(const NoteEditorLoading(), limit: 50);
+  final GetNote _getNote;
+
+  Future<void> open(NoteId id) async {
+    final result = await _getNote(id);
+    if (isClosed) return;
+    if (result case Success(:final value)) {
+      emit(NoteEditorReady(NoteDraft(text: value.text)));
+      clearHistory(); // the loaded note is the starting point, not an undo step
+    }
+    // the failure path is the same as any load cubit, left out here
+  }
+
+  // undo/redo never land on a loading state
+  @override
+  bool shouldReplay(NoteEditorState state) => state is NoteEditorReady;
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `clearHistory()`:</b> بيمسح الـ undo والـ redo. هنا بعد التحميل، عشان أول خطوة undo تبقى أول تعديل من المستخدم. ومكان تاني طبيعي: بعد الحفظ، لو مش عايز المستخدم يعمل undo لحاجة اتحفظت.
+- <b>الـ `shouldReplay`:</b> الـ undo والـ redo بيعدّوا على أي state بيرجّع لها `false`. حماية زيادة: لو حد ضاف emit لـ loading في النص بعدين، الـ undo مش هيقف عليه.
+- <b>الـ `clearHistory` مابيعملش emit:</b> فالـ `BlocBuilder` بتاع الأزرار مش هيتبني تاني، والـ `canUndo` اتغير. هنا مفيش مشكلة لأن الـ emit اللي قبله على طول بيعمل rebuild بعد الـ frame. بس لو ناديته لوحده (بعد الحفظ مثلًا)، اعمله مع emit، أو زرار undo هيفضل شغال وهو مش بيعمل حاجة.
+
+### ReplayCubitMixin + HydratedMixin: مسودة بتعيش وبترجع
+
+المسودة محتاجة الاتنين: تعيش لو النظام قفل الـ app، وundo وانت بتكتب. الـ `ReplayCubitMixin` معمول للحالة دي بالظبط:
+
+<CodeBlock label="NoteDraftCubit بالاتنين">
+
+```dart
+class NoteDraftCubit extends HydratedCubit<NoteDraft> with ReplayCubitMixin<NoteDraft> {
+  NoteDraftCubit(this._bookId) : super(const NoteDraft()) {
+    limit = 50; // ReplayCubitMixin has a setter, HydratedCubit has no limit parameter
+  }
+
+  final BookId _bookId;
+
+  @override
+  String get storagePrefix => 'note_draft';
+  @override
+  String get id => _bookId.value;
+
+  // textCommitted, quoteToggled, pageChanged, fromJson, toJson as before
+}
+```
+
+</CodeBlock>
+
+إيه اللي بيحصل في كل emit، بالترتيب: الـ `emit` بتاع الـ `ReplayCubitMixin` بيسجّل الخطوة، وبينادي `super.emit`، والـ emit الأصلي بينادي `onChange`، والـ `onChange` بتاع الـ `HydratedMixin` بيكتب في الـ box. والـ undo بيعدّي على نفس الطريق من غير التسجيل، فالـ state اللي رجعت ليها بتتحفظ هي كمان.
+
+- <b>الـ history مش بتتحفظ:</b> بعد ما الـ app يتقفل ويفتح، النص بيرجع، بس مفيش undo لحاجة قبل القفل. الـ hydrate بيحط الـ state مباشرة من غير emit، فمش بتتسجل.
+- <b>الترتيب في الـ `with` مهم:</b> اكتبه زي ما هو فوق (`HydratedCubit<...> with ReplayCubitMixin<...>`)، زي مثال الـ package. والقاعدة اللي في درس «Cubit متقدم»: كل override لازم ينادي `super`، وإلا حلقة من السلسلة بتقف من غير error.
+
+<Diagram name="d-sm-replay-stacks">
+
+بعد 3 emits الـ current هو draft 3. undo مرتين بيرجّع لـ draft 1، والـ 2 و3 بيتنقلوا للـ redo. أول emit جديد (draft 4) بيمسح الـ redo كله، زي أي محرر.
+
+</Diagram>
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>HydratedCubit ولا store زي الـ Settings؟</b> الـ HydratedCubit بيربط شكل الـ JSON المحفوظ بشكل الـ state بتاعة الـ presentation. أي refactor في الـ state بقى migration. الـ store بيفصلهم: الـ state تتغير براحتها، والـ store بيقرا ويكتب مفاتيح ثابتة. وكمان الـ store بيقدر حد تاني يقراه (الـ router، أو service في الخلفية) من غير ما يعمل Cubit. القاعدة: <b>HydratedCubit لاختيارات شاشة واحدة</b> (فلاتر، ترتيب، تاب، مسودة)، و<b>store أو repository لأي حاجة تانية حد تاني محتاجها</b>. وفي الوحدة 6 اخترنا store للإعدادات لأنهم قيمتين بيقراهم الـ MaterialApp، وده لسه صح.
+- <b>ماتعملش hydrate لحاجة ليها مصدر حقيقة:</b> المكتبة في drift. لو حفظتها في الـ box كمان، عندك مصدرين ممكن يختلفوا، والـ JSON بيتكتب مع كل emit على الـ main isolate. الـ hydrated state لازم تبقى صغيرة.
+- <b>الـ storagePrefix الثابت مش اختياري:</b> لو الـ release بـ `--obfuscate`، من غيره البيانات بتضيع مع كل update. حطها في الـ checklist بتاع الـ code review، أو في تست بيقرا المفتاح زي اللي فوق.
+- <b>الـ undo بتاع الـ ReplayCubit بيرجّع الـ state بس:</b> «امسح الكتاب من المكتبة» وبعدين undo؟ الـ ReplayCubit هيرجّع الكتاب للـ state، بس drift والـ sync queue لسه فيهم المسح. ده محتاج undo بـ commands: كل عملية ليها عكسها (`AddBookToLibrary` عكس `RemoveBook`)، أو المسح مايحصلش أصلًا غير بعد ما الـ SnackBar بتاع «تراجع» يختفي. الـ ReplayCubit للتعديلات اللي لسه في الذاكرة: محرر، شاشة ترتيب قبل «حفظ»، اختيارات قبل «تطبيق».
+- <b>إمتى مش هتستخدم ولا واحد فيهم:</b> الإعدادات (store)، المكتبة والملاحظات المحفوظة (drift والـ API)، الـ session (secure storage والـ AuthCubit)، أي state فيها loading أو error من غير بيانات يستاهل تتفتكر.
+
+| عايز | استخدم |
+| --- | --- |
+| اختيار شاشة يعيش بعد ما الـ app يتقفل | `HydratedCubit` بـ `storagePrefix` ثابت وversion |
+| كذا نسخة من نفس الحاجة (مسودة لكل كتاب) | `HydratedCubit` + `id` |
+| Cubit بيعمل extends لحاجة تانية | `HydratedMixin` + `hydrate()` |
+| undo وredo لتعديلات في الذاكرة | `ReplayCubit` بـ `limit` وcheckpoints |
+| undo، والـ state تعيش بعد القفل | `HydratedCubit` + `ReplayCubitMixin` |
+| undo لعملية اتبعتت أو اتكتبت | commands، مش ReplayCubit |
+| قيمة بيقراها أكتر من مكان | store أو repository |
+
+<Note kind="interview" title="سؤال interview">
+
+«عملت release بالـ `--obfuscate`، والمستخدمين بيشتكوا إن الفلاتر بتضيع مع كل update. إيه السبب؟» الـ HydratedCubit بيحفظ تحت مفتاح أوله الـ `storagePrefix`، والـ default بتاعه `runtimeType.toString()`. مع الـ obfuscation، اسم الـ class في الـ release بيبقى حروف ممكن تتغير من build للتاني، فكل نسخة بتدوّر تحت مفتاح جديد ومش لاقية حاجة، ومفيش error. الحل `storagePrefix` ثابت مكتوب بإيدك في كل HydratedCubit، وتست بيقرا الـ storage بالمفتاح ده عشان محدش يشيله. ونفس المشكلة بتحصل لو حد عمل rename للـ class.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي تتعامل مع تغيير شكل الـ state في HydratedCubit بعد ما الـ app اتنشر؟» الـ JSON المحفوظ بيعيش أطول من الكود. بحط `v` في الـ toJson، والـ fromJson بيقرا كل نسخة قديمة ويحوّلها، والـ hydrated_bloc بيكتبها بالشكل الجديد أول ما تتقري. لو الـ version أحدث من اللي أعرفه، برجّع null وأبدأ بالـ initial. وكل `as` nullable ومعاه default، والـ enums بالاسم مع fallback، عشان الـ fromJson مايرميش. ولو رمى، الـ default `overwrite` بيمسح القديم، فللبيانات الغالية زي المسودات باستخدم `retain`. وعندي تست لكل نسخة JSON قديمة.
+
+</Note>
+
+</Level>
+
+<Quiz>
+
+<Question id="sm-hydrated-1">
+<Ask>حد حفظ `LibraryState` كلها في HydratedCubit عشان المكتبة تفتح أسرع. إيه المشاكل؟</Ask>
+<Answer>
+
+الـ loading والـ errors هيتحفظوا، فالـ app ممكن يفتح على spinner أو «مفيش نت» من امبارح. والكتب ليها مصدر حقيقة في drift، فبقى في مصدرين ممكن يختلفوا. والـ JSON كبير وبيتكتب مع كل emit. الـ HydratedCubit لاختيارات صغيرة زي الفلاتر والمسودات، والمكتبة بتفتح بسرعة أصلًا من drift.
+
+</Answer>
+</Question>
+
+<Question id="sm-hydrated-2">
+<Ask>الـ `fromJson` رمى exception عند مستخدم. إيه اللي بيحصل للـ state وللبيانات المحفوظة، وإمتى تختار `retain`؟</Ask>
+<Answer>
+
+الخطأ بيروح لـ `onError` والـ `BlocObserver`، والـ Cubit بيبدأ بالـ initial state. مع الـ default (`overwrite`) الـ initial بتتكتب فورًا والقديم بيضيع. مع `retain` ولا emit بيتحفظ طول عمر الـ Cubit ده، فالـ JSON القديم بيفضل لحد نسخة تعرف تقراه. `retain` للبيانات الغالية زي مسودة، و`overwrite` للرخيصة زي الفلاتر. والأحسن إن الـ fromJson مايرميش أصلًا.
+
+</Answer>
+</Question>
+
+<Question id="sm-hydrated-3">
+<Ask>المستخدم عنده مسودتين لكتابين مختلفين، والمسودة التانية بتمسح الأولى. ليه، والحل؟</Ask>
+<Answer>
+
+الـ Cubit بيحفظ تحت `storagePrefix + id`، والـ `id` الـ default فاضي، فالنسختين بيكتبوا تحت نفس المفتاح. الحل override لـ `id` يرجّع الـ BookId، فكل كتاب ليه مفتاح. والـ id لازم يبقى جاهز قبل `super(...)` لأن الـ hydrate بيحصل هناك.
+
+</Answer>
+</Question>
+
+<Question id="sm-hydrated-4">
+<Ask>في محرر الملاحظات بـ ReplayCubit، المستخدم بيدوس undo فبيمسح حرف واحد بس. وساعات بيدوس undo ومفيش حاجة بتتغير. ليه؟</Ask>
+<Answer>
+
+الـ TextField بيعمل emit مع كل حرف، وكل emit خطوة undo. الحل checkpoints: emit لما المستخدم يقف عن الكتابة أو يسيب الحقل. والـ undo اللي مابيعملش حاجة لأن الـ ReplayCubit بيسجّل الخطوة حتى لو الـ state `==` الحالية، فلازم تمنع الـ emit لو مفيش تغيير، والـ state محتاجة equality صح.
+
+</Answer>
+</Question>
+
+<Question id="sm-hydrated-5">
+<Ask>المستخدم مسح كتاب من المكتبة وداس undo، والـ Cubit ReplayCubit. الكتاب رجع في الشاشة. ده كفاية؟</Ask>
+<Answer>
+
+لأ. الـ ReplayCubit بيرجّع الـ state بس. المسح اتكتب في drift واتحط في الـ sync queue، فالـ stream هيرجّع الليستة من غير الكتاب، والسيرفر هيمسحه. العمليات اللي اتنفذت محتاجة undo بـ commands (عكس العملية)، أو تأجيل التنفيذ لحد ما فرصة «تراجع» تخلص. الـ ReplayCubit للتعديلات اللي لسه في الذاكرة.
+
+</Answer>
+</Question>
+
+</Quiz>

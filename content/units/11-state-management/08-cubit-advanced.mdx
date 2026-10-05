@@ -1,0 +1,910 @@
+---
+title: "Cubit متقدم: الـ async والـ effects والتواصل"
+description: "الـ Cubit مابيستناش نفسه: كل نداء بيشتغل جنب اللي قبله. هنا هتقرر لكل method تعمل إيه مع النداء التاني (drop أو restart أو queue أو latest)، وتلغي الشغل بجد، وتعمل optimistic update مايرجّعش قيمة غلط، وتطلّع أحداث مرة واحدة، وتخلي الـ Cubits تتكلم من غير ما تمسك بعض."
+minutes: 45
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="شيف لوحده في المطبخ">
+
+مطبخ صغير فيه شيف واحد، والجرسون بيدخّل الطلبات. الشيف بيعمل طبق، وجاله طلب تاني قبل ما يخلص. عنده 4 اختيارات، وكل واحد صح في موقف:
+
+- <b>يتجاهل الطلب التاني:</b> الزبون داس «اطلب» مرتين بالغلط. طبق واحد كفاية.
+- <b>يرمي اللي في الحلة ويبدأ الجديد:</b> الزبون غيّر رأيه. الطبق القديم محدش عايزه.
+- <b>يعملهم بالترتيب:</b> 3 أطباق لـ 3 ترابيزات. كلهم لازم يطلعوا، وبالترتيب.
+- <b>يعمل آخر واحد بس:</b> الزبون قال «قهوة سادة»، وبعدين «لأ مظبوط»، وبعدين «لأ زيادة». أول ما الشيف يفضى يعمل «زيادة» وخلاص، والطلبات اللي في النص مالهاش لازمة.
+
+والشيف الشاطر كمان لما يخلص بيقول للجرسون «الطبق جاهز» <b>مرة واحدة</b>، مش بيعلّق ورقة على الباب تفضل تتقري كل ما حد يعدّي. ولما يحتاج يعرف المخزن فيه إيه، بيبص على <b>دفتر المخزن</b> اللي الكل بيكتب فيه، مش بيدخل مطبخ شيف تاني يفتح التلاجة بتاعته.
+
+</Analogy>
+
+الـ Cubit هو الشيف ده. الفرق إن الـ Cubit مابيختارش لوحده: لو `load()` اتنادت مرتين، الاتنين هيشتغلوا مع بعض، ومحدش هيقولك. وده مصدر أغلب الـ bugs اللي بتظهر في الـ production وماتظهرش وانت بتجرب على الإيميوليتر.
+
+في [درس الـ Cubit في الوحدة 5](/course/presentation/cubit/) شفنا 3 حلول لمواقف معينة: الـ debounce مع الـ request id في البحث، والـ `_saving` flag في الحفظ، والـ refresh اللي مابيمسحش الكتب. وفي درسين «أنواع الـ Cubit» شفنا أشكال الـ Cubits نفسها. الدرس ده بيعمّم الحلول دي لأنماط بأسامي، وبيكمّل اللي ناقص:
+
+- <b>الأمان مع الـ async:</b> إيه اللي ممكن يتغير وانت مستني `await`.
+- <b>4 أنماط للـ concurrency بالإيد:</b> drop وrestart وqueue وlatest، وإمتى كل واحد.
+- <b>الإلغاء بجد:</b> مش بس تتجاهل النتيجة، توقف الشغل نفسه.
+- <b>الـ optimistic update</b> لما المستخدم يدوس بسرعة على نفس الحاجة.
+- <b>الأحداث اللي بتحصل مرة واحدة:</b> في الـ state ولا في stream لوحده.
+- <b>التواصل بين الـ Cubits</b>، و`onChange` و`onError`، والـ `BlocObserver` والـ `MultiBlocObserver`، والـ mixins.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### الـ Cubit مابيستناش نفسه
+
+الـ methods بتاعة الـ Cubit functions عادية. لما تنادي `load()` وهي لسه شغالة، Dart مش هيحطها في طابور: هتبدأ على طول، والاتنين هيكمّلوا مع بعض. كل `await` نقطة الكود بيسيب فيها الدور لأي حد تاني.
+
+<CodeBlock label="نداءين ورا بعض">
+
+```dart
+// the user taps "retry" twice, fast
+cubit.load(); // call 1: emits Loading, waits for the server
+cubit.load(); // call 2: emits Loading again, waits too
+
+// the server answers call 2 first (fast), then call 1 (slow):
+//   Loading → Loading(ignored, same state) → Loaded(answer 2) → Loaded(answer 1)
+// the screen ends on the OLDER answer
+```
+
+</CodeBlock>
+
+الـ Bloc مختلف شوية: الـ events بتعدّي على transformer بيقرر يعمل إيه مع اللي بعده، وده هنشوفه في درس «الـ Bloc من الصفر». بس حتى الـ Bloc الـ default بتاعه `concurrent`، يعني نفس اللي فوق بالظبط. الفرق إن عنده مكان واحد تغيّر فيه السياسة، والـ Cubit لأ: السياسة بتتكتب جوه الـ method نفسها.
+
+### بعد كل `await`، اسأل 3 أسئلة
+
+بين السطر اللي قبل الـ `await` والسطر اللي بعده، أي حاجة ممكن تكون حصلت: الشاشة اتقفلت، نداء أحدث بدأ، stream عمل emit، method تانية غيّرت الـ state. فبعد كل `await`:
+
+1. <b>الـ Cubit لسه مفتوح؟</b> `if (isClosed) return;`. الـ emit بعد الـ close بيرمي `StateError`.
+2. <b>أنا لسه آخر واحد؟</b> لو في نداء أحدث، نتيجتي قديمة. ده الـ request id بتاع الوحدة 5.
+3. <b>الـ state اللي معايا لسه هي الحالية؟</b> دي اللي بتتنسي.
+
+السؤال التالت محتاج مثال. الـ `NotesCubit` بتاع الوحدة 9 بيضيف ملاحظة:
+
+<CodeBlock label="الـ state القديمة بتمسح اللي حصل في النص">
+
+```dart
+Future<void> add(String text) async {
+  final notes = state.notes; // captured BEFORE the await
+  emit(state.copyWith(saving: true));
+  final result = await _addNote(_bookId, text);
+  if (isClosed) return;
+  emit(switch (result) {
+    // BUG: if the user deleted a note while we waited, it comes back
+    Success(:final value) => state.copyWith(notes: [...notes, value], saving: false),
+    Err(:final failure) => state.copyWith(saving: false, failure: failure, failureId: state.failureId + 1),
+  });
+}
+```
+
+</CodeBlock>
+
+المستخدم ضاف ملاحظة، والطلب أخد ثانية. في الثانية دي مسح ملاحظة تانية، والـ `remove` عمل emit لليستة من غيرها. بعدين الإضافة رجعت، وعملت emit لـ `[...notes, value]`، و`notes` دي الليستة القديمة اللي فيها الملاحظة الممسوحة. الملاحظة رجعت من غير ما حد يرجّعها.
+
+<CodeBlock label="اقرا الـ state من جديد بعد الـ await">
+
+```dart
+Success(:final value) => state.copyWith(notes: [...state.notes, value], saving: false),
+```
+
+</CodeBlock>
+
+القاعدة: <b>المتغير اللي اتاخد قبل الـ await بيوصف الماضي</b>. استخدمه لو انت عايز الماضي فعلًا (زي «الملاحظة اللي كانت في index كذا»)، بس الليستة اللي هتعمل emit ليها تتبني من `state` بعد الـ await.
+
+وفي الـ refresh بتاع الوحدة 5، الـ `current.copyWith(refreshFailure: failure)` كان مقبول، لأن مفيش حاجة تانية بتغيّر الـ `LibraryLoaded` وقت الطلب. لو نفس الـ Cubit بيسمع على `watchLibrary()` كمان، الـ stream ممكن يعمل emit لكتب جديدة في النص، والـ `current` هيرجّع القديمة. ساعتها لازم تبني من `state`.
+
+### الأنماط الأربعة
+
+كل method بتشتغل بـ async في Cubit لازم يبقى ليها إجابة على سؤال: «لو اتنادت وهي لسه شغالة، أعمل إيه؟». ومن غير إجابة، الإجابة بتبقى «الاتنين يشتغلوا مع بعض، وربنا يستر».
+
+<Diagram name="d-sm-async-policies">
+
+نفس التلات ضغطات (A وB وC) وكل واحدة بتاخد وقت. الـ drop بيشتغل على A بس. الـ restart بيلغي A وB وبيكمّل C. الـ queue بيعمل التلاتة بالترتيب. الـ latest بيكمّل A، وبعدين يعمل C على طول، والـ B اتشالت لأن C جت بعدها.
+
+</Diagram>
+
+| النمط | بيعمل إيه مع النداء الجديد | مثال من Readly | في الـ Bloc |
+| --- | --- | --- | --- |
+| <b>drop</b> | بيرميه طول ما في واحد شغال | «حفظ» و«حمّل الصفحة الجاية» و«حاول تاني» | `droppable()` |
+| <b>restart</b> | بيلغي القديم ويبدأ الجديد | البحث، فتح كتاب تاني في الـ pager | `restartable()` |
+| <b>queue</b> | بيستنى دوره | عمليات لازم توصل كلها بالترتيب | `sequential()` |
+| <b>latest</b> | بيحتفظ بآخر طلب بس، ويشغّله لما اللي شغال يخلص | الـ autosave، تثبيت ملاحظة | مش موجود جاهز |
+| (من غير حاجة) | الاتنين يشتغلوا مع بعض | قراية مستقلة لكل عنصر | `concurrent()` |
+
+الأسامي في العمود الأخير هي الـ transformers بتاعة `bloc_concurrency`. هنا هنكتبهم بإيدينا جوه الـ Cubit، عشان تفهم إيه اللي بيحصل تحت.
+
+### drop: طول ما في واحد شغال، ارمي الجديد
+
+ده الـ `_saving` بتاع الوحدة 5. بس الـ flag ده فيه مشكلتين لما يكبر: لو الـ use case رمى exception (مش Failure، exception حقيقي)، السطر `_saving = false` مش هيتنفّذ، والزرار هيفضل ميت لحد ما الشاشة تتقفل. ولو عندك 3 methods محتاجة نفس الحماية، هتكتب 3 flags.
+
+<CodeBlock label="drop بمفتاح، و finally">
+
+```dart
+// keys of the operations running right now
+final _running = <Object>{};
+
+Future<void> _drop(Object key, Future<void> Function() task) async {
+  if (!_running.add(key)) return; // already running: drop this call
+  try {
+    await task();
+  } finally {
+    _running.remove(key); // even if task throws
+  }
+}
+
+// usage in CatalogCubit: replaces the _loadingMore flag of the pagination lesson
+Future<void> loadMore() => _drop('loadMore', () async {
+      final current = state;
+      if (current is! CatalogLoaded || current.hasReachedEnd) return;
+      final result = await _searchBooks(SearchParams(query: _query, page: _page + 1));
+      if (isClosed) return;
+      // ...append the page exactly like the pagination lesson
+    });
+
+// usage in NotesCubit: one delete per note, different notes in parallel
+Future<void> remove(NoteId id) => _drop(id, () async {
+      // ...the optimistic delete from the advanced-requests lesson
+    });
+```
+
+</CodeBlock>
+
+- <b>الـ `Set.add` بيرجّع bool:</b> `false` لو المفتاح موجود. فسطر واحد بيسأل ويحجز.
+- <b>الـ `finally`:</b> بيتنفّذ لو الـ task خلص، أو رجع بدري، أو رمى. ده اللي الـ flag العادي ناقصه.
+- <b>المفتاح:</b> string ثابت لعملية واحدة على الـ Cubit كله، أو id لعملية على عنصر. مسح ملاحظة 7 مرتين بيترمي، بس مسح 7 و9 مع بعض شغال عادي.
+
+والـ UI لسه محتاجة تعرف إن في حاجة شغالة عشان تقفل الزرار وتعرض spinner. ده حقل في الـ state (`saving`، `isLoadingMore`)، مش الـ `_running`. الـ `_running` حماية جوه الـ Cubit من الضغط اللي بيوصل قبل ما الزرار يتقفل.
+
+### restart: ألغي القديم وابدأ الجديد
+
+ده الـ request id بتاع البحث في الوحدة 5، بس معمم. فكرته رقم بيزيد مع كل نداء، وأي نتيجة رقمها مش الأحدث بتترمي:
+
+<CodeBlock label="restart بـ generation">
+
+```dart
+int _generation = 0;
+
+Future<void> show(BookId id) async {
+  final generation = ++_generation;
+  emit(const BookDetailsLoading());
+  final result = await _loadBookPage(id);
+  if (isClosed || generation != _generation) return; // a newer show() owns the screen
+  emit(switch (result) {
+    Success(:final value) => BookDetailsLoaded(value),
+    Err(:final failure) => BookDetailsError(failure),
+  });
+}
+```
+
+</CodeBlock>
+
+ده بيحمي الشاشة، بس الطلب القديم لسه شغال. لو المستخدم بيقلّب في الـ pager بتاع صفحة الكتاب بسرعة، 10 كتب في 5 ثواني، يبقى 10 طلبات (أو 20 لو الصفحة بتجيب الكتاب والملاحظات) بتحمّل بيانات محدش هيشوفها. الإلغاء الحقيقي في Level 3.
+
+### queue: كله يتعمل، بالترتيب
+
+أحيانًا مفيش نداء ينفع يترمي، والترتيب مهم. المثال: المستخدم بيرتّب «قايمة القراية الجاية» بالسحب. كل سحبة بتبعت `PUT` بالترتيب الجديد. لو اتبعتوا مع بعض، السيرفر ممكن يستلم التالت قبل التاني، ويفضل الترتيب الغلط محفوظ.
+
+<CodeBlock label="queue بـ Future chain">
+
+```dart
+Future<void> _tail = Future.value();
+
+Future<void> _enqueue(Future<void> Function() task) {
+  final run = _tail.then((_) => task());
+  _tail = run.catchError((Object _) {}); // one failure must not block the rest
+  return run;
+}
+
+Future<void> reorder(List<BookId> order) => _enqueue(() async {
+      final result = await _saveReadingQueue(order);
+      if (isClosed) return;
+      if (result case Err(:final failure)) {
+        emit(state.copyWith(failure: failure, failureId: state.failureId + 1));
+      }
+    });
+```
+
+</CodeBlock>
+
+- <b>الـ `_tail`:</b> آخر حلقة في السلسلة. كل task جديد بيتعلّق في آخرها، فمش هيبدأ غير لما اللي قبله يخلص.
+- <b>الـ `catchError` على الـ `_tail` بس:</b> لو task رمى exception، اللي بعده لازم يشتغل عادي. بس الـ `run` نفسه بيرجع للي نادى بالـ error بتاعه، فمحدش بيبلع الخطأ.
+- <b>الـ UI بتتغير على طول:</b> الترتيب الجديد بيظهر في الـ state قبل ما يدخل الطابور (optimistic). الطابور للشبكة بس.
+
+### latest: آخر طلب بس هو اللي يهم
+
+الـ queue فوق بيبعت كل الترتيبات. بس لو المستخدم عمل 6 سحبات في 3 ثواني، السيرفر محتاج آخر ترتيب بس. ده نمط «latest»: طلب واحد شغال، وطلب واحد مستني، والجديد بياخد مكان المستني.
+
+<CodeBlock label="latest: واحد شغال وواحد مستني">
+
+```dart
+List<BookId>? _pendingOrder; // the newest order nobody has sent yet
+bool _sending = false;
+
+void reorder(List<BookId> order) {
+  emit(state.copyWith(queue: order)); // the screen changes right away
+  _pendingOrder = order;              // replaces any older pending order
+  unawaited(_flush());
+}
+
+Future<void> _flush() async {
+  if (_sending) return; // the running loop will pick up the new order
+  _sending = true;
+  try {
+    while (_pendingOrder != null) {
+      final order = _pendingOrder!;
+      _pendingOrder = null;
+      final result = await _saveReadingQueue(order);
+      if (isClosed) return;
+      if (result case Err(:final failure)) {
+        emit(state.copyWith(failure: failure, failureId: state.failureId + 1));
+      }
+    }
+  } finally {
+    _sending = false;
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `while`:</b> بعد كل طلب بيبص: في ترتيب أحدث جه وأنا شغال؟ لو أيوه يبعته، لو لأ يقف. 6 سحبات بيبقوا طلبين أو تلاتة، والأخير دايمًا هو اللي بيوصل آخر.
+- <b>الـ `reorder` بترجع `void`:</b> الشاشة مش محتاجة تستنى الشبكة، والـ `unawaited` بيقول ده صراحة. (قاعدة `prefer_void_public_cubit_methods` في bloc_lint بتقبل `void` و`Future<void>` الاتنين، فده قرار تصميم مش lint.)
+- <b>ده مش debounce:</b> الـ debounce بيستنى وقت ثابت قبل أي طلب. الـ latest بيبعت أول واحد على طول، وبيضغط اللي بعده. ممكن تجمعهم: debounce قصير قبل `_flush` عشان أول سحبة ماتطلعش لوحدها.
+
+ونفس النمط هو الأساس بتاع الـ autosave في محرر الملاحظات: كل ما المستخدم يقف عن الكتابة، النص الأخير بيتحط في `_pending`، وطلب واحد بس في نفس الوقت.
+
+</Level>
+
+<Level n="3" title="الإلغاء والـ optimistic والـ effects والتواصل">
+
+### الإلغاء بجد: 3 درجات
+
+الـ request id بيخلّي النتيجة القديمة ماتظهرش، بس الشغل نفسه بيكمّل. في 3 درجات للإلغاء، وكل واحدة بتكلّف أكتر:
+
+| الدرجة | بتعمل إيه | الشغل نفسه |
+| --- | --- | --- |
+| <b>تجاهل النتيجة</b> (request id، generation) | النتيجة القديمة بتترمي لما توصل | بيكمّل للآخر |
+| <b>بطّل تستنى</b> (`CancelableOperation`) | الـ Cubit بيبطّل يستنى في نفس اللحظة | بيكمّل، إلا لو `onCancel` وقّفه |
+| <b>وقّف الشغل</b> (`CancelScope`، أو cancel لـ subscription) | الطلب نفسه بيتقفل، والـ query بيبطّل يسمع | بيقف |
+
+الـ `CancelableOperation` من `package:async` (نفس الـ package اللي فيه `StreamQueue` في الوحدة 8). بيلف Future، وبيدّيك `cancel()`:
+
+<CodeBlock label="BookDetailsCubit في pager: restart مع إلغاء حقيقي">
+
+```dart
+import 'package:async/async.dart';
+
+class BookDetailsCubit extends Cubit<BookDetailsState> {
+  BookDetailsCubit(this._loadBookPage) : super(const BookDetailsLoading());
+
+  final LoadBookPage _loadBookPage;
+  CancelableOperation<Result<BookPage>>? _current;
+
+  Future<void> show(BookId id) async {
+    final previous = _current;
+    final scope = CancelScope();
+    final operation = CancelableOperation.fromFuture(
+      _loadBookPage(id, scope: scope),
+      onCancel: scope.cancel, // the real cancel, down to dio's CancelToken
+    );
+    _current = operation; // set before any await, so a newer show() always sees it
+    unawaited(previous?.cancel()); // stop waiting for the old book, and cancel its requests
+
+    emit(const BookDetailsLoading());
+    final result = await operation.valueOrCancellation();
+    if (result == null || isClosed) return; // cancelled: a newer show() owns the screen
+    emit(switch (result) {
+      Success(:final value) => BookDetailsLoaded(value),
+      Err(:final failure) => BookDetailsError(failure),
+    });
+  }
+
+  @override
+  Future<void> close() async {
+    await _current?.cancel();
+    return super.close();
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `_current` بيتعيّن قبل أي `await`:</b> لو كتبت `await _current?.cancel()` في أول سطر، `show()` تالتة ممكن تيجي وانت مستني، فتلاقي `_current` لسه القديم، وتلغيه هو بدل التاني. ساعتها نتيجة التاني بتوصل وتغطي على التالت. أي حالة بتحدد «مين الأحدث» لازم تتغير sync، قبل ما الـ method تسيب الدور.
+- <b>الـ `valueOrCancellation()`:</b> بيرجّع القيمة، أو `null` لو اتلغى. الـ `Result` نفسه عمره ما يبقى null، فالـ null معناها «اتلغيت» من غير لبس. والـ `operation.value` العادي لو اتلغى عمره ما بيخلص، فالـ `await` عليه هيفضل معلّق للأبد.
+- <b>الـ `onCancel`:</b> هنا الإلغاء بيبقى حقيقي. الـ `CancelScope` ده بتاع [درس الطلبات المتقدمة في الوحدة 9](/course/api-errors/advanced-requests/): abstraction في core، والـ data layer بس هو اللي بيحوّله لـ `CancelToken`. فالـ Cubit لسه مايعرفش dio.
+- <b>من غير `onCancel`:</b> الـ `CancelableOperation` لوحده بيبطّل استنّاك بس، زي الـ request id بالظبط بس بشكل أنضف. ده مفيد لو الشغل مالوش طريقة يتوقف بيها أصلًا.
+
+الـ `isClosed` لسه موجود: ممكن الرد يوصل في نفس الـ microtask اللي الـ close بيحصل فيه. والكتابة ماتتلغيش بالطريقة دي، زي ما قلنا في الوحدة 9: الإلغاء مابيرجّعش اللي السيرفر عمله.
+
+### الـ streams: الـ restart مجاني تقريبًا
+
+لو الشغل stream مش Future، الإلغاء الحقيقي موجود جاهز: `subscription.cancel()` بيقفل الـ stream فعلًا. الـ drift مثلًا بيبطّل يراقب الـ query. فالـ restart في الـ streams هو «الغي الاشتراك القديم واشترك في الجديد». خلينا نفترض إن `watchLibrary` بياخد فلتر اختياري بالحالة، والفلترة بتحصل في الـ query نفسه:
+
+<CodeBlock label="LibraryCubit: فلتر بالـ BookStatus">
+
+```dart
+StreamSubscription<List<Book>>? _sub;
+
+void filterChanged(BookStatus? status) {
+  _sub?.cancel(); // the old query stops, its next value never arrives
+  emit(const LibraryLoading());
+  _sub = _repository.watchLibrary(status: status).listen(
+        (books) => emit(LibraryLoaded(books)),
+        onError: addError,
+      );
+}
+
+@override
+Future<void> close() async {
+  await _sub?.cancel();
+  return super.close();
+}
+```
+
+</CodeBlock>
+
+مفيش request id هنا ولا generation. بعد الـ `cancel()` الـ subscription القديم مش هيبعت ولا قيمة، فمستحيل نتيجة الفلتر القديم تغطي على الجديد. ولو عايز تجمع stream من repository مع stream تاني، ده موجود في درس «أنواع الـ Cubit (2)».
+
+### الـ optimistic update لما المستخدم يدوس بسرعة
+
+في [درس الطلبات المتقدمة](/course/api-errors/advanced-requests/) عملنا optimistic delete للملاحظات: الملاحظة بتتشال فورًا، ولو الطلب فشل بترجع في نفس مكانها جوه الـ state الحالية، مش الـ snapshot. ده بيحل عملية واحدة على عنصر. المشكلة الأصعب لما نفس العنصر يتغير كذا مرة ورا بعض.
+
+خلينا نضيف feature صغيرة: «ثبّت الملاحظة فوق». `Note` بياخد `pinned`، والـ repository فيه `setPinned(bookId, noteId, pinned)` بيعمل `PATCH`. المستخدم داس «ثبّت»، وبعدين «فك»، وبعدين «ثبّت» تاني في ثانية. الكود الساذج:
+
+<CodeBlock label="الـ rollback الساذج">
+
+```dart
+Future<void> togglePin(NoteId id) async {
+  final note = state.notes.where((n) => n.id == id).firstOrNull;
+  if (note == null) return;
+  final pinned = !note.pinned;
+  emit(state.copyWith(notes: _withPinned(state.notes, id, pinned)));
+  final result = await _repository.setPinned(_bookId, id, pinned);
+  if (isClosed) return;
+  if (result case Err(:final failure)) {
+    // roll back to... what?
+    emit(state.copyWith(notes: _withPinned(state.notes, id, !pinned), failure: failure));
+  }
+}
+```
+
+</CodeBlock>
+
+فيه 3 مشاكل مع الضغط السريع:
+
+- <b>3 طلبات بتتسابق على السيرفر:</b> مفيش ضمان إنها توصل بالترتيب. ممكن «ثبّت» الأولاني يوصل آخر واحد، والشاشة تقول «مثبتة» والسيرفر يقول «مثبتة»، ده صدفة. أو العكس، والشاشة والسيرفر يختلفوا من غير ما حد يعرف.
+- <b>الـ rollback على قيمة غلط:</b> لو الطلب التاني («فك») فشل بعد ما التالت بدأ، الـ rollback هيرجّعها «مثبتة» وهي في الشاشة «مثبتة» أصلًا من الضغطة التالتة. ولو التلاتة فشلوا، آخر rollback بيرجّع لـ «عكس آخر ضغطة»، مش للقيمة اللي على السيرفر فعلًا.
+- <b>طلبات مالهاش لازمة:</b> «ثبّت، فك، ثبّت» نتيجتها «ثبّت». طلب واحد كفاية.
+
+الحل يجمع حاجتين من Level 2: الشاشة بتتغير مع كل ضغطة (optimistic)، والشبكة نمط latest <b>لكل ملاحظة</b>. والـ rollback يرجع لآخر قيمة السيرفر أكّدها، مش لعكس الضغطة:
+
+<CodeBlock label="optimistic + latest لكل عنصر">
+
+```dart
+final _wanted = <NoteId, bool>{}; // what the user wants and the server hasn't confirmed
+final _syncing = <NoteId>{};
+
+void togglePin(NoteId id) {
+  final note = state.notes.where((n) => n.id == id).firstOrNull;
+  if (note == null) return;
+  _wanted[id] = !note.pinned;
+  emit(state.copyWith(notes: _withPinned(state.notes, id, !note.pinned))); // instant
+  // when nothing is syncing for this note, what we showed so far is what the server has
+  unawaited(_syncPin(id, confirmed: note.pinned));
+}
+
+Future<void> _syncPin(NoteId id, {required bool confirmed}) async {
+  if (!_syncing.add(id)) return; // a loop is already running for this note
+  var serverValue = confirmed;
+  try {
+    while (true) {
+      final want = _wanted[id];
+      if (want == null || want == serverValue) break; // nothing left to send
+      final result = await _repository.setPinned(_bookId, id, want);
+      if (isClosed) return;
+      if (result case Err(:final failure)) {
+        // give up and show what the server really has
+        _wanted.remove(id);
+        emit(state.copyWith(
+          notes: _withPinned(state.notes, id, serverValue),
+          failure: failure,
+          failureId: state.failureId + 1,
+        ));
+        return;
+      }
+      serverValue = want; // confirmed: the next round compares against it
+    }
+    _wanted.remove(id);
+  } finally {
+    _syncing.remove(id);
+  }
+}
+
+List<Note> _withPinned(List<Note> notes, NoteId id, bool pinned) =>
+    [for (final n in notes) n.id == id ? n.copyWith(pinned: pinned) : n];
+```
+
+</CodeBlock>
+
+- <b>طلب واحد في نفس الوقت لكل ملاحظة:</b> الـ `_syncing` بيمنع loop تاني يبدأ. فالطلبات على نفس الملاحظة بتوصل بالترتيب، والسباق اختفى.
+- <b>«ثبّت، فك، ثبّت»:</b> الأولى بتبدأ طلب. التانية والتالتة بيغيّروا `_wanted` بس. لما الأول يخلص، الـ loop بيلاقي `want == serverValue` فبيقف. طلب واحد بدل 3.
+- <b>الـ rollback لـ `serverValue`:</b> آخر حاجة السيرفر قال عليها «تمام». مش عكس الضغطة، ومش snapshot من الـ state.
+- <b>ملاحظتين مختلفتين:</b> كل واحدة ليها loop بتاعها، فبيشتغلوا مع بعض عادي.
+- <b>الـ `failureId`:</b> نفس الـ SnackBar اللي في [درس الأخطاء في الشاشة](/course/api-errors/errors-ui/). المستخدم لازم يعرف ليه الدبوس رجع.
+
+وفي حاجة مهمة: <b>المكتبة نفسها مش محتاجة ده</b>. تغيير حالة كتاب (`BookStatus`) بيروح لـ drift والـ sync queue، والشاشة بتسمع على `watchLibrary()`. الـ DB هي الـ optimism، والـ queue هي اللي بتضمن الإرسال، زي ما شفنا في درس Offline-first في الوحدة 4. الـ optimistic جوه الـ Cubit للحاجات اللي online بس، زي الملاحظات.
+
+### الأحداث اللي بتحصل مرة واحدة: في الـ state ولا stream لوحده؟
+
+الـ SnackBar والـ navigation والـ haptic مش «حالة الشاشة»، دي «حاجة حصلت». في الوحدة 9 اخترنا نحطها في الـ state: `failure` ومعاه `failureId` بيزيد، والـ `BlocListener` بيقارن الـ id. ده الـ default في Readly، ولسه هو الأنسب لأغلب الحالات.
+
+بس في حالات الـ state فيها بتبقى غريبة. مثال: `AddBookCubit` لما الإضافة تنجح، عايز SnackBar «اتضاف "Matilda" لمكتبتك» ومعاه زرار «افتحه» بيودّي لصفحة الكتاب. الـ SnackBar محتاج الـ `Book` نفسه. لو حطيته في الـ state، يبقى `AddBookState` فيها `lastAdded` و`lastAddedId` بس عشان SnackBar، وبعد ما يظهر، الحقل ده بيفضل قاعد ملهوش معنى. هنا الـ stream المنفصل أنضف:
+
+<CodeBlock label="mixin للـ effects">
+
+```dart
+mixin CubitEffects<S, E> on Cubit<S> {
+  final _effects = StreamController<E>.broadcast();
+
+  Stream<E> get effects => _effects.stream;
+
+  @protected
+  void effect(E value) {
+    if (!_effects.isClosed) _effects.add(value);
+  }
+
+  @override
+  Future<void> close() async {
+    await _effects.close();
+    return super.close();
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="AddBookCubit بيطلّع effect">
+
+```dart
+sealed class AddBookEffect {
+  const AddBookEffect();
+}
+final class BookAdded extends AddBookEffect {
+  const BookAdded(this.book);
+  final Book book;
+}
+
+class AddBookCubit extends Cubit<AddBookState> with CubitEffects<AddBookState, AddBookEffect> {
+  AddBookCubit(this._addBook) : super(const AddBookIdle());
+  final AddBookToLibrary _addBook;
+
+  Future<void> save(Book book) async {
+    if (state is AddBookSaving) return;
+    emit(const AddBookSaving());
+    final result = await _addBook(book);
+    if (isClosed) return;
+    switch (result) {
+      case Success():
+        emit(const AddBookSaved());
+        effect(BookAdded(book)); // a one-time message, not part of the state
+      case Err(:final failure):
+        emit(AddBookError(failure));
+    }
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="widget بيسمع على الـ effects">
+
+```dart
+class EffectListener<C extends CubitEffects<Object?, E>, E> extends StatefulWidget {
+  const EffectListener({super.key, required this.onEffect, required this.child});
+  final void Function(BuildContext context, E effect) onEffect;
+  final Widget child;
+
+  @override
+  State<EffectListener<C, E>> createState() => _EffectListenerState<C, E>();
+}
+
+class _EffectListenerState<C extends CubitEffects<Object?, E>, E>
+    extends State<EffectListener<C, E>> {
+  StreamSubscription<E>? _sub;
+
+  @override
+  void initState() {
+    super.initState();
+    // read, not watch: we subscribe once, outside build
+    _sub = context.read<C>().effects.listen((e) {
+      if (mounted) widget.onEffect(context, e);
+    });
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
+
+// on the add-book screen
+EffectListener<AddBookCubit, AddBookEffect>(
+  onEffect: (context, effect) => switch (effect) {
+    BookAdded(:final book) => context.showBookAdded(book), // SnackBar with "open"
+  },
+  child: const AddBookForm(),
+)
+```
+
+</CodeBlock>
+
+الاتنين شغالين. الفرق في التفاصيل:
+
+| | حقل في الـ state + id | stream منفصل |
+| --- | --- | --- |
+| لو محدش بيسمع لحظتها | مابيضيعش: الـ listener الجاي هيقارن الـ id | بيضيع: الـ broadcast مابيحفظش حاجة |
+| بعد الـ rotation أو rebuild | مابيتكررش لو الـ `listenWhen` صح | مابيتكررش |
+| الـ state | بتكبر بحقول مالهاش معنى بعد الحدث | نضيفة |
+| التست | `blocTest` عادي، الحدث state زي أي state | محتاج `expectLater(cubit.effects, emits(...))` قبل الـ act |
+| الـ BlocObserver | بيشوف الحدث | مابيشوفوش |
+| أدوات flutter_bloc | `BlocListener` جاهز | widget بتاعك (زي اللي فوق) |
+
+- <b>الـ effects بتضيع لو اتطلعت بدري:</b> لو الـ Cubit طلّع effect في الـ constructor، أو قبل ما الشاشة تتبني، الـ broadcast بيرميه. والـ `StreamController` العادي (مش broadcast) بيحفظ لحد أول listener، بس بيقبل listener واحد بس، والاشتراك التاني بيرمي error. فالـ effects للحاجات اللي بتحصل نتيجة ضغطة من المستخدم على شاشة مفتوحة.
+- <b>قاعدة Readly:</b> لو الحدث بيوصف حاجة الشاشة لازم تفضل فاكراها (فشل لسه مهم)، الـ state. لو الحدث رسالة عابرة معاها بيانات مش من الـ state (اتضاف كتاب، روح للصفحة دي)، effect. ولو مش متأكد، الـ state، لأنها مابتضيعش.
+
+### التواصل بين الـ Cubits
+
+شاشة الكتالوج عايزة تعرض علامة «في مكتبتك» جنب كل كتاب موجود عند المستخدم. الكتالوج عنده `CatalogCubit`، والمكتبة عندها `LibraryCubit`. أول فكرة لأي حد: الـ CatalogCubit ياخد الـ LibraryCubit ويسمع على الـ stream بتاعه. وده أكتر pattern بيبوظ في المشاريع الحقيقية.
+
+<Diagram name="d-sm-cubit-communication">
+
+الـ Cubits التلاتة بيسمعوا على نفس الـ stream من الـ repository، فأي تغيير في drift يوصل للكل، ومحدش فيهم يعرف التاني. السهم الأحمر هو اللي بنمنعه: Cubit ماسك Cubit تاني، ومع get_it الـ factory هياخد نسخة جديدة غير اللي على الشاشة.
+
+</Diagram>
+
+ليه Cubit ماسك Cubit فكرة وحشة:
+
+- <b>النسخة الغلط:</b> الـ `LibraryCubit` متسجّل `factory` في get_it، زي ما شفنا في درس الـ DI في الوحدة 6. لو الـ CatalogCubit أخد `getIt<LibraryCubit>()`، هياخد <b>نسخة جديدة</b>، مش اللي في شاشة المكتبة. النسخة دي محدش نادى `load()` عليها، فالـ state بتاعها `LibraryLoading` للأبد. والـ bug ده مابيرميش error، العلامة بس مابتظهرش.
+- <b>العمر:</b> لو جبت النسخة الصح بطريقة ما، شاشة المكتبة ممكن تتقفل وتقفل الـ Cubit بتاعها. الـ CatalogCubit بقى ماسك Cubit مقفول، والـ stream بتاعه خلص.
+- <b>الاعتماد مخفي ومقلوب:</b> الـ CatalogCubit بقى معتمد على presentation تانية، مش على الـ data. والتست محتاج `MockCubit` و`whenListen` بدل fake repository بسيط.
+- <b>الدواير:</b> بكرة الـ LibraryCubit يحتاج حاجة من الكتالوج، وتبقى عندك حلقة.
+
+البيانات اللي الاتنين محتاجينها ليها مصدر واحد: الـ repository. وفي 3 طرق صح:
+
+<b>1. الاتنين يسمعوا على نفس الـ stream من الـ repository (الأساسية).</b> الـ `watchLibrary()` موجود أصلًا، والـ CatalogCubit بياخد الـ `LibraryRepository` ويطلّع منه الـ ids بس، ويحطهم في حقل `owned` جوه `CatalogLoaded`. ده نفس كود علامة «في مكتبتك» اللي في درس «أنواع الـ Cubit (2)» بالظبط، والـ «قبل وبعد» في آخر الدرس بيحطه جنب النسخة اللي بتمسك Cubit. والـ tile بيسأل عن كتابه بس:
+
+<CodeBlock label="كل tile بيسأل عن كتابه">
+
+```dart
+// rebuilds only when this book's answer changes
+final owned = context.select(
+  (CatalogCubit c) => switch (c.state) {
+    CatalogLoaded(:final owned) => owned.contains(book.id),
+    _ => false,
+  },
+);
+```
+
+</CodeBlock>
+
+المستخدم ضاف كتاب من الكتالوج؟ الـ `AddBookToLibrary` كتب في drift، والـ stream طلّع ليستة جديدة، والعلامة ظهرت. محدش نادى حد.
+
+<b>2. الـ UI بتربط رد فعل بحدث.</b> لما التواصل مش «بيانات مشتركة» لكن «لما ده يحصل، اعمل ده»، والقرار ده بتاع الـ flow مش بتاع أي Cubit فيهم. مثال: لما المستخدم يغيّر لغة الـ app، الكتالوج يعيد البحث بلغة الكتب الجديدة:
+
+<CodeBlock label="BlocListener بيوصّل الحدث">
+
+```dart
+BlocListener<SettingsCubit, SettingsState>(
+  listenWhen: (prev, curr) => prev.locale != curr.locale,
+  listener: (context, state) => context.read<CatalogCubit>().languageChanged(state.locale),
+  child: const CatalogView(),
+)
+```
+
+</CodeBlock>
+
+الاتنين مايعرفوش بعض. الشاشة هي اللي بتعرف إن الاتنين موجودين، وهي بتربطهم. ولو الـ CatalogCubit اتقفل، الـ listener اتشال معاه.
+
+<b>3. حقن stream من interface في core.</b> لما المصدر مش repository بتاع feature، زي `NetworkStatus.onOnline` في [درس الأخطاء في الشاشة](/course/api-errors/errors-ui/)، أو `AppAlerts` في نفس الدرس. الـ Cubit بياخد الـ interface في الـ constructor، وget_it بيوصّل الـ implementation. نفس فكرة الطريقة الأولى، بس المصدر app-level.
+
+| الموقف | الطريقة |
+| --- | --- |
+| Cubitين محتاجين نفس البيانات | stream من الـ repository |
+| حدث في Cubit لازم يشغّل action في Cubit تاني في شاشة واحدة | `BlocListener` في الـ UI |
+| حالة على مستوى الـ app (نت، session، تنبيهات) | interface في core بـ stream |
+| Cubit ماسك Cubit | أبدًا |
+
+### onChange وonError جوه الـ Cubit نفسه
+
+في درس «أول Cubit سطر بسطر» شفنا الـ `onChange` والـ `onError` كـ hooks. هنا الاستخدام الحقيقي. الاتنين بيتنادوا في الـ Cubit نفسه الأول، وبعدين في الـ `BlocObserver`، ولازم تنادي `super` عشان الـ observer يوصله:
+
+<CodeBlock label="override في Cubit واحد">
+
+```dart
+class CatalogSearchCubit extends Cubit<CatalogSearchState> {
+  // ...
+
+  @override
+  void onChange(Change<CatalogSearchState> change) {
+    super.onChange(change); // without it, BlocObserver.onChange never sees this cubit
+    if (change.nextState case SearchLoaded(books: [])) {
+      _analytics.log('search_no_results'); // an AnalyticsTracker contract, not a package
+    }
+  }
+
+  @override
+  void onError(Object error, StackTrace stackTrace) {
+    // extra context for this cubit only, then the observer reports it
+    _logger.warning('search failed for "${state.runtimeType}"');
+    super.onError(error, stackTrace);
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `onChange` بيتنادى مع كل emit حقيقي:</b> مش مع الـ emit اللي اتجاهل عشان الـ state زي اللي قبلها. ومعاه `currentState` و`nextState`.
+- <b>الـ `onError` بيوصله الـ `addError` بس:</b> زي ما قلنا في [درس الـ Observability في الوحدة 16](/course/production/observability/)، الـ exception اللي بتطلع من method في الـ Cubit مابتعدّيش عليه. لو عايزها توصل، امسكها وابعتها:
+
+<CodeBlock label="الـ exception غير المتوقعة بتوصل الـ observer">
+
+```dart
+Future<void> load() async {
+  emit(const LibraryLoading());
+  try {
+    final result = await _getLibrary();
+    if (isClosed) return;
+    emit(switch (result) {
+      Success(:final value) => LibraryLoaded(value),
+      Err(:final failure) => LibraryError(failure),
+    });
+  } catch (error, stackTrace) {
+    addError(error, stackTrace); // a bug, not a Failure: report it
+    if (!isClosed) emit(const LibraryError(ServerFailure('unexpected')));
+  }
+}
+```
+
+</CodeBlock>
+
+الـ `guard` في الـ data layer بيحوّل الأخطاء المتوقعة لـ `Failure`، فالـ catch ده مش المفروض يشتغل أبدًا. لو اشتغل، ده bug، والـ observer هيبعته لـ Sentry. وماتحطش `try/catch` ده في كل method، حطه في الـ methods اللي فيها شغل خارج الـ guard (parsing محلي، حسابات).
+
+وخلي بالك: لو عملت override لـ `onChange` ونسيت `super`، مش بس الـ observer هيعمى. الـ `HydratedCubit` في الدرس الجاي بيحفظ الـ state من جوه `onChange`، فالحفظ هيقف من غير أي error.
+
+### BlocObserver وMultiBlocObserver
+
+الـ `AppBlocObserver` بتاع درس الـ Observability بيبعت كل `onChange` و`onError` للـ `AppLogger`. الـ `Bloc.observer` واحد بس للـ app كله (static setter). ولحد bloc 9.2، لو عايز observer تاني في الـ debug بس، كنت بتكتب class بتنادي الاتنين بإيدك. دلوقتي في `MultiBlocObserver`.
+
+observer مفيد جدًا في الـ debug: بيعد الـ Cubits العايشة. لو فتحت صفحة الكتاب وقفلتها 10 مرات ولقيت `BookDetailsCubit: 10`، يبقى في Cubit مابيتقفلش، غالبًا اتعمل بـ `BlocProvider.value` من غير ما حد يملكه:
+
+<CodeBlock label="LiveBlocsObserver">
+
+```dart
+class LiveBlocsObserver extends BlocObserver {
+  final _live = <String, int>{};
+
+  Map<String, int> get live => Map.unmodifiable(_live);
+
+  @override
+  void onCreate(BlocBase<dynamic> bloc) {
+    super.onCreate(bloc);
+    final name = bloc.runtimeType.toString();
+    _live[name] = (_live[name] ?? 0) + 1;
+  }
+
+  @override
+  void onClose(BlocBase<dynamic> bloc) {
+    super.onClose(bloc);
+    final name = bloc.runtimeType.toString();
+    _live[name] = (_live[name] ?? 1) - 1;
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="main.dart">
+
+```dart
+final liveBlocs = LiveBlocsObserver();
+
+Bloc.observer = MultiBlocObserver(
+  observers: [
+    AppBlocObserver(getIt<AppLogger>()), // logs + Sentry breadcrumbs, every build
+    if (kDebugMode) liveBlocs,           // shown in a debug-only menu
+  ],
+);
+```
+
+</CodeBlock>
+
+الـ `runtimeType` هنا مقبول عشان ده debug بس. في الـ release مع `--obfuscate` الأسامي بتبقى حروف ملهاش معنى، وده سبب إن الـ `AppBlocObserver` نفسه مايعتمدش عليها في أي حاجة غير الـ logs.
+
+### الـ mixins: سلوك ميكانيكي يتكتب مرة
+
+الـ `CubitEffects` فوق mixin. وفي mixin تاني مشهور:
+
+<CodeBlock label="SafeEmit">
+
+```dart
+mixin SafeEmit<S> on Cubit<S> {
+  @override
+  void emit(S state) {
+    if (isClosed) return; // drop late emits instead of throwing
+    super.emit(state);
+  }
+}
+```
+
+</CodeBlock>
+
+ده بيوفر سطر `if (isClosed) return;` بعد كل await. بس خلي بالك من التمن: الـ `StateError` كان بيقولك إن في subscription مااتلغاش أو timer لسه شغال. مع الـ SafeEmit الـ leak بيفضل موجود، بس ساكت. لو استخدمته، استخدمه مع `LiveBlocsObserver` والتست بتاع «close بيلغي الـ subscription» من الوحدة 8. وحتى معاه، لسه محتاج السؤالين التانيين بعد الـ await (أنا آخر واحد؟ الـ state لسه هي هي؟).
+
+الـ mixin مناسب لما:
+
+- السلوك <b>ميكانيكي</b> ومالوش دعوة بالـ business: الـ effects، الـ safe emit، الـ drop بمفتاح.
+- مابيضيفش state ولا بيغيّر معنى الـ methods.
+- تقدر تقراه في 15 سطر.
+
+ومش مناسب لما يبقى «base Cubit» متنكر: mixin فيه `load()` و`retry()` و`refresh()` وكل Cubit بيورثهم. ده نفس مشكلة الـ `AsyncCubit<T>` اللي في درس «أنواع الـ Cubit (2)». وترتيب الـ mixins مهم لما أكتر من واحد بيعمل override لنفس الـ method (`emit` أو `onChange` أو `close`): كل واحد بينادي `super`، والسلسلة بتمشي من آخر mixin لأوله. هنشوف ده عملي مع `HydratedMixin` و`ReplayCubitMixin` في الدرس الجاي.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>اكتب سياسة كل method:</b> في code review، أول سؤال على أي method async: «لو اتنادت مرتين؟». الإجابة لازم تبان من الكود (`_drop`، `_generation`، `_enqueue`، `_flush`) أو من comment سطر واحد. «مش هتتنادى مرتين» مش إجابة: الـ double tap، والـ RefreshIndicator والزرار مع بعض، والـ listener اللي بيشتغل مرتين، كلهم بيحصلوا.
+
+| method في Readly | السياسة | ليه |
+| --- | --- | --- |
+| `LibraryCubit.refresh` | drop | refresh واحد كفاية، التاني مش هيجيب جديد |
+| `CatalogCubit.loadMore` | drop | الصفحة الجاية مرة واحدة |
+| `CatalogSearchCubit.queryChanged` | debounce + restart | المهم آخر حاجة اتكتبت |
+| `BookDetailsCubit.show` | restart + إلغاء | المستخدم بيقلّب، والقديم مالوش لازمة |
+| `NotesCubit.togglePin` | optimistic + latest لكل ملاحظة | الشاشة فورية، والسيرفر ياخد آخر قيمة |
+| `ReadingQueueCubit.reorder` | latest | آخر ترتيب بس هو اللي يهم |
+| `NotesCubit.add` | drop | ضغطتين على «حفظ» مش ملاحظتين |
+
+- <b>إمتى الـ Bloc يكسب:</b> لو بتكتب `_drop` و`_generation` و`_flush` في كل Cubit، أو method واحدة محتاجة debounce مع restart مع إلغاء، الـ Bloc بالـ transformers بيشيل الكود ده كله ويخلي السياسة سطر واحد جنب الـ handler. ده موضوع درس «الـ Bloc من الصفر»، والمقارنة الكاملة في درس «Cubit ولا Bloc».
+- <b>الإلغاء ليه تمن:</b> parameter `scope` في كل طبقة. ابدأ بالـ `isClosed` والـ generation، وزوّد الإلغاء الحقيقي لما القياس يقول إن في طلبات كتير بتضيع (pager، بحث، ملفات).
+- <b>الـ optimistic للـ online بس:</b> الحاجات اللي offline-first الـ DB هي الـ optimism. والـ rollback دايمًا لآخر قيمة السيرفر أكدها، ومعاه رسالة.
+- <b>الـ effects:</b> الـ state هي الـ default لأنها مابتضيعش وبتتستّ زي أي state. الـ stream للرسايل العابرة اللي معاها بيانات مش من الـ state.
+- <b>التواصل:</b> البيانات المشتركة من الـ repository، ورد الفعل اللي بيخص flow معين في الـ UI، والحاجات الـ app-level من interface في core. Cubit ماسك Cubit ممنوع، وده اللي بنكتبه في الـ conventions بتاعة الفريق.
+
+<Note kind="interview" title="سؤال interview">
+
+«المستخدم داس على زرار الحفظ مرتين بسرعة، واتعمل record مكرر. إزاي تمنع ده في Cubit؟» الـ methods في الـ Cubit مش بتستنى بعض، فالنداء التاني بيبدأ وهو الأول لسه شغال. أول خط دفاع: الزرار بيتقفل من حقل في الـ state (`status == inProgress`). بس الضغطة التانية ممكن توصل قبل الـ rebuild، فجوه الـ Cubit نمط drop: مفتاح في `Set` بيتحجز قبل الـ await ويتشال في `finally`، عشان لو حصل exception الزرار مايموتش. وعلى السيرفر Idempotency-Key، لأن الـ retry في الـ data layer ممكن يكرر الطلب حتى لو الـ UI منعت. ولو في Bloc، `droppable()` على الـ event.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«عندك Cubitين محتاجين نفس البيانات. توصّلهم إزاي؟» مش ببعض. لو Cubit مسك Cubit تاني، مع get_it الـ factory هياخد نسخة جديدة غير اللي في الشاشة، ولو جاب نفس النسخة هيبقى مربوط بعمرها، والتست هيحتاج mock لـ Cubit. الاتنين يسمعوا على stream من الـ repository (زي `watchLibrary()`)، فأي تغيير يوصل للاتنين. ولو المطلوب رد فعل («لما اللغة تتغير، أعد البحث»)، `BlocListener` في الشاشة بيربطهم، لأن الربط ده قرار الـ flow مش قرار أي Cubit.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### علامة «في مكتبتك» في الكتالوج
+
+<BeforeAfter>
+
+<Side label="قبل: Cubit ماسك Cubit" kind="before">
+
+```dart
+@injectable
+class CatalogCubit extends Cubit<CatalogState> {
+  CatalogCubit(this._searchBooks, this._library) : super(const CatalogLoading()) {
+    // getIt gives a NEW LibraryCubit here, not the one on screen:
+    // nobody calls load() on it, so this never fires
+    _sub = _library.stream.listen((s) {
+      if (s is LibraryLoaded) _ownedChanged({for (final b in s.books) b.id}); // same as "after"
+    });
+  }
+
+  final SearchBooks _searchBooks;
+  final LibraryCubit _library; // presentation depends on presentation
+  late final StreamSubscription<LibraryState> _sub;
+}
+```
+
+</Side>
+
+<Side label="بعد: الاتنين بيسمعوا على الـ repository" kind="after">
+
+```dart
+@injectable
+class CatalogCubit extends Cubit<CatalogState> {
+  CatalogCubit(this._searchBooks, LibraryRepository library) : super(const CatalogLoading()) {
+    // the same source LibraryCubit uses: drift, through the repository
+    _sub = library
+        .watchLibrary()
+        .map((books) => {for (final b in books) b.id})
+        .listen(_ownedChanged, onError: addError);
+  }
+
+  final SearchBooks _searchBooks;
+  late final StreamSubscription<Set<BookId>> _sub;
+  Set<BookId> _owned = const {}; // every new CatalogLoaded starts with it
+
+  // CatalogLoaded gains owned + withOwned(), like SearchLoaded in "Cubit types (2)"
+  void _ownedChanged(Set<BookId> ids) {
+    _owned = ids;
+    if (state case final CatalogLoaded loaded) emit(loaded.withOwned(ids));
+  }
+
+  @override
+  Future<void> close() async {
+    await _sub.cancel();
+    return super.close();
+  }
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+- <b>بيشتغل من غير ما المكتبة تتفتح:</b> الـ stream بيبدأ من drift، مش من شاشة لازم تبقى مفتوحة.
+- <b>التست أبسط:</b> fake repository بـ `StreamController<List<Book>>`، زي تست الـ `watch()` في الوحدة 8. مفيش `MockCubit` ولا `whenListen`.
+- <b>الـ close:</b> الـ "قبل" كمان كان ناسي يلغي الـ subscription. كل فتحة للكتالوج كانت هتسيب listener على Cubit عايش.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="sm-advanced-1">
+<Ask>`final notes = state.notes;` قبل `await _addNote(...)`، وبعدها `emit(state.copyWith(notes: [...notes, value]))`. إيه المشكلة، وإيه الحل؟</Ask>
+<Answer>
+
+الـ `notes` اتاخدت قبل الـ await، فهي بتوصف الماضي. لو المستخدم مسح ملاحظة وهو مستني، الـ emit هيرجّعها لأنه بيبني على الليستة القديمة. الحل تبني من `state.notes` بعد الـ await. وبعد أي await اسأل 3 أسئلة: الـ Cubit لسه مفتوح؟ أنا لسه آخر نداء؟ الـ state اللي معايا لسه الحالية؟
+
+</Answer>
+</Question>
+
+<Question id="sm-advanced-2">
+<Ask>المستخدم بيرتّب قايمة القراية بالسحب، 6 سحبات في 3 ثواني، وكل سحبة `PUT` بالترتيب الجديد. أنهي نمط من الأربعة، وليه مش الباقيين؟</Ask>
+<Answer>
+
+latest: طلب واحد شغال وآخر ترتيب مستني، والجديد بياخد مكان المستني. الـ drop هيرمي الترتيب الأخير فيتحفظ ترتيب قديم. الـ restart بيلغي الطلب على الـ client بس، والطلب ممكن يكون وصل السيرفر، ومفيش ضمان للترتيب. الـ queue صح بس بيبعت 6 طلبات والسيرفر محتاج آخر واحد بس. والـ concurrent ممكن الطلبات توصل بترتيب غلط.
+
+</Answer>
+</Question>
+
+<Question id="sm-advanced-3">
+<Ask>إيه الفرق بين الـ request id، و`CancelableOperation` من غير `onCancel`، و`CancelableOperation` مع `onCancel: scope.cancel`؟</Ask>
+<Answer>
+
+الـ request id بيرمي النتيجة لما توصل، والشغل بيكمّل. الـ `CancelableOperation` لوحده بيخلي الـ Cubit يبطّل يستنى في لحظة الإلغاء (`valueOrCancellation()` بيرجّع null)، بس الطلب برضه بيكمّل. مع `onCancel: scope.cancel` الإلغاء بيوصل للـ data layer اللي بيحوّل الـ `CancelScope` لـ `CancelToken`، فالطلب نفسه بيتقفل، والـ Cubit لسه مايعرفش dio.
+
+</Answer>
+</Question>
+
+<Question id="sm-advanced-4">
+<Ask>المستخدم داس «ثبّت» و«فك» و«ثبّت» على نفس الملاحظة في ثانية، والـ rollback الساذج بيرجّع `!pinned` لو الطلب فشل. إيه اللي بيبوظ، وإيه الحل؟</Ask>
+<Answer>
+
+3 طلبات بتتسابق ومفيش ضمان لترتيب وصولها للسيرفر، والـ rollback بيرجع لعكس الضغطة مش للقيمة اللي على السيرفر، فالشاشة والسيرفر ممكن يختلفوا. الحل: الشاشة بتتغير مع كل ضغطة، والشبكة نمط latest لكل ملاحظة (طلب واحد شغال، والقيمة المطلوبة في map)، والـ rollback لآخر قيمة السيرفر أكدها، ومعاه SnackBar بالـ `failureId`.
+
+</Answer>
+</Question>
+
+<Question id="sm-advanced-5">
+<Ask>ليه `getIt<LibraryCubit>()` جوه الـ `CatalogCubit` عشان يعرف الكتب اللي في المكتبة bug حتى لو الكود اشتغل من غير errors؟</Ask>
+<Answer>
+
+الـ Cubits متسجّلة `factory`، فـ get_it بيرجّع نسخة جديدة مش اللي على شاشة المكتبة، ومحدش نادى `load()` عليها، فالـ state بتاعتها مش هتتغير والعلامة مش هتظهر. وحتى لو جت النسخة الصح، الـ CatalogCubit هيبقى مربوط بعمر شاشة تانية، والـ presentation بقت معتمدة على presentation. الحل إن الاتنين يسمعوا على `watchLibrary()` من الـ repository.
+
+</Answer>
+</Question>
+
+</Quiz>

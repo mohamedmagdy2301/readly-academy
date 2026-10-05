@@ -1,0 +1,854 @@
+---
+title: "أنواع الـ Cubit (1): من البسيط للشائع"
+description: "خمس أنواع Cubit هتقابلهم في كل app: قيمة واحدة، واختيار، وتحميل مرة، وعملية واحدة، وفورم. لكل نوع إمتى تستخدمه، وشكل الـ state، والكود كامل، والـ UI، والغلطات اللي بتتكرر معاه."
+minutes: 45
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="أجهزة البيت">
+
+كل الأجهزة في البيت شغالة بنفس الكهربا، بس كل جهاز ليه شكل وطريقة. <b>مفتاح النور</b> بيفتكر حاجة واحدة: مفتوح ولا مقفول. <b>قايمة المشتريات</b> اللي بتعلّم عليها بالقلم: مجموعة حاجات اخترتها، تعلّم على واحدة وتشيل العلامة من التانية. <b>عداد الكهربا</b> لما تطلب قرايته: بتستنى شوية، وبعدين يا رقم يا «العداد مش باين». <b>زرار الأسانسير</b>: تدوسه فينوّر، وتدوسه تاني وهو منوّر مايحصلش حاجة، ولما الأسانسير يوصل يطفي. و<b>الاستمارة</b>: خانات بتملاها، وحد بيراجعها، وفي الآخر بتتقدم مرة واحدة.
+
+محدش بيصمم مفتاح النور زي الاستمارة. ولما بتعرف الجهاز من نوعه، بتعرف على طول هو بيعمل إيه، وبيبوظ إزاي.
+
+</Analogy>
+
+الـ Cubits نفس الحكاية. كلهم `Cubit<S>` من نفس الـ package، ومفيش class في bloc اسمها `SelectionCubit` ولا `FormCubit`. «النوع» هو <b>شكل الـ state + شكل الـ methods + الغلطات اللي بتتكرر معاه</b>. ولما تعرف انت بتكتب أنهي نوع، نص الشغل بيخلص: شكل الـ state اتقرر في درس «تصميم الـ State»، والفخاخ عارفها قبل ما تقع فيها.
+
+<Diagram name="d-sm-cubit-types">
+
+الخمس أنواع اللي في الدرس ده، من أبسط واحد (قيمة واحدة من غير async ولا فشل) لأكتر واحد شائع في الشاشات (فورم فيه حقول وتحقق وإرسال). والأنواع اللي بتسمع على stream أو بتعيش طول عمر الـ app في الدرس الجاي.
+
+</Diagram>
+
+وعشان تعرف النوع، اسأل سؤال واحد: <b>الشاشة دي محتاجة تفتكر إيه؟</b>
+
+| الشاشة محتاجة تفتكر | النوع | مثال في Readly |
+| --- | --- | --- |
+| قيمة واحدة المستخدم اختارها | Value | عرض المكتبة ليست ولا grid، فلتر الحالة |
+| مجموعة عناصر متعلّم عليها | Selection | الكتب اللي اختارها عشان يمسحها مرة واحدة |
+| بيانات جاية من بره مرة واحدة | Load | صفحة كتاب من الكتالوج |
+| عملية المستخدم طلبها: ماشية، نجحت، فشلت | Action | «امسح الكتب المختارة» |
+| اللي المستخدم بيكتبه، وصح ولا لأ، وإرساله | Form | إضافة ملاحظة على كتاب |
+| بيانات بتتغير لوحدها، بحث، صفحات، حاجة للـ app كله | في «أنواع الـ Cubit (2): المتقدم» | المكتبة بـ `watchLibrary()`، الكتالوج، الـ AuthCubit |
+
+ولكل نوع هنمشي بنفس الترتيب: <b>إمتى</b>، و<b>شكل الـ state</b>، و<b>الكود كامل</b>، و<b>الـ UI</b>، و<b>الغلطات</b>.
+
+</Level>
+
+<Level n="2" title="الأنواع الأساسية: Value وSelection وLoad">
+
+### النوع 1: Value Cubit (قيمة واحدة)
+
+<b>إمتى:</b> الـ state قيمة واحدة بسيطة، بتتغير على طول (sync)، ومفيش حاجة ممكن تفشل. وفي نفس الوقت محتاجها أكتر من widget بعيدين عن بعض، أو ليها قواعد تستاهل تتختبر.
+
+في Readly: زرار في الـ AppBar بيبدّل المكتبة بين ليست وgrid، والليست نفسها تحت محتاجة تعرف. والـ chips اللي فوق المكتبة بتفلتر بالحالة (بقرا، خلصت، عايز أقرا)، والليست والعدّاد محتاجين يعرفوا الفلتر.
+
+<b>شكل الـ state:</b> القيمة نفسها. enum، أو bool، أو enum nullable لو «ولا حاجة» اختيار. من غير class ولا Equatable: الـ enum والـ bool بيتقارنوا بالقيمة لوحدهم.
+
+<CodeBlock label="features/library/presentation/view_mode_cubit.dart">
+
+```dart
+enum LibraryViewMode { list, grid }
+
+class ViewModeCubit extends Cubit<LibraryViewMode> {
+  ViewModeCubit() : super(LibraryViewMode.list);
+
+  void toggle() => emit(switch (state) {
+        LibraryViewMode.list => LibraryViewMode.grid,
+        LibraryViewMode.grid => LibraryViewMode.list,
+      });
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="features/library/presentation/library_filter_cubit.dart">
+
+```dart
+class LibraryFilterCubit extends Cubit<BookStatus?> {
+  LibraryFilterCubit() : super(null); // null: every status
+
+  // tapping the selected chip again clears the filter
+  void select(BookStatus status) => emit(state == status ? null : status);
+
+  void clear() => emit(null);
+}
+```
+
+</CodeBlock>
+
+- <b>الـ switch على الـ enum:</b> exhaustive. لو زوّدت `LibraryViewMode.compact` بكرة، الـ `toggle` مش هيعمل compile لحد ما تقرر يروح فين.
+- <b>الـ `select` فيها قاعدة:</b> «الضغطة التانية على نفس الـ chip بتشيل الفلتر». القاعدة دي مكتوبة مرة في الـ Cubit، وبتتختبر بـ `blocTest` من غير widget.
+- <b>الـ methods بتقول المستخدم عمل إيه:</b> `toggle` و`select`، مش `setMode(mode)`. الـ setter العام بيخلي أي حد يعمل emit لأي قيمة، والقاعدة تتنقل للـ UI.
+
+<CodeBlock label="الـ UI: الزرار والـ chips">
+
+```dart
+// AppBar action
+BlocBuilder<ViewModeCubit, LibraryViewMode>(
+  builder: (context, mode) => IconButton(
+    onPressed: context.read<ViewModeCubit>().toggle,
+    tooltip: mode == LibraryViewMode.list ? l10n.showAsGrid : l10n.showAsList,
+    icon: Icon(mode == LibraryViewMode.list ? Icons.grid_view : Icons.view_list),
+  ),
+)
+
+// filter chips above the list
+BlocBuilder<LibraryFilterCubit, BookStatus?>(
+  builder: (context, selected) => Wrap(
+    spacing: 8,
+    children: [
+      for (final status in BookStatus.values)
+        FilterChip(
+          label: Text(status.label(l10n)),
+          selected: selected == status,
+          onSelected: (_) => context.read<LibraryFilterCubit>().select(status),
+        ),
+    ],
+  ),
+)
+```
+
+</CodeBlock>
+
+الـ `status.label(l10n)` extension في الـ presentation، زي `color` اللي عملناه على `BookStatus` في درس الطبقات في الوحدة 1.
+
+### مين بيفلتر الليست؟
+
+الفلتر في Cubit، والكتب في `LibraryCubit`. حد لازم يجمعهم. وهنا قرار حقيقي، ومش ليه إجابة واحدة:
+
+<CodeBlock label="اختيار 1: الـ UI بتجمع الاتنين">
+
+```dart
+LibraryLoaded(:final books) => Builder(
+    builder: (context) {
+      final filter = context.watch<LibraryFilterCubit>().state;
+      final mode = context.watch<ViewModeCubit>().state;
+      final visible =
+          filter == null ? books : [for (final b in books) if (b.status == filter) b];
+      return switch (mode) {
+        LibraryViewMode.list => BookList(books: visible),
+        LibraryViewMode.grid => BookGrid(books: visible),
+      };
+    },
+  ),
+```
+
+</CodeBlock>
+
+<CodeBlock label="اختيار 2: الفلتر parameter للـ Cubit اللي بيجيب البيانات">
+
+```dart
+// the page wires them: neither Cubit knows the other
+BlocListener<LibraryFilterCubit, BookStatus?>(
+  listener: (context, status) => context.read<LibraryCubit>().watch(status: status),
+  child: const LibraryBody(),
+)
+```
+
+</CodeBlock>
+
+- <b>الاختيار 1</b> مناسب لما الفلتر عرض بس، على بيانات موجودة كلها في الميموري. الـ `Builder` بيحصر الـ `context.watch` في الجزء ده بس، فلما الفلتر يتغير بيتبني الجزء ده مش الشاشة كلها (التفاصيل في درس «flutter_bloc بالتفصيل»).
+- <b>الاختيار 2</b> لما الفلتر بيغيّر <b>إيه اللي بيتجاب</b>: `WatchLibraryParams(status:)` من درس الـ Domain، أو query للسيرفر. الفلتر لسه Value Cubit، والـ `LibraryCubit` بياخده parameter في `watch(status:)`، والشاشة هي اللي بتوصّل الاتنين. إزاي الـ `watch` بيلغي الاشتراك القديم ويفتح الجديد، ده أول حاجة في «أنواع الـ Cubit (2)».
+
+القاعدة: لو تغيير القيمة بيبدأ شغل async، الـ Cubit اللي بيعمل الشغل ده بياخدها parameter، والـ UI بتوصّل بـ `BlocListener`. ولو بيغيّر العرض بس، الـ UI بتحسب من الاتنين. وفي الحالتين الـ Value Cubit مايعرفش مين بيستخدمه. والمكتبة في Readly ماشية على الاختيار 2، لأن الفلترة بتحصل في `WatchLibrary` جوه الـ domain، وطريقة العرض (ليست ولا grid) ماشية على الاختيار 1.
+
+<b>الغلطات:</b>
+
+- <b>Value Cubit لـ state ephemeral:</b> «اعرض الباسورد» في حقل واحد، أو كارت بيتفتح ويتقفل. محدش تاني محتاجها، ومش لازم تعيش بعد الـ widget. ده `setState`، زي ما شفنا في درس «الـ State من الصفر». الـ Cubit هنا class وprovider وتست على الفاضي.
+- <b>القيمة لازم تتحفظ:</b> المستخدم اختار grid، قفل الـ app وفتحه، رجع ليست. لو القيمة تفضيل لازم يفضل، الـ Cubit ده نفسه يبقى `HydratedCubit` (درس «Cubit بيفتكر ويرجع: HydratedCubit وReplayCubit»).
+- <b>الـ «value» بقت ليست أو map:</b> يبقى مابقاش value. اقرا الكلام عن الـ equality في درس «تصميم الـ State»، أو اتنقل للنوع اللي جاي.
+
+### النوع 2: Selection Cubit (اختيار)
+
+<b>إمتى:</b> المستخدم بيعلّم على مجموعة عناصر عشان يعمل عليهم حاجة مرة واحدة.
+
+في Readly: ضغطة طويلة على كتاب في المكتبة بتدخل «وضع الاختيار». كل ضغطة بعدها بتعلّم أو تشيل العلامة. الـ AppBar بيعرض «3 متختارين» وزرار مسح. ولما الاختيار يفضى، الشاشة ترجع لطبيعتها.
+
+<b>شكل الـ state:</b> `Set<BookId>`. و«وضع الاختيار» مش حقل لوحده: هو `isNotEmpty`، قيمة مشتقة.
+
+- <b>Set مش List:</b> مفيش تكرار، والـ `contains` سريع، والترتيب مالوش معنى.
+- <b>BookId مش Book:</b> الكتاب نفسه بيتغير. لو المستخدم علّم كتاب متختار إنه «خلصته»، الـ `Book` اللي في الـ Set بقى نسخة قديمة، والـ `==` بتاعه بيقارن كل الحقول، فـ `contains` على النسخة الجديدة هيقول لأ. الـ id مابيتغيرش.
+
+<CodeBlock label="features/library/presentation/book_selection_cubit.dart">
+
+```dart
+class BookSelectionCubit extends Cubit<Set<BookId>> {
+  BookSelectionCubit() : super(const <BookId>{});
+
+  void toggle(BookId id) =>
+      emit(state.contains(id) ? state.difference({id}) : {...state, id});
+
+  void selectAll(Iterable<BookId> ids) => emit(ids.toSet());
+
+  void clear() {
+    if (state.isNotEmpty) emit(const <BookId>{}); // already empty: nothing to rebuild
+  }
+
+  // drop books that are gone (removed here, or on another device and synced)
+  void retainOnly(Set<BookId> existing) {
+    final kept = state.intersection(existing);
+    if (kept.length != state.length) emit(kept);
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>كل method بتعمل Set جديدة:</b> `difference` و`intersection` و`{...state, id}` كلهم بيرجّعوا Set جديدة. لو كتبت `state.add(id); emit(state)`، الـ emit هيتجاهل زي ما شفنا في درس «تصميم الـ State».
+- <b>الـ `==` بتاع الـ Set بالـ identity:</b> كل Set جديدة «مختلفة» حتى لو نفس العناصر. عشان كده `clear` و`retainOnly` بيشيّكوا الأول إن في تغيير حقيقي، بدل ما يعملوا emit يرسم الشاشة على الفاضي.
+- <b>الـ `retainOnly`:</b> الكتاب اتمسح من المكتبة (من جهاز تاني، والـ sync جابه)، والـ id بتاعه لسه متختار. من غيرها، «3 متختارين» وعلى الشاشة اتنين بس.
+
+<CodeBlock label="الـ UI: كل كتاب بيسمع على نفسه بس">
+
+```dart
+// one tile: rebuilds only when *its* selection changes
+BlocSelector<BookSelectionCubit, Set<BookId>, bool>(
+  selector: (selected) => selected.contains(book.id),
+  builder: (context, isSelected) => BookTile(
+    book: book,
+    selected: isSelected,
+    onLongPress: () => context.read<BookSelectionCubit>().toggle(book.id),
+    onTap: () {
+      final selection = context.read<BookSelectionCubit>();
+      if (selection.state.isNotEmpty) {
+        selection.toggle(book.id); // selection mode: tap selects
+      } else {
+        context.push('/library/books/${book.id.value}');
+      }
+    },
+  ),
+)
+
+// AppBar title
+AppBar(
+  title: BlocSelector<BookSelectionCubit, Set<BookId>, int>(
+    selector: (selected) => selected.length,
+    builder: (context, count) =>
+        Text(count == 0 ? l10n.libraryTitle : l10n.selectedCount(count)),
+  ),
+)
+
+// back button leaves selection mode instead of leaving the screen
+BlocSelector<BookSelectionCubit, Set<BookId>, bool>(
+  selector: (selected) => selected.isNotEmpty,
+  builder: (context, selecting) => PopScope(
+    canPop: !selecting,
+    onPopInvokedWithResult: (didPop, _) {
+      if (!didPop) context.read<BookSelectionCubit>().clear();
+    },
+    child: child, // the rest of the library screen
+  ),
+)
+```
+
+</CodeBlock>
+
+- <b>الـ `BlocSelector` لكل كتاب:</b> لو لفّيت الليست كلها في `BlocBuilder<BookSelectionCubit, ...>`، كل ضغطة بتبني 200 كتاب. الـ selector بيطلّع `bool` لكل كتاب، والكتاب بيتبني تاني بس لما الـ bool بتاعه يتغير. يعني ضغطة واحدة = كتاب واحد بيتبني.
+- <b>الـ `PopScope`:</b> في وضع الاختيار، زرار الرجوع في Android المتوقع منه إنه يلغي الاختيار، مش يقفل الشاشة. الـ `canPop: false` بيمنع الرجوع، والـ callback بيمسح الاختيار.
+
+ومين بيمسح الكتب المختارة؟ مش الـ `BookSelectionCubit`. هو بيفتكر الاختيار وبس. المسح عملية ليها loading وفشل ونجاح، وده النوع الرابع في الـ Level الجاي.
+
+<b>الغلطات:</b>
+
+- <b>الـ Selection عايش أطول من الشاشة:</b> لو اتعمل فوق في الـ app، المستخدم يرجع للمكتبة بعد ساعة يلاقي 3 كتب لسه متختارين. مكانه الـ `BlocProvider` بتاع شاشة المكتبة، فيموت معاها.
+- <b>Set من objects مش ids:</b> اتشرحت فوق. نفس المشكلة بتظهر مع أي حاجة بتتحدث من stream.
+- <b>الـ Selection جوه الـ `LibraryCubit`:</b> ممكن، بس الـ LibraryCubit مسؤول عن البيانات، والاختيار حالة عرض. لو دمجتهم، كل ضغطة على كتاب بتعمل emit لـ `LibraryLoaded` جديدة، وكل `BlocBuilder` على المكتبة بيتبني، والـ copyWith بيكبر بحقل nullable تاني. وأي شاشة تانية بتستخدم نفس الـ Cubit هتشيل اختيار مالهاش دعوة بيه.
+
+### النوع 3: Load Cubit (تحميل مرة)
+
+<b>إمتى:</b> الشاشة بتفتح، بتجيب حاجة مرة واحدة من بره، وبتعرضها. والبيانات مش هتتغير وهي مفتوحة، أو عادي إنها تبقى صورة من لحظة الفتح.
+
+في Readly: صفحة كتاب من الكتالوج (`BookDetailsCubit` من أول feature في الوحدة 1)، صفحة كاتب. البيانات من Open Library، ومش هتتغير وانت بتقرا الصفحة.
+
+ولو البيانات ممكن تتغير وانت فاتح الشاشة؟ زي كتاب في مكتبتك، والمستخدم غيّر حالته من شاشة تانية أو الـ sync جاب تعديل من جهاز تاني. ده مش Load، ده Cubit بيسمع على stream من الـ repository، وده أول نوع في «أنواع الـ Cubit (2)».
+
+<b>شكل الـ state:</b> sealed: Loading وLoaded وError. أول سطر في جدول درس «تصميم الـ State»: كل مرحلة بيانات مختلفة، ومفيش حاجة لازم تفضل بينهم.
+
+<CodeBlock label="features/catalog/presentation/book_details_cubit.dart">
+
+```dart
+class BookDetailsCubit extends Cubit<BookDetailsState> {
+  BookDetailsCubit(this._getBookDetails) : super(const BookDetailsLoading());
+
+  final GetBookDetails _getBookDetails;
+  BookId? _id;
+
+  Future<void> load(BookId id) async {
+    _id = id;
+    emit(const BookDetailsLoading());
+    final result = await _getBookDetails(id);
+    if (isClosed || id != _id) return; // closed, or a newer load started
+    emit(switch (result) {
+      Success(:final value) => BookDetailsLoaded(value),
+      Err(:final failure) => BookDetailsError(failure),
+    });
+  }
+
+  Future<void> retry() async {
+    if (_id case final id?) await load(id);
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ initial state هي `BookDetailsLoading`:</b> لأن الـ load بيتنادى أول ما الـ Cubit يتعمل. لو بدأت بـ `BookDetailsInitial`، هتبقى عندك حالة زيادة لازم كل switch في الـ UI يعرضها، ومالهاش معنى لأن الـ load بيعمل emit لـ Loading في نفس اللحظة. الـ Initial بتتعمل بس لو الـ Cubit بيستنى حاجة قبل ما يحمّل، زي tab مابيحمّلش غير لما المستخدم يفتحه.
+- <b>الـ `id != _id`:</b> على التابلت، الكتالوج على الشمال والتفاصيل على اليمين. المستخدم داس كتاب A وبعده B بسرعة، ورد A البطيء رجع بعد B. من غير الشرط ده، صفحة B هتعرض بيانات A. ده نفس فكرة الـ request id في `CatalogSearchCubit` في درس الـ Cubit في الوحدة 5، بس الـ id هنا هو الكتاب نفسه.
+- <b>الـ `retry`:</b> الـ UI مش محتاجة تفتكر الـ id عشان تعيد. والـ `canRetry` من درس الأخطاء في الوحدة 2 بيقرر الزرار يظهر أصلًا ولا لأ.
+
+<CodeBlock label="الـ route والـ UI">
+
+```dart
+// the route builds the Cubit and starts the load, like the first feature in unit 1
+BlocProvider(
+  create: (_) => getIt<BookDetailsCubit>()..load(id),
+  child: const BookDetailsPage(),
+)
+
+// BookDetailsPage
+BlocBuilder<BookDetailsCubit, BookDetailsState>(
+  builder: (context, state) => switch (state) {
+    BookDetailsLoading() => const LoadingView(),
+    BookDetailsLoaded(:final book) => BookDetailsView(book: book),
+    BookDetailsError(:final failure) => ErrorView(
+        message: failure.localized(l10n),
+        onRetry: failure.canRetry ? context.read<BookDetailsCubit>().retry : null,
+      ),
+  },
+)
+```
+
+</CodeBlock>
+
+<b>الغلطات:</b>
+
+- <b>الـ load في الـ build:</b> `context.read<BookDetailsCubit>().load(id)` جوه `build` بيتنادى مع كل rebuild، يعني طلب جديد كل ما الكيبورد يفتح. مكانه `create` في الـ BlocProvider، اللي بيتنادى مرة واحدة.
+- <b>الـ load في الـ constructor:</b> شكله أنضف، بس الـ Cubit بقى بيعمل طلب أول ما يتعمل، حتى في التست قبل ما تجهّز الـ mock. ومش هيعرف الـ id من غير ما تبعته في الـ constructor. ده واحد من الـ anti-patterns في درس «الـ State management في مشروع حقيقي».
+- <b>نسيان `isClosed`:</b> المستخدم فتح الكتاب ورجع على طول، والرد وصل بعد ما الـ Cubit اتقفل. الـ emit بيرمي `StateError` (درس «أول Cubit سطر بسطر»).
+- <b>الـ retry بيمسح الرسالة:</b> `load` أول حاجة بتعمل emit لـ Loading، فالرسالة بتختفي وspinner في نص الشاشة، ولو فشل تاني ترجع. الشاشة بترمش. الحل `retrying` جوه `BookDetailsError`، زي `LibraryError` في درس «الأخطاء في الشاشة» في الوحدة 9.
+
+</Level>
+
+<Level n="3" title="الأنواع الشائعة: Action وForm، وشاشة فيها كل ده">
+
+### النوع 4: Action Cubit (عملية واحدة)
+
+<b>إمتى:</b> المستخدم طلب عملية: حفظ، مسح، إضافة، تسجيل خروج. العملية ليها feedback لوحدها: زرار بيلف، وsnackbar لما تنجح أو تفشل، وشيت بيتقفل. والبيانات اللي على الشاشة مش مسؤولية الـ Cubit ده. هو بيتابع <b>العملية</b> وبس.
+
+في Readly: «امسح الكتب المختارة» في وضع الاختيار. والـ `AddBookCubit` اللي في درس الـ Cubit في الوحدة 5 (`AddBookSaving` و`AddBookSaved` و`AddBookError`) هو نفس النوع ده بالظبط، بشكل sealed.
+
+<b>شكل الـ state:</b> status من 4 قيم، والـ failure، ونتيجة العملية لو الـ UI محتاجاها:
+
+<CodeBlock label="core/presentation/action_status.dart">
+
+```dart
+enum ActionStatus { idle, inProgress, success, failure }
+```
+
+</CodeBlock>
+
+<CodeBlock label="features/library/presentation/remove_books_cubit.dart">
+
+```dart
+final class RemoveBooksState extends Equatable {
+  const RemoveBooksState({this.status = ActionStatus.idle, this.removed = 0, this.failure});
+
+  final ActionStatus status;
+  final int removed;      // for "3 books removed"
+  final Failure? failure; // only with ActionStatus.failure
+
+  bool get inProgress => status == ActionStatus.inProgress;
+
+  @override
+  List<Object?> get props => [status, removed, failure];
+}
+
+class RemoveBooksCubit extends Cubit<RemoveBooksState> {
+  RemoveBooksCubit(this._removeBooks) : super(const RemoveBooksState());
+
+  final RemoveBooksFromLibrary _removeBooks;
+
+  Future<void> remove(Set<BookId> ids) async {
+    if (state.inProgress || ids.isEmpty) return; // double tap, or nothing selected
+    emit(const RemoveBooksState(status: ActionStatus.inProgress));
+    final result = await _removeBooks(ids);
+    if (isClosed) return;
+    emit(switch (result) {
+      Success() => RemoveBooksState(status: ActionStatus.success, removed: ids.length),
+      Err(:final failure) => RemoveBooksState(status: ActionStatus.failure, failure: failure),
+    });
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ enum مشترك، الـ Cubit لأ:</b> `ActionStatus` enum صغير في `core/presentation`، وكل action Cubit بيستخدمه. ده مش base class: كل Cubit ليه state بتاعته وmethod بتاعته. ليه الـ base classes الـ generic بتأذي أكتر ما بتفيد، ده في «أنواع الـ Cubit (2)».
+- <b>كل خطوة state جديدة من الأول:</b> مش `copyWith`. كده مفيش failure قديم بيفضل لازق في state النجاح، ومفيش `removed` قديم في state الفشل.
+- <b>الـ `RemoveBooksFromLibrary`:</b> use case زي `RemoveBookFromLibrary` في درس الـ Domain، بس بياخد Set وبيرجّع نتيجة واحدة للعملية كلها. زي ما قلنا في درس «الأخطاء في الشاشة»: رسالة واحدة لكل حاجة عملها المستخدم، مش 3 Failures لـ 3 كتب.
+- <b>الكتب بتختفي لوحدها:</b> الـ Cubit ده مابيقولش للـ `LibraryCubit` حاجة. الـ use case مسح من الـ repository، والـ `watchLibrary()` طلّع ليست جديدة من غير الكتب دي، والمكتبة اتحدثت.
+
+### ليه سطر `inProgress` بيمنع الضغطتين
+
+<Diagram name="d-sm-action-timeline">
+
+الضغطة الأولى عملت emit لـ inProgress قبل ما توصل لأول await، فالـ state اتغيرت على طول. الضغطة التانية بعد 80ms لقتها inProgress فرجعت من أول سطر، والـ use case اتنادى مرة واحدة.
+
+</Diagram>
+
+الـ `remove` async، بس الكود اللي قبل أول `await` بيتنفذ على طول، في نفس اللحظة. والـ `emit` نفسه sync: أول ما بيتنادى، `state` بقت الجديدة. فالضغطة التانية، حتى لو في نفس الـ frame، بتقرا `state` وتلاقيها `inProgress`.
+
+في درس الـ Cubit في الوحدة 5 عملنا نفس الحماية بـ flag (`_saving`). الفرق إن الـ flag مستخبي جوه الـ Cubit، والـ status في الـ state: نفس السطر اللي بيمنع الضغطة التانية هو اللي بيقفل الزرار ويلفّه في الـ UI. مصدر واحد للحقيقة.
+
+<CodeBlock label="الـ UI: الزرار والـ feedback">
+
+```dart
+// the delete button in the selection AppBar
+BlocSelector<RemoveBooksCubit, RemoveBooksState, bool>(
+  selector: (state) => state.inProgress,
+  builder: (context, busy) => IconButton(
+    tooltip: l10n.removeSelected,
+    onPressed: busy
+        ? null
+        : () => context.read<RemoveBooksCubit>().remove(context.read<BookSelectionCubit>().state),
+    icon: busy
+        ? const SizedBox.square(
+            dimension: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        : const Icon(Icons.delete_outline),
+  ),
+)
+
+// one-shot feedback: once per transition
+BlocListener<RemoveBooksCubit, RemoveBooksState>(
+  listenWhen: (prev, curr) => prev.status != curr.status,
+  listener: (context, state) {
+    switch (state.status) {
+      case ActionStatus.success:
+        context.read<BookSelectionCubit>().clear();
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(l10n.booksRemoved(state.removed))));
+      case ActionStatus.failure:
+        context.showFailure(state.failure!); // from the errors UI lesson
+      case ActionStatus.idle || ActionStatus.inProgress:
+        break;
+    }
+  },
+  child: const LibraryView(),
+)
+```
+
+</CodeBlock>
+
+- <b>الـ `listenWhen` على تغيير الـ status:</b> كل محاولة بتبدأ بـ `inProgress`، فالفشل التاني ورا الأول بيبقى transition جديد (`inProgress` ثم `failure`)، والـ listener بيشتغل كل مرة. مش محتاج `failureId` زي `NotesState` في درس «الأخطاء في الشاشة»، اللي الفشل فيه كان حقل جوه state البيانات.
+- <b>الـ `clear()` من الـ listener:</b> الـ UI هي اللي بتوصّل الـ Cubitين ببعض: «لما المسح ينجح، امسح الاختيار». ولا واحد فيهم يعرف التاني.
+- <b>الـ switch statement:</b> exhaustive على الـ enum برضه، والـ `idle || inProgress` بيقول صراحة «دول مالهمش feedback»، بدل `default` يبلع أي status جديد.
+
+<b>الغلطات:</b>
+
+- <b>method بترجّع نتيجة للـ UI:</b> `Future<bool> remove()` والـ UI بتعمل `if (await cubit.remove(ids)) ...`. كده في طريقين للحقيقة: الـ state والقيمة الراجعة. والـ widget ممكن يكون اتشال وانت مستني، فالـ `context` بعد الـ await خطر. الـ methods ترجّع `void` أو `Future<void>`، والـ UI بتتفاعل مع الـ state من الـ listener. و`prefer_void_public_cubit_methods` في bloc_lint بيمسك ده.
+- <b>المستخدم قفل الشاشة والعملية شغالة:</b> الكتابة مابتتلغيش مع الشاشة (درس «طلبات متقدمة» في الوحدة 9)، والـ `isClosed` بيمنع الـ emit بس. والنتيجة هتبان على أي حال لأن الكتب هتختفي من المكتبة. لو الـ feedback لازم يوصل حتى بعد ما الشاشة تتقفل، العملية محتاجة صاحب عايش أطول من الشاشة، وده في «أنواع الـ Cubit (2)».
+- <b>الـ success بيفضل:</b> بعد النجاح الـ status فاضل `success`. ده مش مشكلة هنا، لأن المحاولة الجاية بتبدأ بـ `inProgress` على طول. لو الـ UI بتعرض «اتمسح ✓» على طول ومحتاجة ترجع، زوّد `reset()` بيعمل emit لـ `idle`.
+
+### الـ action جوه الـ Cubit بتاع البيانات، ولا لوحده؟
+
+مش كل action محتاج Cubit لوحده. في درس «رحلة request واحدة» في الوحدة 4، `actionFailure` كان حقل جوه `LibraryLoaded`، والـ optimistic delete في درس «طلبات متقدمة» كان جوه الـ Cubit اللي ماسك الليستة.
+
+| الـ action جوه الـ Cubit بتاع البيانات | Action Cubit لوحده |
+| --- | --- |
+| الـ action بيغيّر نفس البيانات اللي على الشاشة، ومحتاج optimistic update وrollback | الـ action ليه UI لوحده: زرار بيلف، شيت، dialog |
+| الشاشة فيها action أو اتنين بسيطين | نفس الـ action في أكتر من شاشة: «أضف لمكتبتي» في الكتالوج وفي صفحة الكتاب |
+| الـ feedback جزء من عرض البيانات (banner فوق الليستة) | الـ Cubit بتاع البيانات عايش أطول من الشاشة، أو مشترك بين شاشتين |
+
+والسؤال اللي بيفرق بين الـ optimistic والـ pessimistic: «لو فشلت، المستخدم هيتضايق قد إيه إن الحاجة رجعت؟». تغيير حالة كتاب: optimistic، سريع ويرجع بسهولة. مسح 10 كتب ومعاهم ملاحظاتهم: pessimistic، استنى السيرفر، واعرض spinner.
+
+### النوع 5: Form Cubit (فورم)
+
+<b>إمتى:</b> المستخدم بيكتب أكتر من حقل، والحقول ليها قواعد، وفي الآخر في submit.
+
+درس الـ Forms في الوحدة 5 شرح الفورم بالتفصيل على `LoginCubit`: إمتى الخطأ يظهر (`touched` و`submitAttempted`)، وأخطاء السيرفر على الحقل، والـ `TextEditingController`. هنا هنشوف الفورم كنوع: الشكل اللي بيتكرر، على مثال جديد: <b>إضافة ملاحظة على كتاب</b>، فيها النص ورقم الصفحة (اختياري).
+
+<b>شكل الـ state:</b> class واحدة + status + copyWith (تالت سطر في جدول درس «تصميم الـ State»). فيها 4 حاجات:
+
+1. <b>المدخلات زي ما اتكتبت:</b> `String`، حتى رقم الصفحة.
+2. <b>حالة الإرسال:</b> `FormStatus` من درس الـ Forms.
+3. <b>إمتى الأخطاء تظهر:</b> `submitAttempted`.
+4. <b>أخطاء السيرفر:</b> `fieldErrors` من درس «من الـ Exception للـ Failure» في الوحدة 9، و`failure` لأي حاجة مش على حقل.
+
+والتحقق نفسه مش حقول، دي <b>getters</b> بتسأل الـ domain.
+
+<CodeBlock label="features/notes/presentation/note_form_state.dart">
+
+```dart
+final class NoteFormState extends Equatable {
+  const NoteFormState({
+    this.text = '',
+    this.page = '',
+    this.submitAttempted = false,
+    this.status = FormStatus.editing,
+    this.fieldErrors = const {},
+    this.failure,
+  });
+
+  final String text;  // raw, as typed
+  final String page;  // raw: "12a" is a real thing to be typing
+  final bool submitAttempted;
+  final FormStatus status;
+  final Map<String, String> fieldErrors; // from the server: 'text' -> 'too_long'
+  final Failure? failure;                // anything not about a field
+
+  // validation: the domain decides, the state asks
+  Result<NoteText> get textResult => NoteText.create(text);
+  int? get pageNumber => int.tryParse(page.trim());
+  bool get pageValid => page.trim().isEmpty || (pageNumber ?? 0) > 0;
+  bool get isDirty => text.isNotEmpty || page.isNotEmpty;
+
+  NoteFormState copyWith({
+    String? text,
+    String? page,
+    bool? submitAttempted,
+    FormStatus? status,
+    Map<String, String>? fieldErrors,
+    Failure? failure,
+  }) =>
+      NoteFormState(
+        text: text ?? this.text,
+        page: page ?? this.page,
+        submitAttempted: submitAttempted ?? this.submitAttempted,
+        status: status ?? this.status,
+        fieldErrors: fieldErrors ?? this.fieldErrors,
+        failure: failure, // an event: cleared by the next copyWith
+      );
+
+  @override
+  List<Object?> get props => [text, page, submitAttempted, status, fieldErrors, failure];
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `NoteText.create`:</b> value object بيرجّع `Result`، زي `Email.create` في درس الـ Domain: مش فاضي، ومش أطول من 2000 حرف. ودي القاعدة اللي درس «الأخطاء في Dart من الصفر» في الوحدة 9 قال إن مكانها validation حقيقي مش `assert`.
+- <b>الصفحة `String` مش `int?`:</b> وهو بيكتب «12» ممكن يعدّي بـ «1» و«12a» لو غلط. الـ `int?` مايقدرش يفرّق بين «فاضي» و«مكتوب غلط»، الاتنين null. النص الخام بيتخزن، والرقم بيتحسب.
+- <b>الـ `failure` من غير `?? this`:</b> حدث بيعدّي، فأول copyWith بعده بيمسحه. ده أول سطر في جدول الـ copyWith في درس «تصميم الـ State».
+
+<CodeBlock label="features/notes/presentation/note_form_cubit.dart">
+
+```dart
+class NoteFormCubit extends Cubit<NoteFormState> {
+  NoteFormCubit(this._addNote) : super(const NoteFormState());
+
+  final AddNote _addNote;
+
+  void textChanged(String value) =>
+      emit(state.copyWith(text: value, fieldErrors: const {})); // the server error was about the old text
+
+  void pageChanged(String value) => emit(state.copyWith(page: value));
+
+  Future<void> submit(BookId bookId) async {
+    if (state.status == FormStatus.submitting) return;
+    emit(state.copyWith(submitAttempted: true)); // show every error now
+    if (state.textResult case Success(value: final text) when state.pageValid) {
+      emit(state.copyWith(status: FormStatus.submitting));
+      final result = await _addNote(
+        AddNoteParams(bookId: bookId, text: text, page: state.pageNumber),
+      );
+      if (isClosed) return;
+      emit(switch (result) {
+        Success() => state.copyWith(status: FormStatus.success),
+        Err(failure: ServerFailure(:final fieldErrors)) when fieldErrors.isNotEmpty =>
+          state.copyWith(status: FormStatus.editing, fieldErrors: fieldErrors),
+        Err(:final failure) => state.copyWith(status: FormStatus.failure, failure: failure),
+      });
+    }
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `if (... case ... when ...)`:</b> بيطلّع `NoteText` من الـ Result لو نجح، وبيشيّك الصفحة في نفس السطر. لو أي حاجة غلط، مفيش إرسال، والأخطاء ظاهرة عشان `submitAttempted`.
+- <b>الـ `AddNoteParams` بياخد `NoteText`:</b> مش `String`. زي `SignIn` اللي بياخد `Email` في درس الـ Forms: مستحيل توصل له ملاحظة فاضية.
+- <b>الـ 422 على الحقل:</b> السيرفر عنده نفس الحد، ولو رفض (نسخة قديمة من الـ app، أو الحد اتغير)، الخطأ بيظهر تحت حقل النص مش في snackbar. ده خط درس «من الـ Exception للـ Failure» كامل.
+- <b>الـ `bookId` بييجي مع الـ submit:</b> الشاشة عارفاه من الـ route. والـ Cubit مش محتاج يفتكره.
+
+<CodeBlock label="الـ UI">
+
+```dart
+BlocConsumer<NoteFormCubit, NoteFormState>(
+  listenWhen: (prev, curr) => prev.status != curr.status,
+  listener: (context, state) {
+    switch (state.status) {
+      case FormStatus.success:
+        context.pop();
+      case FormStatus.failure:
+        context.showFailure(state.failure!);
+      case FormStatus.editing || FormStatus.submitting:
+        break;
+    }
+  },
+  builder: (context, state) {
+    final cubit = context.read<NoteFormCubit>();
+    final submitting = state.status == FormStatus.submitting;
+    return Column(
+      children: [
+        TextField(
+          onChanged: cubit.textChanged,
+          enabled: !submitting,
+          maxLines: 6,
+          decoration: InputDecoration(
+            labelText: l10n.noteLabel,
+            errorText: state.textError(l10n),
+          ),
+        ),
+        TextField(
+          onChanged: cubit.pageChanged,
+          enabled: !submitting,
+          keyboardType: TextInputType.number,
+          decoration: InputDecoration(
+            labelText: l10n.pageLabel,
+            errorText: state.pageError(l10n),
+          ),
+        ),
+        FilledButton(
+          onPressed: submitting ? null : () => cubit.submit(bookId),
+          child: Text(l10n.save),
+        ),
+      ],
+    );
+  },
+)
+```
+
+</CodeBlock>
+
+<CodeBlock label="الترجمة: الحقل بيختار رسالته">
+
+```dart
+extension NoteFormL10n on NoteFormState {
+  String? textError(AppLocalizations l10n) {
+    if (fieldErrors['text'] == 'too_long') return l10n.errorNoteTooLong; // server first
+    if (!submitAttempted) return null;
+    return switch (textResult) {
+      Success() => null,
+      Err() => text.trim().isEmpty ? l10n.errorFieldRequired : l10n.errorNoteTooLong,
+    };
+  }
+
+  String? pageError(AppLocalizations l10n) =>
+      submitAttempted && !pageValid ? l10n.errorPageInvalid : null;
+}
+```
+
+</CodeBlock>
+
+<b>الغلطات:</b>
+
+- <b>القيم parsed في الـ state:</b> اتشرحت فوق مع الصفحة. القاعدة: الـ state بتشيل اللي المستخدم كتبه، والـ getters بتحسب المعنى.
+- <b>الـ validation في مكانين:</b> `validator:` في `TextFormField` بقاعدة، والـ Cubit بقاعدة تانية، والـ domain بتالتة. يوم الحد يتغير لـ 3000، واحد منهم هيفضل 2000. القاعدة في الـ domain، والـ state بتسأله، والـ UI بتعرض.
+- <b>الخطأ من أول حرف:</b> الملاحظة فاضية وهو لسه فاتح الشاشة، فـ «الخانة مطلوبة» تظهر قبل ما يكتب. الـ `submitAttempted` بيأجلها، والتفاصيل (`touched` لكل حقل) في درس الـ Forms.
+- <b>الـ `TextEditingController` في الـ state:</b> لأ. ده resource ليه `dispose`، ومكانه الـ widget. درس الـ Forms شرح إمتى تحتاجه وإزاي الـ Cubit يمسح حقل من غير ما يمسكه.
+- <b>الخروج وفي كلام مكتوب:</b> المستخدم كتب فقرة وداس رجوع بالغلط. الـ `isDirty` getter بيدّي الـ UI اللي تحتاجه عشان تسأل «تسيب اللي كتبته؟» قبل ما تقفل.
+- <b>فورم تعديل محتاج يحمّل الأول:</b> تعديل ملاحظة موجودة. لو الملاحظة جاية من الشاشة اللي قبلها، ابدأ الـ state منها (`text: note.text`، و`isDirty` يقارن بيها). لو لازم تتجاب من بره، ده Load + Form: sealed من بره (`Loading` و`Editing(form)` و`LoadError`)، والفورم كله جوه `Editing`. نفس فكرة الـ hybrid في درس «تصميم الـ State».
+
+### شاشة فيها أكتر من نوع
+
+شاشة المكتبة دلوقتي فيها 5 Cubits: الكتب، وطريقة العرض، والفلتر، والاختيار، والمسح. ده مش كتير، ده طبيعي. كل واحد مسؤول عن حاجة واحدة، وبيتغير لسبب واحد:
+
+<CodeBlock label="router: الـ /library route والـ LibraryPage">
+
+```dart
+GoRoute(
+  path: '/library',
+  builder: (_, __) => MultiBlocProvider(
+    providers: [
+      BlocProvider(create: (_) => getIt<LibraryCubit>()..watch()), // stream Cubit: part 2
+      BlocProvider(create: (_) => getIt<LibraryFilterCubit>()),    // Value
+      BlocProvider(create: (_) => getIt<ViewModeCubit>()),         // Value
+      BlocProvider(create: (_) => getIt<BookSelectionCubit>()),    // Selection
+      BlocProvider(create: (_) => getIt<RemoveBooksCubit>()),      // Action
+    ],
+    child: const LibraryPage(),
+  ),
+),
+
+// LibraryPage.build: the page wires the one-shot reactions
+MultiBlocListener(
+  listeners: [
+    // filter changed: watch with the new status
+    BlocListener<LibraryFilterCubit, BookStatus?>(
+      listener: (context, status) => context.read<LibraryCubit>().watch(status: status),
+    ),
+    // library changed: drop selected ids that are gone
+    BlocListener<LibraryCubit, LibraryState>(
+      listener: (context, state) {
+        if (state case LibraryLoaded(:final books)) {
+          context.read<BookSelectionCubit>().retainOnly({for (final b in books) b.id});
+        }
+      },
+    ),
+    // removal finished: clear selection, show feedback (the switch from above)
+    BlocListener<RemoveBooksCubit, RemoveBooksState>(
+      listenWhen: (prev, curr) => prev.status != curr.status,
+      listener: _onRemoveStatus,
+    ),
+  ],
+  child: const LibraryView(),
+)
+```
+
+</CodeBlock>
+
+- <b>الـ `LibraryCubit` هنا Stream Cubit:</b> بيسمع على `watchLibrary()`، فلما الكتب تتمسح بتختفي لوحدها. ده أول نوع في «أنواع الـ Cubit (2)».
+- <b>كلهم من get_it كـ factory:</b> حتى `ViewModeCubit` اللي مالوش dependencies. كل الـ Cubits بتتعمل بنفس الطريقة في المشروع، ولو بكرة `ViewModeCubit` احتاج store يحفظ فيه، الـ route مش هيتغير (درس الـ DI في الوحدة 6).
+- <b>الـ Cubits مايعرفوش بعض:</b> الـ UI هي اللي بتوصّل ردود الفعل: «الفلتر اتغير، فاسمع بالحالة الجديدة»، و«المكتبة اتغيرت، فنضّف الاختيار»، و«المسح نجح، فامسح الاختيار». والبيانات المشتركة بتعدّي من الـ repository stream. ليه مايصحش Cubit يمسك Cubit تاني، ده في درس «Cubit متقدم: الـ async والـ effects والتواصل».
+- <b>الـ `_onRemoveStatus`:</b> نفس الـ switch اللي في الـ BlocListener في جزء الـ Action فوق، في method لوحدها عشان الـ build يفضل مقروء.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>Cubit لكل سبب للتغيير:</b> اسأل «الحاجتين دول بيتغيروا مع بعض ولا كل واحدة لوحدها؟». طريقة العرض والاختيار والمسح كل واحد بيتغير لوحده، فكل واحد Cubit. والـ `isRefreshing` والكتب بيتغيروا في نفس الخطوة، فمكانهم state واحدة. الدمج غلط لما يخلي الـ state فيها حقول مالهاش علاقة ببعض، والتقسيم غلط لما يخليك توصّل Cubitين عشان يعملوا خطوة واحدة.
+- <b>الـ methods نوايا، مش setters:</b> `toggle()` و`select(status)` و`remove(ids)` و`submit(bookId)`، مش `setState(x)` و`setLoading(true)`. وبترجّع `void` أو `Future<void>`، ومفيش fields عامة. الـ `avoid_public_fields` و`prefer_void_public_cubit_methods` في `bloc_lint/recommended.yaml` بيمسكوا الاتنين (درس «الـ State management في مشروع حقيقي»).
+- <b>مش كل حاجة تستاهل Cubit:</b> لو state بيستخدمها widget واحد، ومش لازم تعيش بعده، ومفيهاش قاعدة تتختبر، يبقى `setState` أو `ValueNotifier` جوه الـ widget. الـ Cubit ليه تمن: class وprovider وتست وملف. ادفعه لما يرجع.
+- <b>الـ scope حسب النوع:</b> الـ Value والـ Selection والـ Action والـ Form غالبًا بيعيشوا مع الشاشة وبيموتوا معاها. لو قيمة لازم تفضل بعد ما الـ app يتقفل (طريقة العرض)، يبقى HydratedCubit أو store زي `SettingsStore` في درس الإعدادات في الوحدة 6. وإمتى Cubit يعيش طول عمر الـ app، في «أنواع الـ Cubit (2)».
+- <b>اعرف النوع قبل ما تكتب:</b> في الـ review، لما تشوف Cubit فيه `status` و`fieldErrors` و`books` و`selectedIds`، ده 3 أنواع في class واحدة. اسأل «ده أنهي نوع؟» وهتلاقي الإجابة «كلهم»، وده بالظبط الـ god Cubit.
+- <b>الأنواع دي أسهل حاجة تتختبر:</b> كل method بتعمل emit لـ states معروفة بترتيب معروف. `blocTest` لكل method، وواحد للضغطتين ورا بعض في الـ Action، وواحد لـ «الكتاب اتمسح وهو متختار» في الـ Selection. الطريقة كلها في درس «تست الـ Cubit» في الوحدة 8.
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي تمنع إن المستخدم يبعت الفورم أو يمسح مرتين لو داس مرتين بسرعة؟» الحماية الحقيقية في الـ Cubit مش في الزرار، لأن في أكتر من طريق للـ submit (الزرار، وDone في الكيبورد). أول سطر في الـ method: `if (state.status == inProgress) return;`، وبعده emit لـ inProgress قبل أي await. ده شغال لأن الكود اللي قبل أول await بيتنفذ على طول، والـ emit بيغيّر الـ state في نفس اللحظة، فالنداء التاني بيلاقيها inProgress. والـ status في الـ state مش flag مستخبي، فنفس القيمة بتقفل الزرار وتلفّه في الـ UI. والزرار المقفول للشكل، مش للحماية.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«عملية المسح تبقى method في الـ LibraryCubit ولا Cubit لوحدها؟» حسب الـ feedback والـ lifecycle. لو المسح محتاج optimistic update وrollback على نفس الليستة، أو الشاشة فيها action واحد بسيط، يبقى جوه الـ Cubit بتاع البيانات والفشل حقل جنب البيانات. لو العملية ليها UI لوحدها (زرار بيلف، snackbar بالعدد)، أو بتتعمل من أكتر من شاشة، أو الـ LibraryCubit عايش أطول من الشاشة ومشترك، يبقى Action Cubit لوحده بـ status من 4 قيم، والبيانات بتتحدث لوحدها من الـ repository stream. ومش بيعرفوا بعض: الـ UI بتوصّل «لما ينجح، امسح الاختيار» بـ BlocListener.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### من Cubit واحد للشاشة لـ Cubit لكل مسؤولية
+
+أول نسخة من شاشة المكتبة غالبًا بتبقى Cubit واحد اسمه على اسم الشاشة، وكل حاجة جواه:
+
+<BeforeAfter>
+<Side label="LibraryScreenCubit واحد" kind="before">
+
+```dart
+final class LibraryScreenState {
+  final List<Book> books;
+  final bool isLoading;
+  final Failure? loadFailure;
+  final LibraryViewMode viewMode;
+  final BookStatus? filter;
+  final Set<BookId> selected;
+  final bool removing;
+  final Failure? removeFailure;
+  final int removedCount;
+  // ...and a copyWith with 9 parameters
+}
+
+class LibraryScreenCubit extends Cubit<LibraryScreenState> {
+  void load() { /* ... */ }
+  void toggleViewMode() { /* ... */ }
+  void selectFilter(BookStatus s) { /* ... */ }
+  void toggleSelected(BookId id) { /* ... */ }
+  Future<void> removeSelected() { /* ... */ }
+}
+```
+
+</Side>
+<Side label="Cubit لكل نوع" kind="after">
+
+```dart
+// data: a stream Cubit (part 2)
+LibraryCubit         // LibraryState: Loading / Loaded / Error
+
+// screen-scoped, one job each
+ViewModeCubit        // LibraryViewMode
+LibraryFilterCubit   // BookStatus?
+BookSelectionCubit   // Set<BookId>
+RemoveBooksCubit     // RemoveBooksState: status + removed + failure
+
+// the page wires one-shot reactions
+MultiBlocProvider(...)
+MultiBlocListener(...)
+```
+
+</Side>
+</BeforeAfter>
+
+قبل: كل ضغطة على كتاب في وضع الاختيار بتعمل emit لـ state الشاشة كلها، فأي `BlocBuilder` على الـ Cubit ده بيتبني: الليستة والـ chips والـ AppBar. والـ copyWith بـ 9 parameters، وأي حقل nullable فيه هو فخ «مابيعرفش يمسح» من درس «تصميم الـ State». والتست بتاع «الضغطتين على مسح» محتاج يجهّز كتب وفلتر وطريقة عرض. والمكتبة مش ممكن تتشارك مع شاشة تانية من غير الاختيار والفلتر بتوعها. بعد: كل Cubit صغير، وكل نوع غلطاته معروفة، وكل تست بيجهّز اللي يخصه بس، والـ `LibraryCubit` بيعمل حاجة واحدة: يسمع على المكتبة.
+
+</LessonPart>
+
+<LessonPart title="الخلاصة: جدول الأنواع">
+
+| النوع | إمتى | شكل الـ state | الـ methods | أشهر غلطة | في Readly |
+| --- | --- | --- | --- | --- | --- |
+| Value | قيمة واحدة sync، بيستخدمها أكتر من widget أو ليها قاعدة | `Cubit<Enum>`، `Cubit<bool>`، `Cubit<T?>` | `toggle()`، `select(x)`، `clear()` | Cubit لـ state ephemeral مكانها `setState`، أو قيمة بتبدأ شغل async | `ViewModeCubit`، `LibraryFilterCubit` |
+| Selection | المستخدم بيعلّم على عناصر عشان يعمل عليهم حاجة مرة واحدة | `Cubit<Set<BookId>>` | `toggle(id)`، `selectAll`، `clear`، `retainOnly` | يعدّل الـ Set في مكانها، أو يخزّن `Book` بدل `BookId`، أو يعيش أطول من الشاشة | `BookSelectionCubit` |
+| Load | بيانات من بره مرة واحدة، ومش هتتغير والشاشة مفتوحة | sealed: Loading / Loaded / Error | `load(id)`، `retry()` | الـ load في `build` أو الـ constructor، ونسيان `isClosed`، ورد قديم يغطي على الجديد | `BookDetailsCubit` |
+| Action | عملية طلبها المستخدم وليها feedback لوحدها | `status` (idle / inProgress / success / failure) + failure + نتيجة | `remove(ids)`، `save()` | الضغط مرتين، أو method بترجّع نتيجة للـ UI | `RemoveBooksCubit`، `AddBookCubit` |
+| Form | حقول بيكتبها المستخدم، ليها قواعد، وفي الآخر submit | الحقول خام + `FormStatus` + `submitAttempted` + getters للتحقق | `xChanged(v)`، `submit()` | قيم parsed في الـ state، وvalidation في أكتر من مكان، وخطأ من أول حرف | `LoginCubit`، `NoteFormCubit` |
+
+والأنواع اللي بتظهر لما البيانات تبقى حية أو الشاشة تكبر في «أنواع الـ Cubit (2): المتقدم»: الـ Cubit اللي بيسمع على stream، والبحث، والـ pagination، والـ Cubits اللي بتعيش للـ app كله، والـ Cubit لكل عنصر في الليستة، والـ base Cubits الـ generic.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="sm-types1-1">
+<Ask>زرار «اعرض الباسورد» في شاشة الـ login. تعمله `Cubit<bool>` ولا `setState`؟ وإمتى نفس الـ bool يستاهل Cubit؟</Ask>
+<Answer>
+
+`setState`. محدش غير الحقل ده محتاجها، ومش لازم تعيش بعد الشاشة، ومفيهاش قاعدة تتختبر. الـ Value Cubit يستاهل لما القيمة بيستخدمها أكتر من widget بعيدين عن بعض (زرار العرض في الـ AppBar والليستة تحت)، أو ليها قاعدة («الضغطة التانية بتشيل الفلتر»)، أو لازم تتحفظ (HydratedCubit).
+
+</Answer>
+</Question>
+
+<Question id="sm-types1-2">
+<Ask>الـ `BookSelectionCubit` بيخزّن `Set<Book>`. المستخدم اختار كتاب، وبعدين الـ sync جاب إن حالته اتغيرت لـ «خلصته». إيه اللي هيبوظ؟</Ask>
+<Answer>
+
+الـ `Book` اللي في الـ Set بقى نسخة قديمة، والـ `==` بتاع Book بيقارن كل الحقول، فـ `contains` على النسخة الجديدة اللي في الليستة بيرجّع false. الكتاب هيبان مش متختار وهو لسه في الـ Set، والعدد هيبقى غلط، والمسح هيبعت نسخة قديمة. الحل `Set<BookId>`: الـ id مابيتغيرش، و`retainOnly` بيشيل الكتب اللي اتمسحت.
+
+</Answer>
+</Question>
+
+<Question id="sm-types1-3">
+<Ask>`remove(ids)` method async، وأول سطرين فيها `if (state.inProgress) return;` وبعدين `emit(inProgress)`. المستخدم داس مرتين في نفس الـ frame. ليه النداء التاني بيرجع، مع إن الأول لسه ماخلصش؟</Ask>
+<Answer>
+
+لأن الكود اللي قبل أول `await` في أي async function بيتنفذ على طول، والـ `emit` sync: بيغيّر `state` في نفس اللحظة. فالنداء الأول غيّر الـ state لـ inProgress قبل ما يستنى الـ use case، والتاني قرا الـ state ولقاها inProgress. ونفس الـ status بيقفل الزرار في الـ UI، فمش محتاج flag مستخبي.
+
+</Answer>
+</Question>
+
+<Question id="sm-types1-4">
+<Ask>`Future<bool> submit()` والـ UI بتعمل `if (await cubit.submit()) context.pop();`. إيه المشكلة؟</Ask>
+<Answer>
+
+بقى في طريقين للحقيقة: القيمة الراجعة والـ state، والـ UI بتقرر من القيمة اللي التستات بتاعة الـ states مش شايفاها. وبعد الـ await الـ widget ممكن يكون اتشال، فالـ `context` بقى خطر. الـ method ترجّع `Future<void>`، والـ Cubit يعمل emit لـ `FormStatus.success`، والـ `BlocListener` هو اللي يعمل pop. والـ `prefer_void_public_cubit_methods` في bloc_lint بيمسكها.
+
+</Answer>
+</Question>
+
+<Question id="sm-types1-5">
+<Ask>في فورم الملاحظة، رقم الصفحة متخزن `int?` في الـ state (`int.tryParse` في `pageChanged`). المستخدم كتب «12a». إيه اللي بيحصل، والحل؟</Ask>
+<Answer>
+
+`int.tryParse('12a')` بترجّع null، فالـ state مش قادرة تفرّق بين «الخانة فاضية» (مسموح، الصفحة اختيارية) و«مكتوب غلط». فالفورم هيتبعت من غير صفحة ومن غير ما المستخدم يعرف إن اللي كتبه اتجاهل. الحل: الـ state تشيل النص الخام `String page`، والـ getters (`pageNumber` و`pageValid`) هي اللي بتحسب المعنى وتطلّع الخطأ.
+
+</Answer>
+</Question>
+
+</Quiz>

@@ -1,0 +1,693 @@
+---
+title: "تصميم الـ State: sealed ولا class واحدة"
+description: "الـ state صورة مابتتعدلش، والـ == هو اللي بيقرر الشاشة تتحدث ولا لأ، والشكل اللي تختاره بيحدد الحالات المستحيلة تبقى مستحيلة فعلًا ولا لأ."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="شاشة متابعة الأوردر">
+
+لما بتطلب أكل من تطبيق توصيل، شاشة المتابعة بتعرض حالة واحدة في كل لحظة: «المطعم بيحضّر»، «الطيار في الطريق»، «وصل»، «اتلغى». وكل حالة معاها بيانات تخصها هي بس: اسم الطيار ومكانه على الخريطة موجودين في «في الطريق» بس، وسبب الإلغاء موجود في «اتلغى» بس.
+
+تخيل لو الشاشة دي معمولة كاستمارة واحدة فيها كل الخانات: الحالة، واسم الطيار، ومكانه، وسبب الإلغاء. هييجي يوم حد ينسى يمسح خانة، فتشوف «وصل» وجنبها «سبب الإلغاء: المطعم قفل». وفي نفس الوقت، في شاشات تانية الاستمارة الواحدة هي الصح: صفحة «عدّل عنوانك» فيها الشارع والدور والعمارة، وكلهم بيتعدلوا مع بعض ومابيختفوش لما تدوس «حفظ».
+
+وحاجة كمان: التطبيق مابيكتبش على الكارت القديم بالقلم. كل تحديث بييجي <b>كارت جديد كامل</b>، والتطبيق بيقارن الجديد بالقديم: لو هما هما، مفيش داعي يرسم الشاشة تاني.
+
+</Analogy>
+
+الـ state بتاعة أي Cubit هي الكارت ده بالظبط. والدرس ده بيجاوب على 3 أسئلة بتتسأل في كل Cubit بتكتبه:
+
+- <b>الـ state بتتغير إزاي؟</b> مابتتغيرش. بتعمل واحدة جديدة وتعمل لها emit. ده اسمه <b>immutability</b>.
+- <b>إمتى اتنين states يبقوا «نفس الحاجة»؟</b> ده سؤال الـ <b>equality</b>، وهو اللي بيقرر الـ emit يعدّي ولا يتجاهل.
+- <b>شكلها إيه؟</b> كروت منفصلة لكل حالة (<b>sealed</b>)، ولا استمارة واحدة فيها <b>status</b>، ولا الاتنين مع بعض (<b>hybrid</b>).
+
+في درس «أول Cubit سطر بسطر» شفنا إن الـ Cubit بيتجاهل الـ emit لو الـ state الجديدة بتساوي الحالية. هنا هنشوف ليه السطر ده هو أهم سطر في تصميم الـ state كله.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### الـ state صورة، مش object بتعدّل فيه
+
+المستخدم علّم كتاب إنه خلّصه. الـ use case نجح، وفاضل الشاشة تتحدث. أول كود بيتكتب غالبًا شكله كده:
+
+<CodeBlock label="بيعدّل الـ state اللي على الشاشة">
+
+```dart
+// LibraryCubit, after the use case succeeded
+void _applyFinished(BookId id) {
+  if (state case LibraryLoaded current) {
+    final i = current.books.indexWhere((b) => b.id == id);
+    current.books[i] = current.books[i].markAsFinished(); // mutates the list on screen
+    emit(current);                                         // same object: ignored
+  }
+}
+```
+
+</CodeBlock>
+
+مفيش error، ومفيش warning، والشاشة فاضلة «بقراه». بص على السطر اللي بيعمل emit: `current` هو نفس الـ object اللي في `state`. والـ `emit` أول حاجة بيعملها إنه يسأل `next == state`، والـ object بيساوي نفسه دايمًا، فالـ emit بيتجاهل.
+
+طب لو عملت wrapper جديد: `emit(LibraryLoaded(current.books))`؟ لو الـ state بـ Equatable، هيقارن الليستتين، والليستتين هما نفس الليست اللي اتعدلت، فهيطلعوا متساويين ويتجاهل برضه. ولو من غير Equatable، الـ emit هيعدّي، بس أي `BlocSelector` أو `buildWhen` بيقارن `prev.books` بـ `curr.books` هيلاقي نفس الـ object، فمش هيرسم. وكمان الـ state القديمة اللي كنت ماسكها عشان ترجع لها لو حاجة فشلت (زي الـ optimistic delete في درس «طلبات متقدمة» في الوحدة 9)، اتعدلت هي كمان. يعني مفيش «قبل» ترجع له.
+
+الحل: ماتلمسش القديم، اعمل جديد.
+
+<CodeBlock label="ليست جديدة، وstate جديدة">
+
+```dart
+void _applyFinished(BookId id) {
+  if (state case LibraryLoaded current) {
+    final updated = [
+      for (final b in current.books) b.id == id ? b.markAsFinished() : b,
+    ];
+    emit(LibraryLoaded(updated)); // new list, new state: == is false, the screen updates
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `if (state case LibraryLoaded current)`:</b> بيشيّك النوع ويديك متغير من النوع ده في سطر واحد، من غير `as` ممكن يرمي لو الـ state اتغيرت.
+- <b>الـ collection for:</b> بيبني ليست جديدة عنصر عنصر. الكتب اللي ماتغيرتش هي نفس الـ objects (مفيش نسخ على الفاضي)، والكتاب اللي اتغير بس هو الجديد.
+- <b>الـ `markAsFinished()`:</b> من درس الـ Domain في الوحدة 2. هي كمان بترجّع `Book` جديد، مابتعدلش في القديم. الـ immutability من تحت لفوق.
+
+والقاعدة دي لكل الـ collections:
+
+| العملية | بتعدّل في مكانها (غلط) | بتعمل جديد (صح) |
+| --- | --- | --- |
+| إضافة | `books.add(book)` | `[...books, book]` |
+| حذف | `books.remove(book)` | `[for (final b in books) if (b.id != id) b]` |
+| استبدال | `books[i] = updated` | `[for (final b in books) b.id == id ? updated : b]` |
+| ترتيب | `books.sort(byTitle)` | `[...books]..sort(byTitle)` |
+| Set | `ids.add(id)` | `{...ids, id}` أو `ids.difference({id})` |
+| Map | `errors['text'] = 'too_long'` | `{...errors, 'text': 'too_long'}` |
+
+وخلي بالك إن `final` مش immutability. `final List<Book> books` معناها إن الحقل مايتغيرش يشاور على ليست تانية، بس الليست نفسها لسه ينفع تتعدل. اللي بيحميك هو الالتزام، أو freezed اللي بيلف الليستات في نسخة مابتتعدلش (هنشوفه تحت).
+
+### المساواة: «نفس الحاجة» يعني إيه؟
+
+في درس Dart في الوحدة 1 شفنا إن `==` الافتراضي بيسأل «ده نفس الـ object في الميموري؟»، مش «ده نفس المحتوى؟». ومع الـ Cubit ده بيعمل bugين عكس بعض:
+
+<Diagram name="d-sm-emit-equality">
+
+كل emit بيعدّي على سؤالين. لو الـ state الجديدة بتساوي الحالية بالـ ==، بتتجاهل ومحدش بيعرف. الليست اللي اتعدلت في مكانها بتساوي نفسها دايمًا، والـ object الجديد من غير == مختلف دايمًا حتى لو المحتوى هو هو.
+
+</Diagram>
+
+| الـ state | emit لـ object جديد بنفس المحتوى | emit لـ object اتعدل في مكانه |
+| --- | --- | --- |
+| من غير `==` (identity) | بيعدّي: rebuild على الفاضي، والتستات بتفشل | بيتجاهل |
+| بـ `==` بالقيمة | بيتجاهل، وده الصح | بيتجاهل |
+
+يعني التعديل في المكان غلط في الحالتين. والـ `==` بالقيمة بيصلّح المشكلة التانية: الـ Cubit مابيرسمش الشاشة لو مفيش حاجة اتغيرت، والـ `BlocSelector` بيقارن صح، والـ `blocTest` يقدر يقارن الـ states بـ instances (زي ما شفنا في درس "تست الـ Cubit" في الوحدة 8).
+
+ليه الـ states اللي من غير بيانات زي `const LibraryLoading()` شغالة من غير `==`؟ لأن Dart بيعمل كل `const` بنفس القيم <b>object واحد</b> في البرنامج كله. فـ `const LibraryLoading() == const LibraryLoading()` صح حتى بالـ identity. أول ما الـ state يبقى فيها بيانات جاية من الـ runtime، الـ const مابيلحقكش.
+
+عندك 4 طرق تدي الـ state مساواة بالقيمة:
+
+<CodeBlock label="1) Equatable">
+
+```dart
+sealed class LibraryState extends Equatable {
+  const LibraryState();
+  @override
+  List<Object?> get props => [];
+}
+
+final class LibraryLoaded extends LibraryState {
+  const LibraryLoaded(this.books, {this.isRefreshing = false, this.refreshFailure});
+  final List<Book> books;
+  final bool isRefreshing;
+  final Failure? refreshFailure;
+
+  @override
+  List<Object?> get props => [books, isRefreshing, refreshFailure];
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `props`:</b> الليستة اللي الـ Equatable بيقارنها. اتنين `LibraryLoaded` متساويين لو الـ props بتاعتهم متساوية عنصر عنصر.
+- <b>الليستات بتتقارن بالمحتوى:</b> الـ Equatable بيقارن الـ List والـ Set والـ Map جوه الـ props عنصر عنصر، مش بالـ identity. وكل عنصر بيتقارن بالـ `==` بتاعه، فالـ `Book` نفسه لازم يكون `==` بتاعه بيقارن كل الحقول (درس الـ Domain في الوحدة 2 شرح ليه الـ `==` بالـ id بس بيخلي «خلّصته» تتجاهل).
+- <b>الـ `toString`:</b> بيطبع الـ props، فرسايل التستات والـ logs بتبقى مقروءة.
+
+أشهر غلطة مع Equatable: تزوّد حقل وتنسى تحطه في الـ props.
+
+<CodeBlock label="حقل جديد مش في الـ props">
+
+```dart
+final class LibraryLoaded extends LibraryState {
+  const LibraryLoaded(this.books, {this.isRefreshing = false, this.refreshFailure});
+  final List<Book> books;
+  final bool isRefreshing;
+  final Failure? refreshFailure;
+
+  @override
+  List<Object?> get props => [books, refreshFailure]; // isRefreshing is missing
+}
+
+// in refresh()
+emit(current.copyWith(isRefreshing: true)); // equal to the current state: ignored
+```
+
+</CodeBlock>
+
+الـ `isRefreshing` اتغير، بس الـ Equatable مش شايفه، فالحالتين «متساويتين» والزرار عمره ما بيتقفل. القاعدة: <b>كل حقل في الـ state لازم يبقى في الـ props</b>، إلا القيم المشتقة (getters) اللي هنشوفها في Level 3.
+
+<CodeBlock label="2) freezed 3">
+
+```dart
+@freezed
+sealed class LibraryState with _$LibraryState {
+  const factory LibraryState.loading() = LibraryLoading;
+  const factory LibraryState.loaded(
+    List<Book> books, {
+    @Default(false) bool isRefreshing,
+    Failure? refreshFailure,
+  }) = LibraryLoaded;
+  const factory LibraryState.error(Failure failure) = LibraryError;
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `sealed` أو `abstract` إجباري:</b> من freezed 3، الـ class لازم تبقى `sealed` أو `abstract`. للـ union (أكتر من factory) استخدم `sealed` عشان الـ switch يبقى exhaustive، والـ `abstract` للـ class اللي ليها factory واحدة. والأسماء بعد `=` (`LibraryLoading`) بتبقى classes حقيقية تعمل عليها switch.
+- <b>بيولّد لوحده:</b> الـ `==` والـ `hashCode` (بيقارن الليستات بالمحتوى)، والـ `copyWith`، والـ `toString`. والليستات اللي بتدخل بيلفها في نسخة مابتتعدلش، فـ `state.books.add(x)` بترمي error بدل ما تكسر الـ state في صمت.
+- <b>التمن:</b> `build_runner` وملفات `.freezed.dart` متولّدة، وكل تعديل في الـ state محتاج تشغّل الـ generator.
+
+<CodeBlock label="3) records لـ state صغيرة">
+
+```dart
+typedef CatalogFilters = ({String language, bool onlyWithCover});
+
+class CatalogFiltersCubit extends Cubit<CatalogFilters> {
+  CatalogFiltersCubit() : super((language: 'any', onlyWithCover: false));
+
+  void coverOnlyToggled() =>
+      emit((language: state.language, onlyWithCover: !state.onlyWithCover));
+}
+```
+
+</CodeBlock>
+
+الـ records في Dart 3 جاية بـ `==` بالقيمة جاهز: اتنين records بنفس الحقول والقيم متساويين. ومناسبة لـ state فيها حقلين أو تلاتة من النوع البسيط. بس خلي بالك من 3 حاجات: الـ `==` بتاعها بيسأل `==` بتاع كل حقل، فلو فيها `List` الليست بتتقارن بالـ identity مش بالمحتوى. ومفيش `copyWith`، فبتكتب الحقول كلها كل مرة. ومفيش methods ولا getters عليها إلا بـ extension.
+
+والطريقة الرابعة إنك تكتب `operator ==` و`hashCode` بإيدك. بتنفع لـ class أو اتنين، بس كل حقل جديد لازم تفتكر تزوّده في المكانين، وده نفس فخ الـ props بالظبط.
+
+| | `==` بالقيمة | الليستات | `copyWith` | codegen | أشهر غلطة |
+| --- | --- | --- | --- | --- | --- |
+| بإيدك | أيوه | بإيدك (`ListEquality`) | بإيدك | لأ | حقل جديد مش في `==` |
+| Equatable | أيوه | بالمحتوى | بإيدك | لأ | حقل مش في الـ props |
+| freezed 3 | أيوه | بالمحتوى ومابتتعدلش | متولّد | أيوه | نسيت تشغّل الـ generator |
+| records | أيوه | بالـ identity | مفيش | لأ | ليست جوه الـ record |
+
+في Readly، زي ما قررنا في درس Dart في الوحدة 1: الـ DTOs بـ freezed، والـ states بنكتبها sealed بإيدنا، ومن درس "تست الـ Cubit" في الوحدة 8 بقت بـ Equatable. القرار ده مش مقدس. المهم إن الفريق كله يمشي على طريقة واحدة، عشان اللي بيقرا state مايسألش «دي بتتقارن إزاي؟».
+
+### الشكل الأول: sealed
+
+ده شكل `LibraryState` من درس الـ Cubit في الوحدة 5، و`BookDetailsState` من أول feature في الوحدة 1: class أب `sealed`، وكل حالة subclass شايلة بياناتها هي بس.
+
+<CodeBlock label="BookDetailsState: sealed">
+
+```dart
+sealed class BookDetailsState extends Equatable {
+  const BookDetailsState();
+  @override
+  List<Object?> get props => [];
+}
+final class BookDetailsLoading extends BookDetailsState {
+  const BookDetailsLoading();
+}
+final class BookDetailsLoaded extends BookDetailsState {
+  const BookDetailsLoaded(this.book);
+  final BookDetails book;
+  @override
+  List<Object?> get props => [book];
+}
+final class BookDetailsError extends BookDetailsState {
+  const BookDetailsError(this.failure);
+  final Failure failure;
+  @override
+  List<Object?> get props => [failure];
+}
+```
+
+</CodeBlock>
+
+- <b>الحالات المستحيلة مستحيلة:</b> مفيش طريقة تعمل «loading ومعاه error»، ولا «loaded من غير كتاب». الـ compiler مش هيسمح.
+- <b>البيانات مش متاحة غير في حالتها:</b> عشان توصل لـ `book` لازم تثبت إن الـ state `BookDetailsLoaded`. مفيش `state.book!` ممكن يوقّع الـ app.
+- <b>الـ switch بيبقى exhaustive:</b> لو زوّدت حالة رابعة، كل switch في الـ UI مابيعملش compile لحد ما تعرضها.
+
+والتمن: البيانات بتضيع لما الحالة تتغير. `emit(const BookDetailsLoading())` بيرمي الكتاب اللي على الشاشة. وده بالظبط اللي اتحل في درس الـ Cubit في الوحدة 5 بالـ refresh.
+
+### الشكل التاني: class واحدة + status
+
+ده شكل `LoginFormState` في درس الـ Forms (و`SettingsState` في درس الإعدادات في الوحدة 6 نفس الفكرة من غير status، لأن مفيش مراحل). class واحدة فيها كل الحقول، وحقل `status` بيقول إحنا فين:
+
+<CodeBlock label="NotesState: class واحدة + status">
+
+```dart
+enum NotesStatus { loading, ready, failure }
+
+final class NotesState extends Equatable {
+  const NotesState({
+    this.status = NotesStatus.loading,
+    this.notes = const [],
+    this.saving = false,
+    this.failure,
+  });
+
+  final NotesStatus status;
+  final List<Note> notes;
+  final bool saving;
+  final Failure? failure;
+
+  NotesState copyWith({
+    NotesStatus? status,
+    List<Note>? notes,
+    bool? saving,
+    Failure? failure,
+  }) =>
+      NotesState(
+        status: status ?? this.status,
+        notes: notes ?? this.notes,
+        saving: saving ?? this.saving,
+        failure: failure ?? this.failure, // can't be cleared: Level 3
+      );
+
+  @override
+  List<Object?> get props => [status, notes, saving, failure];
+}
+```
+
+</CodeBlock>
+
+- <b>البيانات بتفضل:</b> الملاحظات موجودة وانت بتحفظ واحدة جديدة، وموجودة لو الحفظ فشل. مفيش حاجة بتختفي لما الـ status يتغير.
+- <b>التحديث سطر واحد:</b> `emit(state.copyWith(saving: true))`. من غير ما تشيّك النوع الأول.
+- <b>مناسبة للفورم والإعدادات:</b> كل الحقول عايشة طول الوقت، وبتتعدل واحد واحد.
+
+والتمن: الحالات المستحيلة بقت ممكنة. `NotesState(status: NotesStatus.failure)` من غير `failure` بيعمل compile عادي. والـ UI لازم تكتب `state.failure!` وتتمنى إن محدش نسي:
+
+<CodeBlock label="نفس الـ UI بالشكلين">
+
+```dart
+// sealed: the compiler knows `book` exists here
+switch (state) {
+  BookDetailsLoading() => const LoadingView(),
+  BookDetailsLoaded(:final book) => BookDetailsView(book: book),
+  BookDetailsError(:final failure) => ErrorView(message: failure.localized(l10n)),
+}
+
+// status: the compiler checks the enum, not the fields
+switch (state.status) {
+  NotesStatus.loading => const LoadingView(),
+  NotesStatus.ready => NotesList(notes: state.notes, saving: state.saving),
+  NotesStatus.failure => ErrorView(message: state.failure!.localized(l10n)), // hope
+}
+```
+
+</CodeBlock>
+
+### الشكل التالت: hybrid
+
+بص على `LibraryState` بعد ما كبرت في درس الـ Cubit: لسه sealed (Loading وLoaded وError)، بس `LibraryLoaded` جواه `isRefreshing` و`refreshFailure`. ده الشكل الهجين: <b>sealed للمراحل اللي البيانات فيها مختلفة من الأساس، وحقول جوه Loaded للحاجات اللي بتحصل والبيانات موجودة</b>.
+
+<Diagram name="d-sm-state-shapes">
+
+الـ sealed بيقفل الحالات المستحيلة، والـ class الواحدة بتحافظ على البيانات، والـ hybrid بياخد الاتنين: مراحل منفصلة قبل ما يبقى في بيانات، وحقول جوه الـ Loaded لكل حاجة بتحصل والبيانات على الشاشة.
+
+</Diagram>
+
+والسؤال اللي بيقرر أي حاجة جديدة تبقى subclass ولا حقل: <b>لو ده حصل، البيانات اللي على الشاشة تفضل؟</b>
+
+- الـ refresh بدأ؟ الكتب تفضل، فده حقل `isRefreshing` جوه Loaded.
+- الـ refresh فشل؟ الكتب تفضل، فده حقل `refreshFailure` جوه Loaded.
+- أول تحميل فشل؟ مفيش كتب أصلًا، فده `LibraryError` لوحده.
+- المستخدم عمل logout؟ الكتب لازم تختفي، فده مش حقل ولا حالة: الـ redirect بيودّي للـ login، والشاشة بتتشال، والـ Cubit بيموت معاها لأنه factory (درس الـ Session في الوحدة 6).
+
+</Level>
+
+<Level n="3" title="التفاصيل اللي بتوقّع">
+
+### الـ copyWith مابيعرفش يمسح
+
+الـ copyWith اللي فوق فيه `failure ?? this.failure`. يعني لو ماادتهوش failure، بياخد القديم. ولو اديته `null`؟ برضه بياخد القديم، لأن `null ?? this.failure` هي `this.failure`. مفيش طريقة تقول «امسح الـ failure».
+
+في درس الـ Cubit في الوحدة 5 حلّينا ده بإن `refreshFailure` مالوش `?? this` خالص، فأي copyWith بيمسحه. ده صح لحقل زي `refreshFailure` (حدث عدّى، والمفروض يتمسح مع أي تغيير). بس جرّبه على حقل لازم يفضل:
+
+<CodeBlock label="فلتر بيتمسح من غير ما حد يطلب">
+
+```dart
+final class LibraryFilters extends Equatable {
+  const LibraryFilters({this.query = '', this.status});
+  final String query;
+  final BookStatus? status; // null: every status
+
+  LibraryFilters copyWith({String? query, BookStatus? status}) => LibraryFilters(
+        query: query ?? this.query,
+        status: status, // no "?? this" so it can be cleared...
+      );
+
+  @override
+  List<Object?> get props => [query, status];
+}
+
+// the user picked "reading", then typed in the search box
+emit(state.copyWith(query: 'clean')); // ...and the "reading" filter is gone
+```
+
+</CodeBlock>
+
+الحقل الـ nullable اللي لازم يتمسح <b>ويفضل</b> محتاج طريقة يفرّق بيها بين «ماقلتش حاجة» و«قلت null». عندك 4 طرق:
+
+<CodeBlock label="1) flag صريح">
+
+```dart
+LibraryFilters copyWith({String? query, BookStatus? status, bool clearStatus = false}) =>
+    LibraryFilters(
+      query: query ?? this.query,
+      status: clearStatus ? null : (status ?? this.status),
+    );
+
+// usage
+state.copyWith(clearStatus: true);
+```
+
+</CodeBlock>
+
+<CodeBlock label="2) function بترجّع القيمة">
+
+```dart
+LibraryFilters copyWith({String? query, BookStatus? Function()? status}) =>
+    LibraryFilters(
+      query: query ?? this.query,
+      status: status != null ? status() : this.status,
+    );
+
+// usage
+state.copyWith(status: () => BookStatus.reading);
+state.copyWith(status: () => null); // clear
+```
+
+</CodeBlock>
+
+<CodeBlock label="3) sentinel">
+
+```dart
+const _unset = Object();
+
+LibraryFilters copyWith({String? query, Object? status = _unset}) => LibraryFilters(
+      query: query ?? this.query,
+      status: identical(status, _unset) ? this.status : status as BookStatus?,
+    );
+
+// usage: reads naturally
+state.copyWith(status: null);
+state.copyWith(status: 'reading'); // compiles too, then throws at runtime
+```
+
+</CodeBlock>
+
+- <b>الـ flag:</b> أوضح حاجة، وأي حد يقراها يفهمها. بس كل حقل nullable بياخد parameter زيادة.
+- <b>الـ function:</b> type-safe، وواحد بس لكل حقل. والشكل `() => null` غريب أول مرة. وفي Flutter في typedef جاهز اسمه `ValueGetter<T>` بنفس المعنى، بس ده من `package:flutter/foundation.dart`، والـ state والـ Cubit مايعملوش import لـ Flutter (القاعدة دي بتتشرح في درس «الـ State management في مشروع حقيقي»، وbloc_lint بيمسكها). فاكتب نوع الـ function بنفسك.
+- <b>الـ sentinel:</b> الاستخدام أنضف، بس الـ parameter بقى `Object?`، فالـ compiler بيقبل أي حاجة، والغلطة بتظهر في الـ runtime.
+- <b>الطريقة الرابعة freezed:</b> الـ copyWith المتولّد بيعمل sentinel من جوه وبيحافظ على النوع، فـ `copyWith(status: null)` بتمسح، و`copyWith(status: 'reading')` مابتعملش compile. ودي من أقوى أسباب الناس بتختار freezed للـ states.
+
+| الطريقة | type-safe | الاستخدام | إمتى |
+| --- | --- | --- | --- |
+| من غير `?? this` | أيوه | بيمسح مع أي copyWith | حقل لحدث عدّى: `refreshFailure` |
+| flag صريح | أيوه | `clearStatus: true` | حقل أو اتنين nullable |
+| function | أيوه | `status: () => null` | حقول nullable كتير ومش عايز codegen |
+| sentinel | لأ | `status: null` | الأحسن تتجنبه |
+| freezed | أيوه | `status: null` | الفريق بيستخدم freezed أصلًا |
+
+### الـ switch الـ exhaustive، وإزاي تكسره من غير ما تحس
+
+الميزة الأكبر للـ sealed إن الـ compiler بيعدّ الحالات. بس في سطر واحد بيلغي الميزة دي:
+
+<CodeBlock label="الـ _ بيبلع أي حالة جديدة">
+
+```dart
+BlocBuilder<LibraryCubit, LibraryState>(
+  builder: (context, state) => switch (state) {
+    LibraryLoaded(:final books) => BookList(books: books),
+    _ => const Center(child: CircularProgressIndicator()), // Loading... and Error
+  },
+)
+```
+
+</CodeBlock>
+
+الـ `LibraryError` بيعرض spinner للأبد، والـ compiler ساكت لأن الـ `_` غطّى «أي حاجة تانية». ولو زوّدت بكرة `LibraryEmpty`، برضه هيروح للـ spinner. القاعدة: <b>ماتستخدمش `_` في switch على sealed state</b>. اكتب كل حالة باسمها، حتى لو اتنين بيعرضوا نفس الحاجة:
+
+<CodeBlock label="كل حالة باسمها، والـ patterns بتساعد">
+
+```dart
+switch (state) {
+  LibraryLoading() => const LoadingView(),
+  LibraryLoaded(books: []) => const EmptyLibraryView(),     // empty list pattern
+  LibraryLoaded(:final books) => BookList(books: books),
+  LibraryError(:final failure) when failure.isGlobal => const SizedBox.shrink(),
+  LibraryError(:final failure) => ErrorView(message: failure.localized(l10n)),
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `books: []`:</b> list pattern بيطابق الليست الفاضية بس. والترتيب مهم: الحالة الأخص الأول، لأن الـ switch بياخد أول pattern يطابق.
+- <b>الـ `when`:</b> شرط زيادة على الـ pattern. الـ `isGlobal` من درس «الأخطاء في الشاشة» في الوحدة 9: الـ Failures اللي ليها صاحب على مستوى الـ app مالهاش رسالة في الشاشة.
+- <b>الـ exhaustiveness لسه شغالة:</b> لأن آخر pattern لكل نوع مالوش شرط. لو شلت `LibraryError(:final failure) =>` وسبت اللي بـ `when` بس، الـ compiler هيقولك إن في `LibraryError` مش متغطية.
+
+ونفس الكلام في الـ Cubit نفسه. بدل سلسلة `if (state is ...)` وفي الآخر `else`، استخدم `if (state case ...)` للحالة اللي تهمك، وswitch لو محتاج تتصرف في كل الحالات.
+
+### الـ when القديم بتاع freezed
+
+لو فتحت كود Flutter مكتوب قبل Dart 3، هتلاقي الـ UI بتستخدم `when` و`map` اللي freezed بيولّدهم:
+
+<CodeBlock label="قبل Dart 3، وبعدها">
+
+```dart
+// freezed when: generated method, one callback per factory
+state.when(
+  loading: () => const LoadingView(),
+  loaded: (books, isRefreshing, refreshFailure) => BookList(books: books),
+  error: (failure) => ErrorView(message: failure.localized(l10n)),
+);
+
+// Dart 3: the language does it, with any state, freezed or not
+switch (state) {
+  LibraryLoading() => const LoadingView(),
+  LibraryLoaded(:final books) => BookList(books: books),
+  LibraryError(:final failure) => ErrorView(message: failure.localized(l10n)),
+}
+```
+
+</CodeBlock>
+
+الـ `when` كان الطريقة الوحيدة تعمل exhaustive matching قبل Dart 3. freezed 3.0 شاله، وبعدين 3.1 رجّعه عشان الكود القديم. التوصية الحديثة: الـ switch. بيشتغل مع أي sealed class (مش freezed بس)، وبياخد الحقول بالاسم (`:final books`) مش بالترتيب، فلو زوّدت حقل في النص الـ callbacks القديمة مش هتتلخبط. والكود القديم اللي فيه `when`؟ سيبه شغال، وانقله للـ switch لما تلمس الملف لسبب تاني.
+
+### القيم المشتقة: getter، مش حقل
+
+شاشة المكتبة فوق فيها «بقرا 3 · خلصت 12». أول فكرة إنك تحط العدد في الـ state:
+
+<CodeBlock label="عدد محفوظ لازم يتحدث في كل حتة">
+
+```dart
+final class LibraryLoaded extends LibraryState {
+  const LibraryLoaded(this.books, {required this.readingCount});
+  final List<Book> books;
+  final int readingCount; // must be updated by every method that touches books
+}
+```
+
+</CodeBlock>
+
+كل method بتغيّر الكتب لازم تفتكر تحسب العدد: الإضافة، والمسح، وتغيير الحالة، وكل ليست جديدة جاية من الـ stream. واحدة تنسى، والرقم يبقى غلط لحد ما المستخدم يقفل الـ app. العدد ده مش معلومة جديدة، ده <b>نتيجة حساب</b> على `books`. والنتيجة مكانها getter:
+
+<CodeBlock label="getters على الـ state">
+
+```dart
+final class LibraryLoaded extends LibraryState {
+  const LibraryLoaded(this.books, {this.isRefreshing = false, this.refreshFailure});
+  final List<Book> books;
+  final bool isRefreshing;
+  final Failure? refreshFailure;
+
+  // derived: always in sync, never in props
+  int countOf(BookStatus status) => books.where((b) => b.status == status).length;
+  List<Book> get currentlyReading =>
+      [for (final b in books) if (b.status == BookStatus.reading) b];
+  bool get isEmpty => books.isEmpty;
+
+  @override
+  List<Object?> get props => [books, isRefreshing, refreshFailure];
+}
+```
+
+</CodeBlock>
+
+- <b>مصدر واحد للحقيقة:</b> `books` بس هي اللي بتتخزن. أي حاجة بتتحسب منها مستحيل تبقى غلط.
+- <b>مش في الـ props:</b> لو `books` متساوية، الـ getters هتطلّع نفس النتيجة، فمفيش داعي تتقارن.
+- <b>نفس فكرة درس الـ Forms:</b> `emailResult` getter بيسأل الـ domain، مش حقل بيتحدث مع كل حرف.
+
+والتكلفة؟ الـ getter بيتحسب كل مرة حد يقراه. لـ 200 كتاب، `where` على الليست أسرع من إنك تلاحظ. لو الـ profiler قالك إن الحساب تقيل فعلًا (ترتيب 3000 كتاب مع كل build)، احسبه مرة واحدة في الـ Cubit لما المصدر يتغير، في function واحدة private بتبني الـ state كلها، فيفضل في مكان واحد بس بيحسب. وماتحاولش تعمل cache بـ `late final` جوه الـ state: الـ Dart مابيسمحش بـ `late final` في class ليها const constructor.
+
+### الـ records كـ state: إمتى وإمتى لأ
+
+الـ records شكلها مغري لأي state صغيرة: مفيش class، ومفيش props، والـ `==` جاهز. وبتنفع فعلًا في Cubit بيمسك حاجتين بسيطتين مرتبطين، زي `CatalogFiltersCubit` اللي فوق. بس وقّفها لما:
+
+- <b>تحتاج ليست:</b> الـ `==` هيقارن الليست بالـ identity، وهترجع لمشكلة «emit اتجاهل» أو «rebuild على الفاضي».
+- <b>الحقول بقت أكتر من 3:</b> من غير copyWith، كل emit بيكتب الحقول كلها، وأي حقل تنساه بيبقى error في الـ compile على الأقل، بس الكود بيبقى طويل.
+- <b>محتاج اسم وmethods:</b> `Cubit<({String language, bool onlyWithCover})>` في كل `BlocBuilder` تقيل على العين. الـ `typedef` بيحل الاسم بس.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+### تختار الشكل إزاي
+
+| الشاشة | الشكل | ليه | مثال في Readly |
+| --- | --- | --- | --- |
+| بيانات بتتحمل مرة، ومفيش حاجة تتعرض قبلها | sealed | كل مرحلة ليها بيانات مختلفة | `BookDetailsState` |
+| بيانات بتتحمل، وبعدين تتحدث ويتعمل عليها actions | hybrid | الـ refresh والـ action مايمسحوش البيانات | `LibraryState`، `CatalogState` |
+| فورم أو إعدادات: حقول عايشة طول الوقت | class + copyWith (+ status لو في submit) | كل حقل بيتعدل لوحده، ومفيش مراحل | `LoginFormState`، `SettingsState` |
+| قيمة واحدة | النوع نفسه | مفيش حاجة تتصمم | `Cubit<Locale>` في درس الترجمة |
+| حالة على مستوى الـ app، أشكالها مختلفة تمامًا | sealed | كل حالة بتقود الـ app لمكان مختلف | `AuthState` في درس الـ Session |
+
+- <b>الـ booleans الكتير علامة إن الشكل غلط:</b> `isLoading` و`hasError` و`isEmpty` معناهم 8 تركيبات، واللي ليه معنى منهم 4 بس. كل boolean بتزوّده بيضاعف الحالات اللي محدش فكر فيها. لو لقيت نفسك بتكتب `if (state.isLoading && !state.hasError)`، حوّلهم لـ enum أو sealed.
+- <b>«خلي الحالات المستحيلة مستحيلة» بس من غير تطرف:</b> الـ `NotesState` بـ `failure` nullable مع `status: failure` ثغرة صغيرة ومقبولة لو الـ Cubit هو المكان الوحيد اللي بيعمل الحالة دي، في سطر واحد. الهدف إن الغلطة تبقى صعبة، مش إن كل state تبقى 6 classes.
+- <b>سياسة مساواة واحدة للفريق:</b> Equatable في كل حتة، أو freezed في كل حتة. والـ entities اللي جوه الـ state لازم `==` بتاعها يقارن كل الحقول، وإلا Equatable الصح فوقيها مش هيفيد.
+- <b>اللي مالوش مكان في الـ state:</b> `TextEditingController`، و`BuildContext`، و`StreamSubscription`، و`Timer`، و`Future`. دول resources ليها دورة حياة، مش بيانات بتتعرض. الـ subscriptions والـ timers private fields في الـ Cubit نفسه، والـ controllers في الـ widget. والأحداث اللي بتحصل مرة واحدة (navigation، snackbar) ليها كلام لوحدها في درس «Cubit متقدم: الـ async والـ effects والتواصل».
+- <b>الأسماء:</b> الـ course ماشي على `<Feature><Phase>`: `LibraryLoading` و`LibraryLoaded` و`LibraryError`. الـ docs بتاعة bloc بتقترح أسماء زي `LibraryLoadInProgress` و`LibraryLoadSuccess` و`LibraryLoadFailure`. الاتنين صح، والمهم إن كل الـ features تمشي على نفس الشكل.
+
+<Note kind="interview" title="سؤال interview">
+
+«sealed classes ولا class واحدة فيها status؟» حسب البيانات. لو كل مرحلة بيانات مختلفة ومفيش حاجة لازم تفضل بينهم، sealed: الحالات المستحيلة مابتعملش compile، والـ switch exhaustive، والبيانات مش متاحة غير لما تثبت إنك في الحالة الصح. لو الحقول عايشة طول الوقت وبتتعدل لوحدها، زي فورم، class واحدة بـ copyWith وstatus enum، وأدفع تمن إن `failure` ممكن تبقى null مع status فشل. والأغلب في الشاشات الحقيقية hybrid: sealed للمراحل قبل البيانات، وحقول زي `isRefreshing` و`refreshFailure` جوه الـ Loaded. والسؤال اللي بيقرر: «لو ده حصل، البيانات اللي على الشاشة تفضل؟».
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«عملت emit والشاشة ماتحدثتش. هتدوّر على إيه؟» تلات حاجات بالترتيب: هل عدّلت في الـ state أو في ليست جواها بدل ما تعمل جديدة؟ ده بيخلي الـ state الجديدة هي هي القديمة فالـ emit يتجاهل. هل الحقل اللي اتغير ناقص من الـ props أو من الـ `==`؟ ده بيخلي الحالتين «متساويتين». هل الـ `==` بتاع الـ entity اللي جوه الليست بيقارن الـ id بس؟ ده بيخلي الكتاب القديم والجديد متساويين. وأتأكد بـ `onChange` أو BlocObserver: لو مفيش Change اتسجل، المشكلة في الـ equality مش في الـ UI.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### من booleans كتير لـ sealed
+
+صفحة الكتاب في أول نسخة، والـ state زي ما أي حد بيكتبها أول مرة:
+
+<BeforeAfter>
+<Side label="flags وحقول nullable" kind="before">
+
+```dart
+class BookDetailsState {
+  BookDetailsState({
+    this.isLoading = false,
+    this.error,
+    this.book,
+  });
+  bool isLoading;
+  String? error;
+  BookDetails? book;
+}
+
+// in the UI
+if (state.isLoading) return const LoadingView();
+if (state.error != null) return ErrorView(message: state.error!);
+return BookDetailsView(book: state.book!); // crashes if all three are empty
+```
+
+</Side>
+<Side label="sealed وimmutable" kind="after">
+
+```dart
+sealed class BookDetailsState extends Equatable {
+  const BookDetailsState();
+  @override
+  List<Object?> get props => [];
+}
+final class BookDetailsLoading extends BookDetailsState {
+  const BookDetailsLoading();
+}
+final class BookDetailsLoaded extends BookDetailsState {
+  const BookDetailsLoaded(this.book);
+  final BookDetails book;
+  @override
+  List<Object?> get props => [book];
+}
+final class BookDetailsError extends BookDetailsState {
+  const BookDetailsError(this.failure);
+  final Failure failure;
+  @override
+  List<Object?> get props => [failure];
+}
+
+// in the UI
+switch (state) {
+  BookDetailsLoading() => const LoadingView(),
+  BookDetailsLoaded(:final book) => BookDetailsView(book: book),
+  BookDetailsError(:final failure) => ErrorView(message: failure.localized(l10n)),
+}
+```
+
+</Side>
+</BeforeAfter>
+
+قبل: الحقول مش `final`، فأي حد يقدر يعدّل فيها ويعمل emit لنفس الـ object. ومن غير `==`، كل emit بيعدّي حتى لو مفيش حاجة اتغيرت. والـ 3 حقول معناهم 8 تركيبات، منهم «loading وerror مع بعض» و«ولا حاجة خالص» اللي بتوقّع الـ `book!`. والـ error `String`، فالترجمة والـ retry مش ممكنين. بعد: 3 حالات بس، وكل واحدة شايلة اللي يخصها، والـ switch بيجبرك تعرضهم كلهم، والـ Failure بيوصل للـ UI بنوعه.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="sm-design-1">
+<Ask>`state.books.add(book); emit(state);` والشاشة ماتحدثتش. ليه، وإيه الحل؟</Ask>
+<Answer>
+
+الـ `emit` بيسأل `next == state`، والـ object اللي اتعدل في مكانه بيساوي نفسه، فالـ emit بيتجاهل. وحتى لو عملت wrapper جديد بـ Equatable، الليست جواه هي نفس الليست في القديمة، فيطلعوا متساويين. الحل ليست جديدة وstate جديدة: `emit(LibraryLoaded([...current.books, book]))`.
+
+</Answer>
+</Question>
+
+<Question id="sm-design-2">
+<Ask>زوّدت `isRefreshing` لـ `LibraryLoaded` (Equatable)، والزرار عمره ما بيتقفل وقت الـ refresh. أول حاجة تشيّك عليها؟</Ask>
+<Answer>
+
+الـ `props`. لو `isRefreshing` مش فيها، الـ Equatable شايف `copyWith(isRefreshing: true)` بتساوي الـ state الحالية، فالـ emit بيتجاهل. كل حقل في الـ state لازم يبقى في الـ props، إلا الـ getters المشتقة.
+
+</Answer>
+</Question>
+
+<Question id="sm-design-3">
+<Ask>الـ copyWith فيه `status: status ?? this.status`، والمستخدم داس «الكل» عشان يشيل فلتر الحالة، والفلتر مااتشالش. ليه، وإزاي تصلّحه من غير ما الفلتر يتمسح مع أي copyWith تاني؟</Ask>
+<Answer>
+
+`null ?? this.status` بترجّع القديم، فالـ copyWith مايقدرش يفرّق بين «ماقلتش» و«قلت null». ولو شلت الـ `?? this`، الفلتر هيتمسح مع أي copyWith للـ query. الحل: flag صريح (`clearStatus: true`)، أو function (`status: () => null`)، أو freezed اللي الـ copyWith بتاعه بيفرّق لوحده. والـ sentinel بـ `Object?` شغال بس بيضيّع الـ type safety.
+
+</Answer>
+</Question>
+
+<Question id="sm-design-4">
+<Ask>switch على `LibraryState` آخره `_ => const LoadingView()`. إيه اللي اتخسر؟</Ask>
+<Answer>
+
+الـ exhaustiveness. أي حالة مش مكتوبة باسمها، زي `LibraryError`، بتعرض loading للأبد، وأي حالة جديدة تتزوّد بكرة هتروح هناك من غير ما الـ compiler يقول حاجة. اكتب كل حالة باسمها، حتى لو اتنين بيعرضوا نفس الـ widget.
+
+</Answer>
+</Question>
+
+<Question id="sm-design-5">
+<Ask>المكتبة بتعرض «بقرا 3». تحط العدد ده حقل في `LibraryLoaded` ولا getter؟</Ask>
+<Answer>
+
+getter بيحسبه من `books`. الحقل لازم كل method بتغيّر الكتب تفتكر تحدّثه، وواحدة تنسى فالرقم يبقى غلط. الـ getter مستحيل يبقى غلط، ومش بيدخل في الـ props لأنه نتيجة لحاجات موجودة فيها. ولو الحساب تقيل فعلًا بالقياس، يتحسب مرة في الـ Cubit في مكان واحد لما الكتب تتغير.
+
+</Answer>
+</Question>
+
+</Quiz>
