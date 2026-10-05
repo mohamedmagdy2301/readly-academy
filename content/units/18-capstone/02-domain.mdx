@@ -1,0 +1,292 @@
+---
+title: "الـ Domain: الـ entities والقواعد بالـ TDD"
+description: "الـ value objects والـ entities والصلاحيات والـ use cases والـ failures بتاعة الرفوف المشتركة، والتست قبل الكود في كل خطوة. وفي الآخر package Dart صافية بتعدّي dart test من غير Flutter ولا dio ولا drift."
+minutes: 25
+draft: true
+---
+
+الـ spec بيقول «أي حد في الرف يقدر يشيل الكتاب اللي هو ضافه، وصاحب الرف يشيل أي حاجة». الجملة دي هي الـ domain. ولو كتبتها جوه `if` في الـ Cubit، هتتكتب تاني في الـ widget عشان تخفي الزرار، وتالت في الـ outbox عشان تعرف الـ 403 دي متوقعة ولا لأ، وفي الآخر التلاتة هيختلفوا.
+
+المرحلة دي كلها Dart صافي، والقاعدة فيها واحدة: <b>مفيش سطر كود من غير تست فاشل قبله.</b> كل commit يا red، يا green، يا refactor، واكتب ده في رسالة الـ commit.
+
+### المهمة 1: ليستة التستات
+
+<Tasks>
+<Task id="cap-domain-1">قبل أي كود، اكتب ليستة التستات في أول ملف تست أو في وصف الـ PR: كل قاعدة في الـ spec تتحول لسطر أو أكتر («viewer مايقدرش يضيف»، «الاسم 41 حرف مرفوض»، «الإضافة لكتاب موجود ماتعملش حاجة»). وقرر فين الـ domain: جوه `feature_shelves`، ولا package لوحدها زي `library_domain`؟ واكتب السبب.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: الليستة بتطلع منين</summary>
+
+من جدول الـ spec اللي عملته في الـ Brief. كل خانة فيها «ممنوع» أو «مايحصلش حاجة» هي تست. والخانات اللي فيها «بيظهر كذا» دي شغل الـ presentation، مش هنا.
+
+</details>
+
+<details className="qa">
+<summary>تلميح 2: package لوحدها ولا لأ؟</summary>
+
+السؤال اللي في [درس «domain واحد لأكتر من app»](/course/modularization/shared-domain/): فيه app تاني محتاج القواعد دي؟ لو الأدمن هيعرض الرفوف ويقفل رف عليه بلاغ، يبقى `shelves_domain` لوحدها. لو لأ، جوه `feature_shelves` تحت `src/domain/`، والـ architecture test بيضمن إنها مابتعملش import لـ Flutter.
+
+</details>
+
+### المهمة 2: الـ value objects
+
+<Tasks>
+<Task id="cap-domain-2">اعمل `ShelfId` و`ShelfName` و`InviteToken`. الـ `ShelfName` بيعمل trim، وبيرفض الفاضي واللي كله مسافات، وبيقبل من 1 لـ 40 حرف. اكتب التستات بالـ boundaries بالظبط (0 و1 و40 و41)، وبـ parameterized test مش تست لكل قيمة.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: «40 حرف» يعني إيه؟</summary>
+
+جرّب اسم زي `نادي القراية 👨‍👩‍👧` واطبع `.length`. الرقم هيطلع أكبر من اللي بتشوفه بعينك.
+
+</details>
+
+<details className="qa">
+<summary>تلميح 2: الحروف اللي المستخدم بيشوفها</summary>
+
+الـ `String.length` في Dart بيعد UTF-16 code units، والـ emoji العيلة لوحده أكتر من 5. اللي المستخدم بيعدّه اسمه grapheme cluster، وpackage `characters` بتعده صح، وهي Dart صافية فمسموحة في الـ domain. واتفق مع الـ backend على نفس طريقة العد، وإلا الـ app هيقبل اسم والسيرفر يرجّع 422.
+
+</details>
+
+<details className="qa">
+<summary>تلميح 3: الشكل</summary>
+
+```dart
+extension type const ShelfId(String value) {}
+
+final class ShelfName {
+  const ShelfName._(this.value);
+  final String value;
+
+  static const maxLength = 40;
+
+  static Result<ShelfName> parse(String raw) {
+    final trimmed = raw.trim();
+    final length = trimmed.characters.length;
+    if (length == 0) return Err(const ValidationFailure(/* empty */));
+    if (length > maxLength) return Err(const ValidationFailure(/* too long */));
+    return Success(ShelfName._(trimmed));
+  }
+}
+```
+
+والـ `ValidationFailure` بالشكل اللي في الـ core عندك. المهم إن الرسالة نفسها مش هنا: الـ domain بيقول السبب، والـ presentation بتترجمه.
+
+</details>
+
+### المهمة 3: الـ entities والصلاحيات
+
+<Tasks>
+<Task id="cap-domain-3">اعمل `Shelf` و`ShelfEntry` و`ShelfMember` و`ShelfDetails` و`ShelfRole` (owner وeditor وviewer). الصلاحيات تبقى methods على الـ entity أو الـ role: يضيف، يشيل entry معينة، يدعو، يغيّر الاسم، يمسح الرف، يشيل عضو، يخرج. اكتب جدول الصلاحيات في التست نفسه كـ data، ولوب عليه.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: القاعدة تعيش فين؟</summary>
+
+ارجع لـ «Entity غنية ولا فاضية؟» في [درس الـ Domain](/course/domain-errors/domain/). «يقدر يشيل الـ entry دي؟» محتاجة الـ role بتاعي وصاحب الـ entry. الاتنين موجودين في `ShelfDetails`، فالسؤال مكانه هناك، مش في use case ولا Cubit.
+
+</details>
+
+<details className="qa">
+<summary>تلميح 2: جدول الصلاحيات</summary>
+
+| الفعل | owner | editor | viewer |
+| --- | --- | --- | --- |
+| يضيف كتاب | آه | آه | لأ |
+| يشيل entry هو ضافها | آه | آه | مش وارد |
+| يشيل entry حد تاني ضافها | آه | لأ | لأ |
+| يعمل لينك دعوة | آه | لأ | لأ |
+| يغيّر الاسم أو يمسح الرف | آه | لأ | لأ |
+| يشيل عضو | آه، غير نفسه | لأ | لأ |
+| يخرج من الرف | لأ | آه | آه |
+
+</details>
+
+<details className="qa">
+<summary>تلميح 3: التست كـ data</summary>
+
+```dart
+final cases = [
+  (role: ShelfRole.owner, action: _removeOthersEntry, allowed: true),
+  (role: ShelfRole.editor, action: _removeOthersEntry, allowed: false),
+  (role: ShelfRole.viewer, action: _add, allowed: false),
+  // ... one row per cell in the table
+];
+
+for (final c in cases) {
+  test('${c.role.name} ${c.action.name} -> ${c.allowed}', () {
+    expect(c.action.run(aShelf(myRole: c.role)), c.allowed);
+  });
+}
+```
+
+كده لو حد غيّر قاعدة، التست اللي هيقع اسمه بيقول القاعدة بالظبط.
+
+</details>
+
+### المهمة 4: الـ failures
+
+<Tasks>
+<Task id="cap-domain-4">قرر إزاي أسباب الرفض الخاصة بالرفوف (مش عضو، بيتفرج بس، الرف مليان، الأعضاء كملوا، اللينك خلص، صاحب الرف مايقدرش يخرج) بتمشي في `Result`، مع إن `Failure` في `core` معمولة `sealed`. اكتب القرار في ADR قصير، والـ presentation لازم تعرف تعمل `switch` exhaustive على الأسباب دي.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: المشكلة</summary>
+
+جرّب تكتب `final class ShelfFullFailure extends Failure` جوه `feature_shelves`. الـ compiler هيرفض: الـ `sealed` class مايتعملهاش extends برا الـ library بتاعتها. وده مقصود: هو اللي بيخلي الـ `switch` على `Failure` exhaustive.
+
+</details>
+
+<details className="qa">
+<summary>تلميح 2: البدائل</summary>
+
+- <b>تزوّد أنواع في `core`</b> لكل سبب: `core` هيعرف حاجات عن الرفوف، وده بيكسر الحدود.
+- <b>تستخدم `ServerFailure.code`</b> وتعمل `switch` على strings في الـ presentation: مش exhaustive، وأي code جديد بيعدّي ساكت.
+- <b>نوع واحد generic في `core`</b> بيشيل سبب من enum بتاع الـ feature: `core` بيتغير مرة واحدة، وكل feature بتجيب الـ enum بتاعها، والـ `switch` على الـ enum exhaustive.
+
+</details>
+
+<details className="qa">
+<summary>تلميح 3: الشكل التالت</summary>
+
+```dart
+// core: added once, knows nothing about shelves
+final class RuleFailure<R extends Enum> extends Failure {
+  const RuleFailure(this.reason);
+  final R reason;
+}
+
+// feature_shelves domain
+enum ShelfDenial { notAMember, readOnly, notYourEntry, shelfFull, membersFull, inviteExpired, inviteNotFound, ownerCannotLeave }
+
+// presentation
+String shelfFailureText(AppLocalizations l10n, Failure f) => switch (f) {
+  RuleFailure(reason: final ShelfDenial r) => switch (r) {
+    ShelfDenial.shelfFull => l10n.shelfFull,
+    // ... every value, no default
+  },
+  _ => commonFailureText(l10n, f),
+};
+```
+
+والـ mapping من `code` السيرفر للـ enum مكانه الـ data layer في مكان واحد، زي ما [درس الـ Failure pipeline](/course/api-errors/failure-pipeline/) قال. وعرّف `code` مش معروف إنه `ServerFailure` عادية، مش crash.
+
+</details>
+
+### المهمة 5: الـ contracts
+
+<Tasks>
+<Task id="cap-domain-5">اكتب الـ contracts: streams للرفوف بتاعتي ولرف واحد (اللي بيطلّع `null` لو الرف اتمسح أو اتشلت منه)، و`refresh`، والكتابة، والدعوات. قسّمهم على interfaces على قد اللي بيستخدمها، واكتب `FakeShelvesRepository` في الـ `testing.dart` بتاع الـ package.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: interface واحد ولا أكتر؟</summary>
+
+افتكر `NewsRepository` بتاع Escore في [درس الجودة](/course/quality/escore/): 22 method، وكل fake بـ `noSuchMethod`. الشاشة اللي بتعرض لينك الدعوة محتاجة إيه بالظبط من الـ interface؟
+
+</details>
+
+<details className="qa">
+<summary>تلميح 2: تقسيم ممكن</summary>
+
+`ShelvesRepository` للقراية والكتابة جوه الرف (اللي بيعدّوا على drift والـ outbox)، و`ShelfMembership` للدعوات والانضمام والخروج (أونلاين بس). التقسيم ده نفسه هو قرار الـ ADR بتاع الـ Brief: لو بصيت على الـ interface، تعرف أنهي method ممكن تشتغل أوفلاين.
+
+</details>
+
+<details className="qa">
+<summary>تلميح 3: الـ stream بتاع الرف</summary>
+
+```dart
+abstract interface class ShelvesRepository {
+  Stream<List<Shelf>> watchMyShelves();
+  Stream<ShelfDetails?> watchShelf(ShelfId id); // null: deleted, or I was removed
+  Future<Result<void>> refresh();
+  Future<Result<void>> refreshShelf(ShelfId id);
+  Future<Result<void>> createShelf(ShelfId id, ShelfName name);
+  Future<Result<void>> addBook(ShelfId id, BookSnapshot book);
+  Future<Result<void>> removeBook(ShelfId id, BookId bookId);
+  // rename, delete
+}
+```
+
+والـ `Stream<ShelfDetails?>` مش `Stream<Result<...>>`، لنفس سبب [درس الـ Streams في Readly](/course/dart-async/watch/): ده بيقرا من drift، والفشل المتوقع في الـ `refresh`.
+
+</details>
+
+### المهمة 6: الـ use cases اللي فيها قاعدة بس
+
+<Tasks>
+<Task id="cap-domain-6">اعمل use cases للحاجات اللي فيها قاعدة فعلًا: إضافة كتاب (الصلاحية والحد، والكتاب الموجود مايعملش حاجة)، وشيل كتاب، والانضمام (عضو أصلًا يبقى نجاح، والـ preview بيقول خلص بالـ `Clock`)، والخروج. وأي method من غير قاعدة، قرر: use case pass-through ولا الـ Cubit يكلّم الـ repository؟ واكتب القرار جنب الـ DI.</Task>
+<Task id="cap-domain-7">شغّل `dart test --coverage` على الـ domain لحد 100%، واتأكد إن الـ architecture test بيعدّي على الـ package الجديدة: مفيش Flutter ولا dio ولا drift جوه الـ domain.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: الحد بييجي منين؟</summary>
+
+200 كتاب مش رقم تكتبه `const`. الحد جاي مع الرف من السيرفر (`maxBooks`)، والـ use case بيقرا منه. لو المنتج غيّره بكرة لـ 300، الـ app القديم مش هيرفض حاجة السيرفر بيقبلها.
+
+</details>
+
+<details className="qa">
+<summary>تلميح 2: الوقت</summary>
+
+«اللينك خلص؟» محتاجة الوقت. لو كتبت `DateTime.now()` جوه الـ domain، التست هيبقى مرتبط بالساعة. استخدم الـ `Clock` اللي عندك من [درس الـ Conflicts](/course/offline/conflicts/)، و`FixedClock` في التست. وافتكر إن السيرفر هو الحكم: الـ app بيقول «خلص» عشان مايبعتش طلب على الفاضي، بس لو السيرفر رجّع 410 والساعة بتقول لسه، صدّق السيرفر.
+
+</details>
+
+<details className="qa">
+<summary>تلميح 3: أول تست في الـ AddBookToShelf</summary>
+
+```dart
+test('a viewer cannot add, and nothing reaches the repository', () async {
+  final repo = FakeShelvesRepository()..seed(aShelfDetails(myRole: ShelfRole.viewer));
+  final add = AddBookToShelf(repo);
+
+  final result = await add(shelfId, aBookSnapshot());
+
+  expect(
+    result,
+    isA<Err<void>>().having((e) => e.failure, 'failure',
+        isA<RuleFailure<ShelfDenial>>().having((f) => f.reason, 'reason', ShelfDenial.readOnly)),
+  );
+  expect(repo.addedBooks, isEmpty);
+});
+```
+
+التست ده هيقع الأول عشان الـ class مش موجود. ده الـ red. وبعدين أقل كود يخليه أخضر، وبعدين التست اللي بعده من الليستة.
+
+</details>
+
+<Quiz>
+
+<Question id="cap-domain-q1">
+<Ask>الـ app بيتشيك إن الرف مش مليان قبل ما يضيف، والسيرفر برضه بيتشيك. ليه الاتنين؟</Ask>
+<Answer>
+
+الـ check في الـ app عشان المستخدم يعرف على طول، حتى وهو أوفلاين، ومايتبعتش طلب هيترفض. والـ check في السيرفر هو الحقيقة: عضوين ممكن يضيفوا الكتاب رقم 200 في نفس الثانية من جهازين، والـ app مايعرفش. فالـ app بيقلّل الحالات، والسيرفر بيحسمها، والـ 422 `shelf_full` لازم يتعالج في الـ outbox حتى لو الـ app كان شايف إن فيه مكان. والحد نفسه بييجي من السيرفر مع الرف، مش متكتب في الكود.
+
+</Answer>
+</Question>
+
+<Question id="cap-domain-q2">
+<Ask>ليه `ShelfName` بيعد الحروف بـ `characters` مش بـ `String.length`؟</Ask>
+<Answer>
+
+لأن `length` بيعد UTF-16 code units، والـ emoji الواحد ممكن يبقى 2 أو 11 وحدة، فاسم شكله 30 حرف ممكن يترفض على إنه أطول من 40. الـ `characters` بيعد الـ grapheme clusters، يعني الحروف زي ما المستخدم شايفها. والمهم إن الـ backend يعد بنفس الطريقة، وإلا الـ app والسيرفر هيختلفوا على نفس الاسم.
+
+</Answer>
+</Question>
+
+</Quiz>
+
+### اتأكد قبل ما تكمّل
+
+- الـ domain بيعدّي `dart test` من غير Flutter، والتغطية 100% ([تست كل طبقة](/course/testing/layers/)).
+- كل commit red أو green أو refactor، والليستة اتقفلت كلها ([TDD](/course/testing/tdd/)).
+- الـ value objects متستة بالـ boundaries بـ parameterized test ([أول unit test](/course/testing/unit-tests/)).
+- كل قاعدة ليها مكان واحد، والـ entity بتجاوب على أسئلة الصلاحيات ([الـ Domain](/course/domain-errors/domain/)).
+- أسباب الرفض أنواع مش strings، والـ `switch` عليها exhaustive ([الأخطاء: من try/catch لـ Result](/course/domain-errors/errors/)).
+- الـ interfaces على قد اللي بيستخدمها، والـ fake صغير من غير `noSuchMethod` ([SOLID في Readly](/course/quality/solid-in-readly/) و[الـ Test Doubles](/course/testing/test-doubles/)).
+- مفيش use case pass-through من غير قرار مكتوب ([الأخطاء الشائعة](/course/quality/anti-patterns/)).
+- الـ architecture test شايف الـ package الجديدة وبيعدّي ([حراسة المعمارية](/course/quality/architecture-guards/)).

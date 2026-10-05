@@ -1,0 +1,151 @@
+---
+title: "الاختبارات: الطبقات الباقية والـ widgets والـ golden والـ integration"
+description: "خريطة باللي اتغطى واللي لسه، وتستات الـ events والـ outbox بـ fake_async، والـ Cubits بـ blocTest، والشاشات بـ widget tests فيها الـ semantics وتكبير الخط، وgolden واحد بس مختار بسبب، وintegration test للـ flow اللي لو باظ الـ feature كلها مالهاش لازمة."
+minutes: 25
+draft: true
+---
+
+الـ domain اتكتب بالتستات الأول، والـ data جت ومعاها contract test وتست الـ migration. اللي فاضل هو الطبقات اللي كتير بيأجّلوها لحد ما تتنسي: الـ events والـ timers، والـ Cubits، والشاشات، والـ flow كله من أوله لآخره.
+
+والسؤال في المرحلة دي مش «كام تست»، السؤال: <b>لو حد غيّر سطر في الـ feature دي بعد 6 شهور، أنهي تست هيقع؟</b> لو مفيش إجابة لجزء معين، ده المكان اللي ناقص.
+
+### المهمة 1: الخريطة
+
+<Tasks>
+<Task id="cap-tests-1">اعمل جدول لكل class في `feature_shelves`: عليه تست ولا لأ، من أنهي نوع، وبيحميه من إيه. واكتب قسم «الرفوف» في صفحة الـ test strategy: إيه بيتختبر بأنهي نوع، وإيه اللي مش متختبر عن قصد وليه.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: ابدأ من الخطر مش من السهولة</summary>
+
+أسهل حاجة تتختبر هي الـ mappers. وأخطر حاجة هي الـ outbox لما يتشال عضو، والـ events لما توصل بترتيب غريب. ارجع لدرس Escore في [وحدة الاختبارات](/course/testing/escore/): التستات كانت على السهل، واللي لو باظ الـ app كله يقع ماكانش عليه حاجة.
+
+</details>
+
+### المهمة 2: الـ events والـ outbox
+
+<Tasks>
+<Task id="cap-tests-2">اكتب تستات الـ `LiveSyncService` للرفوف بـ `FakeWebSocketChannel` و`fakeAsync`: الترتيب العشوائي والمكرر بيطلّع نفس الحالة، والصدى بتاع تعديلك مابيكتبش تاني، والـ `shelf.removed` وفيه عملية pending، والفجوة في الـ `seq` بتعمل catch-up واحد بس.</Task>
+<Task id="cap-tests-3">اكتب تستات الـ outbox للرفوف بـ `FixedClock` وremote fake: أول رد ضايع والرف بيوصل نسخة واحدة، والـ 5xx بالـ backoff في وقته بالظبط، والـ 403 بيمسح الرف ويسيب الرسالة، والإضافة والشيل وانت أوفلاين بيلغوا بعض، والـ dead على رف مابيوقفش رف تاني ولا المكتبة.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: الوقت</summary>
+
+مفيش `Future.delayed` حقيقي في أي تست هنا. الـ backoff والـ debounce بتاع الإعلانات والـ heartbeat كلهم على ساعة واحدة انت ماسكها. وفي آخر كل تست، `pendingTimers` لازم تبقى فاضية. التفاصيل في [درس تست الـ real-time](/course/realtime/testing-realtime/).
+
+</details>
+
+<details className="qa">
+<summary>تلميح 2: الـ fake لازم يبقى صادق</summary>
+
+الـ remote الـ fake بتاع الرفوف لو بيرجّع 200 على أي حاجة، كل التستات هتعدّي والـ app هيقع على أول 422. خليه يطبّق نفس القواعد (العضوية والحد والـ role)، وشغّل عليه نفس الـ contract test بتاع الـ remote الحقيقي، زي [«الـ fake كان بيكدب»](/course/realtime/testing-realtime/).
+
+</details>
+
+### المهمة 3: الـ Cubits
+
+<Tasks>
+<Task id="cap-tests-4">اكتب `blocTest` لكل Cubit في الرفوف بالليستة الكاملة للـ states مش الأولى والأخيرة بس: الضغطتين على «ضيف» بيعملوا نداء واحد، والـ refresh الفاشل مابيمسحش البيانات، والرف اختفى وانت فاتحه، والانضمام بكل حالاته (preview، وخلص، ومليان، وأوفلاين، وعضو أصلًا).</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: الـ stream من الـ fake</summary>
+
+الـ `FakeShelvesRepository` فيه `StreamController` انت بتدفع فيه قيم من التست. كده تقدر تقول: «الرف كان موجود، وبعدين بقى `null`» وتشوف الـ states اللي طلعت، من غير drift ولا socket.
+
+</details>
+
+<details className="qa">
+<summary>تلميح 2: الأحداث اللي بتحصل مرة</summary>
+
+لو الرسالة بتاعة «اتشلت من الرف» جوه الـ state بـ `failureId` أو nonce، التست بيتأكد إنها ظهرت في state واحدة. ولو في stream effects لوحده، التست بيسمع عليه. أيًا كان اللي اخترته في الـ presentation، التست هو اللي بيثبت إنه مابيتكررش. ارجع لـ [تست الـ Cubit](/course/testing/cubit-tests/).
+
+</details>
+
+### المهمة 4: الشاشات
+
+<Tasks>
+<Task id="cap-tests-5">اكتب widget tests لشاشة الرف وشاشة الانضمام بـ `pumpApp` و`whenListen`: كل state بتعرض اللي المفروض، و«ادعُ» مقفول أوفلاين ومعاه السبب، والـ viewer مايشوفش «ضيف». وفي نفس التستات: `meetsGuideline` للـ tap targets والـ labels، والـ semantics label بتاع كارت الرف، ومفيش overflow على 320 بخط 2.0.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: التست بيدوّر زي المستخدم</summary>
+
+`find.bySemanticsLabel` أحسن من `find.byKey` في أغلب الحالات: لو التست لاقى الزرار بالاسم اللي قارئ الشاشة بيقوله، يبقى قارئ الشاشة هيلاقيه كمان. التفاصيل في «الـ accessibility» و«RTL وأحجام الشاشات والـ text scale» في [درس الـ Widget tests](/course/testing/widget-tests/).
+
+</details>
+
+### المهمة 5: golden واحد
+
+<Tasks>
+<Task id="cap-tests-6">اختار شاشة واحدة بس للـ golden في الرفوف، واكتب في الـ PR ليه هي بالذات. اعملها بالعربي وdark، وفيها أسامي بلغتين وentry pending، والصور fake ثابتة والخط محمّل. واتأكد إنها بتتولّد على Linux في الـ CI.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: ليه واحد؟</summary>
+
+كل golden بيكلّف: صورة في الـ repo، ومراجعة مع كل تغيير في الـ design، وفشل لما الخط يتحدث. والـ components نفسها عليها goldens في `core_ui` أصلًا. فالـ golden هنا لحاجة واحدة الـ components لوحدها مابتغطيهاش: الشكل لما كلهم يتجمعوا. ارجع لـ «كام golden وفين» في [درس الـ Golden tests](/course/testing/golden-tests/).
+
+</details>
+
+<details className="qa">
+<summary>تلميح 2: اختيار ممكن</summary>
+
+رأس شاشة الرف بأول 3 entries: الاسم الطويل اللي بيلف سطرين، وصف الأعضاء المتراكب في الـ RTL، وعلامة الـ pending، والعنوان الإنجليزي جوه الـ UI العربي. دي أكتر حتة فيها حاجات ممكن تبوظ بصريًا ومن غير ما أي تست تاني يقع.
+
+</details>
+
+### المهمة 6: integration test
+
+<Tasks>
+<Task id="cap-tests-7">اكتب integration test بـ fake backend وrobots للـ flow اللي لو باظ الـ feature مالهاش لازمة: login، وعمل رف والنت قاطع، وإضافة كتابين، ورجوع النت، والـ backend عنده رف واحد فيه كتابين. وبعدين الـ fake backend يبعت `shelf.entry_added` من عضو تاني، والكتاب يظهر على الشاشة. ويتشغّل على emulator في الـ CI كل ليلة، وعلى أي PR بيلمس `feature_shelves`.</Task>
+<Task id="cap-tests-8">زوّد للـ CI: الـ coverage بحد أدنى للـ domain والـ data بتوع الرفوف، و`--test-randomize-ordering-seed random`، والـ leak tracker على widget tests الرفوف. واتأكد إن الـ affected detection بيشغّل تستات الـ app لما `feature_shelves` تتغير.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: النت بيقطع إزاي في التست؟</summary>
+
+مش بقفل الـ wifi. الـ fake backend فيه switch «offline» بيخلي كل الطلبات ترمي connection error، والـ connectivity fake بيقول none. ونفس الحاجة للـ socket. ده كله في «الـ flow الحرج: أوفلاين وبعدين sync» في [درس الـ Integration tests](/course/testing/integration/).
+
+</details>
+
+<details className="qa">
+<summary>تلميح 2: الـ flakiness</summary>
+
+لو التست بيستنى الكتاب يظهر بـ `pumpAndSettle`، هيعدّي على جهازك ويقع في الـ CI، لأن الـ sync شغل حقيقي مش animation. robot بيعمل `pump` لحد ما حاجة تظهر أو timeout واضح، ورسالة الفشل بتقول كان مستني إيه.
+
+</details>
+
+<Quiz>
+
+<Question id="cap-tests-q1">
+<Ask>ليه الـ integration test للرفوف بيغطي flow واحد بس، والباقي widget وunit tests؟</Ask>
+<Answer>
+
+لأن الـ integration test أبطأ وأغلى وأهش نوع، ولازم يتحجز للحاجة اللي مفيش طريقة أرخص تثبتها: إن الطبقات كلها متوصلة صح على جهاز حقيقي. الـ flow ده (أوفلاين، وبعدين sync، وبعدين event من عضو تاني) بيعدّي على drift والـ outbox والـ socket والشاشة مع بعض. أما الحالات (كل رد من السيرفر، كل state) فمكانها الـ unit والـ widget tests اللي بتجري في ثواني وبتقول بالظبط إيه اللي باظ.
+
+</Answer>
+</Question>
+
+<Question id="cap-tests-q2">
+<Ask>الـ fake backend بتاع الـ integration test بيرجّع 200 على أي `PUT` للرفوف. إيه اللي ممكن يعدّي من غير ما حد ياخد باله؟</Ask>
+<Answer>
+
+كل حاجة ليها علاقة بالرفض: الـ viewer اللي بيضيف، والرف المليان، والعضو اللي اتشال. التست هيعدّي، والـ app هيقع على أول 403 حقيقية في الـ staging. الـ fake لازم يطبّق نفس قواعد السيرفر، وأحسن طريقة تضمن ده إن نفس الـ contract test يشتغل على الـ fake وعلى الـ backend الحقيقي.
+
+</Answer>
+</Question>
+
+</Quiz>
+
+### اتأكد قبل ما تكمّل
+
+- كل class في الـ feature ليه سطر في الخريطة، والـ strategy مكتوبة ([الاختبارات في فريق حقيقي](/course/testing/strategy/)).
+- مفيش وقت حقيقي في أي تست، و`pendingTimers` فاضية في الآخر ([تست الـ real-time والـ timers](/course/realtime/testing-realtime/)).
+- الـ fakes صادقة بـ contract tests ([الـ Test Doubles](/course/testing/test-doubles/) و[تست كل طبقة](/course/testing/layers/)).
+- كل `blocTest` بيقارن الليستة كاملة ([تست الـ Cubit](/course/testing/cubit-tests/)).
+- الـ widget tests فيها الـ semantics وتكبير الخط ([Widget tests](/course/testing/widget-tests/)).
+- الـ golden الواحد بيتولّد في الـ CI مش على جهازك بس ([Golden tests](/course/testing/golden-tests/)).
+- الـ integration test من غير `pumpAndSettle` على الشبكة، وبيتشغّل كل ليلة ([Integration tests](/course/testing/integration/)).
+- الـ CI بيشغّل اللي اتغير واللي بيعتمد عليه، والـ coverage بحد ([الـ codegen والـ CI في الـ monorepo](/course/modularization/codegen-ci/)).

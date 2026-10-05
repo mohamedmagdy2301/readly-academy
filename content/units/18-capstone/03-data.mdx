@@ -1,0 +1,184 @@
+---
+title: "الـ Data: الـ remote والـ local والـ sync"
+description: "الـ backend بالـ endpoints والـ fan-out، والـ DTOs والـ mappers على الـ fixtures، وجداول drift والـ migration، والـ outbox اللي بقى لازم يعرف حاجة غير الكتب، والـ events اللي بتكتب في drift، والـ dead letter لما تتشال من رف وعندك تعديل لسه ماتبعتش."
+minutes: 30
+draft: true
+---
+
+في المرحلة دي الـ contracts اللي كتبتها في الـ domain بتلاقي حد ينفّذها. وهنا أغلب المفاجآت: الـ outbox اللي عندك معمول للكتب بس، والـ event ممكن يوصل قبل رد الطلب اللي انت بعته، وعضو ممكن يتشال من الرف وفي إيده تعديل لسه في الطابور.
+
+القاعدة اللي ماشية معاك من [وحدة Offline-first](/course/offline/offline/): <b>drift هو المصدر الوحيد للحقيقة.</b> الـ refresh بيكتب في drift، والـ event بيكتب في drift، والـ outbox بيقرا من drift. والشاشة بتسمع على drift بس، ومش هتعرف إن فيه socket.
+
+### المهمة 1: الـ backend
+
+<Tasks>
+<Task id="cap-data-1">نفّذ الـ endpoints في الـ backend بتاعك (Node وMongo) بالعقد اللي في الـ Brief بالظبط: unique index على الرف والكتاب للـ entries، وmiddleware بيتشيك على العضوية والـ role، وcollection للدعوات بـ TTL index على `expiresAt`. وكل تغيير في رف بيتكتب في الـ change feed بتاع كل عضو بالـ `seq` بتاعه، وبيتبعت على الـ socket لكل عضو متوصل.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: الـ fan-out</summary>
+
+الـ event بتاع المكتبة كان بيروح لمستخدم واحد: صاحبها. هنا التغيير في رف واحد لازم يوصل لـ 20 مستخدم، وكل واحد فيهم ليه `seq` بتاعه. فكّر: الـ `seq` بيتزود فين، وإيه اللي يحصل لو السيرفر وقع بعد ما كتب الـ entry وقبل ما يكتب في feed العضو العاشر؟
+
+</details>
+
+<details className="qa">
+<summary>تلميح 2: نفس الـ transaction</summary>
+
+الـ entry والـ feed rows لكل الأعضاء في transaction واحدة في Mongo (replica set)، والإرسال على الـ socket بعد الـ commit. لو الإرسال فشل، مفيش مشكلة: الـ catch-up هيجيبه من الـ feed. ده نفس منطق «الـ event إشارة، والحقيقة في الـ API» بتاع [وحدة الـ Real-time](/course/realtime/push-vs-pull/).
+
+</details>
+
+<details className="qa">
+<summary>تلميح 3: العضو اللي اتشال</summary>
+
+لما صاحب الرف يشيل عضو، العضو ده لازم ياخد `shelf.removed` بـ `reason: kicked` في الـ feed بتاعه، وبعدها مايوصلوش أي event تاني عن الرف ده. ولو بعت طلب على الرف، السيرفر يرجّع 403 `not_a_member` مش 404، عشان الـ app يعرف يفرّق بين «الرف اتمسح» و«انت اتشلت».
+
+</details>
+
+### المهمة 2: الـ DTOs والـ mappers
+
+<Tasks>
+<Task id="cap-data-2">اعمل الـ DTOs بتاعة الرف والـ entry والعضو والدعوة والـ events بـ freezed وjson_serializable، والـ mappers للـ entities، وكل `fromJson` جوه `parseOrThrow`. اكتب تستاتهم على الـ fixtures اللي عملتها في الـ Brief، ومعاهم round-trip test لأي حاجة بتتكتب وتتقري من نفس الشكل.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: السيرفر الأحدث من الـ app</summary>
+
+بعد سنة، السيرفر هيزوّد role جديد اسمه `moderator`، وevent جديد اسمه `shelf.entry_pinned`. النسخة اللي في إيد المستخدم دلوقتي هتعمل إيه لما تشوفهم؟
+
+</details>
+
+<details className="qa">
+<summary>تلميح 2: الأأمن</summary>
+
+الـ role المش معروف يتحول لأقل صلاحية (`viewer`)، مش crash ومش `owner`. والـ event المش معروف يتسجل ويتجاهل، زي `WsUnknownEvent` في [درس Escore في وحدة الـ API](/course/api-errors/escore/). والاتنين ليهم تست على fixture فيها القيمة الجديدة.
+
+</details>
+
+### المهمة 3: drift والـ migration
+
+<Tasks>
+<Task id="cap-data-3">زوّد جداول `Shelves` و`ShelfEntries` و`ShelfMembers` بـ migration لـ `schemaVersion` الجديد، وتست `SchemaVerifier` للترقية من النسخة اللي قبلها ببيانات حقيقية. واعمل queries الـ watch: رفوفي بعدد الكتب والأعضاء في query واحد، والرف الواحد بيطلّع `null` لو اتمسح.</Task>
+<Task id="cap-data-4">سجّل مسح الجداول الجديدة في الـ logout، واتأكد بتست إن مستخدم B بعد A مابيشوفش أي رف بتاع A.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: الأعداد</summary>
+
+لو `watchMyShelves` جاب الرفوف وبعدين عمل query لكل رف عشان يعد الكتب، ده N+1 جوه الـ DB، وهيتعاد مع كل كتابة في أي رف. ارجع لـ «N+1: المكان اللي الطبقات بتكلّف فيه بجد» في [درس تمن الطبقات](/course/performance/cost-of-layers/).
+
+</details>
+
+<details className="qa">
+<summary>تلميح 2: query واحد</summary>
+
+`LEFT JOIN` على الـ entries والأعضاء بـ `COUNT(DISTINCT ...)` و`GROUP BY`، أو أعمدة counts في جدول `Shelves` بتتحدث في نفس الـ transaction مع أي كتابة. الأولى أبسط وصح دايمًا، والتانية أسرع لو القياس قال إنك محتاجها. ابدأ بالأولى، واكتب الرقم.
+
+</details>
+
+<details className="qa">
+<summary>تلميح 3: الـ migration مش هتستخبى</summary>
+
+الـ migration دي هتشتغل عند كل مستخدم يحدّث الـ app، حتى والـ flag مقفول. فتست الترقية لازم يكون من نسخة فيها مكتبة وملاحظات وعمليات pending حقيقية، ويتأكد إنهم كلهم سليمين بعدها. ده [«زوّدت عمود والـ app وقع عند كل المستخدمين»](/course/data-network/local-storage/) بس بجدول كامل.
+
+</details>
+
+### المهمة 4: الـ remote source والـ repository
+
+<Tasks>
+<Task id="cap-data-5">اعمل `ShelvesRemoteSource` على الـ Dio بتاع الـ backend (اللي عليه `AuthInterceptor`)، والـ mapping من `code` السيرفر للـ `ShelfDenial` في مكان واحد. واعمل الـ repository: القراية من drift، والـ `refresh` بيكتب في drift، والدعوات والانضمام أونلاين على طول، وبـ `NetworkFailure` واضحة لو مفيش نت، ومن غير ما يدخلوا الـ outbox.</Task>
+<Task id="cap-data-6">اكتب contract test واحد لـ `ShelvesRepository` يشتغل على الـ fake وعلى الـ impl فوق `NativeDatabase.memory()` وremote fake، عشان الـ `FakeShelvesRepository` اللي الشاشات هتتست بيه يفضل صادق.</Task>
+</Tasks>
+
+### المهمة 5: الـ outbox
+
+<Tasks>
+<Task id="cap-data-7">خلي الـ outbox يشيل عمليات الرفوف: إنشاء رف، وتغيير اسمه، ومسحه، وإضافة كتاب، وشيله. الكتابة في drift والعملية في الـ outbox في نفس الـ transaction، والـ entry بتظهر على طول وجنبها علامة إنها pending. والـ dead بيوقف عمليات نفس الرف بس، مش كل الطابور.</Task>
+<Task id="cap-data-8">صنّف ردود السيرفر لعمليات الرفوف: 403 `not_a_member` و404 على الرف يمسحوا الرف من drift وعملياته، ويسيبوا رسالة للمستخدم فيها الكتب اللي ماتحفظتش. و422 `shelf_full` بيشيل الـ entry من drift وبيبقى dead برسالة. والـ 5xx والـ 429 backoff عادي. واكتب تست لكل سطر.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: الجدول معمول للكتب</summary>
+
+افتح `SyncOps` بتاع [درس الـ Conflicts](/course/offline/conflicts/): فيه `bookId` إجباري، و`SyncKind` للمكتبة، والـ dead بيوقف «الكتاب ده». عملية «امسح الرف» مالهاش `bookId` أصلًا. فيه قرار هنا قبل أي كود.
+
+</details>
+
+<details className="qa">
+<summary>تلميح 2: البدائل</summary>
+
+- <b>جدول outbox تاني للرفوف</b> بـ `SyncService` تاني: مفيش migration للجدول القديم، بس هيبقى فيه اتنين بيتنافسوا على الشبكة والـ backoff، وترتيب بينهم مش مضمون.
+- <b>تعمم الجدول</b>: `bookId` يبقى `entityKey` (`book:OL45W` أو `shelf:7f3a`)، و`payload` JSON للبيانات الزيادة، والـ `SyncKind` يكبر. migration للجدول، بس طابور واحد وقاعدة dead واحدة: «الـ dead بيوقف الـ entity بتاعته».
+- <b>handlers بالنوع</b>: الـ `SyncService` يبقى بيوزّع كل `kind` على handler (`LibrarySyncHandler` و`ShelfSyncHandler`)، فمش لازم يعرف الرفوف. ده الـ OCP اللي في [درس SOLID](/course/quality/solid-in-readly/).
+
+التانية والتالتة مع بعض غالبًا أحسن اختيار. اكتب ليه في الـ ADR.
+
+</details>
+
+<details className="qa">
+<summary>تلميح 3: الإضافة وبعدين الشيل وانت أوفلاين</summary>
+
+ضفت كتاب للرف وشلته قبل ما النت يرجع. ماتبعتش الاتنين: العمليتين يلغوا بعض، زي «ضيف وبعدين امسح» في [درس Offline-first](/course/offline/offline/). وخلي بالك: لو الإضافة كانت `syncing` ساعة الشيل (يعني طلعت فعلًا)، ماينفعش تلغيها، لازم الشيل يتبعت بعدها.
+
+</details>
+
+### المهمة 6: الـ events والـ catch-up
+
+<Tasks>
+<Task id="cap-data-9">خلي الـ `LiveSyncService` يتعامل مع الـ `shelf.*` events: كل event بيكتب في drift بنفس قاعدة الكتابة بتاعة المكتبة (السيرفر مايكتبش فوق صف pending)، والـ event اللي `origin` بتاعه الجهاز ده مايعملش كتابة تانية، والـ `shelf.removed` بيمسح الرف وعملياته المستنية ويسيب الرسالة. والـ catch-up بعد فجوة في الـ `seq` بيجيب أحداث الرفوف مع المكتبة.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: الترتيب مش مضمون</summary>
+
+انت ضفت كتاب، والطلب طلع. قبل ما الرد يرجع، الـ socket جاب `shelf.entry_added` لنفس الكتاب (الصدى بتاعك). وبعدها رد الطلب. وبعدها `shelf.entry_removed` من عضو تاني. اكتب الصف في drift بعد كل خطوة.
+
+</details>
+
+<details className="qa">
+<summary>تلميح 2: القاعدة اللي عندك</summary>
+
+[درس دمج الأحداث](/course/realtime/merge-cache/) عمل قاعدة كتابة واحدة: `_serverMayOverwrite` و`_putServerRow`، والصف الـ pending مايتكتبش فوقه، والكتاب اللي اتمسح بيتسجل عشان مايرجعش. نفس القاعدة لازم تتطبق على الـ entries، بمفتاح الرف والكتاب.
+
+</details>
+
+<details className="qa">
+<summary>تلميح 3: تست الترتيب</summary>
+
+نفس فكرة تست الـ «50 ترتيب عشوائي ومعاهم events مكررة»: ليستة events لرف واحد، تخلطها بـ seed ثابت 50 مرة، وتتأكد إن الحالة النهائية في drift واحدة في كل مرة. ولو فيه ترتيب بيطلّع حالة مختلفة، القاعدة فيها ثغرة.
+
+</details>
+
+<Quiz>
+
+<Question id="cap-data-q1">
+<Ask>ضفت كتاب لرف وانت أوفلاين، وقبل ما النت يرجع صاحب الرف شالك. إيه اللي يحصل لما النت يرجع؟</Ask>
+<Answer>
+
+حاجتين ممكن يوصلوا الأول. لو الـ catch-up وصل الأول، فيه `shelf.removed` بـ `kicked`: الرف بيتمسح من drift ومعاه العملية المستنية، والرسالة بتتسجل بالكتب اللي ماتحفظتش. ولو الـ outbox بعت الأول، السيرفر بيرجّع 403 `not_a_member`، وده بيعمل نفس الحاجة بالظبط. في الحالتين الشاشة بتسمع على drift، فالرف بيختفي، والـ banner بيقول إن الكتاب ماتحفظش ومعاه «ضيفه لمكتبتك». ومفيش retry للأبد على 403.
+
+</Answer>
+</Question>
+
+<Question id="cap-data-q2">
+<Ask>ليه الـ event بتاع `shelf.entry_added` مايتكتبش فوق صف pending لنفس الكتاب في نفس الرف؟</Ask>
+<Answer>
+
+لأن الصف الـ pending فيه نية المستخدم اللي لسه ماوصلتش للسيرفر، والـ event ممكن يكون أقدم منها. مثلًا: عضو تاني ضاف الكتاب، وانت شلته أوفلاين، والـ event بتاع إضافته وصل بعد الشيل. لو كتبت الـ event فوق الصف، الكتاب هيرجع قدامك وكأن الشيل ماحصلش، والعملية لسه في الطابور. القاعدة: السيرفر بيكتب فوق اللي ماعليهوش تعديل محلي بس، والعملية لما تتبعت السيرفر بيرد بالحالة الصح.
+
+</Answer>
+</Question>
+
+</Quiz>
+
+### اتأكد قبل ما تكمّل
+
+- الـ DTOs بتستحمل أي قيمة جديدة من السيرفر، وعليها تستات fixtures وround-trip ([الـ Data](/course/data-network/data/) و[من الـ Exception للـ Failure](/course/api-errors/failure-pipeline/)).
+- الـ migration متستة من النسخة اللي قبلها ببيانات حقيقية ([التخزين المحلي](/course/data-network/local-storage/)).
+- الـ watch queries من غير N+1، وبتطلّع `null` لما الرف يختفي ([الـ Streams في Readly](/course/dart-async/watch/)).
+- الكتابة في drift والعملية في الـ outbox في transaction واحدة، والـ dead بيوقف الرف بتاعه بس ([الـ Conflicts والـ idempotency](/course/offline/conflicts/)).
+- كل رد من السيرفر ليه سطر في التصنيف وتست ([رحلة request واحدة](/course/offline/request-journey/) و[خريطة أخطاء الـ API](/course/api-errors/error-map/)).
+- الـ events بتكتب في drift بقاعدة الكتابة الواحدة، والـ Cubit مش هيعرف إن فيه socket ([الـ WebSocket كـ RemoteDataSource](/course/realtime/websocket/) و[دمج الأحداث](/course/realtime/merge-cache/)).
+- الـ logout بيمسح الرفوف، والتست بيثبت ده ([الـ Session والتخزين الآمن](/course/di-scale/session/)).
+- الـ contract test شغال على الـ fake والـ impl ([تست كل طبقة](/course/testing/layers/)).

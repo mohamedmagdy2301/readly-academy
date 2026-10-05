@@ -1,0 +1,162 @@
+---
+title: "الـ Review: مراجعة الـ senior والـ rubric"
+description: "تراجع الرفوف المشتركة كأن حد تاني كتبها: checklist بالأسئلة اللي senior هيسألها في الـ code review لكل طبقة، وشكل التعليقات نفسها، وrubric من 40 تقيّم بيه نفسك، ولكل نقطة لينك للدرس اللي بيشرحها."
+minutes: 30
+draft: true
+---
+
+الـ feature خلصت ونزلت. المرحلة دي عن إنك تبص عليها بعين حد ماكتبهاش. استنى يومين بعد آخر PR، وبعدين افتح الـ PRs واحد واحد بالترتيب، وراجع كأنك الـ senior اللي هيوافق عليها. ولو عندك زميل، بدّلوا: هو يراجع بتاعتك وانت بتاعته، بنفس الـ checklist.
+
+والهدف مش إنك تطلع 40 من 40. الهدف إنك تعرف أضعف 3 حاجات عندك بالاسم، ويبقى عندك خطة ليهم.
+
+### شكل التعليق
+
+الـ senior مابيكتبش «الكود ده وحش». كل تعليق ليه نوع، وسبب، واقتراح:
+
+| النوع | معناه | مثال على الرفوف |
+| --- | --- | --- |
+| <b>blocking</b> | مايتدمجش غير لما يتصلح | «الـ `ShelfCubit` بيعمل listen على الـ `RealtimeClient`. لو الـ socket اتقفل، الشاشة مش هتعرف حاجة اتغيرت من الـ catch-up. اسمع على `watchShelf` بس، والـ event يكتب في drift.» |
+| <b>suggestion</b> | أحسن، بس مش شرط دلوقتي | «الـ `ShelfDenial` بقى فيه 8 قيم وكلهم بيتعرضوا بنفس الشكل. ممكن نجمعهم في جدول ترجمة واحد بدل الـ switch في 3 شاشات.» |
+| <b>question</b> | مش فاهم، مش متأكد إنه غلط | «ليه الـ invite preview مش متخزن في drift؟ لو فتح اللينك أوفلاين بيشوف إيه؟» |
+| <b>nit</b> | ذوق، ماتعطّلش الـ PR عشانه | «`shelfBooksCount` و`entriesCount` نفس الحاجة باسمين.» |
+
+وكل تعليق blocking لازم يكون فيه السيناريو اللي هيبوظ، مش القاعدة بس. «ده بيكسر الـ dependency rule» أضعف من «لو `feature_catalog` اتنقلت لـ package، السطر ده مش هيعمل compile».
+
+### الـ checklist
+
+علّم على كل نقطة لما تتأكد منها في الكود نفسه، مش من ذاكرتك. وأي نقطة مش متحققة، اكتبها تعليق على الـ PR بالنوع بتاعها.
+
+#### الـ spec والعقد
+
+<Tasks>
+<Task id="cap-review-1">كل خانة في جدول الحالات بتاع الـ spec ليها تست أو قرار مكتوب إنها مش متختبرة. ([TDD](/course/testing/tdd/))</Task>
+<Task id="cap-review-2">كل `code` السيرفر بيرجّعه موجود في `docs/errors.md` وفي الـ mapping وفي الترجمة، ومفيش code بيوصل للمستخدم كنص خام. ([خريطة أخطاء الـ API](/course/api-errors/error-map/))</Task>
+<Task id="cap-review-3">الـ OpenAPI والـ AsyncAPI متطابقين مع اللي السيرفر بيرجّعه فعلًا، والـ contract test بيثبت ده. ([عقد الـ API](/course/api-errors/api-contract/))</Task>
+<Task id="cap-review-4">كل ADR فيه البدائل اللي اترفضت، ولو قرار اتغير في النص، الـ ADR اتحدث. ([التوسّع والـ production](/course/di-scale/scale/))</Task>
+</Tasks>
+
+#### الـ domain
+
+<Tasks>
+<Task id="cap-review-5">الـ domain مافيهوش import لـ Flutter ولا dio ولا drift ولا `DateTime.now()`. ([الطبقات التلاتة](/course/foundations/layers/))</Task>
+<Task id="cap-review-6">كل قاعدة صلاحية مكتوبة مرة واحدة، والشاشة والـ use case والـ outbox بيسألوا نفس الـ method. ([الـ Domain](/course/domain-errors/domain/))</Task>
+<Task id="cap-review-7">الحدود (200 كتاب، 20 عضو) جاية من السيرفر مش `const` في الكود. ([الـ Domain](/course/domain-errors/domain/))</Task>
+<Task id="cap-review-8">مفيش use case pass-through من غير قرار مكتوب، ومفيش interface ليه implementation واحد من غير سبب. ([الأخطاء الشائعة](/course/quality/anti-patterns/))</Task>
+<Task id="cap-review-9">أسباب الرفض أنواع، والـ `switch` عليها exhaustive من غير `default`. ([الأخطاء: من try/catch لـ Result](/course/domain-errors/errors/))</Task>
+</Tasks>
+
+#### الـ data والـ offline
+
+<Tasks>
+<Task id="cap-review-10">مفيش `as Map` ولا `fromJson` برا `parseOrThrow`، والقيم الجديدة من السيرفر مابتوقّعش الـ app. ([من الـ Exception للـ Failure](/course/api-errors/failure-pipeline/))</Task>
+<Task id="cap-review-11">الكتابة في drift والعملية في الـ outbox في transaction واحدة، ومفيش طريق بيكتب في واحد من غير التاني. ([Offline-first](/course/offline/offline/))</Task>
+<Task id="cap-review-12">كل عملية كتابة idempotent، والـ retry بعد رد ضايع مابيعملش نسختين. ([الـ Conflicts والـ idempotency](/course/offline/conflicts/))</Task>
+<Task id="cap-review-13">الـ 403 والـ 404 والـ 422 على عمليات الرفوف بيوصلوا لحالة نهائية ورسالة، مش retry للأبد. ([الـ Conflicts والـ idempotency](/course/offline/conflicts/))</Task>
+<Task id="cap-review-14">الـ migration متستة من النسخة اللي قبلها، والـ logout بيمسح الجداول الجديدة. ([التخزين المحلي](/course/data-network/local-storage/) و[الـ Session](/course/di-scale/session/))</Task>
+<Task id="cap-review-15">مفيش N+1، لا في الـ DB ولا في الشبكة. ([تمن الطبقات](/course/performance/cost-of-layers/))</Task>
+</Tasks>
+
+#### الـ real-time والإشعارات
+
+<Tasks>
+<Task id="cap-review-16">مفيش Cubit ولا widget بيعرف إن فيه socket. الـ events بتكتب في drift بس. ([الـ WebSocket كـ RemoteDataSource](/course/realtime/websocket/))</Task>
+<Task id="cap-review-17">الـ event مابيكتبش فوق صف pending، والصدى بتاع تعديلك مابيتكتبش تاني، والترتيب العشوائي بيطلّع نفس الحالة. ([دمج الأحداث مع الـ cache](/course/realtime/merge-cache/))</Task>
+<Task id="cap-review-18">الضغطة على الإشعار بتفتح الرف من أي حالة للـ app، ومعدّية على الـ allowlist، ومابتفتحش رف اتشلت منه. ([الـ Push notifications](/course/realtime/push-notifications/))</Task>
+<Task id="cap-review-19">الإشعارات متجمّعة على السيرفر، ومفيش مستخدم بياخد 20 إشعار لرف واحد. ([Push ولا Pull](/course/realtime/push-vs-pull/))</Task>
+</Tasks>
+
+#### الـ presentation
+
+<Tasks>
+<Task id="cap-review-20">كل Cubit ليه مسؤولية واحدة، ومفيش Cubit بيمسك Cubit تاني ولا بيجيب حاجة من get_it بنفسه. ([الـ State management في مشروع حقيقي](/course/state-management/architecture/))</Task>
+<Task id="cap-review-21">الضغط المتكرر بيعمل طلب واحد، والـ emit بعد الـ close مستحيل. ([Cubit متقدم](/course/state-management/cubit-advanced/))</Task>
+<Task id="cap-review-22">الـ SnackBar والـ navigation في `BlocListener`، ومابيتكرروش مع الـ rebuild. ([flutter_bloc بالتفصيل](/course/state-management/flutter-bloc-widgets/))</Task>
+<Task id="cap-review-23">كل شاشة فيها الحالات الأربعة، والـ refresh الفاشل مابيمسحش البيانات. ([الأخطاء في الشاشة](/course/api-errors/errors-ui/))</Task>
+<Task id="cap-review-24">مفيش نص متكتب في الكود، والجمع صح بالعربي. ([الترجمة](/course/presentation/l10n/))</Task>
+</Tasks>
+
+#### الـ accessibility والـ RTL والـ design system
+
+<Tasks>
+<Task id="cap-review-25">مفيش لون ولا `EdgeInsets.only(left:` ولا `isArabic ?` في الـ feature، وتست الـ tokens بيعدّي. ([الـ Design tokens](/course/design-system/tokens/))</Task>
+<Task id="cap-review-26">كل اسم جاي من مستخدم ملفوف بـ `isolate()`، واتجاه المحتوى من المحتوى. ([الـ RTL بالتفصيل](/course/design-system/rtl/))</Task>
+<Task id="cap-review-27">مستخدم قارئ الشاشة دخل رف وضاف كتاب لوحده، والإعلانات متجمعة. ([الـ Semantics وقارئ الشاشة](/course/design-system/semantics/))</Task>
+<Task id="cap-review-28">كل شاشات الرفوف شغالة بخط 200% على عرض 320 من غير قص ولا overflow. ([تكبير الخط](/course/design-system/text-scaling/))</Task>
+</Tasks>
+
+#### الحدود والـ packages
+
+<Tasks>
+<Task id="cap-review-29">`feature_shelves` مابتعتمدش على أي feature تانية، ومحدش بيعتمد عليها غير الـ app، والـ barrel صغير بـ `show`. ([الـ dependency rule من الـ pubspec](/course/modularization/enforce-rule/))</Task>
+<Task id="cap-review-30">التسجيل في الـ DI جوه الـ package بـ `registerShelves`، والـ Cubits factories. ([الـ Dependency Injection](/course/di-scale/di/))</Task>
+</Tasks>
+
+#### التستات
+
+<Tasks>
+<Task id="cap-review-31">لو مسحت أي `if` في الـ domain أو الـ outbox، فيه تست هيقع. جرّب 5 منهم بإيدك. ([الاختبارات في فريق حقيقي](/course/testing/strategy/))</Task>
+<Task id="cap-review-32">مفيش `Future.delayed` ولا `sleep` في أي تست، ومفيش تست بيعتمد على ترتيب التستات. ([تست الـ real-time والـ timers](/course/realtime/testing-realtime/))</Task>
+<Task id="cap-review-33">الـ fakes صادقة: نفس الـ contract test بيشتغل عليها وعلى الحقيقي. ([الـ Test Doubles](/course/testing/test-doubles/))</Task>
+<Task id="cap-review-34">الـ integration test عدّى 10 مرات ورا بعض في الـ CI من غير ولا فشل. ([Integration tests](/course/testing/integration/))</Task>
+</Tasks>
+
+#### الـ ship
+
+<Tasks>
+<Task id="cap-review-35">قفلت الـ flag في الـ staging والـ app شغال: مفيش crash، ومفيش عملية ضاعت. ([الـ Feature Flags](/course/production/feature-flags/))</Task>
+<Task id="cap-review-36">مفيش بيانات شخصية في أي event أو log أو breadcrumb. ([الـ Logging والـ Monitoring](/course/production/observability/))</Task>
+<Task id="cap-review-37">كل رقم أداء في `docs/perf/shelves.md` ليه قبل وبعد على نفس الجهاز ونفس السيناريو. ([القياس](/course/performance/measure/))</Task>
+<Task id="cap-review-38">فيه حدود رجوع مكتوبة، واتفقت عليها قبل الـ rollout مش بعده. ([الـ Flavors والـ release](/course/production/release/))</Task>
+</Tasks>
+
+#### الـ PRs نفسها
+
+<Tasks>
+<Task id="cap-review-39">كل PR أقل من 400 سطر من غير المتولّد، وبيتدمج لوحده والـ app شغال. ([Refactor feature قديمة](/course/production/refactor/))</Task>
+<Task id="cap-review-40">وصف كل PR بيقول إيه وليه، والتستات اللي معاه، وإزاي يترجع، والوقت اللي خدته. ([الأخطاء الشائعة وقائمة المراجعة](/course/quality/anti-patterns/))</Task>
+</Tasks>
+
+### الـ rubric
+
+قيّم نفسك في كل سطر من 1 لـ 4، بالدليل من الكود مش بالإحساس. والدليل يتكتب: لينك لملف أو تست أو PR.
+
+| المعيار | 1 | 2 | 3 | 4 |
+| --- | --- | --- | --- | --- |
+| [الـ spec والعقد](/course/api-errors/api-contract/) | الـ spec ماتكتبش، والعقد اتعرف من الكود | مكتوبين، بس ناقصين حالات الرفض | كل حالة ليها سطر، والـ contract test شغال | والعقد سبق الكود، واتغير بـ PR متراجع |
+| [الـ domain](/course/domain-errors/domain/) | القواعد في الـ Cubit أو الـ widget | في الـ domain بس متكررة | مكان واحد لكل قاعدة، و100% تغطية | واتكتب بالـ TDD، والـ commits بتحكي ده |
+| [الأخطاء](/course/api-errors/failure-pipeline/) | `catch (e)` ونص ثابت | أنواع، بس فيه strings في الـ switch | أنواع exhaustive من السيرفر للشاشة | وكل code جديد بيكسر الـ compile لحد ما يتعالج |
+| [الـ offline](/course/offline/conflicts/) | الإضافة أوفلاين مش شغالة | شغالة، بس الـ retry ممكن يكرر | idempotent، والـ dead ليه رسالة | وحالة «اتشلت وعندي pending» متستة ومعروضة صح |
+| [الـ real-time](/course/realtime/merge-cache/) | refresh يدوي بس | الـ events بتوصل للـ Cubit مباشرة | بتكتب في drift بقاعدة واحدة | والترتيب العشوائي والـ catch-up متستين |
+| [الـ presentation](/course/state-management/architecture/) | state في الـ widgets | Cubits، بس فيه SnackBar بيتكرر أو race | كل Cubit بنوع واضح، والحالات الأربعة | وقرار الـ state management مكتوب بالمعايير |
+| [الـ accessibility والـ RTL](/course/design-system/semantics/) | ماتجربتش | الـ labels موجودة، والـ RTL فيه حاجات مقلوبة | TalkBack و200% وأسامي بلغتين شغالين | وعليهم تستات بتمنع رجوعهم |
+| [التستات](/course/testing/strategy/) | الـ domain بس | كل الطبقات، بس فيه وقت حقيقي أو fakes بتكدب | كل الأنواع، وثابتة في الـ CI | وكل تست بيحمي من حاجة مكتوبة في الـ strategy |
+| [الـ ship](/course/production/feature-flags/) | نزلت للكل مرة واحدة | ورا flag، بس مافيش مراقبة | flag ومراقبة وحدود رجوع | والـ flag اتقفل مرة في الـ staging واتعرف إيه اللي حصل |
+| [الأداء](/course/performance/measure/) | ماتقاسش | اتقاس مرة على المحاكي | baseline وقياس بعد على جهاز مرجعي | وفيه تست في الـ CI بيحرس الأرقام |
+
+<b>إزاي تقرا المجموع:</b> من 10 لـ 19، الـ feature شغالة في الـ demo بس، وأول أسبوع في الـ production هيكشف حاجات. من 20 لـ 29، شغل junior كويس محتاج مراجعة قريبة. من 30 لـ 35، شغل mid-level تقدر تشحنه. وفوق 35، تقدر تحكي الـ feature دي في interview senior وتدافع عن كل قرار فيها.
+
+<Quiz>
+
+<Question id="cap-review-q1">
+<Ask>إيه الفرق بين تعليق «ده بيكسر الـ dependency rule» وتعليق senior على نفس السطر؟</Ask>
+<Answer>
+
+الأول بيقول القاعدة. التاني بيقول السيناريو اللي هيبوظ والاقتراح: «لو `feature_catalog` اتنقلت لـ package، السطر ده مش هيعمل compile، لأن الـ catalog هيبقى معتمد على الـ shelves. خلي الـ app يركّب الزرار في الـ slot بتاع الصفحة». السيناريو بيخلي اللي اتراجع يفهم ليه، ويطبّق نفس الفكرة المرة الجاية من غير ما حد يقوله.
+
+</Answer>
+</Question>
+
+<Question id="cap-review-q2">
+<Ask>ليه الـ rubric بيطلب دليل من الكود لكل درجة؟</Ask>
+<Answer>
+
+لأن التقييم بالإحساس بيطلع دايمًا أعلى من الحقيقة: انت فاكر إنك عملت حاجة لأنك فكرت فيها. اللينك لملف أو تست أو PR بيفرق بين «كنت ناوي» و«اتعمل». ونفس الدليل ده هو اللي هتحكيه في interview لما حد يسألك «وريني».
+
+</Answer>
+</Question>
+
+</Quiz>
+
+<ReviewQuestion>اكتب درجتك في كل سطر من الـ rubric ومعاها الدليل، والمجموع. وبعدين اختار أضعف 3 معايير، ولكل واحد: إيه اللي ناقص بالظبط، والدرس اللي هترجعله، والـ PR اللي هيقفله. وفي الآخر سطر واحد: لو هتبني الـ feature دي من الأول بكرة، أول حاجة هتعملها غير كده؟</ReviewQuestion>
+
+<LogBox id="cap-review-log" />

@@ -1,0 +1,217 @@
+---
+title: "الـ Brief: الـ spec والعقد وأول ADR"
+description: "قبل أي سطر Dart: تحوّل طلب الـ product لـ spec فيه كل الحالات، وتتفق على عقد الـ REST والـ WebSocket والـ push، وتكتب أول ADR للـ feature، وتقسم الشغل لـ PRs صغيرة كل واحد فيها بيتدمج والـ flag مقفول."
+minutes: 25
+draft: true
+---
+
+المرحلة دي مافيهاش Dart خالص. في أي شركة، feature زي دي بتبدأ برسالة من الـ product فيها 6 سطور، وأول غلطة بيعملها أي حد هي إنه يفتح الـ IDE على طول. اللي بيحصل بعدها معروف: بعد أسبوع تكتشف إن «الإضافة أوفلاين» محتاجة id من الـ app، وإن الـ backend عامل الإنشاء `POST` بيرجّع id، فتهد نص الشغل.
+
+هنا انت الـ product والـ backend والـ app مع بعض. فاكتب الورق اللي كنت هتطلبه من كل واحد فيهم.
+
+### الطلب زي ما وصل
+
+<Note kind="info" title="من الـ product: الرفوف المشتركة">
+
+1. «عايز أعمل رف اسمه "نادي القراية: أكتوبر"، وأحط عليه 5 كتب، وأبعت لينك لصحابي على واتساب.»
+2. «صاحبي داس على اللينك، فشاف اسم الرف وعدد الكتب ومين عامله، ودخل.»
+3. «أي حد في الرف يقدر يضيف كتاب، أو يشيل الكتاب اللي هو ضافه. وصاحب الرف يشيل أي حاجة.»
+4. «لو أنا فاتح الرف وحد ضاف كتاب، أشوفه على طول. ولو الـ app مقفول، يجيلي إشعار. بس مش 20 إشعار.»
+5. «في المترو من غير نت، أضيف كتاب للرف، ويتبعت لوحده بعدين.»
+6. «صاحب الرف يقدر يشيل حد، أو يمسح الرف كله.»
+
+والحدود: اسم الرف من 1 لـ 40 حرف، و20 عضو بالكتير، و200 كتاب بالكتير. لينك الدعوة بيخلص بعد 7 أيام، وبيدّي واحد من دورين: «يضيف ويشيل» أو «يتفرج بس».
+
+مش في النسخة دي: الترتيب بالسحب، ونقل ملكية الرف، والتعليقات، وكتم إشعارات رف بعينه.
+
+</Note>
+
+### المهمة 1: الـ spec
+
+<Tasks>
+<Task id="cap-brief-1">اكتب `docs/specs/shared-shelves.md`: الـ user stories، وجدول بكل فعل وكل حالة (أونلاين، أوفلاين، عضو بيتفرج بس، اتشلت من الرف، الرف اتمسح)، والـ app بيعمل إيه في كل خانة. ولكل story معايير قبول بصيغة Given/When/Then، وفي الآخر اللي برا الـ scope.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: ابدأ من الحالات، مش من الشاشات</summary>
+
+اسأل عن كل فعل: إيه اللي ممكن يحصل للرف ده وأنا مش فاتحه؟ مين تاني بيعدّل فيه؟ النت ممكن يقطع في أنهي لحظة بالظبط: قبل ما أدوس، ولا بعد ما الطلب طلع ولسه الرد مارجعش؟
+
+</details>
+
+<details className="qa">
+<summary>تلميح 2: الجدول هو نص التستات</summary>
+
+اعمل جدول: الصفوف هي الأفعال (إنشاء، تغيير الاسم، إضافة، شيل، دعوة، انضمام، خروج، شيل عضو، مسح)، والأعمدة هي الحالات. أي خانة مش عارف تملاها هي سؤال للـ product، اكتبه تحت الجدول. والخانات اللي فيها «ممنوع» قرر الممنوع ده بيبان إزاي: الزرار مش موجود، ولا مقفول ومعاه سبب، ولا بيظهر خطأ بعد الضغط؟
+
+</details>
+
+<details className="qa">
+<summary>تلميح 3: شكل معايير القبول</summary>
+
+```text
+Given I am an editor and I am offline
+When I add "Dune" to "Book club: October"
+Then it shows on the shelf immediately, marked as pending
+And when I am back online it is sent exactly once
+
+Given my add is still pending
+And the owner removed me from the shelf meanwhile
+When the sync runs
+Then the shelf disappears from my list
+And a banner says the book was not saved, with "Add to my library instead"
+```
+
+التانية دي هي اللي هتفرق: حالة محدش من الـ product فكّر فيها، وانت لقيتها من الجدول.
+
+</details>
+
+### المهمة 2: عقد الـ API
+
+<Tasks>
+<Task id="cap-brief-2">ضيف الرفوف للـ `api/openapi.yaml` (كل endpoint بالـ error schema وكل `code` ممكن يرجع)، وللـ `api/asyncapi.yaml` (الـ events اللي بتوصل على نفس الـ socket)، وحدد الـ push اللي بيتبعت ومين بيستلمه. وزوّد كل `code` جديد في `docs/errors.md`: معناه، وغلطة مين، والـ retry بيفيد ولا لأ، والمستخدم يشوف إيه.</Task>
+<Task id="cap-brief-3">حوّل الـ examples بتاعة الـ OpenAPI والـ AsyncAPI لـ fixtures، واعمل عليها contract test زي اللي في وحدة الـ API، وزوّد الـ `FakeApiAdapter` بالـ routes الجديدة، عشان المراحل الجاية تشتغل والـ backend لسه مااتكتبش.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: تلات أسئلة قبل أي endpoint</summary>
+
+1. الرف اللي اتعمل أوفلاين، الـ id بتاعه بييجي منين؟
+2. «ضيف الكتاب ده للرف» ليها مفتاح طبيعي، ولا محتاجة `Idempotency-Key`؟
+3. الكتاب اللي عضو تاني ضافه، وانت ماعندكش في مكتبتك، عنوانه وغلافه هييجوا منين وانت أوفلاين؟
+
+</details>
+
+<details className="qa">
+<summary>تلميح 2: الإجابات</summary>
+
+1. الـ id من الـ app (UUID)، والإنشاء `PUT /shelves/{shelfId}`. كده الـ retry بعد رد ضايع مايعملش رفين، ومش محتاج header.
+2. ليها مفتاح طبيعي: الرف والكتاب. `PUT /shelves/{shelfId}/books/{bookId}` بيخليها idempotent بطبيعتها، زي اللي اتقال في [درس الـ Conflicts](/course/offline/conflicts/). وخلي بالك من الفخ اللي في نفس الدرس: لو السيرفر رجّع 409 «موجود خلاص»، الـ retry بعد رد ضايع هيتحسب فشل.
+3. snapshot: الـ app بيبعت العنوان والمؤلف والـ `coverId` مع الإضافة، والسيرفر بيخزنهم. البديل إن كل عضو يطلب كل كتاب من Open Library وقت العرض، وده N+1 طلب، ومش هيشتغل أوفلاين. والتمن إن العنوان ممكن يبقى قديم شوية، وده مقبول.
+
+</details>
+
+<details className="qa">
+<summary>تلميح 3: شكل العقد اللي وصلنا له</summary>
+
+| الطلب | بيعمل إيه | الحالات |
+| --- | --- | --- |
+| `GET /shelves` | رفوفي بالـ role والأعداد والحدود | 200 |
+| `PUT /shelves/{shelfId}` | إنشاء أو تغيير الاسم | 200 أو 201، و403 `not_owner`، و422 `name_invalid` على الـ field |
+| `DELETE /shelves/{shelfId}` | مسح الرف | 204، و404 بيتحسب نجاح |
+| `GET /shelves/{shelfId}` | الرف بالأعضاء والكتب | 403 `not_a_member`، و404 `shelf_not_found` |
+| `PUT /shelves/{shelfId}/books/{bookId}` | إضافة، ومعاها `title` و`author` و`coverId` | 200 أو 201، و403 `read_only` أو `not_a_member`، و422 `shelf_full` |
+| `DELETE /shelves/{shelfId}/books/{bookId}` | شيل كتاب | 204، و404 بيتحسب نجاح، و403 `not_your_entry` |
+| `POST /shelves/{shelfId}/invites` | لينك دعوة بـ `role` | 201 فيه `token` و`url` و`expiresAt`، و403، و429 بـ `Retry-After` |
+| `GET /invites/{token}` | الـ preview قبل الانضمام | 200، و404 `invite_not_found`، و410 `invite_expired` |
+| `POST /invites/{token}/accept` | الانضمام | 200 فيه `shelfId` حتى لو عضو أصلًا، و410، و422 `members_full` |
+| `DELETE /shelves/{shelfId}/members/{userId}` | خروج (`me`) أو شيل عضو | 204، و403 `owner_cannot_leave` |
+
+وكمان الرف في الرد فيه `maxBooks` و`maxMembers`، عشان الحدود تيجي من السيرفر مش متكتبة في الـ app.
+
+والـ events على الـ socket: `shelf.upserted`، و`shelf.entry_added`، و`shelf.entry_removed`، و`shelf.member_joined`، و`shelf.member_left`، و`shelf.removed` ومعاه `reason` (`deleted` أو `kicked`). كل event فيه الـ `seq` بتاع المستخدم والـ `origin`، وبيدخل في نفس الـ catch-up بتاع المكتبة. والـ push اتنين: `shelf.member_joined` لصاحب الرف، و`shelf.entries_added` للأعضاء متجمّع، واحد لكل رف كل 30 دقيقة بالكتير، والضغطة بتفتح `/shelves/{shelfId}`.
+
+</details>
+
+### المهمة 3: أول ADR
+
+<Tasks>
+<Task id="cap-brief-4">اكتب ADR في `docs/adr/` بيجاوب على سؤال واحد: «أنهي جزء من الرفوف بيشتغل أوفلاين، وإزاي بيتزامن؟» بالـ Context والـ Decision والـ Consequences، ومعاه البدائل اللي اترفضت وسبب كل واحد.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: الـ ADR عن قرار، مش عن أداة</summary>
+
+«هنستخدم drift» مش قرار، ده موجود أصلًا. القرار هو: الكتابة في الرف تمشي زي المكتبة (drift الأول والـ outbox بيبعت)، ولا زي Escore (السيرفر الأول، وأوفلاين ممنوع)؟ والانضمام بلينك ينفع يستنى في الـ outbox ولا لأ؟
+
+</details>
+
+<details className="qa">
+<summary>تلميح 2: التلات بدائل</summary>
+
+- <b>أ: كله remote-first</b> زي [Escore في وحدة الـ offline](/course/offline/escore/): أبسط، بس بيكسر story رقم 5.
+- <b>ب: كله أوفلاين</b> بما فيه الانضمام والدعوات: الانضمام محتاج السيرفر يقول «اللينك ده لسه شغال؟»، وانت مش هتعرف ده وانت أوفلاين.
+- <b>ج: hybrid</b>: الكتابة جوه الرف (إنشاء، اسم، إضافة، شيل) من drift والـ outbox، والعضوية (دعوة، انضمام، خروج، شيل عضو) أونلاين بس، وبرسالة واضحة لو مفيش نت.
+
+</details>
+
+<details className="qa">
+<summary>تلميح 3: الـ Consequences اللي لازم تتكتب لـ (ج)</summary>
+
+- الـ outbox بيكبر بأربع أنواع عمليات جديدة، وكلها بمفتاح طبيعي.
+- لازم سياسة لعملية pending على رف اتشلت منه أو اتمسح: dead letter برسالة، مش retry للأبد.
+- الـ events بتعدّي على نفس الـ socket ونفس الـ `seq`، فالـ catch-up مش محتاج كود جديد.
+- الـ logout لازم يمسح الجداول الجديدة.
+- الـ migration بتاعة drift هتنزل لكل المستخدمين حتى والـ flag مقفول.
+
+</details>
+
+### المهمة 4: الشغل كـ PRs
+
+<Tasks>
+<Task id="cap-brief-5">اكتب `docs/specs/shared-shelves-plan.md`: ليستة PRs بالترتيب، كل واحد أقل من 400 سطر من غير الكود المتولّد، وبيتدمج في `main` والـ app شغال والـ flag مقفول. جنب كل PR: الـ packages اللي بيلمسها، والتستات اللي معاه، وإزاي يترجع لو باظ.</Task>
+<Task id="cap-brief-6">قرر شكل الـ feature في الـ workspace: `feature_shelves` package لوحدها، بتعتمد على مين، ومين بيعتمد عليها، والـ barrel بتاعها هيصدّر إيه. وقرر Clean كامل ولا MVVM بالـ checklist بتاع درس «Clean ولا MVVM؟»، واكتب القرارين في الـ plan.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: القاعدة</summary>
+
+كل PR لازم يتدمج لوحده ويتعمل منه release من غير ما حاجة تبوظ. يعني مفيش PR «نص الشاشة»، ومفيش PR بيكسر الـ CI على أمل إن اللي بعده يصلّحه.
+
+</details>
+
+<details className="qa">
+<summary>تلميح 2: الترتيب من جوه لبره</summary>
+
+العقد، وبعدين الـ domain، وبعدين الـ data، وبعدين الـ events والـ push، وبعدين الشاشات، وبعدين الـ flag والـ release. وخلي الـ migration بتاعة drift في PR لوحده وبدري، عشان هي الحاجة الوحيدة اللي هتشتغل عند كل المستخدمين حتى والـ flag مقفول، فلازم تقعد في الـ staging أطول وقت.
+
+</details>
+
+<details className="qa">
+<summary>تلميح 3: خطة ممكنة</summary>
+
+1. الـ ADR والعقد والـ fixtures والـ contract tests.
+2. `feature_shelves` فاضية في الـ workspace، والـ domain بتستاته.
+3. جداول drift والـ migration وتست الترقية.
+4. الـ remote source والـ repository والـ outbox ops.
+5. الـ events في الـ `LiveSyncService`، والـ push route.
+6. شاشات القايمة والرف والإنشاء، ورا الـ flag.
+7. الدعوة والانضمام بالـ deep link، ورا الـ flag.
+8. الـ golden والـ integration test والـ analytics وقياس الأداء.
+9. تشغيل الـ flag في الـ staging، وبعدين الـ rollout.
+
+والـ backend بيمشي جنبهم في الـ repo بتاعه، كل endpoint قبل الـ PR اللي بيستخدمه.
+
+</details>
+
+<Quiz>
+
+<Question id="cap-brief-q1">
+<Ask>ليه الإضافة للرف `PUT /shelves/{shelfId}/books/{bookId}` مش `POST /shelves/{shelfId}/books`؟</Ask>
+<Answer>
+
+لأن العملية ليها مفتاح طبيعي: الرف والكتاب. بالـ `PUT` على الـ URL ده، إرسالها مرتين نتيجته نفس إرسالها مرة، فالـ outbox يقدر يعيدها بعد رد ضايع من غير `Idempotency-Key` ومن غير خوف من نسختين. مع `POST`، كل retry ممكن يعمل entry جديدة، أو السيرفر يرجّع 409 فالعملية اللي نجحت فعلًا تتحسب فشل.
+
+</Answer>
+</Question>
+
+<Question id="cap-brief-q2">
+<Ask>الكتاب اللي عضو تاني ضافه للرف، ليه عنوانه وغلافه بييجوا كـ snapshot من السيرفر مش من Open Library وقت العرض؟</Ask>
+<Answer>
+
+لأن العرض من Open Library معناه طلب لكل كتاب مش في مكتبتك، يعني N+1 طلب لرف فيه 200 كتاب، ومش هيشتغل أوفلاين، وهيضغط على API مجاني. الـ snapshot بيخلي الرف كله ييجي في طلب واحد ويتخزن في drift. والتمن إن العنوان ممكن يبقى قديم لو اتغير في Open Library، وده تمن صغير لعنوان كتاب.
+
+</Answer>
+</Question>
+
+</Quiz>
+
+### اتأكد قبل ما تكمّل
+
+- كل endpoint ليه error schema، وكل `code` مكتوب في `docs/errors.md` بمعناه وباللي المستخدم يشوفه ([خريطة أخطاء الـ API](/course/api-errors/error-map/)).
+- الـ examples بقت fixtures، وعليها contract test، والـ `FakeApiAdapter` بيرد على كل route جديدة ([عقد الـ API والـ production](/course/api-errors/api-contract/)).
+- كل عملية كتابة اتحدد لها: idempotent بطبيعتها، ولا محتاجة key ([الـ Conflicts والـ idempotency](/course/offline/conflicts/)).
+- الـ events بنفس الـ `$ref` بتاع الـ REST، وفيها `seq` و`origin`، وبتدخل في الـ catch-up ([دمج الأحداث مع الـ cache](/course/realtime/merge-cache/)).
+- الـ push ليه route في الـ allowlist، وليه حد أقصى، وقناة Android متحددة ([الـ Push notifications](/course/realtime/push-notifications/)).
+- الـ ADR فيه بدائل اترفضت بسببها، مش القرار لوحده ([التوسّع والـ production](/course/di-scale/scale/)).
+- قرار Clean ولا MVVM مكتوب بالـ checklist ([Clean ولا MVVM؟](/course/production/choose/))، وحدود الـ package واضحة ([الـ dependency rule من الـ pubspec](/course/modularization/enforce-rule/)).

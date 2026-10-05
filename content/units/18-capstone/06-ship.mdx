@@ -1,0 +1,147 @@
+---
+title: "الـ Ship: الـ flag والـ release والمراقبة والقياس"
+description: "الـ feature flag وإيه اللي بيقفله وإيه اللي مايقدرش يقفله، والـ flavors، والـ release والـ migration اللي بتنزل للكل، والـ analytics من غير بيانات شخصية، والـ dashboard وحدود الرجوع، وأرقام الأداء قبل ما الـ feature توصل لأول مستخدم."
+minutes: 25
+draft: true
+---
+
+الكود كله في `main`، والتستات خضرا، والـ feature مستخبية. المرحلة دي عن أخطر 48 ساعة في عمر أي feature: أول ما توصل لناس حقيقيين على موبايلات انت عمرك ما شفتها. والهدف إنك تعرف إن فيه مشكلة قبل ما حد يكتب review بنجمة واحدة، وتقدر تقفلها في دقيقة من غير release.
+
+### المهمة 1: الـ feature flag
+
+<Tasks>
+<Task id="cap-ship-1">اعمل flag اسمه `sharedShelves` ورا الـ contract بتاع الـ `FeatureFlags` في الـ DI، والقيمة من Remote Config، والقيمة الافتراضية `false` لو ماوصلش. اكتب جدول: إيه اللي بيتقفل لما الـ flag يتقفل (المداخل، والـ routes، والـ push routing)، وإيه اللي بيفضل شغال (الـ migration، والـ outbox، والـ events). واقفل الـ feature من السيرفر كمان، مش من الـ app بس.</Task>
+<Task id="cap-ship-2">اكتب تست بيثبت إن الـ flag لما يتقفل والـ app شغال: الرفوف بتختفي من التابات، ولينك الدعوة بيفتح شاشة «مش متاحة لسه» مش crash، والإشعار بيفتح المكتبة، والعمليات اللي في الـ outbox ماتضيعش.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: الـ flag بيقفل إيه بالظبط؟</summary>
+
+تخيل إن المستخدم ضاف 3 كتب لرف وهو أوفلاين، وفي اللحظة دي قفلت الـ flag عشان فيه bug في الشاشة. لما النت يرجع، العمليات تتبعت ولا لأ؟ ولو لأ، تروح فين؟
+
+</details>
+
+<details className="qa">
+<summary>تلميح 2: product switch مش data switch</summary>
+
+الـ flag بيقفل اللي المستخدم يشوفه ويبدأه. بس اللي المستخدم عمله فعلًا لازم يوصل، وإلا انت بتضيّع بياناته عشان تخبّي شاشة. فالـ outbox يكمّل يبعت، والـ events تكمّل تتكتب في drift. ولو لازم السيرفر نفسه يوقف الكتابة، يرجّع code معين، والعمليات تفضل pending (مش dead) لحد ما الـ flag يرجع.
+
+</details>
+
+<details className="qa">
+<summary>تلميح 3: الـ flag مش flavor</summary>
+
+ارجع لـ «الـ flavor مش feature flag» في [درس الـ Flavors والـ release](/course/production/release/): الـ flavor بيتحدد وقت الـ build، والـ flag عشان تقفل حاجة في دقيقة. والتفاصيل في [درس الـ Feature Flags](/course/production/feature-flags/).
+
+</details>
+
+### المهمة 2: الـ flavors
+
+<Tasks>
+<Task id="cap-ship-3">ظبّط الرفوف في التلات flavors: dev على الـ `FakeApiAdapter` بالـ fixtures والـ flag مفتوح، وstaging على الـ backend الحقيقي والـ flag مفتوح للفريق بس، وprod مقفول. واتأكد إن لينك الدعوة بتاع staging بيفتح الـ app بتاع staging مش prod.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: الـ deep links والـ flavors</summary>
+
+اللينك `https://readly.app/join/...` بيفتح أنهي app لو التلاتة متسطّبين؟ كل flavor محتاج host بتاعه (`staging.readly.app`)، ومعاه `assetlinks.json` و`apple-app-site-association` بتوعه، وentitlements مختلفة في الـ iOS schemes.
+
+</details>
+
+### المهمة 3: الـ release
+
+<Tasks>
+<Task id="cap-ship-4">اكتب خطة الـ rollout في `docs/releases/shared-shelves.md`: الـ release اللي فيه الـ migration والـ flag مقفول، وكام يوم تستنى وتبص على إيه، وبعدين 5% وبعدين 25% وبعدين الكل، ومين بيقلب الـ flag، والأرقام اللي لو اتعدّت بتقفله. وطلّع الـ release من الـ workflow بالـ tag زي أي release.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: الرجوع</summary>
+
+لو الـ feature فيها مشكلة: تقفل الـ flag. لو الـ migration فيها مشكلة: مفيش رجوع. drift مابيرجعش لـ schema أقدم، والمستخدم مش هينزّل النسخة القديمة. علشان كده الـ release الأول فيه الـ migration لوحدها والـ flag مقفول، وتقعد أيام تبص على أخطاء الـ DB قبل ما تفتح أي حاجة.
+
+</details>
+
+<details className="qa">
+<summary>تلميح 2: الـ app القديم</summary>
+
+مستخدم على نسخة مافيهاش الرفوف خالص، وصاحبه بعتله لينك دعوة. اللينك بيفتح إيه؟ الـ app القديم مش عارف `/join`، فلازم يبقى فيه صفحة web بتقوله «حدّث الـ app»، وده نفس منطق [عقد الـ API والـ production](/course/api-errors/api-contract/) لما النسخ القديمة بتقابل حاجة جديدة.
+
+</details>
+
+### المهمة 4: المراقبة
+
+<Tasks>
+<Task id="cap-ship-5">اعمل events الـ analytics للرفوف بأسماء ثابتة (اتعمل رف، اتعمل لينك، اللينك اتفتح، الانضمام ونتيجته، كتاب اتضاف ومن أنهي شاشة، عملية بقت dead ومعاها الـ code). ومن غير أي بيانات شخصية: لا اسم رف، ولا عنوان كتاب، ولا اسم عضو. واكتب الجدول في `docs/analytics.md`.</Task>
+<Task id="cap-ship-6">زوّد `isReportable` بالـ failures الجديدة (الـ 403 بتاعة «اتشلت» مش bug، والـ parsing بايظ bug)، وbreadcrumbs في Sentry لأفعال الرفوف، ومقياس للتأخير من `occurredAt` لحد ما الـ event يتكتب في drift للأحداث اللي جاية من جهاز تاني. واعمل dashboard فيه الأرقام دي مقسومة بالنسخة، ومعاها حدود الرجوع من الخطة.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: اسم الرف بيانات شخصية؟</summary>
+
+«كتب عن الطلاق»، «علاج الاكتئاب»، اسم صاحبه. اسم الرف مكتوب بإيد المستخدم، فممكن يبقى فيه أي حاجة. نفس الكلام لعناوين الكتب في رف خاص. الـ analytics بتعد، مابتقراش. والـ Sentry نفس الكلام: الـ breadcrumb فيه الـ `shelfId` لو محتاجه، مش الاسم. ارجع لـ «الـ logs بتطبع الـ token» في [درس الـ Logging والـ Monitoring](/course/production/observability/).
+
+</details>
+
+<details className="qa">
+<summary>تلميح 2: الأرقام اللي بتقول إن فيه مشكلة</summary>
+
+- نسبة الانضمام من اللي فتحوا اللينك: لو قليلة، فيه حاجة في شاشة الـ preview أو في الـ deep link.
+- العمليات اللي بقت dead لكل 1000 عملية، مقسومة بالـ code: لو `shelf_full` كتير، الـ app مش بيوضح الحد.
+- التأخير بين جهازين: لو بيزيد، الـ socket بيقع والـ catch-up شايل الحمل.
+- الـ crash-free للي الـ flag مفتوح عندهم قصاد اللي مقفول: ده الرقم اللي بيقفل الـ flag.
+
+</details>
+
+### المهمة 5: الأداء
+
+<Tasks>
+<Task id="cap-ship-7">قيس في profile mode على الجهاز المرجعي واكتب في `docs/perf/shelves.md` الرقم قبل أي تصليح وبعده: فتح رف فيه 200 كتاب لحد أول frame، والـ scroll فيه، و50 `entry_added` ورا بعض والرف مفتوح (عدد الـ rebuilds والـ janky frames)، وفتح وقفل الرف 20 مرة (الـ memory)، ووقت فتح الـ app قبل الـ feature وبعدها.</Task>
+<Task id="cap-ship-8">حوّل سيناريو الـ 200 كتاب لـ integration test بـ `traceAction`، واكتب الحد اللي لو اتعدّى الـ CI يعتبره regression.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: الـ 50 event</summary>
+
+لو كل event بيعمل كتابة في drift لوحده، والـ watch بيطلّع ليستة جديدة مع كل كتابة، والشاشة كلها بتتبني مع كل ليستة، يبقى 50 rebuild للرف كله في ثانيتين. فيه 3 أماكن تصلّح فيهم: الكتابة (batch في transaction)، والـ stream (`distinct` وdebounce)، والـ widget (كل tile بتسمع على اللي يخصها). قيس الأول عشان تعرف أنهي واحد فيهم بيفرق.
+
+</details>
+
+<details className="qa">
+<summary>تلميح 2: الـ startup</summary>
+
+الرفوف مش محتاجة تتحمّل قبل أول frame. لو `registerShelves` بيفتح حاجة أو بيعمل query في الـ bootstrap، ده وقت زيادة على كل مستخدم، حتى اللي الـ flag مقفول عنده. ارجع لـ [درس وقت فتح الـ app](/course/performance/startup/).
+
+</details>
+
+<Quiz>
+
+<Question id="cap-ship-q1">
+<Ask>ليه الـ migration بتاعة جداول الرفوف مش ممكن تستخبى ورا الـ feature flag؟</Ask>
+<Answer>
+
+لأن drift بيشغّل الـ migration أول ما الـ DB تتفتح، قبل ما أي flag يتقري، وعند كل المستخدمين اللي حدّثوا. ومفيش رجوع: الـ schema مابترجعش لورا، والمستخدم مابينزّلش نسخة أقدم. علشان كده الـ migration بتنزل في release لوحدها والـ flag مقفول، وتتراقب أيام، وتستها لازم يكون من بيانات حقيقية فيها مكتبة وعمليات pending. الـ flag بيقفل السلوك، مش شكل الـ DB.
+
+</Answer>
+</Question>
+
+<Question id="cap-ship-q2">
+<Ask>قفلت الـ flag، وعند مستخدم 3 عمليات pending على رف. تتبعت ولا لأ؟</Ask>
+<Answer>
+
+تتبعت. الـ flag قرار منتج عن اللي المستخدم يشوفه ويبدأه، مش عن بيانات المستخدم كتبها فعلًا. لو وقفتها، يا هتتمسح (ضاعت بياناته)، يا هتفضل في الطابور من غير ما يشوفها ولا يعرف عنها حاجة. ولو لازم توقف الكتابة على السيرفر نفسه، السيرفر يرجّع code معين، والعمليات تفضل pending مش dead، لحد ما الـ flag يرجع.
+
+</Answer>
+</Question>
+
+</Quiz>
+
+### اتأكد قبل ما تكمّل
+
+- الـ flag ورا contract في الـ DI، والقيمة الافتراضية آمنة، وجدول «بيقفل إيه» مكتوب ومتست ([الـ Feature Flags](/course/production/feature-flags/)).
+- التلات flavors متظبطين، واللينكات بتفتح الـ app الصح ([الـ Flavors والـ environments والـ release](/course/production/release/)).
+- الـ release طالع من الـ CI بالـ tag، والـ symbols في Sentry ([الـ Flavors والـ release](/course/production/release/)).
+- النسخ القديمة بتتعامل مع لينك الدعوة من غير ما تقع ([عقد الـ API والـ production](/course/api-errors/api-contract/)).
+- مفيش اسم رف ولا عنوان كتاب في أي log أو event، و`isReportable` بيفرّق الـ bug من الحالة المتوقعة ([الـ Logging والـ Monitoring](/course/production/observability/)).
+- التأخير بين جهازين بيتقاس ([التطبيق في وحدة الـ Real-time](/course/realtime/practice/)).
+- كل رقم أداء ليه baseline وقياس بعده على الجهاز المرجعي ([القياس](/course/performance/measure/) و[الـ rebuilds](/course/performance/rebuilds/) و[القوائم الطويلة](/course/performance/lists/) و[الـ Memory](/course/performance/memory/)).
+- وقت فتح الـ app ماتغيرش ([وقت فتح الـ app](/course/performance/startup/)).

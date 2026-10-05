@@ -1,0 +1,50 @@
+---
+title: "المشروع الختامي (Capstone)"
+description: "feature جديدة كاملة في Readly تبنيها لوحدك: «الرفوف المشتركة». من الـ spec والعقد وأول ADR، للـ domain بالـ TDD، والـ data أوفلاين والـ real-time، والشاشات والـ accessibility، والتستات، والـ release ورا feature flag، وفي الآخر مراجعة بعين الـ senior وrubric تقيّم بيه نفسك."
+---
+
+الوحدة دي مختلفة عن كل اللي فات: شرح قليل وشغل كتير. مفيش مستويات ولا تشبيهات ولا كود جاهز تنسخه. فيه feature جديدة في Readly، وانت اللي هتبنيها لوحدك، من أول سطر في الـ spec لحد ما توصل للمستخدمين وتعرف بالأرقام إذا كانت شغالة ولا لأ. كل حاجة هتحتاجها اتشرحت قبل كده في وحدة من الوحدات، والدروس هنا بتقولك فين بالظبط لو وقفت.
+
+### الـ feature: الرفوف المشتركة
+
+المستخدم بيعمل رف باسم («نادي القراية: أكتوبر»)، ويحط عليه كتب من مكتبته أو من الكتالوج، ويبعت لينك دعوة لصحابه. اللي بيدخل بيبقى عضو: يقدر يضيف كتب ويشيل اللي هو ضافه، أو يتفرج بس، على حسب الدعوة. وكل الأعضاء بيشوفوا التغييرات لحظة بلحظة والرف مفتوح، وبيجيلهم إشعار لما حاجة تحصل والـ app مقفول. والإضافة شغالة من غير نت، وبتتبعت لوحدها لما النت يرجع.
+
+اخترناها لأنها بتلمس كل وحدة في الكورس، مش بس الطبقات:
+
+| الحتة في الـ feature | بتلمس إيه | اتعلمتها فين |
+| --- | --- | --- |
+| تعمل رف وتضيف كتب والنت قاطع | الـ offline-first والـ outbox والـ idempotency | [Offline-first](/course/offline/offline/) و[الـ Conflicts](/course/offline/conflicts/) |
+| لينك الدعوة والانضمام | عقد الـ API والـ deep links والأخطاء زي 410 و422 | [عقد الـ API](/course/api-errors/api-contract/) و[go_router](/course/presentation/router/) |
+| عضو تاني ضاف كتاب وانت فاتح الرف | الـ WebSocket ودمج الأحداث مع drift والـ catch-up | [الـ WebSocket](/course/realtime/websocket/) و[دمج الأحداث](/course/realtime/merge-cache/) |
+| إشعار «سارة ضافت 3 كتب» | FCM والـ PushRouter والتجميع | [الـ Push notifications](/course/realtime/push-notifications/) |
+| صاحب الرف شالك وانت عندك إضافة لسه ماتبعتتش | الـ dead letter والأخطاء في الشاشة | [الأخطاء في الشاشة](/course/api-errors/errors-ui/) |
+| أسماء رفوف بالعربي والإنجليزي، وقارئ الشاشة، وخط 200% | الـ RTL والـ semantics وتكبير الخط | [الـ RTL](/course/design-system/rtl/) و[الـ Semantics](/course/design-system/semantics/) |
+| رف فيه 200 كتاب، وعضو ضاف 50 مرة واحدة | الـ rebuilds والقوائم والصور | [الـ rebuilds](/course/performance/rebuilds/) و[القوائم الطويلة](/course/performance/lists/) |
+| تنزل لـ 5% من المستخدمين الأول | الـ feature flag والـ release والمراقبة | [الـ Flavors والـ release](/course/production/release/) و[الـ Logging والـ Monitoring](/course/production/observability/) |
+
+<Note kind="info" title="ليه مش «أهداف القراية»؟">
+
+لأنها اتعملت قبل كده: سلسلة القراية في [درس الـ TDD](/course/testing/tdd/)، و`ReadingGoalCubit` في [وحدة الـ State management](/course/state-management/first-cubit/)، وتذكير القراية في [درس الـ Push](/course/realtime/push-notifications/). الـ capstone لازم يبقى feature أول مرة تشوفها، عشان تتأكد إنك بتطبّق مش بتفتكر.
+
+</Note>
+
+### الدروس هي المراحل
+
+| الدرس | المرحلة | بيطلع منه |
+| --- | --- | --- |
+| [الـ Brief](/course/capstone/brief/) | الـ spec والعقد وأول ADR وخطة الـ PRs | ورق بس، ومفيش سطر Dart |
+| [الـ Domain](/course/capstone/domain/) | الـ entities والقواعد والـ failures، بالتستات الأول | package بتعدّي `dart test` من غير Flutter |
+| [الـ Data](/course/capstone/data/) | الـ backend والـ remote والـ local والـ outbox والـ events | الرفوف شغالة أوفلاين وبتتحدث لايف |
+| [الـ Presentation](/course/capstone/presentation/) | الـ state والشاشات والأخطاء والـ RTL والـ accessibility | كل الشاشات ورا flag مقفول |
+| [الاختبارات](/course/capstone/tests/) | الطبقات الباقية، والـ widgets، وgolden، وintegration | الـ CI بيحرس الـ feature |
+| [الـ Ship](/course/capstone/ship/) | الـ flag والـ flavors والـ release والمراقبة والقياس | الـ feature عند 5% وبعدين للكل |
+| [الـ Review](/course/capstone/review/) | مراجعة الـ senior والـ rubric | درجتك، وأضعف 3 حاجات وخطة ليهم |
+
+### إزاي تشتغل في الوحدة دي
+
+- <b>كل مهمة ليها تلميحات متدرجة.</b> التلميح الأول سؤال يفتح الباب، والتاني اتجاه، والتالت قريب من الحل. ماتفتحش تلميح غير لما تقف فعلًا، ولو فتحت التالت اكتب ده في الـ PR. ده مش عيب، ده معلومة عن نفسك.
+- <b>في آخر كل درس «اتأكد قبل ما تكمّل».</b> لو فيه نقطة مش متحققة، ارجع للدرس اللي جنبها قبل ما تبدأ المرحلة اللي بعدها. المراحل مبنية على بعض، والغلطة في الـ domain بتبان في الشاشة بعد أسبوعين.
+- <b>مفيش نسخ من دروس الكورس.</b> ارجع للدرس عشان تفهم، واقفل الصفحة وانت بتكتب.
+- <b>سجّل الوقت.</b> اكتب في كل PR خدت كام ساعة. في الآخر هتعرف المرحلة اللي بتاخد منك أكتر من حقها.
+
+الوقت المتوقع حوالي 50 لـ 70 ساعة شغل، يعني 3 لـ 4 أسابيع جنب شغلك. والشرط إن Readly يكون فيه اللي اتبنى في الوحدات اللي فاتت: الـ outbox والـ `SyncService`، والـ `RealtimeClient` والـ `LiveSyncService`، والـ FCM، والـ workspace بالـ packages، و`core_ui`، والـ flavors والـ release workflow. لو حاجة منهم ناقصة، كمّلها الأول: الـ capstone مش هيعلّمها من الأول.

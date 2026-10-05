@@ -1,0 +1,191 @@
+---
+title: "الـ Presentation: الـ state والشاشات والـ accessibility"
+description: "Cubit ولا Riverpod بقرار مكتوب، وشكل الـ state لكل شاشة، والـ routes والـ deep link بتاع الدعوة، والأخطاء في الشاشة، والترجمة بالجمع، والـ RTL لأسامي بلغتين، وقارئ الشاشة لما عضو تاني يضيف كتاب، وخط 200% على موبايل صغير."
+minutes: 30
+draft: true
+---
+
+الـ domain والـ data جاهزين ومتستين، والشاشات لسه مش موجودة. المرحلة دي هي اللي المستخدم هيشوفها، وهي كمان اللي أغلب الـ bugs بتبان فيها لأول مرة: SnackBar بيتكرر، وشاشة رف فاضلة مفتوحة وصاحبه شالك منه، وزرار «ادعُ» شغال والنت قاطع، واسم رف إنجليزي بيتعرض بالمقلوب.
+
+وكل الشاشات دي ورا الـ flag من أول PR، فالـ merge في `main` مابيغيّرش حاجة عند حد.
+
+### المهمة 1: Cubit ولا Riverpod
+
+<Tasks>
+<Task id="cap-presentation-1">اختار هتكتب الـ state بتاعة الرفوف بـ Cubit (زي باقي Readly) ولا بـ Riverpod، واكتب ADR بالمعايير اللي في درس «تختار state management إزاي»: الـ default، وتمن الخلط في app واحد، والتستات، والـ DI. أيًا كان اختيارك، الـ domain والـ data مش هيتغير فيهم سطر.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: السؤال الحقيقي</summary>
+
+السؤال مش «مين أحسن». السؤال: إيه اللي هيكسبه الفريق لو الـ feature دي بقت مختلفة عن الباقي، وإيه اللي هيدفعه؟ ارجع لـ «الخلط بين الحلول في app واحد» في [درس الاختيار](/course/state-management/choosing/).
+
+</details>
+
+<details className="qa">
+<summary>تلميح 2: لو اخترت Riverpod</summary>
+
+الـ repositories متسجلة في get_it. هتوصلها للـ providers إزاي؟ provider بيرجّع `getIt<ShelvesRepository>()`، ولا تنقل التسجيل كله؟ والتستات هتبقى `ProviderContainer` بـ overrides وانت باقي الـ app بـ `blocTest`. اقرا [درس Riverpod](/course/state-management/riverpod/) و[وحدة Riverpod في الـ Clean Architecture](/course/riverpod/) قبل ما تقرر.
+
+</details>
+
+<details className="qa">
+<summary>تلميح 3: اختيار معقول</summary>
+
+لو الهدف إن الـ feature تتشحن وتتصان مع الباقي: Cubit، لأن الاتساق في مشروع فيه أكتر من حد أهم من مكسب صغير في شاشة. لو الهدف إنك تجرّب Riverpod في مشروع حقيقي: Riverpod في الـ feature دي بس، والـ ADR يقول ده صريح، ويقول هيتقيّم امتى.
+
+</details>
+
+### المهمة 2: شكل الـ state
+
+<Tasks>
+<Task id="cap-presentation-2">حدد نوع كل Cubit (أو provider) وشكل الـ state بتاعته، واكتب سطر لكل واحد في `docs/state-design.md`: قايمة الرفوف، والرف الواحد، والإنشاء وتغيير الاسم، والانضمام بلينك، و«ضيف للرف» من صفحة الكتاب. والأحداث اللي بتحصل مرة (SnackBar، رجوع، navigation) ماتتكررش مع الـ rebuild.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: الأنواع اللي تعرفها</summary>
+
+قايمة الرفوف بتسمع على stream: Stream Cubit. الرف الواحد stream ومعاه `refresh` وأفعال. والإنشاء فورم. والانضمام بيحمّل حاجة وبعدين بيعمل action. ارجع لـ [أنواع الـ Cubit (1)](/course/state-management/cubit-types/) و[(2)](/course/state-management/cubit-types-advanced/)، وقرر: الأفعال جوه Cubit الرف، ولا Action Cubit لوحده؟
+
+</details>
+
+<details className="qa">
+<summary>تلميح 2: الانضمام بلينك</summary>
+
+```dart
+sealed class JoinShelfState {}
+final class JoinLoading extends JoinShelfState {}
+final class JoinPreview extends JoinShelfState { /* name, owner, counts, role */ }
+final class JoinJoining extends JoinShelfState { /* same preview */ }
+final class JoinDone extends JoinShelfState { /* shelfId: navigate */ }
+final class JoinUnavailable extends JoinShelfState { /* ShelfDenial: expired, notFound, membersFull */ }
+final class JoinFailed extends JoinShelfState { /* Failure: offline, server, with retry */ }
+```
+
+لاحظ إن «اللينك خلص» مش `JoinFailed`: مفيش «حاول تاني» ليها معنى، زي [«زرار حاول تاني على خطأ عمره ما هيتصلح»](/course/domain-errors/errors/).
+
+</details>
+
+<details className="qa">
+<summary>تلميح 3: الرف اختفى وانت فاتحه</summary>
+
+الـ `watchShelf` بيطلّع `null`. الـ Cubit بيطلّع state زي `ShelfGone(reason)`، والـ `BlocListener` بيعمل pop ويعرض الرسالة مرة واحدة. الـ Cubit نفسه مايعرفش ده حصل بسبب event ولا رد 403 ولا refresh. هو شاف drift بس.
+
+</details>
+
+### المهمة 3: الـ routes والدعوة
+
+<Tasks>
+<Task id="cap-presentation-3">زوّد routes الرفوف في الـ package نفسها، وصدّرها من الـ barrel: القايمة، والرف، و`/join/:token` للـ deep link (https والـ scheme الاتنين). المستخدم اللي مش داخل يروح للـ login ويرجع للدعوة بعدها. وقرر مكان الرفوف في التابات، وإيه اللي يحصل لو حد فتح لينك دعوة والـ flag مقفول.</Task>
+<Task id="cap-presentation-4">اعمل «ضيف للرف» في صفحة الكتاب من غير ما `feature_catalog` أو `feature_library` تعتمد على `feature_shelves`: الـ app هو اللي بيركّب الزرار في الصفحة.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: اللينك والـ login</summary>
+
+ده بالظبط الـ `from` اللي اتعمل في الـ redirect في وحدة الـ Real-time عشان الإشعار. ولازم يعدّي على نفس الـ allowlist، عشان لينك متفبرك مايفتحش أي route.
+
+</details>
+
+<details className="qa">
+<summary>تلميح 2: الزرار من غير dependency</summary>
+
+نفس فكرة الـ `below` في `BookDetailsPage` من [درس تقسيم Readly](/course/modularization/split-readly/): الصفحة بتقول «عندي مكان للأفعال»، والـ app بيحط فيه widget من `feature_shelves`. والسهم في الـ graph بيبقى من الـ app للاتنين، مش بين الـ features.
+
+</details>
+
+### المهمة 4: الشاشات والأخطاء
+
+<Tasks>
+<Task id="cap-presentation-5">ابني الشاشات بـ components من `core_ui` بس، من غير ولا لون ولا `left` أو `right`. كل شاشة فيها الحالات الأربعة: loading، وفاضية، وخطأ، وخطأ فوق بيانات قديمة. والـ entry الـ pending عليها علامة، والعملية الـ dead ليها banner فيه «حاول تاني» أو «الغي».</Task>
+<Task id="cap-presentation-6">«ادعُ» والنت قاطع: الزرار مقفول ومعاه السبب، مش بيضغط ويرجّع خطأ. والـ 429 على الدعوة بيقول امتى يقدر يحاول، من `retryAfter`. وكل رسالة خطأ فيها رقم مرجع تقدر تنسخه.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: الشاشة الفاضية مش واحدة</summary>
+
+«مفيش رفوف لسه» غير «الرف ده فاضي» غير «الرف ده فاضي وانت بتتفرج بس». التالتة مافيهاش زرار «ضيف كتاب». كل واحدة ليها نص، وأحيانًا ليها فعل.
+
+</details>
+
+<details className="qa">
+<summary>تلميح 2: المراجع</summary>
+
+[«الـ refresh فشل والليستة اختفت»](/course/api-errors/errors-ui/) و[«الـ SnackBar بيظهر تاني كل ما الشاشة تتبني»](/course/api-errors/errors-ui/) في درس الأخطاء في الشاشة، و[«الـ banner بيقول أوفلاين والنت شغال»](/course/api-errors/errors-ui/) في نفس الدرس. الأربعة هيحصلوا في الرفوف لو مااتعملش حسابهم.
+
+</details>
+
+### المهمة 5: الترجمة والـ RTL
+
+<Tasks>
+<Task id="cap-presentation-7">كل النصوص في الـ ARB بالعربي والإنجليزي، والأعداد بالجمع («كتاب واحد»، «كتابين»، «3 كتب»، «11 كتاب»). وأي placeholder قيمته جاية من مستخدم (اسم رف، اسم عضو، عنوان كتاب) ملفوف بـ `isolate()`. والنص اللي جوه الرف اتجاهه من المحتوى مش من لغة الـ app.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: جرّب الحالات دي</summary>
+
+رف اسمه `Summer reads 2026`، وعضو اسمه `Sara_92`، وكتاب اسمه `Who Moved My Cheese?`، والجملة «سارة ضافت ‹...› لرف ‹...›». اعرضها في الـ app العربي والإنجليزي، وبص على علامة الاستفهام والأرقام.
+
+</details>
+
+<details className="qa">
+<summary>تلميح 2: صفوف الأعضاء</summary>
+
+صف صور الأعضاء المتراكبة فوق بعض: أنهي صورة فوق في الـ RTL؟ استخدم `PositionedDirectional`، وجرّب زرار قلب الـ `Directionality` اللي عملته في [درس الـ RTL](/course/design-system/rtl/).
+
+</details>
+
+### المهمة 6: الـ accessibility
+
+<Tasks>
+<Task id="cap-presentation-8">كارت الرف جملة واحدة لقارئ الشاشة («نادي القراية، 12 كتاب، 4 أعضاء، انت صاحبه»)، وصور الأعضاء مخفية عنه والعدد بيتقري. كل `IconButton` ليه tooltip، وعناوين الأقسام headings. ولما عضو تاني يضيف كتاب والرف مفتوح، قارئ الشاشة بيقول ده، بس مش أكتر من مرة كل 10 ثواني («اتضاف 3 كتب»).</Task>
+<Task id="cap-presentation-9">شغّل TalkBack أو VoiceOver، وغمّض عينك، وادخل رف من لينك دعوة وضيف عليه كتاب. اكتب كل مكان وقفت فيه، وصلّحه، وكرر. وبعدين افتح كل شاشات الرفوف على عرض 320 بخط 200%.</Task>
+</Tasks>
+
+<details className="qa">
+<summary>تلميح 1: ليه حد أقصى للإعلانات؟</summary>
+
+عضو استورد 50 كتاب في ثانيتين. لو كل `entry_added` قال جملة، قارئ الشاشة هيقعد دقيقة بيقرا والمستخدم مش عارف يعمل حاجة. اجمع اللي حصل في فترة، وقول جملة واحدة.
+
+</details>
+
+<details className="qa">
+<summary>تلميح 2: من فين ده بييجي</summary>
+
+`MergeSemantics` و`ExcludeSemantics` و`headingLevel` و`sendAnnouncement` في [درس الـ Semantics](/course/design-system/semantics/)، و`minHeight` بدل `height` و`Wrap` بدل `Row` في [درس تكبير الخط](/course/design-system/text-scaling/).
+
+</details>
+
+<Quiz>
+
+<Question id="cap-presentation-q1">
+<Ask>المستخدم فاتح الرف، وصاحبه شاله منه. مين بيقرر إن الشاشة تتقفل، وإزاي؟</Ask>
+<Answer>
+
+محدش بيقرر في الشاشة. الـ `shelf.removed` (أو رد 403 على عملية) بيمسح الرف من drift، فالـ `watchShelf` بيطلّع `null`. الـ Cubit بيحوّل ده لـ state زي `ShelfGone`، والـ `BlocListener` بيعمل pop ويعرض الرسالة مرة واحدة. الـ Cubit مايعرفش إن فيه socket ولا outbox، وده اللي بيخلي نفس الكود يشتغل لو الرف اتمسح من جهاز تاني لنفس المستخدم.
+
+</Answer>
+</Question>
+
+<Question id="cap-presentation-q2">
+<Ask>ليه زرار «ادعُ» بيتقفل وهو أوفلاين بدل ما يضغط ويرجّع NetworkFailure؟</Ask>
+<Answer>
+
+لأن الدعوة أونلاين بس بقرار في الـ ADR، والـ app عارف ده قبل الضغطة. الزرار المقفول ومعاه سبب («محتاج نت عشان تعمل لينك») بيقول للمستخدم الحقيقة من غير ما يعمل حاجة ويستنى ويتفاجئ. والفرق مهم عن الإضافة، اللي شغالة أوفلاين: المستخدم لازم يفهم من الشاشة إيه اللي بيستنى النت وإيه اللي لأ.
+
+</Answer>
+</Question>
+
+</Quiz>
+
+### اتأكد قبل ما تكمّل
+
+- قرار الـ state management مكتوب بالمعايير، وكل Cubit ليه نوع وشكل state مكتوب ([تختار state management إزاي](/course/state-management/choosing/) و[تصميم الـ State](/course/state-management/state-design/)).
+- مفيش Cubit بيمسك Cubit تاني، والأحداث اللي بتحصل مرة في `BlocListener` ([Cubit متقدم](/course/state-management/cubit-advanced/) و[flutter_bloc بالتفصيل](/course/state-management/flutter-bloc-widgets/)).
+- الضغطتين على «ضيف» بيعملوا طلب واحد ([Cubit من الصفر للاحتراف](/course/presentation/cubit/)).
+- الـ deep link بيرجع للدعوة بعد الـ login، ومعدّي على الـ allowlist ([go_router والتنقل](/course/presentation/router/)).
+- كل شاشة فيها الحالات الأربعة، ورقم المرجع بيتنسخ ([الأخطاء في الشاشة](/course/api-errors/errors-ui/)).
+- الجمع والـ placeholders والـ isolate صح بالعربي والإنجليزي ([الترجمة](/course/presentation/l10n/) و[الـ RTL بالتفصيل](/course/design-system/rtl/)).
+- مستخدم قارئ الشاشة يقدر يدخل رف ويضيف كتاب لوحده، والـ app كله شغال بخط 200% على 320 ([الـ Semantics](/course/design-system/semantics/) و[تكبير الخط](/course/design-system/text-scaling/)).
+- مفيش لون ولا left/right برا `core_ui`، وتست الـ tokens بيعدّي ([مكتبة الـ components](/course/design-system/components/)).
+- مفيش feature بتعتمد على `feature_shelves` غير الـ app ([نقسّم Readly خطوة خطوة](/course/modularization/split-readly/)).
