@@ -1,0 +1,352 @@
+---
+title: "في Escore: الـ Performance"
+description: "buildWhen صح عند الـ root بيبوظه watch مستخبي في extension للترجمة، وbuildWhen بالـ identity ممكن يخبّي نتيجة ماتش، وthrottle للـ WebSocket، وwidget صور بيحسب حجم الـ decode لوحده، وsort جوه build، وsplash بـ 3 ثواني، وHive box بـ 50MB بيتفتح كله وقت الـ startup."
+minutes: 20
+draft: true
+---
+
+الوحدة دي قالت: قيس قبل ما تصلّح. Escore فيه شغل performance حقيقي واتعمل عن قصد: كومنتات بتشرح ليه، ومراجع لـ tickets، وفولدر `docs/` فيه تقارير عن الصور وعن صفحة البطولات. وفيه كمان أماكن الـ optimization فيها اتعمل في حتة واتبوظ في حتة تانية من غير ما حد يحس. وده بالظبط اللي بيحصل لما مفيش قياس ثابت: مفيش `Timeline` ولا integration test للـ frames في المشروع كله.
+
+### الـ rebuilds: buildWhen صح، وwatch مستخبي
+
+عند الـ root، الـ `MaterialApp` بيتبني جوه `BlocBuilder` على الـ `SettingsCubit`، ومعاه `buildWhen` مكتوب صح:
+
+<CodeBlock label="lib/escore_app.dart">
+
+```dart
+child: BlocBuilder<SettingsCubit, SettingsState>(
+  buildWhen: (previous, current) {
+    if (previous is SettingsLoaded && current is SettingsLoaded) {
+      return previous.currentLangCode != current.currentLangCode ||
+          previous.translations != current.translations;
+    }
+    return true;
+  },
+```
+
+</CodeBlock>
+
+الـ app كله بيتبني لما اللغة أو الترجمات تتغير بس. تغيير لون الثيم مثلًا مابيعيدش بناء الـ `MaterialApp`. ده درس [الـ rebuilds](/course/performance/rebuilds/) بالظبط.
+
+بس الترجمة في Escore بتعدّي من extension:
+
+<CodeBlock label="lib/core/extensions/localization_extansions.dart">
+
+```dart
+String tr(BuildContext context) {
+  try {
+    // محاولة استخدام watch أولاً (للاستماع للتغييرات)
+    final state = context.watch<SettingsCubit>().state;
+    if (state is SettingsLoaded) {
+      final translations = state.translations;
+      if (translations.containsKey(this)) {
+        return translations[this].toString();
+      }
+    }
+  // ...
+}
+```
+
+</CodeBlock>
+
+`.tr(context)` مستخدمة 500 مرة في 227 ملف، و`context.isArabic` (watch هو كمان) 50 مرة. وكل widget نادى `.tr(context)` بقى بيسمع على الـ `SettingsCubit` كله، بـ subscription خاص بيه. الـ `buildWhen` اللي فوق مالوش أي علاقة بيهم: هو بيحمي الـ `MaterialApp` بس. ده الـ «extension شكلها بريء ووراها watch» اللي في درس الـ rebuilds، بس في 500 مكان.
+
+والحتة التانية في الـ state نفسها:
+
+<CodeBlock label="settings_state.dart وsettings_cubit.dart">
+
+```dart
+class SettingsLoaded extends SettingsState { // no Equatable, no ==
+  // availableLanguages, translations, currentLangCode
+}
+
+// settings_cubit.dart: the "theme changed" signal
+if (state is SettingsLoaded) {
+  emit((state as SettingsLoaded).copyWith()); // same data, new instance
+}
+```
+
+</CodeBlock>
+
+الـ `copyWith()` من غير arguments بيعمل instance جديد بنفس البيانات، ومن غير `==` الـ Cubit بيعتبره state جديدة. ده مقصود: هو الإشارة إن الثيم اتغير. بس النتيجة إن كل تغيير في الثيم بيعيد بناء كل widget فيه نص مترجم، في كل الشاشات المفتوحة، مع إن الترجمات ماتغيرتش.
+
+الحل مش إنك تشيل الـ watch. الترجمة لازم تتحدث لما اللغة تتغير. الحل `select` على الحاجة اللي الـ widget محتاجها:
+
+```dart
+final translations = context.select(
+  (SettingsCubit c) => switch (c.state) {
+    SettingsLoaded(:final translations) => translations,
+    _ => null,
+  },
+); // the same Map instance across theme-only emits: no rebuild
+```
+
+ولأن الـ `copyWith()` بيعدّي نفس الـ Map، الـ select بيقارن بـ `==` على الـ Map (يعني identity) وبيلاقيه هو هو، فمفيش rebuild. وإشارة الثيم تروح في Cubit لوحده أو `ThemeExtension`.
+
+وفي المشروع 0 استخدام لـ `context.select`. الـ `BlocSelector` موجود 8 مرات، 7 منهم في أزرار الـ follow، وده استخدام صح. بس في نفس الشاشة:
+
+<CodeBlock label="lib/features/clubs/presentation/screens/club_details_screen.dart">
+
+```dart
+body: BlocBuilder<ClubDetailsCubit, ClubDetailsState>(
+  builder: (context, state) {
+    // ...
+    return ClubDetailsContentWidget(club: displayClub, onRefresh: _onRefresh);
+```
+
+</CodeBlock>
+
+الزرار بـ `BlocSelector` على `isFollowing`، والصفحة كلها بـ `BlocBuilder` من غير `buildWhen`. فلما المستخدم يدوس follow، الـ Cubit بيعمل emit بالـ `isFollowing` والـ `followersCount` الجديدين، والزرار بيتبني، و<b>كمان</b> الصفحة كلها. والإنصاف: الـ `followersCount` بيتغير فعلًا، فالصلّح الصح selector على widget العدد، مش `buildWhen` بيمنع الصفحة.
+
+### buildWhen بالـ identity: سريع، وممكن يخبّي نتيجة
+
+ده أشطر وأخطر حتة في المشروع. ليستة الماتشات بيوصلها 20 لـ 30 تحديث نتيجة في الثانية من الـ WebSocket. الـ state عملت قرار واضح ومكتوب:
+
+<CodeBlock label="lib/features/matches/presentation/cubit/matches_list/matches_list_state.dart">
+
+```dart
+/// Equatable is intentionally absent: cubits emit fresh instances and
+/// `buildWhen` (P01-M03) gates rebuilds via reference equality, so deep
+/// equality on large match lists was pure overhead.
+sealed class MatchesListState {
+```
+
+</CodeBlock>
+
+والـ `buildWhen` بتاع الليستة:
+
+<CodeBlock label="matches_body_entity_widget.dart">
+
+```dart
+buildWhen: (previous, current) {
+  if (previous.runtimeType != current.runtimeType) return true;
+  if (previous is MatchesListLoaded && current is MatchesListLoaded) {
+    if (!identical(previous.groups, current.groups)) return true;
+    if (previous.isLoadingMore != current.isLoadingMore) return true;
+    if (previous.loadMoreError != current.loadMoreError) return true;
+    return false;
+  }
+  return true;
+},
+```
+
+</CodeBlock>
+
+لحد هنا ممتاز: مقارنة بالـ identity بدل مقارنة 300 ماتش واحد واحد، وده نفس اللي [درس تمن الطبقات](/course/performance/cost-of-layers/) قاسه (الـ `==` لما الـ objects نفسها `identical` أرخص 6 مرات). بس بص على تحديث النتيجة:
+
+<CodeBlock label="MatchesListLoaded.applyMatchUpdate">
+
+```dart
+MatchesListLoaded applyMatchUpdate(MatchEntity updated) {
+  final index = idToIndex[updated.id];
+  if (index != null) {
+    matches[index] = updated;
+    for (final group in groups) { /* stageMatches[i] = updated; in place */ }
+  }
+  return MatchesListLoaded._reuse(/* ... */ groups: groups, /* same object */);
+}
+```
+
+</CodeBlock>
+
+الـ `groups` بيتعدّل في مكانه، والـ state الجديدة شايلة <b>نفس</b> الـ object. فالـ `identical(previous.groups, current.groups)` بيقول true، والـ `buildWhen` بيرجّع false، والليستة مابتتبنيش. والـ match cards في الليستة مابتسمعش على أي حاجة لوحدها. يعني زي ما الكود مكتوب، نتيجة الماتش ممكن ماتتحدثش في الليستة لحد ما حاجة تانية تعمل rebuild (scroll يبني card جديد، أو load more). ده محتاج يتأكد وهو شغال قبل ما يتقال bug، بس ده بالظبط اللي [درس flutter_bloc](/course/state-management/flutter-bloc-widgets/) حذّر منه: الـ `buildWhen` بيقارن حاجة انت كتبتها بإيدك، ولما الافتراض اللي تحتها يتغير (هنا: «كل تغيير بيعمل groups جديدة»)، الشاشة بتعرض حاجة قديمة. الحل اللي بيحافظ على السرعة: الـ card تسمع على الماتش بتاعها بس (selector بالـ id)، أو `applyMatchUpdate` يعمل list جديدة للـ group اللي اتغير بس.
+
+### الـ throttle والـ RepaintBoundary: الحلو
+
+<CodeBlock label="match_details_cubit.dart">
+
+```dart
+/// Coalesces bursts of WS score updates (fighting/standard matches can
+/// fire 20-30 events/sec) into one emit per window. Score events are
+/// absolute, so collapsing to the latest is safe.
+static const Duration _scoreEmitWindow = Duration(milliseconds: 120);
+```
+
+</CodeBlock>
+
+30 تحديث في الثانية بقوا 8 emits. والكومنت بيقول ليه ده آمن: كل event فيه النتيجة كاملة، فآخر واحد كفاية. وليستة الماتشات بتعمل نفس الحكاية: بتطبّق N event وتعمل emit واحد. ده أرخص optimization في الوحدة كلها: أقل emits يعني أقل كل حاجة بعدها.
+
+وفي صفحة الماتش، كل عمود في الـ header ملفوف في `RepaintBoundary` ومعاه `SelectiveListenableBuilder` (نسخة بيتي من `BlocSelector` لـ `ValueListenable`)، فتحديث النتيجة بيرسم العمود اللي في النص بس، مش اللوجوهات. والتابات اللي ماتفتحتش بترجع `SizedBox.shrink()`، فمابتعملش Cubits ولا طلبات.
+
+وفيه كومنت واحد يستاهل سؤال: في `custom_container_glass.dart` الكومنت بيقول إن الـ `RepaintBoundary` بيخلي الـ engine يعيد استخدام الـ blur بدل ما يحسبه كل frame وانت بتعمل scroll. بس الـ backdrop blur بيعتمد على اللي <b>ورا</b> الـ widget، ولو اللي ورا بيتحرك، لازم يتحسب تاني. الادعاء ده محتاج Highlight repaints والـ raster time قبل وبعد. ده مثال كويس على «قيس، ماتفترضش».
+
+### القوائم
+
+**الحلو**: الكومنت ده لوحده درس:
+
+<CodeBlock label="overview_event_body_widget.dart">
+
+```dart
+// Build a list of section factories so ListView.builder can lazily
+// construct each section only when it scrolls into view. The eager
+// `ListView(children: [...])` form built every section on the first
+// frame — including the YouTube WebView stream player and the HTML
+// description parse — even though most of them are off-screen at mount.
+```
+
+</CodeBlock>
+
+وفيه `prototypeItem` في ليستة الألعاب، و`ValueKey` و`findChildIndexCallback` في الـ discover feed، وpagination بـ scroll notification وguard ضد الطلبات المتكررة.
+
+**الوحش**:
+
+<CodeBlock label="round_robin_group_content_widget.dart">
+
+```dart
+final matches = group.rounds.expand((r) => r.matches).toList();
+// ...
+final standings = isLobbyGroup
+    ? const <RoundRobinStandingRow>[]
+    : RoundRobinGroupAnalysis.buildStandings(group); // walks every match, then sorts
+
+return Directionality(
+  textDirection: TextDirection.ltr,
+  child: ListView(children: [ /* every round section, eagerly */ ]),
+);
+```
+
+</CodeBlock>
+
+حساب الترتيب وsort جوه `build`، ومع كل rebuild، وكل الـ rounds بتتبني مرة واحدة. والمفارقة إن ملف تاني في نفس المشروع (`standing_results_list_widget.dart`) بيعمل الصح: بيخزّن الـ sorted في الـ State، وبيعيد الـ sort في `didUpdateWidget` بس لو الـ input اتغير (`!identical(old.results, widget.results)`). الحل موجود في المشروع، بس مش في كل حتة. وده [درس الـ main isolate](/course/performance/main-isolate/): الـ build بيحوّل، مابيحسبش.
+
+وحاجتين أصغر: الـ `findChildIndexCallback` في الـ discover feed بيدوّر بـ `for` على الليستة كلها في كل نداء بدل Map. وكل row في الـ news feed فيه `GridView.builder(shrinkWrap: true, itemCount: 2)` عشان يرصّ كارتين، و`Row` بـ `Expanded` كان هيعمل نفس الشكل.
+
+### الصور: widget واحد بيحسب الحجم
+
+ده أحسن حاجة في المشروع في الموضوع ده. كل صورة من النت بتعدّي من `CustomImageWidget` (95 مكان)، وهو بيحسب حجم الـ decode لوحده:
+
+<CodeBlock label="lib/core/utils/widgets/custom_image_widget.dart">
+
+```dart
+(int?, int?) _effectiveMemCache(BuildContext context) {
+  if (memCacheWidth != null || memCacheHeight != null) {
+    return (memCacheWidth, memCacheHeight);
+  }
+  // ... the widget's own width/height
+  const thumbnailCeiling = 256.0;
+  if (larger > thumbnailCeiling) return (null, null);
+
+  final dpr = MediaQuery.maybeDevicePixelRatioOf(context) ?? 3.0;
+  if (h == null || (w != null && w >= h)) {
+    return ((w! * dpr).round(), null);
+  }
+  return (null, (h * dpr).round());
+}
+```
+
+</CodeBlock>
+
+كل اللي في [درس الصور](/course/performance/images/) هنا: widget واحد، وضرب في الـ DPR، وبعد واحد بس عشان النسبة تفضل، و`maybeDevicePixelRatioOf` مش `MediaQuery.of`. والـ disk cache بـ `cached_network_image`. واللي ناقص: صفر `precacheImage`، والصور الأكبر من 256 بتتفك بحجمها الأصلي. والـ placeholder الافتراضي GIF متحرك 72KB بيتعرض 26 pixel من غير `cacheWidth`، في كل خلية بتحمّل، ومعاه `ColorFiltered` في الـ dark mode بيعمل `saveLayer` لكل خلية. ده الـ «placeholder اللي بيقطّع» اللي في الدرس.
+
+### الشغل على الـ main: الـ layers والـ DateFormat
+
+مفيش ولا `compute` ولا `Isolate.run`، وده مقبول لنفس السبب اللي في [درس Escore في وحدة الـ Async](/course/dart-async/escore/): الـ responses صغيرة. بس كل fetch بيعمل على الـ main: `fromJson` للـ model، وmapper للـ entity، و`jsonEncode` للـ response كله تاني عشان يتكتب في Hive. والكود نفسه حاطط رقم:
+
+<CodeBlock label="matches_repository_impl.dart">
+
+```dart
+/// Sits above the Hive offline cache so repeated reads inside a session
+/// skip `jsonDecode + MatchModel.fromJson × N + MatchMapper.toEntityList`
+/// (≈ 50-100ms on low-end Android for a 30-match list).
+```
+
+</CodeBlock>
+
+الـ cache في الذاكرة ده حل صح: ماتعملش الشغل تاني. بس الرقم نفسه يستاهل سؤال: 50 لـ 100ms لـ 30 ماتش كتير جدًا مقارنة بالـ benchmark اللي في [درس تمن الطبقات](/course/performance/cost-of-layers/) (4000 entity في أقل من 0.1ms). لو الرقم ده اتقاس، فالوقت غالبًا في الـ `jsonDecode` أو في حاجة جوه الـ mapper، مش في إن فيه model وentity. والـ mapper بتاع الماتشات 464 سطر، وده مكان يستاهل `Timeline.timeSync` قبل أي قرار.
+
+وفي كل match card:
+
+<CodeBlock label="lib/core/extensions/datetime_extensions.dart">
+
+```dart
+String get _locale =>
+    sl<CacheManager>().getData(key: CacheKey.keyLocale) as String? ?? 'ar';
+
+String toLocalizedTime() {
+  return _ltrIsolate(DateFormat('h:mm a', _locale).format(this));
+}
+```
+
+</CodeBlock>
+
+`DateFormat` جديد وقراية من الـ cache في كل نداء، من الـ build بتاع كل card. الـ ISO formatter في نفس الملف متخزن مرة واحدة ومعاه كومنت بيقول ليه، فالفكرة معروفة. وزي ما قسنا في درس الـ main isolate: ده مش سبب jank لوحده، بس تصليحه سطر.
+
+### الـ startup: 3 ثواني حد أدنى
+
+<CodeBlock label="lib/core/app/app_initializer_screen.dart">
+
+```dart
+// Init starts only AFTER the intro animation finishes — not in parallel.
+// Initialization does main-isolate work (API calls, JSON decode) that would
+// jank the animation if run underneath it.
+Future<void> _onAnimationCompleted() async {
+```
+
+</CodeBlock>
+
+الـ animation مدته 3000ms، وبعده حوالي 10 `await` ورا بعض: Firebase، وHive، والـ environment، والـ prefs، والـ offline cache، والـ notifications، والـ home widget، والـ settings (ممكن تجيب الترجمات من النت)، والـ startup check. يعني وقت الفتح = 3 ثواني + مجموع كل ده. ده الـ «splash الطويلة عشان الـ branding» اللي في [درس الـ startup](/course/performance/startup/) بالظبط. والكومنت صادق في السبب: الـ init بيقطّع الـ animation. بس الحل اللي اتاخد إنهم اتعملوا ورا بعض، بدل ما الـ init يبقى أخف.
+
+**الحلو** هنا كتير: كل الـ get_it registrations lazy (145 lazy singleton، و67 factory، وصفر `registerSingleton`)، والـ `main.dart` بينادي `runApp` على طول، وصناديق Hive بتتفتح بـ `Future.wait`، والـ startup check ليه timeout 4 ثواني، وطلب الـ theme palette اتشال من الـ cold start.
+
+**والوحش الكبير**:
+
+<CodeBlock label="offline_cache_service.dart وcache_config.dart">
+
+```dart
+_box = await Hive.openBox<String>(_boxName); // not openLazyBox: every value is read into RAM
+
+/// Maximum total cache size in bytes (~50 MB).
+static const int maxCacheSizeBytes = 50 * 1024 * 1024;
+```
+
+</CodeBlock>
+
+الـ `openBox` في Hive بيقرا كل القيم في الذاكرة. الـ offline cache حده 50MB من JSON strings، فممكن 50MB يتقروا قبل أول شاشة، ويفضلوا في الذاكرة طول عمر الـ app. والـ `evictExpired()` بعده بيمسح key ورا key بـ `await` لكل واحد، على نفس الـ path. `openLazyBox` بيقرا القيمة لما تتطلب بس، وده اللي cache بالحجم ده محتاجه.
+
+### الـ memory: نضيف
+
+الـ Cubits اللي بتسمع بتقفل كل حاجة في `close()`: الـ timers، والـ subscriptions، والـ WebSocket. ومفيش ملف فيه controllers بتتعمل أكتر من اللي بيتعملها dispose. الاستثناء الوحيد الـ `connectivityControllerInit` اللي [درس Escore في وحدة الـ Async](/course/dart-async/escore/) اتكلم عنه، وفيه حتة زيادة: زرار الـ retry في شاشة الـ init بيعيد `environmentInit`، فممكن يزوّد listener تاني.
+
+### الأدوات
+
+`FirebasePerfInterceptor` بيقيس كل طلب HTTP في الـ release، وCrashlytics متركّب. بس مفيش `Timeline` ولا traces مخصصة ولا integration test للـ frames، و`integration_test` موجود في الـ dev_dependencies ومفيش فولدر ليه. يعني الشبكة بتتقاس، والـ UI لأ. وكل الـ optimizations الحلوة اللي فوق اتعملت من tickets وتقارير، ومفيش حاجة بتمنعها ترجع تبوظ.
+
+### لو هنعيدها
+
+1. `.tr(context)` يعمل `select` على الـ translations بس، وإشارة الثيم في مكان لوحدها، والـ `SettingsLoaded` بـ Equatable.
+2. أي `buildWhen` بالـ identity جنبه تست بيتأكد إن تحديث النتيجة بيوصل للشاشة، أو الـ card تسمع على الماتش بتاعها.
+3. الحسابات زي الـ standings تتعمل مرة في الـ Cubit أو الـ State، زي `standing_results_list_widget` اللي في نفس المشروع.
+4. الـ init يبدأ مع الـ animation، والـ animation يخلص لما الـ init يخلص. والـ notifications والـ home widget بعد أول frame.
+5. الـ offline cache بـ `openLazyBox`، والـ eviction بـ `deleteAll` مرة واحدة.
+6. integration test بـ `traceAction` لليستة الماتشات وقت الـ live scores، عشان كل الشغل اللي فوق مايرجعش يبوظ.
+
+<Quiz>
+
+<Question id="escore-perf-1">
+<Ask>الـ `MaterialApp` في Escore عليه `buildWhen` بيمنع الـ rebuild لما الثيم بس يتغير. ليه برضه كل نص مترجم في الـ app بيتبني مع تغيير الثيم؟</Ask>
+<Answer>
+
+لأن `.tr(context)` جواها `context.watch<SettingsCubit>()`، فكل widget بيترجم بقى عنده subscription خاص بيه على الـ Cubit كله، والـ `buildWhen` بيحمي الـ `MaterialApp` بس. والـ theme change بيعمل emit لـ `copyWith()` من غير arguments، والـ state مالهاش `==`، فكل emit بيعدّي. الحل `select` على الـ translations (نفس الـ Map بين الـ emits، فمفيش rebuild)، والـ state بـ Equatable.
+
+</Answer>
+</Question>
+
+<Question id="escore-perf-2">
+<Ask>`buildWhen` في ليستة الماتشات بيقارن الـ `groups` بـ `identical`، و`applyMatchUpdate` بيعدّل الـ groups في مكانها. إيه اللي ممكن يحصل، وليه ده مثال على خطورة الـ buildWhen؟</Ask>
+<Answer>
+
+تحديث النتيجة بيرجّع state فيها نفس الـ groups object، فالـ buildWhen بيقول false والليستة مابتتبنيش، والـ cards مابتسمعش لوحدها، فالنتيجة ممكن تفضل قديمة لحد rebuild تاني. الـ buildWhen بيعتمد على افتراض مكتوب بإيدك (كل تغيير بيعمل groups جديدة)، ولما الكود اللي تحته يتغير، الشاشة بتغلط في صمت. الـ selector بيقارن اللي بيعرضه بالظبط، فأأمن.
+
+</Answer>
+</Question>
+
+<Question id="escore-perf-3">
+<Ask>`Hive.openBox` للـ offline cache اللي حده 50MB وقت الـ startup. إيه التمن، وإيه البديل؟</Ask>
+<Answer>
+
+الـ `openBox` بيقرا كل القيم في الذاكرة، فممكن 50MB من JSON يتقروا قبل أول شاشة ويفضلوا في الـ RAM طول عمر الـ app، وده وقت startup وذاكرة. البديل `openLazyBox`، اللي بيقرا القيمة لما تتطلب بس، ومعاه eviction بنداء واحد بدل await لكل key.
+
+</Answer>
+</Question>
+
+</Quiz>

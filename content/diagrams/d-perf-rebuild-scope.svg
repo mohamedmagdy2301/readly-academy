@@ -1,0 +1,31 @@
+<svg viewBox="0 0 760 300" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="قبل: context.watch في LibraryView بيعيد بناء الصفحة كلها مع كل emit من الـ SyncStatusCubit. بعد: SyncBadge بس اللي بيسمع بـ select، والباقي مابيتبنيش">
+<text x="190" y="28" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)" class="ar" direction="rtl">قبل: watch في أول الصفحة</text>
+<text x="570" y="28" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)" class="ar" direction="rtl">بعد: select في الـ badge</text>
+<line x1="380" y1="20" x2="380" y2="250" stroke="var(--line)" stroke-width="1.2"/>
+<g font-size="11" text-anchor="middle" fill="var(--ink)">
+<rect x="20" y="40" width="130" height="30" rx="7" fill="var(--surface)" stroke="var(--muted)"/><text x="85" y="59">SyncStatusCubit</text>
+<rect x="190" y="40" width="160" height="30" rx="7" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="1.6"/><text x="270" y="59">LibraryView ×41</text>
+<rect x="190" y="96" width="160" height="30" rx="7" fill="var(--warn-soft)" stroke="var(--warn)"/><text x="270" y="115">Scaffold · AppBar ×41</text>
+<rect x="150" y="152" width="110" height="30" rx="7" fill="var(--warn-soft)" stroke="var(--warn)"/><text x="205" y="171">Badge ×41</text>
+<rect x="270" y="152" width="100" height="30" rx="7" fill="var(--warn-soft)" stroke="var(--warn)"/><text x="320" y="171">LibraryBody</text>
+<rect x="250" y="208" width="120" height="30" rx="7" fill="var(--warn-soft)" stroke="var(--warn)"/><text x="310" y="227">BookTile ×~500</text>
+<path d="M 150 55 L 186 55" stroke="var(--warn)" stroke-width="1.6" marker-end="url(#mk-warn)"/>
+<path d="M 270 70 L 270 92" stroke="var(--muted)" stroke-width="1.2" marker-end="url(#mk-mut)"/>
+<path d="M 250 126 L 215 148" stroke="var(--muted)" stroke-width="1.2" marker-end="url(#mk-mut)"/>
+<path d="M 290 126 L 315 148" stroke="var(--muted)" stroke-width="1.2" marker-end="url(#mk-mut)"/>
+<path d="M 318 182 L 312 204" stroke="var(--muted)" stroke-width="1.2" marker-end="url(#mk-mut)"/>
+<rect x="400" y="40" width="130" height="30" rx="7" fill="var(--surface)" stroke="var(--muted)"/><text x="465" y="59">SyncStatusCubit</text>
+<rect x="570" y="40" width="160" height="30" rx="7" fill="var(--good-soft)" stroke="var(--good)"/><text x="650" y="59">LibraryView ×1</text>
+<rect x="570" y="96" width="160" height="30" rx="7" fill="var(--good-soft)" stroke="var(--good)"/><text x="650" y="115">Scaffold · AppBar ×1</text>
+<rect x="530" y="152" width="110" height="30" rx="7" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.6"/><text x="585" y="171">SyncBadge ×41</text>
+<rect x="650" y="152" width="100" height="30" rx="7" fill="var(--good-soft)" stroke="var(--good)"/><text x="700" y="171">LibraryBody ×1</text>
+<rect x="630" y="208" width="120" height="30" rx="7" fill="var(--good-soft)" stroke="var(--good)"/><text x="690" y="227">BookTile ×12</text>
+<path d="M 470 70 C 480 130, 500 160, 526 166" fill="none" stroke="var(--accent)" stroke-width="1.6" marker-end="url(#mk-acc)"/>
+<text x="470" y="140" font-size="10" fill="var(--accent)">select(pending)</text>
+<path d="M 650 70 L 650 92" stroke="var(--muted)" stroke-width="1.2" marker-end="url(#mk-mut)"/>
+<path d="M 630 126 L 595 148" stroke="var(--muted)" stroke-width="1.2" marker-end="url(#mk-mut)"/>
+<path d="M 670 126 L 695 148" stroke="var(--muted)" stroke-width="1.2" marker-end="url(#mk-mut)"/>
+<path d="M 698 182 L 692 204" stroke="var(--muted)" stroke-width="1.2" marker-end="url(#mk-mut)"/>
+</g>
+<text x="380" y="278" text-anchor="middle" font-size="12" fill="var(--ink)" class="ar" direction="rtl">نفس الـ 41 emit في الـ sync. الفرق مين بيسمع: الصفحة كلها، ولا الـ widget اللي بيعرض الرقم بس</text>
+</svg>

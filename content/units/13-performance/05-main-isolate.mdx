@@ -1,0 +1,293 @@
+---
+title: "الشغل التقيل على الـ main isolate"
+description: "إزاي تلاقي الشغل اللي بيوقّف الـ UI في الـ timeline والـ CPU profiler: sort جوه build، وHydratedCubit بيعمل JSON لـ 4000 كتاب مع كل emit، وasync اللي مش بيطلّع الشغل من الـ main، والترتيب الصح للحلول قبل ما توصل للـ isolate."
+minutes: 30
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="الكاشير اللي بيرتّب الدرج كل ما زبون ييجي">
+
+ارجع للكاشير بتاع [درس الـ Future](/course/dart-async/future/). فيه كاشير، كل ما زبون يقف قدامه، بيطلّع كل الفلوس من الدرج ويرتّبها من الأول بالفئة، وبعدين ياخد الفلوس من الزبون. الترتيب بياخد دقيقة، فالطابور كله بيمشي ببطء، مع إن الحساب نفسه ثواني.
+
+الحل الأول مش إنك تجيب موظف من الأوضة اللي ورا يرتّب الدرج. الحل إن الدرج يفضل مترتب، والفلوس الجديدة تتحط في مكانها وهي داخلة. الموظف اللي ورا (الـ isolate) للحاجات اللي مالهاش حل غيره.
+
+</Analogy>
+
+الـ main isolate هو الكاشير: بيبني الـ widgets، وبيعمل layout، وبيشغّل كود الـ Cubits، وبيرد على اللمس، كله على thread واحد. أي حاجة بتاخد 20ms جوه الـ build أو جوه emit، الـ frame بيتأخر. الدرس ده عن إزاي <b>تلاقي</b> الشغل ده في الـ timeline. والحل لما يكون محتاج isolate اتشرح في [درس الـ Isolates](/course/dart-async/isolates/)، ومش هنعيده هنا. اللي هنعرفه: إمتى توصل له، وإمتى فيه حل أبسط قبله.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### المشكلة: كل تغيير في المكتبة بيقطّع
+
+بعد ما [درس القوائم](/course/performance/lists/) صلّح فتح المكتبة، لسه فيه frame واحد بيقطّع كل ما المستخدم يغيّر حالة كتاب، أو يضيف كتاب. الـ Flutter frames chart: frame واحد UI بـ 38ms، والـ raster 4ms. يعني كود Dart.
+
+### من الـ frame للـ function
+
+1. <b>دوس على الـ frame الأحمر</b> في الـ Performance view، وروح على Timeline events. الـ `BUILD` واخد 31ms. جواه `BookList` لوحده 29ms.
+2. <b>الـ widget اتبنى مرة واحدة</b>، يعني مش مشكلة rebuilds زي [درس الـ rebuilds](/course/performance/rebuilds/). الـ build نفسه تقيل.
+3. <b>افتح الـ CPU Profiler</b>، وسجّل وانت بتعمل نفس الحركة، واختار <b>Bottom Up</b>: الـ functions مترتبة بالوقت اللي اتصرف فيها هي نفسها. فوق خالص: `List.sort`، و`String.toLowerCase`، و`_compareTitles`.
+4. <b>الـ Call Tree</b> بيقولك مين نادى عليهم: `BookList.build` ← `_groupByLetter` ← `sort`.
+
+<CodeBlock label="BookList: الترتيب والتجميع جوه build">
+
+```dart
+@override
+Widget build(BuildContext context) {
+  final sorted = [...books]..sort(_compareTitles);   // 4000 strings, every build
+  final byLetter = _groupByLetter(sorted);           // for the A-Z index
+  return LibraryScrollView(sections: byLetter);
+}
+
+int _compareTitles(Book a, Book b) => a.title.toLowerCase().compareTo(b.title.toLowerCase());
+```
+
+</CodeBlock>
+
+الغريب إن الـ query في `LibraryDao` أصلًا بيرتّب بالعنوان، من [درس الـ Streams في Readly](/course/dart-async/watch/). بس SQLite بيرتّب case-sensitive افتراضيًا، فـ «Zebra» كانت بتيجي قبل «alice»، وحد صلّحها بـ sort تاني في Dart بـ `toLowerCase`. الـ sort ده لـ 4000 عنوان اتقاس 2.3ms على لابتوب، وعلى الموبايل المرجعي حوالي 9ms. والتجميع بالحرف بعده. وكل build بيعيدهم، حتى لو الكتب ماتغيرتش.
+
+### سمّيها في الـ timeline قبل ما تصلّح
+
+الـ CPU profiler بيقولك أنهي function، بس الـ timeline بيقولك هي جوه أنهي frame. الـ `Timeline.timeSync` من [درس القياس](/course/performance/measure/) بيربط الاتنين:
+
+```dart
+final byLetter = Timeline.timeSync(
+  'library.sortAndGroup',
+  () => _groupByLetter([...books]..sort(_compareTitles)),
+  arguments: {'books': books.length},
+);
+```
+
+دلوقتي الـ event باسمه بيظهر في الـ frame، بوقته، وبعدد الكتب. وبعد التصليح، نفس الـ event هيختفي من الـ frames، أو هيبقى أصغر، وده الرقم اللي في الـ PR.
+
+### الحل: الشغل يتعمل مرة، في المكان الصح
+
+الترتيب مش شغل الـ widget. الترتيب حاجة الـ DB بتعملها أحسن من أي حد:
+
+<CodeBlock label="الترتيب في الـ SQL، والتجميع مرة في الـ Cubit">
+
+```dart
+// LibraryDao: the same query, case-insensitive, sorted in the DB isolate
+Stream<List<BookRow>> watchAll({BookStatus? status}) {
+  final query = select(books)
+    ..where((b) {
+      final visible = b.syncState.equals('deleted').not();
+      return status == null ? visible : visible & b.status.equalsValue(status);
+    })
+    ..orderBy([(b) => OrderingTerm.asc(b.title.collate(Collate.noCase))]); // was: b.title
+  return query.watch();
+}
+
+// LibraryCubit: group once per new list, not once per build
+void _onBooks(List<Book> books) => emit(LibraryLoaded(books, sections: groupByLetter(books)));
+```
+
+</CodeBlock>
+
+- <b>الـ sort رجع للـ DB:</b> drift بيشغّل الـ SQL في isolate لوحده، والـ `COLLATE NOCASE` بيحل مشكلة الحروف الكبيرة اللي الـ sort التاني اتعمل عشانها. الـ NOCASE بيفرق في الحروف الإنجليزي بس، والعناوين العربي مالهاش حروف كبيرة أصلًا. ولو عايز الـ ORDER BY ده ياخد من الـ index، الـ index نفسه يتعمل بـ `COLLATE NOCASE`.
+- <b>التجميع راح للـ Cubit:</b> بيتعمل مرة لما الليستة تتغير، مش مع كل build. والـ build بقى بيقرا `state.sections` بس.
+- <b>الـ build بقى pure ورخيص:</b> بيحوّل state لـ widgets ومابيحسبش.
+
+القياس بعد: الـ frame بتاع تغيير الترتيب UI بـ 7ms، والـ `library.sortAndGroup` اختفى من الـ timeline، وظهر مكانه `library.group` في الـ Cubit بـ 1.5ms مرة واحدة لما الليستة اتغيرت.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### HydratedCubit بيعمل JSON لـ 4000 كتاب مع كل emit
+
+حد قرأ [درس الـ Hydrated](/course/state-management/hydrated-replay/) وقال: «المكتبة بتفتح بـ spinner لحد ما drift يرد. نخلي الـ `LibraryCubit` hydrated، فتفتح بآخر state على طول». الـ app بقى بيفتح أسرع بـ 200ms. وكل تغيير في كتاب بقى بيقطّع.
+
+الـ timeline قال: بعد كل emit، event اسمه `toJson` وبعده `jsonEncode`، الاتنين 18ms على الموبايل المرجعي. الـ HydratedCubit بينادي `toJson` ويكتب في الـ storage مع <b>كل</b> state جديدة، على الـ main isolate. 4000 كتاب يعني 4000 Map، وبعدين JSON string حوالي 800KB. وفي الـ sync اللي فيه 20 عملية، ده 20 مرة.
+
+- <b>البيانات اللي في drift ماتتعملهاش hydrate:</b> ده بالظبط اللي الدرس قاله في «تحفظ إيه، وإيه اللي عمره ما يتحفظ». drift هو الـ cache، والـ HydratedCubit بقى نسخة تانية منه بتتكتب على الـ main.
+- <b>والـ 200ms بتوع الفتح:</b> مشكلة startup، ومكانها [درس الـ startup](/course/performance/startup/): الـ DB تتفتح بدري، والـ query الأول يبقى صغير.
+
+### الـ async اللي مش بيطلّع الشغل من الـ main
+
+<CodeBlock label="شكله في الخلفية، وهو لأ">
+
+```dart
+Future<void> _rebuildSections(List<Book> books) async {
+  final sections = await Future(() => groupByLetter(books)); // still on the main isolate
+  emit(state.copyWith(sections: sections));
+}
+```
+
+</CodeBlock>
+
+الـ `Future(() => ...)` بيأجّل الشغل لـ event تاني في نفس الـ event loop، زي ما اتشرح في [درس الـ Future](/course/dart-async/future/). الشغل نفسه بيتعمل على نفس الـ thread، فالـ frame اللي هيقع فيه هيتأخر بنفس القدر. نفس الكلام لـ `async` على function مافيهاش `await` حقيقي، ولـ `Future.microtask`، ولـ `scheduleMicrotask`.
+
+الـ async بيساعد لما فيه <b>انتظار</b> (شبكة، ديسك، timer). لو فيه <b>حساب</b>، مفيش غير تلات طرق: تقلله، أو تقسّمه على frames، أو تطلّعه لـ isolate.
+
+### الحاجات الصغيرة اللي بتتضرب في عدد الـ tiles
+
+الـ CPU profiler جاب كمان `DateFormat.yMMMd` في الـ Bottom Up، من الـ `toReadlyDate` اللي في [درس الـ anti-patterns](/course/quality/anti-patterns/):
+
+```dart
+extension ReadlyDate on DateTime {
+  String toReadlyDate(String locale) => DateFormat.yMMMd(locale).format(this); // a new formatter per call
+}
+```
+
+اتقاس: 15 tile بـ formatter جديد لكل واحد 128µs على لابتوب، وبـ formatter واحد متخزن 7µs. يعني الفرق حقيقي (17 مرة)، بس في الأرقام المطلقة أقل من 1% من frame. ده مش سبب الـ jank، وكويس إنك تعرف ده قبل ما تقول «لقيتها».
+
+```dart
+final _formatters = <String, DateFormat>{};
+
+extension ReadlyDate on DateTime {
+  String toReadlyDate(String locale) =>
+      (_formatters[locale] ??= DateFormat.yMMMd(locale)).format(this);
+}
+```
+
+التصليح سطرين ومالوش عيوب، فاعمله. بس الدرس هنا: الـ profiler بيرتّب بالوقت، وأول سطر هو اللي يستاهل وقتك. لو صلّحت التالت وسيبت الأول، الـ frame هيفضل أحمر.
+
+ونفس الحكاية لـ `RegExp(...)` جوه build أو loop، و`NumberFormat` جديد كل مرة، و`jsonDecode` لـ string متخزن في كل build. كلهم «صغيرين»، وكلهم بيتضربوا في عدد الـ items.
+
+### لما الشغل نفسه لازم يتعمل وهو تقيل
+
+استيراد Goodreads: ملف CSV فيه 3000 سطر، والـ parsing 350ms. مش ممكن يتعمل في الـ SQL، ومش ممكن يتعمل وقت الكتابة لأنه هو الكتابة. ده الشغل اللي الـ isolate اتعمل عشانه، والحل كامل في [درس الـ Isolates](/course/dart-async/isolates/): `Isolate.run` بـ function top-level بتاخد بيانات وبترجّع بيانات.
+
+اللي يهمنا هنا إزاي تعرف إنك وصلت للنقطة دي:
+
+| السؤال | لو الإجابة أيوه |
+| --- | --- |
+| الشغل ده بيتكرر على نفس البيانات من غير ما تتغير؟ | cache أو احسبه مرة في الـ Cubit |
+| ينفع يتعمل في الـ query؟ (فلتر، ترتيب، عدّ، تجميع) | الـ SQL في drift، وهو أصلًا في isolate لوحده |
+| ينفع يتعمل مرة وقت الكتابة بدل كل قراية؟ | اعمله في الـ repository وقت الـ upsert |
+| بيشتغل على items أكتر من اللي ظاهرة؟ | اعمله للي ظاهر بس، في الـ tile |
+| حساب واحد تقيل (أكتر من frame) على بيانات في الذاكرة؟ | `Isolate.run` |
+| الـ app على الـ web؟ | مفيش isolates في Flutter web: قسّمه دفعات بـ `await Future.pause()` بينهم، أو السيرفر |
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>الـ build بيحوّل، مابيحسبش:</b> أي `sort` أو `where().toList()` أو `groupBy` أو parsing جوه `build` سؤال في الـ review. الـ build ممكن يتنادى كل frame، والحساب لازم يتعمل لما البيانات تتغير بس.
+- <b>من الـ frame للسطر في دقيقتين:</b> الـ frame الأحمر، والـ Timeline events عشان تعرف أنهي widget، والـ CPU Profiler Bottom Up عشان تعرف أنهي function، والـ Call Tree عشان تعرف مين نادى. وبعدين `Timeline.timeSync` على الحتة دي عشان القياس قبل وبعد.
+- <b>رتّب الحلول من الأرخص:</b> ماتعملهوش (cache، أو distinct)، أو اعمله في الـ DB، أو اعمله مرة وقت الكتابة، أو اعمله للي ظاهر بس، وبعدين الـ isolate. الـ isolate آخر واحدة لأنه بيضيف نسخ وتعقيد، وده اللي [درس الـ Isolates](/course/dart-async/isolates/) قاسه.
+- <b>الـ profiler بيرتّب، انت بتقرر:</b> أول سطر في الـ Bottom Up هو اللي يستاهل. التصليحات الصغيرة (formatter متخزن، RegExp static) كويسة ومجانية، بس ماتقولش إنها حلت الـ jank من غير ما تقيس.
+- <b>الـ persistence على الـ main ليها تمن:</b> HydratedCubit، و`SharedPreferences` بـ JSON كبير، وأي `jsonEncode` بعد كل تغيير. لو الـ state كبيرة وبتتغير كتير، مكانها DB بتكتب الـ row اللي اتغير بس.
+
+<Note kind="interview" title="سؤال interview">
+
+«الـ UI بيقطّع. إزاي تعرف إن السبب شغل تقيل على الـ main isolate؟» الـ frames الحمرا في الـ UI thread والـ raster تمام. في الـ Timeline events بشوف الـ BUILD أو الـ event اللي واخد الوقت، ولو الـ widget اتبنى مرة واحدة، يبقى الـ build نفسه تقيل مش عدد الـ rebuilds. بفتح الـ CPU Profiler على نفس الحركة، والـ Bottom Up بيرتّب الـ functions بوقتها. وبحط `Timeline.timeSync` على الحتة دي عشان أشوفها في الـ frame وأقيسها قبل وبعد. والحل بالترتيب: ماتعملوش، أو في الـ DB، أو مرة وقت الكتابة، وبعدين `Isolate.run`.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«`await Future(() => heavyWork())` بيحل الـ jank؟» لأ. الـ Future بيأجّل الشغل لـ event تاني في نفس الـ event loop، على نفس الـ thread، فالـ frame اللي هيقع فيه هيتأخر بنفس القدر. الـ async بيحل الانتظار مش الحساب. الحساب التقيل يا يتقلل، يا يتقسم على frames، يا يطلع لـ isolate بـ `Isolate.run`.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### المكتبة: الحساب من الـ build للـ DB والـ Cubit
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+// LibraryCubit: hydrated "so it opens faster"
+class LibraryCubit extends HydratedCubit<LibraryState> {
+  // ...
+  @override
+  Map<String, dynamic>? toJson(LibraryState s) => switch (s) {
+        LibraryLoaded(:final books) => {'books': [for (final b in books) b.toJson()]},
+        _ => null,
+      };
+}
+
+// BookList.build
+final sorted = [...books]..sort(_compareTitles);
+final byLetter = _groupByLetter(sorted);
+
+// BookTile.build
+Text(book.addedAt.toReadlyDate(locale)) // new DateFormat per tile
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+// LibraryCubit: a plain Cubit; drift is the cache
+class LibraryCubit extends Cubit<LibraryState> {
+  // ...
+  void _onBooks(List<Book> books) => emit(LibraryLoaded(
+        books, // already sorted by the query
+        sections: Timeline.timeSync('library.group', () => groupByLetter(books)),
+      ));
+}
+
+// BookList.build: reads, doesn't compute
+LibraryScrollView(sections: state.sections)
+
+// toReadlyDate: one formatter per locale
+(_formatters[locale] ??= DateFormat.yMMMd(locale)).format(this)
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: كل emit بيعمل JSON لـ 4000 كتاب (18ms)، وكل build بيرتّب ويجمّع (حوالي 9ms ومعاهم التجميع)، وكل tile بيعمل formatter. والـ frame بتاع تغيير حالة كتاب كان 38ms. بعد: الترتيب في الـ SQL، والتجميع مرة لكل ليستة جديدة في الـ Cubit، والـ persistence شغل drift. نفس الـ frame بقى 7ms. ومفيش ولا `Isolate.run` في الحل، لأن الشغل ماكانش محتاج يتعمل أصلًا.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="perf-main-isolate-1">
+<Ask>الـ frame UI بـ 38ms، والـ Track widget builds بيقول إن `BookList` اتبنى مرة واحدة بس. إيه معنى ده، وبتعمل إيه بعدها؟</Ask>
+<Answer>
+
+المشكلة مش عدد الـ rebuilds، المشكلة إن الـ build الواحد تقيل. بتفتح الـ CPU Profiler على نفس الحركة، والـ Bottom Up بيقولك أنهي function واخدة الوقت، والـ Call Tree بيقولك مين نادى عليها. وبتحط `Timeline.timeSync` على الحتة دي عشان تقيسها قبل وبعد.
+
+</Answer>
+</Question>
+
+<Question id="perf-main-isolate-2">
+<Ask>`final sorted = [...books]..sort(...)` جوه `build` لـ 4000 كتاب. إيه الحل اللي قبل الـ isolate؟</Ask>
+<Answer>
+
+الترتيب يتعمل في الـ query بـ `ORDER BY` (drift بيشغّله في isolate الـ DB، ومع index بيبقى أسرع)، وأي تجميع بعده يتعمل مرة في الـ Cubit لما الليستة تتغير. الـ build يقرا النتيجة بس. الـ isolate بيضيف نسخ وتعقيد لشغل ماكانش محتاج يتكرر أصلًا.
+
+</Answer>
+</Question>
+
+<Question id="perf-main-isolate-3">
+<Ask>`LibraryCubit` بقى `HydratedCubit` عشان المكتبة تفتح أسرع، وبعدها كل تغيير في كتاب بيقطّع. ليه؟</Ask>
+<Answer>
+
+الـ HydratedCubit بينادي `toJson` ويكتب في الـ storage مع كل state جديدة، على الـ main isolate. 4000 كتاب يعني 4000 Map وJSON حوالي 800KB مع كل emit، 18ms. والبيانات أصلًا في drift، فالـ hydration نسخة تانية مالهاش لازمة. الحل Cubit عادي، والفتح السريع يتحل في الـ startup.
+
+</Answer>
+</Question>
+
+<Question id="perf-main-isolate-4">
+<Ask>`await Future(() => groupByLetter(books))`. الشغل كده بقى في الخلفية؟</Ask>
+<Answer>
+
+لأ. الـ `Future(...)` بيأجّل الشغل لـ event تاني في نفس الـ event loop على نفس الـ thread، فالـ frame اللي هيقع فيه هيتأخر بنفس الوقت. الـ async للانتظار، والحساب يتقلل أو يتقسم أو يروح isolate.
+
+</Answer>
+</Question>
+
+<Question id="perf-main-isolate-5">
+<Ask>الـ CPU profiler جاب `DateFormat.yMMMd` في الـ Bottom Up، واتقاس إن الـ formatter الجديد لكل tile أبطأ 17 مرة من واحد متخزن. هل ده سبب الـ jank؟</Ask>
+<Answer>
+
+غالبًا لأ: 15 tile بياخدوا 128µs، أقل من 1% من frame. التصليح مجاني (formatter لكل locale في Map) فاعمله، بس سبب الـ jank هو اللي فوق في الـ Bottom Up. نسبة «أبطأ 17 مرة» مش معناها إنه مهم، الوقت المطلق جوه الـ frame هو اللي بيقرر.
+
+</Answer>
+</Question>
+
+</Quiz>

@@ -1,0 +1,341 @@
+---
+title: "تمن الطبقات في الـ Clean Architecture"
+description: "هل الـ mapping من row لـ entity، والـ use cases، والـ Result بيبطّأوا الـ app؟ benchmark حقيقي على 4000 كتاب، والـ 30ms بتوع الـ sync اتوزعوا فين، والمكان اللي الطبقات بتكلّف فيه بجد، والإجابة الصريحة."
+minutes: 30
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="الطرد اللي بيعدّي على تلات مكاتب">
+
+طرد رايح من القاهرة لإسكندرية. بيعدّي على مكتب الاستلام، يتختم ويتلف في ورق الشركة. وبعدين مكتب الفرز، يتكتب عليه رقم المنطقة. وبعدين مكتب التسليم، يتلف تاني بورقة فيها اسم المستلم. حد في الشركة قال: «التلات مكاتب دول بيأخروا الطرد، نلغيهم ونسلّم من العربية على طول».
+
+قبل ما تلغي حاجة، قيس. الختم والتغليف في كل مكتب بياخدوا دقيقة. والعربية بتاخد 3 ساعات على الطريق. لو لغيت المكاتب، الطرد هيوصل بعد 2 ساعة و57 دقيقة بدل 3 ساعات، وهتخسر كل اللي المكاتب كانت بتعمله: إن كل واحد عارف هو مسؤول عن إيه. بس لو لقيت إن موظف في مكتب الفرز بيفتح كل طرد ويقرا الكتاب اللي جواه قبل ما يقفله، ده بقى يستاهل يتصلّح. مش المكتب هو المشكلة، الموظف اللي بيعمل شغل مالوش لازمة.
+
+</Analogy>
+
+ده بالظبط سؤال «الـ Clean Architecture بتبطّأ الـ app؟». الطبقات هي المكاتب: الـ row من drift بيتحوّل لـ entity، وبيعدّي على use case، وبيتلف في `Result`. والعربية هي الشغل الحقيقي: الـ query، والـ JSON، والـ layout، والرسم. الدرس ده بيقيس الاتنين بالأرقام، ويطلع بإجابة مش رأي.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### الـ benchmark: نقيس الطبقة لوحدها
+
+الطبقة في Readly بتعمل تلات حاجات: بتعمل object جديد لكل row (الـ `toEntity`)، وبتقارن الليستة القديمة بالجديدة (الـ `distinct` بـ `ListEquality` من [درس الـ operators](/course/dart-async/operators/))، وبتلف النتيجة في `Result` في الـ use cases اللي بترجّع Future. نقيس كل واحدة لوحدها، على 4000 كتاب زي مستخدم Readly التقيل.
+
+<CodeBlock label="benchmark/layers_bench.dart">
+
+```dart
+// pure Dart: no Flutter, so it compiles to a native exe
+double timeUs(void Function() body, {int reps = 200}) {
+  for (var i = 0; i < 20; i++) body(); // warm-up: let the compiler settle
+  final sw = Stopwatch()..start();
+  for (var i = 0; i < reps; i++) body();
+  return sw.elapsedMicroseconds / reps;
+}
+
+void main() {
+  final rows = fakeRows(4000); // BookRow like drift generates: 8 fields
+  final books = [for (final r in rows) r.toEntity()];
+  final same = [for (final r in rows) r.toEntity()];
+  Object? sink; // keeps the compiler from deleting "unused" work
+
+  print('rows -> entities: ${timeUs(() => sink = [for (final r in rows) r.toEntity()])}us');
+  print('ListEquality:     ${timeUs(() => sink = const ListEquality<Book>().equals(books, same))}us');
+  print('Success(books):   ${timeUs(() => sink = Success(books))}us');
+  print('filter + sort:    ${timeUs(() => sink = readingFirst(books))}us');
+  print('jsonDecode:       ${timeUs(() => sink = jsonDecode(libraryJson), reps: 50)}us');
+}
+```
+
+</CodeBlock>
+
+- <b>الـ warm-up:</b> أول كام مرة بيبقوا أبطأ، والـ benchmark اللي من غيره بيقيس الـ startup مش الشغل.
+- <b>الـ `sink`:</b> الـ compiler ممكن يشيل كود نتيجته مش مستخدمة، فتقيس صفر. حط النتيجة في متغير بيتقري.
+- <b>الـ `dart compile exe`:</b> الـ benchmark يتقاس AOT، زي الـ release والـ profile. الـ `dart run` بيشغّل JIT، وأرقامه مختلفة.
+
+### النتيجة
+
+اتقاس فعلًا على لابتوب Windows، `dart compile exe`، 4000 كتاب:
+
+| الشغل | الوقت | من frame الـ 16.6ms |
+| --- | --- | --- |
+| loop على الـ rows من غير أي طبقة | 7µs | 0.04% |
+| `toEntity` لـ 4000 row (من غير `Uri.parse`) | 57µs | 0.3% |
+| `ListEquality` على 4000 كتاب متساويين | 55µs | 0.3% |
+| `Success(books)` | أقل من 0.01µs | صفر |
+| `List.unmodifiable` نسخة من الليستة | 8µs | 0.05% |
+| فلتر وsort في الـ use case | 93µs | 0.6% |
+| `toEntity` لـ 4000 row <b>ومعاه `Uri.parse` للغلاف</b> | 800 لـ 980µs | 5.5% |
+| `jsonDecode` لنفس الكتب (823KB) | 3500µs | 21% |
+
+اقرا الجدول ده كويس، لأن فيه إجابة الدرس كله:
+
+- <b>الطبقة نفسها رخيصة جدًا:</b> 4000 object جديد في 57µs. الـ `Result` مالوش تمن خالص. الـ Dart مصمم لحاجة زي دي: الـ objects اللي بتعيش وقت قصير بتتمسح بالـ young generation GC، وده أرخص garbage collection موجود.
+- <b>اللي جوه الـ mapper هو اللي غالي:</b> سطر واحد، `Uri.parse(row.coverUrl)`، خلّى الـ mapping أغلى 15 مرة. مش الطبقة، الشغل اللي اتحط فيها.
+- <b>الشغل الحقيقي في حتة تانية:</b> الـ `jsonDecode` لنفس البيانات أغلى من الـ mapping بـ 60 مرة. ولسه ماحسبناش الـ query ولا الـ layout ولا الرسم.
+
+<Note kind="warn" title="اللابتوب مش الموبايل">
+
+الأرقام دي من لابتوب. على موبايل متوسط اضرب في 3 لـ 5 تقريبًا، بس ماتعتمدش على الضرب: شغّل نفس الكود على الموبايل في profile mode (زرار مخفي في شاشة الـ debug، أو integration test) وسجّل الرقم. النسبة بين السطور هي اللي بتفضل ثابتة: الطبقة رخيصة، والـ parsing غالي.
+
+</Note>
+
+### نفس القياس جوه الـ app
+
+الـ benchmark بيقيس الحاجة لوحدها. جوه الـ app عايز تعرف بتاخد كام من الـ frame الحقيقي. الـ `Timeline` من `dart:developer` بيحط اسم على الحتة دي في الـ timeline بتاع DevTools، زي ما شفنا في [درس القياس](/course/performance/measure/):
+
+<CodeBlock label="LibraryRepositoryImpl.watchLibrary مع علامات للـ timeline">
+
+```dart
+import 'dart:developer';
+
+@override
+Stream<List<Book>> watchLibrary() => _local
+    .watchBooks()
+    .map((rows) => Timeline.timeSync(
+          'library.toEntity',
+          () => [for (final r in rows) r.toEntity()],
+          arguments: {'rows': rows.length},
+        ))
+    .distinct(const ListEquality<Book>().equals);
+```
+
+</CodeBlock>
+
+في profile mode الـ `Timeline.timeSync` بيظهر كـ event باسمه في الـ timeline، تحت الـ frame اللي حصل فيه، ومعاه عدد الـ rows. وفي الـ release الـ timeline مش بيتسجل، فالتمن بيبقى صغير جدًا. ماتسيبهوش في كل حتة، بس في الـ hot paths اللي بتراقبها، هو أرخص من إنك تقيس بالتخمين.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### الـ 30ms بتوع الـ sync راحوا فين؟
+
+في [درس الـ Streams في Readly](/course/dart-async/watch/) المكتبة كانت بتقطّع مع كل sync: 4000 كتاب، وكل `markSynced` بيصحّي الـ query، وكل مرة 30ms على الـ main. واحد في الفريق قال: «الـ 30ms دول من الطبقات: row لـ entity، وuse case، وdistinct. نشيلهم والـ UI تقرا الـ rows على طول».
+
+قبل ما حد يشيل حاجة، فتحنا الـ timeline في profile mode على موبايل متوسط، والـ `Timeline.timeSync` على كل حلقة:
+
+| الحلقة | الوقت في emit واحد |
+| --- | --- |
+| drift: الـ rows بتوصل من isolate الـ DB وبيتعملها `BookRow` | 17ms |
+| `toEntity`: منهم `Uri.parse` حوالي 4.5ms | 5ms |
+| `distinct` بـ `ListEquality` | 0.3ms |
+| الـ use case: فلتر وsort | 0.5ms |
+| الـ BlocBuilder والـ layout للي ظاهر على الشاشة | 7ms |
+| <b>المجموع</b> | <b>حوالي 30ms</b> |
+
+لو شلنا الـ entity والـ use case والـ distinct، هنوفّر حوالي 1ms من 30، وهنخسر كل اللي الطبقات بتعمله. والأسوأ: شيل الـ distinct هيخلي الـ BlocBuilder يرسم مع كل emit حتى لو مفيش حاجة اتغيرت، فهنزوّد الوقت مش نقلله.
+
+الحل الحقيقي كان في الجدول من الأول:
+
+1. <b>الـ emit نفسه مالوش لازمة:</b> الـ `markSynced` مابيغيرش أي حاجة الشاشة بتعرضها. الـ syncState في جدول لوحده (الحل اللي في درس الـ watch) بيخلي الـ 30ms دول صفر، مش 29.
+2. <b>الليستة مش محتاجة كل الأعمدة:</b> query بالـ id والعنوان والحالة والغلاف بس بيقلل الـ 17ms بتوع drift.
+3. <b>الـ `Uri.parse` في الـ mapper:</b> شغل بيتعمل لـ 4000 كتاب، والشاشة بتعرض 12.
+
+### الـ mapper اللي بيشتغل أكتر من اللازم
+
+الـ `toEntity` المفروض يبقى نقل حقول. لما تلاقي جواه parsing، ده الموظف اللي بيقرا الكتاب جوه الطرد:
+
+<CodeBlock label="شغل غالي مستخبي في mappers">
+
+```dart
+extension on BookRow {
+  Book toEntity() => Book(
+        id: BookId.fromTrusted(id),
+        title: title,
+        status: BookStatus.fromDb(status),
+        coverUrl: coverUrl == null ? null : Uri.parse(coverUrl!), // parsing, 4000 times per emit
+        addedAt: DateTime.parse(addedAtIso),                      // a String column: parsing again
+      );
+}
+
+extension on BookDto {
+  Book toEntity() => Book(
+        // ...
+        title: title.replaceAll(RegExp(r'\s+'), ' '), // a new RegExp for every book
+      );
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `DateTime` في drift:</b> drift بيخزّن الـ `DateTimeColumn` كـ int ويرجّعه `DateTime` جاهز. الـ `DateTime.parse` معناه إن حد عمل العمود `TextColumn`. صلّحه في الـ schema بـ migration، مش في الـ mapper.
+- <b>الـ `RegExp` جوه loop:</b> اعمله مرة كـ `static final` أو top-level، والأحسن إن التنضيف ده يحصل مرة وقت الكتابة في الـ DB، مش مع كل قراية.
+- <b>الـ `Uri.parse`:</b> لو الـ entity محتاج `Uri`، فيه حلين تحت. ولو الـ UI بس اللي محتاجاه، الـ `BookCover` في [درس الصور](/course/performance/images/) يقدر ياخد الـ String ويعمل الـ URL بالحجم اللي محتاجه.
+
+### Memoization: ماتعملش entity لكتاب ماتغيرش
+
+في كل emit من الـ 20، الكتب اللي اتغيرت فعلًا 1 أو 2. الـ 3998 الباقيين بيتعملهم entity من جديد، وبعدين الـ `ListEquality` بيقارنهم واحد واحد عشان يكتشف إنهم زي ما هم.
+
+<CodeBlock label="cache بالـ id والـ updatedAt جوه الـ repository">
+
+```dart
+final _entities = <String, (DateTime, Book)>{};
+
+Book _toEntityCached(BookRow r) {
+  if (_entities[r.id] case (final at, final book) when at == r.updatedAt) {
+    return book; // same object as last emit
+  }
+  final book = r.toEntity();
+  _entities[r.id] = (r.updatedAt, book);
+  return book;
+}
+```
+
+</CodeBlock>
+
+اتقاس: الـ mapping بالـ `Uri.parse` نزل من 800µs لـ 65µs، لأن الـ parse بقى بيحصل للكتاب اللي اتغير بس. والـ `ListEquality` نزل من 55µs لـ 9µs، لأن الـ `==` في Book أول حاجة بيعملها `identical`، والكتب بقت نفس الـ objects.
+
+بس ده cache، وليه تمن: لازم يتمسح منه الكتاب اللي اتمسح، ولازم يتمسح كله في الـ logout، وأي حقل بيتغير من غير ما الـ `updatedAt` يتغير هيرجّع entity قديم. اعمله بس لو الـ timeline قال إن الـ mapping واخد وقت حقيقي من الـ frame، وبعد ما تكون قللت عدد الـ emits.
+
+### N+1: المكان اللي الطبقات بتكلّف فيه بجد
+
+الطبقات مابتكلّفش في الـ CPU، بس ممكن تخبّي شغل. ده كود عدّى الـ review لأن كل حتة فيه شكلها نضيف:
+
+<CodeBlock label="عدد الملاحظات جنب كل كتاب">
+
+```dart
+class BookTile extends StatelessWidget {
+  // ...
+  @override
+  Widget build(BuildContext context) => ListTile(
+        title: Text(book.title),
+        trailing: NotesCount(bookId: book.id), // a FutureBuilder over GetNotesCount(bookId)
+      );
+}
+```
+
+</CodeBlock>
+
+الـ `GetNotesCount` use case بينادي `NotesRepository.count(bookId)`، وده query. كل tile بيظهر بيعمل query. اعمل scroll سريع في المكتبة، وهتلاقي 200 query في الثانية، وكل واحدة بتعدّي من isolate الـ DB وراجعة. كل طبقة لوحدها صح، والمجموع غلط: الـ API بتاع الـ repository اتعمل على مقاس كتاب واحد، والشاشة محتاجة 4000.
+
+الحل مش إنك تشيل طبقة. الحل إن الـ repository يدّي اللي الشاشة محتاجاه في query واحدة: `watchLibrary()` يرجّع مع كل كتاب عدد ملاحظاته بـ `JOIN` و`GROUP BY` في drift، أو `watchNotesCounts()` بيرجّع `Map<BookId, int>` مرة واحدة. ده نفس الدرس اللي في [درس الـ HTTP](/course/api-errors/http/) عن الطلبات الكتير الصغيرة: كل رحلة بين طبقتين ليها تمن ثابت، فقلل عدد الرحلات مش حجمها.
+
+### البيانات اللي بتعدّي بين isolates
+
+أي طبقة بتعدّي من isolate لـ isolate بتنسخ. drift بيشغّل الـ SQL في isolate لوحده، فكل نتيجة query بتتنسخ للـ main. ده جزء كبير من الـ 17ms اللي فوق. وفي [درس الـ isolates](/course/dart-async/isolates/)، الحاجة الوحيدة اللي مابتتنسخش هي نتيجة `Isolate.run`.
+
+يعني لو حد عمل «طبقة» بتعمل `Isolate.run` لكل mapping «عشان الأداء»، هو كده ضاعف النسخ: الـ rows راحت للـ isolate، والـ entities رجعت. الطبقة اللي بتعدّي حدود isolate لازم تتقاس، لأن تمنها مش الكود اللي فيها، تمنها حجم البيانات.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>الإجابة الصريحة:</b> الطبقات في الـ Clean Architecture تمنها في الـ CPU تقريبًا صفر. 4000 entity في أقل من 0.1ms على لابتوب، وأقل من 0.5ms على موبايل متوسط. الـ app البطيء بطيء عشان بيعمل شغل مالوش لازمة (emits زيادة، وأعمدة زيادة، وparsing في الـ mapper، وqueries في كل tile)، مش عشان فيه use case.
+- <b>التمن الحقيقي للطبقات في الوقت بتاعك، مش وقت الـ CPU:</b> ملفات أكتر، وmapper لكل شكل، ورحلة أطول وانت بتدوّر. وده اللي [درس الـ anti-patterns](/course/quality/anti-patterns/) بيتكلم عنه: الـ mapper بين شكلين متطابقين بتشيله عشان مالوش لازمة، مش عشان بطيء.
+- <b>الـ mapper ينقل، مايحسبش:</b> أي parsing أو regex أو formatting في `toEntity` بيتضرب في عدد الـ rows وفي عدد الـ emits. الـ parsing مكانه وقت الكتابة في الـ DB، والـ formatting مكانه الـ widget اللي بيعرض.
+- <b>صمّم الـ repository على مقاس الشاشة:</b> API بيرجّع كتاب واحد بيتحول لـ N+1 لما الشاشة تبقى ليستة. لو الشاشة محتاجة ليستة ومعاها أعداد، الـ repository يرجّعهم في query واحدة.
+- <b>قيس قبل ما تشيل طبقة:</b> لو حد قال «الطبقات بتبطّأ»، اطلب الـ timeline. لو الـ mapping أكتر من 1ms في frame، دوّر على اللي جواه. ولو أقل، النقاش خلص.
+
+<Note kind="interview" title="سؤال interview">
+
+«الـ Clean Architecture مش بتبطّأ الـ app بكل الـ mapping والطبقات دي؟» لأ، وده رقم مش رأي: الـ mapping لـ 4000 object بياخد أقل من 0.1ms على لابتوب، والـ Dart GC مصمم للـ objects اللي عمرها قصير. الطبقات بتبقى غالية في حالتين: لما الـ mapper نفسه بيعمل شغل تقيل (parsing، regex)، ولما الـ API بتاع الـ repository متعمل على مقاس item واحد فالشاشة بتعمل N+1 queries. والاتنين بيتصلحوا جوه الطبقات، مش بإنك تشيلها. وقبل أي حاجة: قيس في profile mode بـ `Timeline.timeSync` على كل حلقة.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي تعمل benchmark صح في Dart؟» AOT مش JIT (`dart compile exe` أو profile mode على الجهاز)، وwarm-up قبل القياس، والنتيجة تتخزن في متغير بيتقري عشان الـ compiler مايشيلش الشغل، وتكرار كتير وتاخد المتوسط. والأهم: الـ benchmark بيقيس الحاجة لوحدها، فلازم تكمّله بالـ timeline جوه الـ app عشان تعرف هي بتاخد كام من الـ frame الحقيقي.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### watchLibrary: من «نشيل الطبقات» لـ «نصلّح اللي جواها»
+
+<BeforeAfter>
+
+<Side label="قبل: الاقتراح اللي اتقال في الـ standup" kind="before">
+
+```dart
+// "layers are slow": the UI reads drift rows directly
+class LibraryCubit extends Cubit<List<BookRow>> {
+  LibraryCubit(AppDatabase db) : super(const []) {
+    _sub = db.booksDao.watchAll().listen(emit); // no entity, no distinct
+  }
+  late final StreamSubscription<List<BookRow>> _sub;
+  // ...
+}
+
+// BookTile now imports drift and parses the cover itself
+Image.network(Uri.parse(row.coverUrl!).toString())
+```
+
+</Side>
+
+<Side label="بعد: نفس الطبقات، شغل أقل" kind="after">
+
+```dart
+@override
+Stream<List<Book>> watchLibrary({BookStatus? status}) => _local
+    .watchBooks(status: status) // filter + only the list columns, in SQL
+    .map((rows) => Timeline.timeSync(
+          'library.toEntity',
+          () => [for (final r in rows) _toEntityCached(r)],
+        ))
+    .distinct(const ListEquality<Book>().equals);
+
+// + sync state moved to its own table (watch lesson):
+//   markSynced no longer wakes this query at all
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: وفّرنا حوالي 1ms، وخسرنا الـ distinct فالشاشة بقت بترسم مع كل emit، وdrift دخل الـ UI، وكل tile بقى بيعمل parse. بعد: الطبقات زي ما هي، والـ emits اللي مالهاش لازمة اختفت، والـ query بيرجّع الأعمدة اللي الليستة محتاجاها، والـ `Uri.parse` بيحصل للكتاب اللي اتغير بس. القياس بعد التغيير: الـ sync اللي فيه 20 عملية بقى بيعمل 0 emits للمكتبة بدل 20، والـ scroll مابيقطّعش.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="perf-cost-of-layers-1">
+<Ask>الـ benchmark قال إن `toEntity` لـ 4000 row بياخد 57µs، ومع `Uri.parse` بياخد 900µs. إيه اللي تستنتجه عن تمن الطبقة؟</Ask>
+<Answer>
+
+إن الطبقة نفسها (object جديد لكل row) رخيصة جدًا، أقل من 0.5% من frame. اللي غالي هو الشغل اللي اتحط جوه الـ mapper: سطر parsing واحد خلّاه أغلى 15 مرة. الحل إنك تشيل الـ parsing من الـ mapper (وقت الكتابة، أو في الـ widget للي ظاهر بس)، مش إنك تشيل الطبقة.
+
+</Answer>
+</Question>
+
+<Question id="perf-cost-of-layers-2">
+<Ask>حد اقترح الـ UI تقرا `BookRow` من drift على طول «عشان الطبقات بطيئة». إيه اللي هيكسبه وإيه اللي هيخسره؟</Ask>
+<Answer>
+
+هيكسب حوالي 1ms من 30 في كل emit (الـ mapping والـ distinct). وهيخسر: الـ distinct، فالشاشة هترسم مع كل emit حتى لو مفيش تغيير، يعني أبطأ مش أسرع. وdrift هيدخل الـ UI، وأي تغيير في الـ schema هيكسر الـ widgets. الـ timeline كان بيقول إن المشكلة في الـ emits اللي مالهاش لازمة وفي الأعمدة الزيادة، مش في الطبقات.
+
+</Answer>
+</Question>
+
+<Question id="perf-cost-of-layers-3">
+<Ask>كل `BookTile` فيه `FutureBuilder` على `GetNotesCount(bookId)`. كل طبقة لوحدها نضيفة. إيه المشكلة، وإيه الحل؟</Ask>
+<Answer>
+
+N+1: كل tile بيظهر بيعمل query، وscroll سريع بيعمل مئات الـ queries، وكل واحدة رحلة لـ isolate الـ DB ورجوع. الـ API بتاع الـ repository متعمل على مقاس كتاب واحد والشاشة ليستة. الحل query واحدة بترجّع الأعداد كلها (JOIN وGROUP BY، أو `Map<BookId, int>`)، جوه نفس الطبقات.
+
+</Answer>
+</Question>
+
+<Question id="perf-cost-of-layers-4">
+<Ask>ليه الـ benchmark لازم يبقى فيه warm-up ومتغير `sink`، وليه بيتشغّل بـ `dart compile exe` مش `dart run`؟</Ask>
+<Answer>
+
+الـ warm-up عشان أول كام تشغيلة أبطأ وهتقيس الـ startup مش الشغل. الـ `sink` عشان الـ compiler ممكن يشيل كود نتيجته مش مستخدمة فتقيس صفر. والـ `dart compile exe` عشان ده AOT زي الـ release والـ profile، والـ `dart run` بيشغّل JIT وأرقامه مختلفة.
+
+</Answer>
+</Question>
+
+<Question id="perf-cost-of-layers-5">
+<Ask>الـ memoization بالـ `updatedAt` نزّلت الـ mapping من 800µs لـ 65µs. ليه ماتعملهاش في كل repository من الأول؟</Ask>
+<Answer>
+
+لأنها cache وليها تمن: لازم تمسح منها الكتب اللي اتمسحت، وتمسحها كلها في الـ logout، وأي حقل بيتغير من غير ما الـ `updatedAt` يتغير هيرجّع entity قديم. تعملها لما الـ timeline يقول إن الـ mapping واخد وقت حقيقي من الـ frame، وبعد ما تقلل عدد الـ emits الأول، لأن ده بيوفّر أكتر وأبسط.
+
+</Answer>
+</Question>
+
+</Quiz>

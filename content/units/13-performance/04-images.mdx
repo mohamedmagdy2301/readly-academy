@@ -1,0 +1,335 @@
+---
+title: "الصور وأغلفة الكتب"
+description: "غلاف بيتعرض 100 pixel وبيتفك 1000: الحسبة اللي بتاكل الذاكرة، وcacheWidth وmemCacheWidth، والـ disk cache بـ cached_network_image، والحجم الصح من السيرفر، وprecacheImage لصفحة الكتاب، وHighlight oversized images."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="البوستر اللي بتطبعه عشان تحطه في محفظتك">
+
+عايز صورة صغيرة في محفظتك. بتروح للمطبعة، وبدل ما تطلب مقاس المحفظة، بتطبع بوستر 2 متر في 3، وبعدين تطبّقه لحد ما يدخل المحفظة. المحفظة اتملت بورقة واحدة، ومحتاج شنطة عشان تشيل 10 صور. والأسوأ: كل مرة عايز تبص على صورة، بتروح المطبعة تطبعها تاني، لأنك مش محتفظ بالأصل في البيت.
+
+</Analogy>
+
+ده بالظبط اللي بيحصل لما `Image.network` بيعرض غلاف كتاب صغير من URL حجمه كبير. الصورة بتتفك (decode) في الذاكرة بحجمها الأصلي، مهما كانت هتتعرض صغيرة. والـ `Image.network` عنده cache في الذاكرة بس، فلما الصورة تتشال منه، بتتحمّل من النت تاني. الحل في تلات حتت: اطلب من السيرفر المقاس اللي محتاجه، وفك الصورة بالحجم اللي هتتعرض بيه، واحتفظ بالأصل على الـ disk.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### المشكلة: الـ grid بتاع الكتالوج
+
+Sentry بدأ يجيب crashes من موبايلات Android رخيصة بعد scroll طويل في الكتالوج، والـ stack trace بيقول out of memory. واللي جرّب على موبايل متوسط قال إن الـ grid بيقطّع أول ما أغلفة جديدة تظهر، والأغلفة بتختفي وترجع لو رجعت فوق.
+
+الغلاف في Readly جاي من [أول feature](/course/foundations/first-feature/):
+
+```dart
+coverUrl: Uri.parse('https://covers.openlibrary.org/b/id/${covers.first}-L.jpg'),
+```
+
+الـ `-L` معناها الحجم الكبير من Open Library. صفحة الكتاب كانت بتعرضه بـ `height: 240`، وده منطقي. بعدها الكتالوج والمكتبة استخدموا نفس الـ `coverUrl` في الـ grid، بـ `Image.network(url, width: 100)`.
+
+### الحسبة
+
+الصورة في الذاكرة بعد الـ decode بتاخد عرض × ارتفاع × 4 bytes (RGBA)، مهما كان حجم الـ JPEG على النت:
+
+| | الأبعاد بالـ pixels | في الذاكرة |
+| --- | --- | --- |
+| غلاف `-L` زي ما هو | حوالي 1000 × 1500 | حوالي 6MB |
+| خلية الـ grid: 100 × 150 logical، والشاشة DPR 3 | 300 × 450 | حوالي 0.5MB |
+
+<Diagram name="d-perf-image-decode">
+
+الغلاف الكبير بيتفك بحجمه الأصلي مهما كان بيتعرض صغير، فالـ ImageCache بيتملي من 16 غلاف. بالحجم الصح، نفس الـ grid بياخد 18MB من 100.
+
+</Diagram>
+
+يعني كل غلاف في الـ grid بياخد أكتر من 10 أضعاف اللي محتاجه. والـ `ImageCache` بتاع Flutter حدّه الافتراضي 1000 صورة أو 100MB، أيهم يجي الأول. 100MB ÷ 6MB = حوالي 16 غلاف. الـ grid بيعرض 15 على الشاشة، فالـ cache مليان على طول، وكل غلاف جديد بيطلّع واحد قديم، ولما ترجع بالـ scroll القديم مش موجود: download وdecode من الأول. وده غير الذاكرة اللي الـ engine بيستخدمها للـ textures، اللي على الموبايلات الرخيصة بتوصل للـ OOM.
+
+### اكتشفها بعينك: Highlight oversized images
+
+في DevTools، الـ Inspector فيه زرار <b>Highlight oversized images</b> (أو `debugInvertOversizedImages = true;` في الكود). أي صورة اتفكت أكبر من اللي بتتعرض بيه بكتير، بتتعرض مقلوبة الألوان ومعكوسة، والـ console بيطبع حجمها الحقيقي والحجم اللي كان كفاية. في Readly، كل الأغلفة في الـ grid طلعت مقلوبة.
+
+### الحل 1: فك الصورة بالحجم اللي هتتعرض بيه
+
+```dart
+final dpr = MediaQuery.devicePixelRatioOf(context);
+Image.network(
+  url.toString(),
+  width: 100,
+  cacheWidth: (100 * dpr).round(), // decode at 300px, not 1000
+)
+```
+
+الـ `cacheWidth` و`cacheHeight` بيقولوا للـ engine يفك الصورة بالحجم ده. حدّد واحد بس منهم (العرض هنا)، والتاني بيتحسب بنفس النسبة. لو حددت الاتنين، الصورة ممكن تتمط. واضرب في الـ DPR: الـ 100 دي logical pixels، والشاشة فيها 3 pixels حقيقية لكل واحد. ولو مش عايز تضرب بإيدك في كل مكان، الـ `ResizeImage(provider, width: ...)` بيعمل نفس الحكاية لأي `ImageProvider`.
+
+### الحل 2: اطلب الحجم الصح من السيرفر
+
+الـ `cacheWidth` بيصلّح الذاكرة، بس الـ JPEG الكبير لسه بيتحمّل من النت وبيتفك. Open Library بيدّي تلات مقاسات للغلاف: `-S` و`-M` و`-L`. الـ grid محتاج `-M`، وصفحة الكتاب `-L`. ده أرخص حل في كل حاجة: data أقل، وdecode أسرع، وذاكرة أقل.
+
+بس الـ `-L` مكتوب في الـ mapper، فالـ entity ماسك URL بحجم واحد. والحجم قرار الشاشة مش الـ domain: نفس الكتاب بيتعرض صغير في الـ grid وكبير في صفحته.
+
+<CodeBlock label="presentation/widgets/book_cover.dart">
+
+```dart
+enum CoverSize {
+  small(width: 48, suffix: 'S'),   // list tiles
+  medium(width: 100, suffix: 'M'), // grids
+  large(width: 240, suffix: 'L');  // the book page
+
+  const CoverSize({required this.width, required this.suffix});
+  final double width;
+  final String suffix;
+}
+
+final _sizeSuffix = RegExp(r'-[SML]\.jpg$');
+
+extension on Uri {
+  Uri withCoverSize(CoverSize size) =>
+      replace(path: path.replaceFirst(_sizeSuffix, '-${size.suffix}.jpg'));
+}
+```
+
+</CodeBlock>
+
+### الحل 3: cache على الـ disk
+
+`Image.network` بيخزّن في الذاكرة بس. الـ `cached_network_image` بيخزّن الملف على الـ disk كمان، فالغلاف اللي اتشال من الـ memory cache بيرجع من الـ disk من غير نت. وفيه `memCacheWidth` اللي بيعمل نفس شغل الـ `cacheWidth`:
+
+<CodeBlock label="BookCover: كل الأغلفة في Readly بتعدّي من هنا">
+
+```dart
+class BookCover extends StatelessWidget {
+  const BookCover({super.key, required this.url, required this.size});
+  final Uri? url;
+  final CoverSize size;
+
+  @override
+  Widget build(BuildContext context) {
+    final w = size.width, h = size.width * 1.5;
+    final placeholder = SizedBox(width: w, height: h, child: const CoverPlaceholder());
+    final url = this.url;
+    if (url == null) return placeholder;
+    return CachedNetworkImage(
+      imageUrl: url.withCoverSize(size).toString(),
+      width: w,
+      height: h,
+      fit: BoxFit.cover,
+      memCacheWidth: (w * MediaQuery.devicePixelRatioOf(context)).round(),
+      placeholder: (_, _) => placeholder,
+      errorWidget: (_, _, _) => placeholder,
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>widget واحد لكل الأغلفة:</b> القرار في مكان واحد. لو حد في الفريق كتب `Image.network` لغلاف في شاشة جديدة، الـ review بيمسكه.
+- <b>الـ placeholder بنفس الحجم بالظبط:</b> لو الـ placeholder أصغر، أول ما الصورة تيجي الـ layout بيتغير والـ grid يتنطط.
+- <b>الـ `MediaQuery.devicePixelRatioOf`:</b> مش `MediaQuery.of`، عشان الكيبورد مايعيدش بناء كل غلاف، زي [درس الـ rebuilds](/course/performance/rebuilds/).
+- <b>نسخة الـ package:</b> `cached_network_image` 4.x محتاجة Flutter 3.44 أو أحدث. لو مشروعك أقدم، الـ 3.x فيه نفس الـ parameters.
+
+القياس بعد الـ `BookCover`، نفس السيناريو (scroll في الكتالوج 10 صفحات ورجوع):
+
+| | قبل | بعد |
+| --- | --- | --- |
+| الـ ImageCache | 100MB، مليان على طول | 18MB |
+| أسوأ raster frame وأغلفة جديدة بتظهر | 25ms | 8ms |
+| data في الرجوع لفوق | الأغلفة بتتحمّل تاني | صفر، من الـ disk |
+| Highlight oversized images | كل الأغلفة مقلوبة | ولا واحد |
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### صفحة الكتاب بتفتح والغلاف فاضي
+
+المستخدم بيدوس على كتاب في الـ grid، الصفحة بتفتح بـ hero animation، والغلاف الكبير فاضي لحد ما الـ `-L` يتحمّل، فالـ hero بيطير ويوصل placeholder. الـ `precacheImage` بيبدأ التحميل والـ decode قبل ما الصفحة تفتح:
+
+<CodeBlock label="ابدأ الغلاف الكبير مع الضغطة">
+
+```dart
+onTap: () {
+  final url = book.coverUrl;
+  if (url != null) {
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    // the same provider the large BookCover will ask for: same URL, same resize
+    unawaited(precacheImage(
+      ResizeImage(
+        CachedNetworkImageProvider(url.withCoverSize(CoverSize.large).toString()),
+        width: (CoverSize.large.width * dpr).round(),
+      ),
+      context,
+    ));
+  }
+  context.push('/library/books/${book.id}');
+},
+```
+
+</CodeBlock>
+
+الفخ هنا: الـ precache بيحط الصورة في الـ cache تحت <b>key</b>، والـ key هو الـ provider نفسه. لو الـ precache بـ `CachedNetworkImageProvider(url)` من غير resize، والـ `BookCover` بيطلب بـ `memCacheWidth`، دول key مختلفين، فالصفحة هتفك الصورة تاني. اتأكد إن الاتنين بيطلبوا نفس الـ URL بنفس الحجم، أو خلي الـ `BookCover` والـ precache يستخدموا نفس الـ function اللي بتعمل الـ provider.
+
+وماتعملش precache لكل حاجة: الـ precache لـ 20 غلاف `-L` «عشان لو المستخدم داس» هيملا الـ cache بصور ممكن ماحدش يشوفها. اعمله للحاجة اللي المستخدم أكيد رايحلها.
+
+### الـ placeholder اللي بيقطّع
+
+قبل الـ `BookCover`، الـ placeholder كان `CoverShimmer`: `AnimationController..repeat()` ومعاه `ShaderMask` بـ gradient بيتحرك. في الـ grid، 15 خلية بتحمّل مع بعض، فـ 15 shimmer شغالين كل frame. الـ raster وصل 14ms وهي بتحمّل، لأن الـ `ShaderMask` بيعمل `saveLayer` لكل خلية.
+
+- <b>placeholder ثابت:</b> مستطيل بلون الـ surface ومعاه أيقونة كتاب. الصور من الـ disk cache بتيجي في ms، والـ shimmer بيبان لمح البصر أصلًا.
+- <b>لو الشكل مهم:</b> animation واحد للـ grid كله بدل واحد لكل خلية، وتتأكد بالـ raster time.
+- <b>الـ fade:</b> الـ `CachedNetworkImage` بيعمل fade-in للصورة. ده أرخص من `Opacity` حوالين الصورة، لأن الـ Flutter docs بتقول `FadeInImage` والـ animated opacity أحسن من `Opacity` widget في animation.
+
+### الـ grid بيقطّع وأغلفة جديدة بتظهر، حتى بعد الـ cacheWidth
+
+الـ decode بيحصل في threads بره الـ UI thread، فمش هو اللي بيوقف الـ build. بس لو الـ scroll سريع، والـ grid طالب 20 صورة في نفس اللحظة، الـ raster thread بيرفع textures كتير مرة واحدة. الـ timeline بيبيّن ده في الـ raster thread مش الـ UI.
+
+- <b>الحجم الصغير بيحل أغلبها:</b> texture بـ 300 pixel أرخص بكتير من 1000. ده السبب إن الـ raster نزل من 25 لـ 8.
+- <b>ماتطلبش صور مش هتظهر:</b> المسافة اللي الـ ListView بيبني فيها قبل الظهور (`scrollCacheExtent`) كل ما تكبر، صور أكتر بتتطلب. سيبها على الافتراضي إلا لو القياس قال حاجة.
+
+### الـ ImageCache: تكبّره؟
+
+حد اقترح `PaintingBinding.instance.imageCache.maximumSizeBytes = 300 << 20;` عشان «الأغلفة ماتتشالش». قبل الـ BookCover، ده كان هيأجّل المشكلة شوية ويخلي الـ OOM أقرب. بعده، الـ cache مستخدم 18MB من 100، فالرقم مش هو المشكلة.
+
+القاعدة: الـ cache الافتراضي كفاية لأغلب الـ apps لو الصور متفكة بالحجم الصح. لو لقيت نفسك محتاج تكبّره، غالبًا فيه صور كبيرة. والعكس: لو الـ app على أجهزة ضعيفة جدًا، ممكن تصغّره. وفي الحالتين، بتقرر بعد ما تبص على الـ Memory view، زي [درس الـ Memory](/course/performance/memory/).
+
+### الـ web
+
+الـ `cacheWidth` و`cacheHeight` بيتجاهلوا على الـ web. لو Readly اتبنى للـ web، الحجم الصح من السيرفر (`-M` بدل `-L`) هو اللي بيوفّر، والـ browser ليه cache بتاعه.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>الحجم من السيرفر أول حاجة:</b> أرخص byte هو اللي مااتحمّلش. لو الـ API بتاعك مابيدّيش مقاسات، ده طلب للـ backend (أو CDN بيعمل resize) أهم من أي كود في الـ app.
+- <b>widget واحد للصور اللي من النت:</b> `BookCover` بيقرر الـ URL والـ decode size والـ placeholder والـ cache. الشاشات بتقول «غلاف medium» بس. وده بيخلي الـ review سهل: أي `Image.network` بره الـ widget ده سؤال.
+- <b>الحجم قرار الـ UI:</b> الـ entity ماسك مرجع للغلاف، والـ widget بيقرر الحجم. الحل اللي هنا بيغيّر الـ suffix في الـ URL. الحل الأنضف إن الـ entity يمسك `coverId` بس، والـ URL يتبني في الـ presentation. ده تغيير في الـ entity والـ DB والـ mapper، فبيتعمل لما يكون فيه سبب تاني، مش عشان الصور بس.
+- <b>Highlight oversized images في الـ review:</b> شغّله مرة على كل شاشة جديدة فيها صور. أي صورة مقلوبة bug.
+- <b>الـ disk cache ليه حد:</b> `cached_network_image` بيستخدم `flutter_cache_manager`، وليه حد افتراضي لعدد الملفات ومدتها. لو المكتبة 4000 كتاب، فكّر في الحد ده، وفي إن الـ logout يمسحه لو الأغلفة فيها حاجة شخصية.
+
+<Note kind="interview" title="سؤال interview">
+
+«صورة JPEG حجمها 200KB. بتاخد قد إيه في الذاكرة؟» مالهاش علاقة بالـ 200KB. بعد الـ decode بتاخد العرض × الارتفاع × 4 bytes. صورة 1000 × 1500 بتاخد حوالي 6MB، حتى لو بتتعرض في خلية 100 × 150. عشان كده بنفك بالحجم اللي هيتعرض (`cacheWidth` أو `memCacheWidth` مضروب في الـ DPR)، وبنطلب من السيرفر المقاس الصح، وبنتأكد بـ Highlight oversized images في DevTools.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«`Image.network` ولا `cached_network_image`؟» الـ `Image.network` بيخزّن الصورة المتفكة في الـ ImageCache في الذاكرة بس، فلما تتشال منه أو الـ app يتقفل، بتتحمّل من النت تاني. الـ `cached_network_image` بيخزّن الملف على الـ disk كمان، فبيوفّر data وبيخلي الرجوع للصورة سريع. وفي الاتنين لازم تحدد حجم الـ decode، لأن الـ disk cache مش بيحل مشكلة الذاكرة.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### خلية الغلاف في الـ grid
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+class BookCoverCell extends StatelessWidget {
+  const BookCoverCell({super.key, required this.book});
+  final Book book;
+
+  @override
+  Widget build(BuildContext context) => Column(
+        children: [
+          if (book.coverUrl case final url?)
+            Image.network(
+              url.toString(), // the -L cover: ~1000x1500
+              width: 100,
+              loadingBuilder: (_, child, progress) =>
+                  progress == null ? child : const CoverShimmer(),
+            )
+          else
+            const CoverShimmer(),
+          Text(book.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+        ],
+      );
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+class BookCoverCell extends StatelessWidget {
+  const BookCoverCell({super.key, required this.book});
+  final Book book;
+
+  @override
+  Widget build(BuildContext context) => Column(
+        children: [
+          BookCover(url: book.coverUrl, size: CoverSize.medium),
+          Text(book.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+        ],
+      );
+}
+
+// BookCover: the -M URL, decoded at 100 x DPR,
+// cached on disk, same-size static placeholder
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: كل غلاف 6MB في الذاكرة، والـ cache مليان من 16 صورة، فالرجوع بالـ scroll بيحمّل من النت تاني، والـ placeholder أصغر من الصورة فالـ grid بيتنطط، وكل خلية فيها shimmer بـ saveLayer. بعد: `-M` من السيرفر، ومتفك بحجم الخلية، ومتخزن على الـ disk، والـ placeholder ثابت وبنفس الحجم. والـ crashes بتاعة الـ OOM من الموبايلات الرخيصة اختفت من Sentry في الـ release اللي بعده.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="perf-images-1">
+<Ask>غلاف 1000 × 1500 بيتعرض في خلية 100 × 150 logical على شاشة DPR 3. بياخد قد إيه في الذاكرة، والمفروض ياخد قد إيه؟</Ask>
+<Answer>
+
+متفك بحجمه الأصلي: 1000 × 1500 × 4 = حوالي 6MB. اللي محتاجه 300 × 450 × 4 = حوالي 0.5MB. يعني أكتر من 10 أضعاف، والـ ImageCache (100MB افتراضي) بيتملي من حوالي 16 غلاف.
+
+</Answer>
+</Question>
+
+<Question id="perf-images-2">
+<Ask>ليه `cacheWidth: 100` غلط لخلية عرضها 100 logical، وليه بتحدد العرض بس من غير الارتفاع؟</Ask>
+<Answer>
+
+الـ 100 logical على شاشة DPR 3 = 300 pixel حقيقي، فـ `cacheWidth: 100` هيطلّع صورة مش واضحة. لازم تضرب في `MediaQuery.devicePixelRatioOf(context)`. والعرض بس لأن التاني بيتحسب بنفس النسبة، ولو حددت الاتنين الصورة ممكن تتمط.
+
+</Answer>
+</Question>
+
+<Question id="perf-images-3">
+<Ask>عملت `precacheImage(CachedNetworkImageProvider(url), context)` قبل ما تفتح صفحة الكتاب، والصفحة برضه بتفك الغلاف من الأول. ليه؟</Ask>
+<Answer>
+
+الـ cache بيخزّن تحت key هو الـ provider نفسه. الصفحة بتطلب الصورة بـ resize (`memCacheWidth`، يعني `ResizeImage` حوالين الـ provider)، فده key مختلف عن اللي اتعمله precache. لازم الـ precache يطلب نفس الـ URL بنفس الـ resize، والأحسن إن الاتنين يستخدموا نفس الـ function اللي بتعمل الـ provider.
+
+</Answer>
+</Question>
+
+<Question id="perf-images-4">
+<Ask>`cached_network_image` بيحل مشكلة الذاكرة؟</Ask>
+<Answer>
+
+لأ لوحده. هو بيضيف disk cache، فبيوفّر data وبيرجّع الصورة من غير نت. بس الصورة لسه بتتفك بحجمها الأصلي في الذاكرة لو ماحددتش `memCacheWidth`. الاتنين مع بعض، ومعاهم الحجم الصح من السيرفر.
+
+</Answer>
+</Question>
+
+<Question id="perf-images-5">
+<Ask>حد اقترح يكبّر `imageCache.maximumSizeBytes` لـ 300MB عشان الأغلفة ماتتشالش. رأيك؟</Ask>
+<Answer>
+
+ده بيداري المشكلة ويقرّب الـ OOM على الموبايلات الرخيصة. الـ cache كان مليان لأن كل صورة متفكة أكبر بـ 10 مرات. لما الصور اتفكت بحجمها، الـ cache بقى 18MB من 100. القرار في الـ cache بييجي بعد ما الصور تبقى بالحجم الصح، ومن الـ Memory view مش بالتخمين.
+
+</Answer>
+</Question>
+
+</Quiz>

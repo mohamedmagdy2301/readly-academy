@@ -1,0 +1,353 @@
+---
+title: "الـ Memory والتسريب"
+description: "الـ Memory view في DevTools: الـ chart، وDiff Snapshots، وTrace Instances. إزاي تفرّق بين leak وcache وGC لسه مااشتغلش، والتسريبات اللي مش subscriptions: AnimationController بيلف لوحده، وclosure ماسك BuildContext، وcache مالوش حد، وleak_tracker في الـ widget tests."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="الأوضة اللي محدش بيرجّع فيها حاجة">
+
+شركة فيها أوضة خزين. كل موظف بياخد منها كرسي لما يحتاجه، والمفروض يرجّعه لما يخلص. في آخر كل أسبوع، عامل النضافة بيلف ويرجّع أي كرسي مالوش حد قاعد عليه. بس فيه موظفين بيسيبوا شنطتهم على الكرسي وهم ماشيين، فالعامل بيقول «ده لسه حد بيستخدمه» ومابيلمسوش. بعد شهر، الأوضة فاضية، والشركة بتشتري كراسي جديدة.
+
+والغلطة التانية: إنك تدخل الأوضة يوم التلات، تلاقي كراسي كتير بره، وتقول «فيه حد بيسرق». لأ، عامل النضافة لسه ماعدّاش. عشان تعرف إن فيه مشكلة فعلًا، لازم تعدّ الكراسي بعد ما يعدّي.
+
+</Analogy>
+
+عامل النضافة هو الـ garbage collector. بيمسح أي object محدش بيشاور عليه. الـ leak مش إن الـ object اتنسي، الـ leak إن حاجة لسه عايشة (singleton، أو timer، أو الـ scheduler) لسه <b>بتشاور عليه</b>، فالـ GC مش هيمسحه أبدًا. والغلطة التانية: إنك تشوف الـ memory عالية وتقول leak، قبل ما الـ GC يشتغل.
+
+درس [عمر الـ subscription](/course/dart-async/lifecycle/) اتكلم عن أشهر شنطة متسابة: الـ `StreamSubscription` اللي مااتلغتش. الدرس ده عن الأداة اللي بتلاقي بيها أي شنطة، وعن الأنواع التانية.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### المشكلة: الـ app بيقفل لوحده بعد ساعة
+
+Android vitals وSentry الاتنين بيقولوا نفس الحاجة: على الموبايلات اللي فيها 3 أو 4GB RAM، Readly بيتقفل من الـ system بعد استخدام طويل. اللي بيعملوه المستخدمين دول: بيتصفّحوا الكتالوج، ويفتحوا كتاب، ويرجعوا، ويفتحوا غيره. السيناريو ده بنكرره:
+
+1. افتح الكتالوج.
+2. افتح كتاب، اكتب ملاحظة قصيرة، وارجع. كرر 20 مرة.
+3. ارجع للكتالوج واستنى.
+
+### الـ Memory view
+
+في DevTools افتح <b>Memory</b>. فوق chart بخطوط: الـ <b>Dart/Flutter Heap</b> (الـ objects بتاعتك)، والـ <b>Dart/Flutter Native</b> (ذاكرة بره الـ heap زي الصور المتفكة)، والـ <b>RSS</b> (كل اللي الـ process واخده من الـ system)، وعلامات الـ <b>GC</b>. وتحتها تلات tabs:
+
+| الـ tab | بيعمل إيه | بتستخدمه إمتى |
+| --- | --- | --- |
+| Profile Memory | الـ classes كلها، وعدد الـ instances والحجم دلوقتي | نظرة عامة: مين واخد الذاكرة |
+| Diff Snapshots | snapshot قبل وبعد، والفرق بينهم بالـ class | السؤال الأساسي: إيه اللي زاد ومانزلش |
+| Trace Instances | بتختار class، وبيسجّل كل instance بيتعمل منه ومين عمله (stack trace) | لما تعرف مين بيتسرّب وعايز تعرف اتعمل فين |
+
+### الطريقة: snapshot، سيناريو، GC، snapshot
+
+1. افتح الـ app على الكتالوج، ودوس <b>GC</b> في الـ Memory view، وخد snapshot في Diff Snapshots.
+2. اعمل السيناريو 20 مرة.
+3. ارجع للكتالوج، ودوس GC تاني، واستنى ثانيتين، وخد snapshot.
+4. قارن التانية بالأولى. دوّر على classes زادت <b>بعدد مرات السيناريو</b> أو مضاعفاته.
+
+الـ GC قبل كل snapshot مهم: من غيره هتلاقي objects كتير «زيادة» وهي بس لسه مااتمسحتش. والعدد هو المفتاح: الكتالوج مفتوح في الحالتين، فأي حاجة تخص صفحة الكتاب المفروض ترجع زي ما كانت. لو `BookDetailsCubit` زاد 20، يبقى كل صفحة اتفتحت سابت واحد.
+
+في Readly، الـ diff طلّع:
+
+```text
+class                       delta
+BookDetailsCubit            +20
+_NoteEditorState            +20
+AnimationController         +20
+TextEditingController       +20
+_BookDetailsViewState       +20
+_Image / _ImageInfo         +38   (expected? check below)
+```
+
+### Trace Instances: مين ماسكه؟
+
+الـ diff بيقول إيه اللي فضل. عشان تعرف <b>ليه</b> فضل، اختار instance من `BookDetailsCubit` في الـ snapshot، وشوف الـ <b>retaining path</b>: السلسلة من الـ root لحد الـ object ده. هي اللي بتقولك مين الشنطة اللي على الكرسي:
+
+```text
+root -> SchedulerBinding._transientCallbacks
+     -> _Ticker
+     -> AnimationController
+     -> _NoteEditorState
+     -> BuildContext (Element) -> ... -> BookDetailsCubit
+```
+
+<Diagram name="d-perf-leak-chain">
+
+الـ retaining path بتاع الـ BookDetailsCubit اللي فضل: من الـ scheduler اللي عايش طول عمر الـ app لحد الشجرة كلها. dispose واحد للـ AnimationController بيقطع السلسلة.
+
+</Diagram>
+
+الـ scheduler (عايش طول عمر الـ app) ماسك ticker، والـ ticker ماسك الـ AnimationController، والـ controller ماسك الـ State بتاع الـ editor، والـ State ماسك الـ element، ومنه الشجرة كلها والـ Cubit. حاجة واحدة صغيرة شايلة صفحة كاملة.
+
+### التسريب الأول: AnimationController بيلف لوحده
+
+<CodeBlock label="NoteEditor: المؤشر اللي بيلمع وقت الحفظ">
+
+```dart
+class _NoteEditorState extends State<NoteEditor> with SingleTickerProviderStateMixin {
+  late final _saving = AnimationController(vsync: this, duration: const Duration(seconds: 1))
+    ..repeat(reverse: true);
+  final _text = TextEditingController();
+
+  @override
+  void dispose() {
+    _text.dispose(); // the AnimationController was forgotten
+    super.dispose();
+  }
+}
+```
+
+</CodeBlock>
+
+الـ `repeat()` بيخلي الـ ticker يسجّل نفسه في الـ scheduler كل frame. لو الـ controller مااتعملهوش dispose، الـ ticker بيفضل شغال بعد ما الصفحة اتقفلت: ماسك الـ State، وبيطلب frames من الـ engine على الفاضي، فالبطارية كمان بتخلص. في الـ debug الـ `SingleTickerProviderStateMixin` بيرمي assertion إن الـ ticker لسه شغال وقت الـ dispose. لو حد سكّت الـ assertion أو مااختبرش الحالة دي، الـ release بيسرّب في صمت.
+
+```dart
+@override
+void dispose() {
+  _saving.dispose(); // every controller you create, you dispose
+  _text.dispose();
+  super.dispose();
+}
+```
+
+القاعدة نفسها بتاعة الـ subscriptions: اللي عمل هو اللي يقفل. `AnimationController`، و`TextEditingController`، و`ScrollController`، و`FocusNode`، و`PageController`، وأي `ChangeNotifier` انت عملته، ليهم `dispose`.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### closure ماسك BuildContext في singleton
+
+<CodeBlock label="LibraryPage بتسجّل callback في الـ SyncService">
+
+```dart
+@override
+void initState() {
+  super.initState();
+  getIt<SyncService>().onConflict = (book) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(context.l10n.conflictResolved(book.title))),
+    );
+  };
+}
+```
+
+</CodeBlock>
+
+الـ `SyncService` singleton عايش طول عمر الـ app. الـ closure اللي اتحط في `onConflict` لامس `context`، فالـ singleton بقى ماسك الـ element بتاع `LibraryPage`، ومنه الشجرة كلها. لما المستخدم يعمل logout والصفحة تتقفل، الـ element مش بيتمسح. وأسوأ من الـ memory: لو حصل conflict بعد كده، الـ callback بيستخدم context لصفحة مش موجودة، فبيرمي أو بيعرض الـ snackbar في مكان غلط.
+
+الـ Flutter docs بتاعة الـ Memory view بتقول ده بالنص: الـ closures اللي بتمسك `BuildContext` أو objects كبيرة من أشهر أسباب الـ leaks.
+
+- <b>الحل:</b> الـ service يطلّع stream (`Stream<Book> get conflicts`)، والشاشة تسمع عليه بـ `BlocListener` أو subscription بتتلغي في الـ dispose، زي [درس عمر الـ subscription](/course/dart-async/lifecycle/). كده الـ service مابيعرفش حد بالاسم.
+- <b>ولو لازم callback:</b> الشاشة تشيله في الـ dispose (`onConflict = null`)، وده سهل يتنسي، فالـ stream أحسن.
+
+### cache مالوش حد
+
+في [درس تمن الطبقات](/course/performance/cost-of-layers/) عملنا `_entities` في الـ repository: Map من الـ id للـ entity، عشان مانعملش entity لكتاب ماتغيرش. والـ repository singleton. لو مفيش حاجة بتمسح منه، كل كتاب المستخدم شافه في عمره فاضل في الـ Map، حتى بعد ما اتمسح من المكتبة، وحتى بعد الـ logout ودخول مستخدم تاني.
+
+ده leak «by design»: الكود شغال صح، والـ memory بتكبر بالراحة. أي cache لازم يكون ليه إجابة على تلات أسئلة:
+
+1. <b>إيه اللي بيطلّع حاجة منه؟</b> هنا: كل emit بيبني الـ Map من جديد من الـ rows اللي جت، فالكتب اللي اتمسحت بتختفي لوحدها.
+2. <b>حده الأقصى كام؟</b> لو مالوش طريقة طبيعية للمسح، LRU بعدد ثابت.
+3. <b>مين بيمسحه كله؟</b> الـ logout، زي الـ scopes في [درس الـ Session](/course/di-scale/session/).
+
+<CodeBlock label="الـ cache بيتبني من جديد مع كل emit">
+
+```dart
+Map<String, (DateTime, Book)> _entities = {};
+
+List<Book> _mapRows(List<BookRow> rows) {
+  final next = <String, (DateTime, Book)>{};
+  final books = [
+    for (final r in rows)
+      (next[r.id] = switch (_entities[r.id]) {
+        (final at, final book) when at == r.updatedAt => (at, book),
+        _ => (r.updatedAt, r.toEntity()),
+      }).$2,
+  ];
+  _entities = next; // books that disappeared from the query are dropped here
+  return books;
+}
+```
+
+</CodeBlock>
+
+### الـ memory عالية، بس مش leak
+
+مش كل حاجة بتزيد leak. في الـ diff بتاع Readly، الـ `_Image` زاد 38. ده مش تسريب: الـ `ImageCache` بيحتفظ بالصور المتفكة لحد 1000 صورة أو 100MB، وده شغله. لو بعد الـ GC العدد ثابت مع تكرار السيناريو أكتر (20 مرة كمان، وبرضه 38 مش 76)، يبقى cache وصل لحده. ولو بيزيد مع كل تكرار من غير سقف، يبقى leak. والصور المتفكة بحجم غلط موضوعها [درس الصور](/course/performance/images/).
+
+وكمان:
+
+- <b>الـ RSS مابينزلش لما الـ heap ينزل:</b> الـ Dart VM بيحتفظ بالذاكرة اللي خدها من الـ system عشان يستخدمها تاني، مش بيرجّعها على طول. الـ heap بعد الـ GC هو الرقم اللي بتراقبه للـ leaks.
+- <b>الـ debug أكبر:</b> الـ debug فيه objects ومعلومات زيادة. أرقام الـ memory الحقيقية من profile mode. بس الـ diff بالعدد (+20) بيبان في الاتنين.
+- <b>الـ keep-alive:</b> الـ tiles اللي فضلت عايشة بسبب `AutomaticKeepAliveClientMixin` في [درس القوائم](/course/performance/lists/) هتبان في الـ diff، وهي مش leak بالمعنى الحرفي، بس نتيجتها نفس الحكاية.
+
+### leak_tracker في الـ widget tests
+
+الـ DevTools بيلاقي اللي حصل. الـ tests ممكن تمنعه يحصل تاني. الـ `leak_tracker` (اللي Flutter نفسه بيستخدمه في الـ framework tests) بيتابع الـ objects اللي ليها `dispose`، وبيقولك لو واحد اتمسح من الـ memory من غير ما يتعمله dispose. وده بيمسك الـ controllers اللي اتنست، حتى لو مكانوش بيسرّبوا الشاشة النهارده:
+
+<CodeBlock label="test/flutter_test_config.dart">
+
+```dart
+import 'dart:async';
+import 'package:leak_tracker_flutter_testing/leak_tracker_flutter_testing.dart';
+
+Future<void> testExecutable(FutureOr<void> Function() testMain) async {
+  LeakTesting.enable();
+  LeakTesting.settings = LeakTesting.settings.withIgnored(createdByTestHelpers: true);
+  await testMain();
+}
+```
+
+</CodeBlock>
+
+```yaml
+dev_dependencies:
+  leak_tracker_flutter_testing: any # the Flutter SDK pins the version
+```
+
+بعدها أي widget test بيفتح `NoteEditor` ويقفله هيفشل لو الـ `FocusNode` أو الـ `TextEditingController` اتمسحوا من غير dispose (الـ leak_tracker بيسميها notDisposed). والـ `AnimationController` اللي ticker بتاعه لسه شغال بيتمسك من غير leak_tracker أصلًا: الـ assertion بتاع الـ `SingleTickerProviderStateMixin` بيرمي في التست أول ما الـ State يتعمله dispose. أما الـ objects اللي اتعملها dispose بس فضلت في الذاكرة (notGCed)، فتتبّعها لسه experimental ومقفول افتراضيًا. والأداة كلها لسه experimental، والـ Flutter docs بتقول كده صراحة، فاستخدمها كشبكة أمان في الـ widget tests، مش كبديل للـ review. وتقدر تتجاهل classes معينة في تست معين: `experimentalLeakTesting: LeakTesting.settings.withIgnored(classes: ['Image'])`.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>الـ leak بيتعرف بالعدد، مش بالحجم:</b> السيناريو N مرة، وGC، وdiff. أي class زاد N أو مضاعفاته بيتعلّق بالسيناريو ده. الحجم بيتلخبط بالـ caches والـ GC، العدد لأ.
+- <b>الـ retaining path هو الإجابة:</b> مش كفاية تعرف «الـ Cubit فاضل». السلسلة من الـ root بتقولك مين الـ singleton أو الـ timer أو الـ ticker اللي ماسكه، وده اللي بتصلّحه.
+- <b>اللي عمل يقفل، في نفس الـ class:</b> كل controller وsubscription وtimer بيتعمل في State أو Cubit، جنبه field، وجنب الـ field سطر في `dispose` أو `close`. والـ singletons مابتمسكش حاجة من شاشة: بتطلّع streams والشاشة بتسمع.
+- <b>كل cache ليه حد ومسح:</b> لو مش عارف تقول إمتى حاجة بتخرج منه، ده leak بتعمله بإيدك.
+- <b>اختبر الـ leaks مرة في كل release:</b> سيناريو ثابت للشاشات اللي بتتفتح وتتقفل كتير (صفحة الكتاب، والـ editor)، والـ diff بالعدد. والـ leak_tracker في الـ widget tests بيمسك الـ controllers اللي اتنست قبل ما توصل للـ release.
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي تلاقي memory leak في Flutter؟» بحدد سيناريو بيفتح ويقفل الشاشة اللي شاكك فيها. في DevTools Memory بدوس GC وباخد snapshot، وبعمل السيناريو N مرة، وGC تاني وsnapshot، وبعمل Diff. أي class زاد N مرة بيتسرّب مع كل فتحة. بختار instance منه وبشوف الـ retaining path من الـ root، وده بيقولي مين ماسكه: subscription مااتلغتش، أو AnimationController بـ repeat مااتعملهوش dispose، أو closure ماسك BuildContext في singleton، أو cache مالوش حد. وبفرّق بين ده وبين cache زي الـ ImageCache، اللي بيوصل لحد ويقف.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«ليه الـ AnimationController اللي مااتعملهوش dispose خطير أكتر من TextEditingController مااتعملهوش dispose؟» لأن الـ AnimationController بـ `repeat()` ليه ticker مسجّل في الـ scheduler، والـ scheduler عايش طول عمر الـ app، فهو ماسك الـ controller والـ State والشجرة كلها، وبيطلب frames على الفاضي فبيصرف بطارية. الـ TextEditingController لو محدش تاني بيشاور عليه، هيتمسح مع الـ State. بس القاعدة واحدة للاتنين: أي حاجة ليها dispose بتتعملها dispose، لأنك مش هتعرف دايمًا مين تاني بيشاور عليها.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### صفحة الكتاب والـ editor
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+class _NoteEditorState extends State<NoteEditor>
+    with SingleTickerProviderStateMixin {
+  late final _saving = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 1),
+  )..repeat(reverse: true);
+  final _text = TextEditingController();
+  final _focus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    getIt<SyncService>().onConflict = (book) =>
+        ScaffoldMessenger.of(context).showSnackBar(/* ... */);
+  }
+
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+class _NoteEditorState extends State<NoteEditor>
+    with SingleTickerProviderStateMixin {
+  late final _saving = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 1),
+  );
+  final _text = TextEditingController();
+  final _focus = FocusNode();
+
+  // the conflict snackbar is a BlocListener on the page,
+  // fed by SyncService.conflicts (a stream): no callback in the singleton
+
+  @override
+  void dispose() {
+    _saving.dispose();
+    _focus.dispose();
+    _text.dispose();
+    super.dispose();
+  }
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: كل فتحة لصفحة الكتاب بتسيب State فيه ticker شغال، والـ singleton ماسك آخر context، والـ diff بعد 20 فتحة +20 `BookDetailsCubit`. والـ animation بيبدأ `repeat()` من أول ما الـ editor يتبني، حتى لو مفيش حفظ. بعد: كل controller ليه dispose، والـ animation بيشتغل وقت الحفظ بس (`_saving.repeat()` في بداية الحفظ و`_saving.stop()` في آخره)، والـ service بيطلّع stream. نفس السيناريو: الـ diff صفر لكل classes صفحة الكتاب، والـ heap بعد الـ GC ثابت مهما كررت.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="perf-memory-1">
+<Ask>فتحت صفحة الكتاب وقفلتها 20 مرة، وخدت snapshot من غير ما تدوس GC، ولقيت classes كتير زايدة. تقول فيه leak؟</Ask>
+<Answer>
+
+لسه لأ. من غير GC، فيه objects كتير لسه مااتمسحتش وهي مش leak. دوس GC قبل كل snapshot، وبعدين دوّر في الـ diff على classes زادت بعدد مرات السيناريو (20 أو مضاعفاته). ده اللي بيتعلّق بالسيناريو.
+
+</Answer>
+</Question>
+
+<Question id="perf-memory-2">
+<Ask>الـ diff بيقول `BookDetailsCubit` +20. إيه الخطوة الجاية عشان تعرف السبب؟</Ask>
+<Answer>
+
+تختار instance منه وتشوف الـ retaining path: السلسلة من الـ root لحد الـ object. هي اللي بتقولك مين ماسكه: subscription في singleton، أو ticker في الـ scheduler، أو closure في service. ولو عايز تعرف اتعمل فين، Trace Instances بيسجّل الـ stack trace وقت الإنشاء.
+
+</Answer>
+</Question>
+
+<Question id="perf-memory-3">
+<Ask>`AnimationController(...)..repeat()` في State، ومفيش `dispose` ليه. إيه اللي بيحصل بعد ما الشاشة تتقفل؟</Ask>
+<Answer>
+
+الـ ticker بيفضل مسجّل في الـ scheduler (عايش طول عمر الـ app)، فماسك الـ controller والـ State والشجرة وأي Cubit فيها، ومش هيتمسحوا. وبيفضل يطلب frames على الفاضي فبيصرف بطارية. في الـ debug فيه assertion وقت الـ dispose، وفي الـ release بيسرّب في صمت.
+
+</Answer>
+</Question>
+
+<Question id="perf-memory-4">
+<Ask>`getIt<SyncService>().onConflict = (b) => ScaffoldMessenger.of(context)...` في `initState`. إيه المشكلتين؟</Ask>
+<Answer>
+
+الـ singleton بقى ماسك الـ closure، والـ closure ماسك الـ context، يعني الـ element والشجرة كلها مش هيتمسحوا. ولو حصل conflict بعد ما الصفحة اتقفلت، الـ callback هيستخدم context ميت. الحل إن الـ service يطلّع stream، والشاشة تسمع بـ BlocListener أو subscription بتتلغي في الـ dispose.
+
+</Answer>
+</Question>
+
+<Question id="perf-memory-5">
+<Ask>الـ `_Image` زاد 38 في الـ diff. leak؟ وإزاي تتأكد؟</Ask>
+<Answer>
+
+مش لازم. الـ ImageCache بيحتفظ بالصور لحد 1000 صورة أو 100MB، وده شغله. كرر السيناريو مرات أكتر واعمل GC وdiff تاني: لو العدد ثابت، ده cache وصل لحده. لو بيزيد مع كل تكرار من غير سقف، ده leak.
+
+</Answer>
+</Question>
+
+</Quiz>

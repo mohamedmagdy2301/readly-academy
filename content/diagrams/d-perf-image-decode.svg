@@ -1,0 +1,28 @@
+<svg viewBox="0 0 760 300" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="غلاف كبير بيتفك 1000 في 1500 ويبقى 6MB في الذاكرة حتى لو بيتعرض 100 في 150، فالـ ImageCache بتاع 100MB بيتملي من 16 غلاف. بالحجم الصح 300 في 450 بياخد نص ميجا">
+<text x="190" y="28" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)" class="ar" direction="rtl">قبل: Image.network للغلاف الكبير</text>
+<text x="570" y="28" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)" class="ar" direction="rtl">بعد: BookCover بالحجم الصح</text>
+<line x1="380" y1="20" x2="380" y2="250" stroke="var(--line)" stroke-width="1.2"/>
+<rect x="40" y="48" width="100" height="150" rx="4" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="1.6"/>
+<text x="90" y="118" text-anchor="middle" font-size="11" fill="var(--ink)">1000 × 1500</text>
+<text x="90" y="134" text-anchor="middle" font-size="11" fill="var(--warn)" font-weight="600">≈ 6MB</text>
+<rect x="170" y="98" width="34" height="50" rx="3" fill="var(--surface)" stroke="var(--muted)"/>
+<text x="187" y="166" text-anchor="middle" font-size="9" fill="var(--muted)">shown 100×150</text>
+<path d="M 142 123 L 166 123" stroke="var(--warn)" stroke-width="1.4" marker-end="url(#mk-warn)"/>
+<text x="230" y="60" font-size="11" fill="var(--ink)">ImageCache: 100MB</text>
+<g fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="1">
+<rect x="230" y="70" width="8" height="24"/><rect x="239" y="70" width="8" height="24"/><rect x="248" y="70" width="8" height="24"/><rect x="257" y="70" width="8" height="24"/><rect x="266" y="70" width="8" height="24"/><rect x="275" y="70" width="8" height="24"/><rect x="284" y="70" width="8" height="24"/><rect x="293" y="70" width="8" height="24"/><rect x="302" y="70" width="8" height="24"/><rect x="311" y="70" width="8" height="24"/><rect x="320" y="70" width="8" height="24"/><rect x="329" y="70" width="8" height="24"/><rect x="338" y="70" width="8" height="24"/><rect x="347" y="70" width="8" height="24"/><rect x="356" y="70" width="8" height="24"/><rect x="365" y="70" width="8" height="24"/>
+</g>
+<text x="300" y="112" text-anchor="middle" font-size="10" fill="var(--warn)" class="ar" direction="rtl">مليان بـ 16 غلاف</text>
+<text x="300" y="196" text-anchor="middle" font-size="11" fill="var(--ink)" class="ar" direction="rtl">الـ grid بيعرض 15، فكل غلاف جديد</text>
+<text x="300" y="212" text-anchor="middle" font-size="11" fill="var(--ink)" class="ar" direction="rtl">بيطلّع واحد قديم: download وdecode تاني</text>
+<rect x="430" y="98" width="34" height="50" rx="3" fill="var(--good-soft)" stroke="var(--good)" stroke-width="1.6"/>
+<text x="447" y="166" text-anchor="middle" font-size="9" fill="var(--muted)">300 × 450</text>
+<text x="447" y="180" text-anchor="middle" font-size="11" fill="var(--good)" font-weight="600">≈ 0.5MB</text>
+<text x="500" y="60" font-size="11" fill="var(--ink)">ImageCache: 18MB / 100MB</text>
+<rect x="500" y="70" width="230" height="24" fill="none" stroke="var(--line)"/>
+<rect x="500" y="70" width="41" height="24" fill="var(--good-soft)" stroke="var(--good)"/>
+<text x="500" y="132" font-size="10" fill="var(--ink)">server size: M instead of L</text>
+<text x="500" y="148" font-size="10" fill="var(--ink)">decode width = 100 × DPR</text>
+<text x="500" y="164" font-size="10" fill="var(--ink)">disk cache: back-scroll costs 0 bytes</text>
+<text x="380" y="278" text-anchor="middle" font-size="12" fill="var(--ink)" class="ar" direction="rtl">الصورة في الذاكرة = العرض × الارتفاع × 4 bytes، مهما كان حجم الـ JPEG على النت</text>
+</svg>

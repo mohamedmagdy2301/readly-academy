@@ -1,0 +1,333 @@
+---
+title: "القياس: الـ profile mode والـ Performance view"
+description: "ليه الـ debug mode بيكدب، وميزانية الـ frame (16ms على 60Hz و8ms على 120Hz)، والـ UI thread والـ raster thread، وإزاي تقرا الـ Flutter frames chart والـ timeline، وتطلع بـ baseline بالأرقام قبل ما تلمس سطر."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="القطر اللي بيقوم كل 16 دقيقة">
+
+مطبخ بيطلّع الأطباق على قطر صغير بيعدّي قدام الزباين. القطر بيقوم كل 16 دقيقة بالظبط، مابيستناش حد. لو الطبق جاهز، بيطلع. لو مش جاهز، القطر بيعدّي فاضي، والزبون بيشوف فجوة، وبعدين يجيله طبقين ورا بعض.
+
+وفي المطبخ اتنين: <b>الشيف</b> بيجهّز الطبق (بيقرر فيه إيه وبيحطه فين)، و<b>اللي بيزيّن</b> بياخد الطبق ويرصّه ويحطه على القطر. لو القطر عدّى فاضي، أول سؤال: مين اللي اتأخر؟ لو الشيف، مالوش لازمة تجيب مزيّن أسرع. ولو المزيّن، مالوش لازمة تزعّق للشيف.
+
+والغلطة التالتة: إنك تقيس سرعة المطبخ وهو في يوم التدريب، والمتدرب بيشرح كل خطوة بصوت عالي. أكيد هيبان بطيء، بس ده مش المطبخ الحقيقي.
+
+</Analogy>
+
+القطر هو الـ <b>vsync</b>: الشاشة بتطلب frame جديد كل 16.6ms (لو 60Hz). الشيف هو الـ <b>UI thread</b> (كود Dart بتاعك: build وlayout)، والمزيّن هو الـ <b>raster thread</b> (بيحوّل اللي اتبنى لرسم على الـ GPU). والقطر الفاضي هو الـ <b>jank</b>: frame اتأخر فاتشال، والـ scroll بيبان بيقطّع. ويوم التدريب هو الـ <b>debug mode</b>.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### المشكلة اللي بدأنا بيها
+
+تقييمات Readly على Play Store بدأت فيها جملة متكررة: «المكتبة بتقطّع لما بعمل scroll». واحد في الفريق فتح الـ app في الـ debug على الـ emulator، ولقاه بيقطّع في كل حتة، فبدأ يحط `const` ويشيل animations. بعد يومين، محدش عارف إيه اللي اتصلّح، ولا إذا كان فيه حاجة اتصلّحت أصلًا.
+
+الدرس ده عن الخطوة اللي اتنطّت: <b>القياس</b>. وأول قاعدة فيه إنك تقيس في الـ mode الصح.
+
+### debug ولا profile ولا release
+
+| الـ mode | الـ compile | ينفع تقيس فيه؟ |
+| --- | --- | --- |
+| debug | JIT، وasserts، وhot reload، وdebug checks في كل حتة | لأ. أبطأ بكتير، والـ JIT نفسه بيوقف الـ app يعمل compile، وده jank مش موجود عند المستخدم |
+| profile | AOT زي الـ release، ومعاه tracing يكفي لـ DevTools | أيوه. ده الـ mode الوحيد للقياس |
+| release | AOT، من غير أي tracing | ده اللي عند المستخدم، بس مش هتشوف فيه الـ timeline |
+
+```bash
+flutter run --profile        # on a physical device; profile mode doesn't run on emulators
+```
+
+- <b>جهاز حقيقي، ويفضل متوسط:</b> الـ emulator بيشغّل الـ GPU بطريقة مختلفة، وأرقامه مش بتعبّر عن موبايل. وموبايلك الـ flagship مش هو موبايل المستخدم. Readly بيتقاس على موبايل Android متوسط من سنتين، والفريق محتفظ بواحد في الدرج للقياس بس.
+- <b>عدد الـ rebuilds مش وقتها:</b> لو بتعدّ widget اتبنى كام مرة، الـ debug ينفع. لو بتقيس اتبنى في كام ms، profile بس.
+
+### ميزانية الـ frame
+
+| الشاشة | frame كل | يعني الـ UI والـ raster كل واحد لازم يخلص في |
+| --- | --- | --- |
+| 60Hz | 16.6ms | أقل من 16ms |
+| 90Hz | 11.1ms | أقل من 11ms |
+| 120Hz | 8.3ms | أقل من 8ms |
+
+الـ UI thread والـ raster thread شغالين زي خط إنتاج: وانت بتبني frame رقم 5، الـ raster بيرسم frame رقم 4. فكل واحد فيهم لوحده لازم يخلص في الميزانية. لو الـ UI خد 12ms والـ raster خد 10ms، ده تمام على 60Hz. ولو أي واحد فيهم خد 20ms، الـ frame اتأخر.
+
+<Diagram name="d-perf-frame-pipeline">
+
+كل frame بيتبني في الـ UI thread وبيترسم في الـ raster عند الـ vsync اللي بعده. frame 3 خد 38ms في الـ UI، فالـ raster مالقاش frame جديد يرسمه، والـ scroll قطّع.
+
+</Diagram>
+
+وافتكر إن الموبايلات الـ 120Hz بقت كتير: الكود اللي «تمام» على 60Hz ممكن يقطّع على 120Hz، لأن الميزانية بقت النص.
+
+### الـ Performance overlay: نظرة سريعة
+
+```dart
+MaterialApp.router(
+  showPerformanceOverlay: true, // or the button in DevTools, or press P in the flutter run terminal
+  // ...
+)
+```
+
+بيرسم graphين فوق الـ app: الفوقاني للـ raster thread، والتحتاني للـ UI thread. كل عمود frame، والخط الأفقي هو الـ 16ms. أي عمود أحمر عدّى الخط. ده كويس عشان تعرف «فيه مشكلة ولا لأ» وانت ماسك الموبايل، بس مش هيقولك السبب.
+
+### DevTools: الـ Performance view
+
+افتح DevTools من الـ IDE أو من اللينك اللي `flutter run --profile` بيطبعه، وروح على <b>Performance</b>:
+
+- <b>الـ Flutter frames chart:</b> كل frame عمودين: UI وRaster. العمود اللي فوق الميزانية بيتلوّن أحمر (jank). ولو أحمر غامق، ده shader compilation.
+- <b>تاب Frame analysis:</b> دوس على frame أحمر، وهيقولك الوقت راح فين: build ولا layout ولا paint ولا raster، وأحيانًا بيقترح السبب.
+- <b>تاب Timeline events:</b> كل الـ events اللي حصلت في الـ frame ده بالترتيب على خط زمني. هنا بتشوف `Animator::BeginFrame` و`BUILD` و`LAYOUT` و`PAINT`، وأي event انت سمّيته بنفسك.
+- <b>Enhance tracing:</b> تلات اختيارات: <b>Track widget builds</b>، و<b>Track layouts</b>، و<b>Track paints</b>. لما تفعّلهم، كل widget بيتبني أو بيتعمله layout أو paint بيظهر باسمه في الـ timeline.
+- <b>الـ CPU Profiler</b> (صفحة لوحدها في DevTools): بيسجّل الـ functions اللي بتاخد وقت، بـ Bottom Up وCall Tree. لما الـ timeline يقولك «الـ BUILD خد 30ms» والـ widgets مش كفاية تفسّر، الـ profiler بيقولك أنهي function.
+
+### سمّي الكود بتاعك في الـ timeline
+
+<CodeBlock label="Timeline من dart:developer">
+
+```dart
+import 'dart:developer';
+
+// a sync block: shows up as an event with this name inside the frame
+final visible = Timeline.timeSync('library.filter', () => _applyFilter(books));
+
+// an async flow that spans several frames (start ... await ... finish)
+final task = TimelineTask()..start('library.refresh');
+await _repository.refresh();
+task.finish();
+```
+
+</CodeBlock>
+
+الـ timeline بيبيّن كود Flutter بأسامي زي `BUILD` و`LAYOUT`. الكود بتاعك بيبان جوه الـ `BUILD` كأنه جزء منه. الـ `Timeline.timeSync` بيحط اسم على الحتة اللي انت شاكك فيها، فتشوفها جنب الـ frame اللي اتأخر. وده اللي هنستخدمه في الوحدة كلها.
+
+### الـ baseline: الرقم قبل أي تغيير
+
+القياس من غير سيناريو ثابت مالوش معنى. «حسيت إنه بقى أنعم» مش رقم. اكتب السيناريو، وكرره بنفس الطريقة قبل وبعد:
+
+1. <b>السيناريو:</b> افتح المكتبة (4000 كتاب)، واعمل fling لتحت 5 مرات، ولفوق 5 مرات. حوالي 10 ثواني.
+2. <b>الجهاز:</b> الموبايل المتوسط، الشاشة 60Hz، البطارية فوق 50%، مش في وضع توفير الطاقة.
+3. <b>المقاييس:</b> عدد الـ frames، وعدد الـ janky frames ونسبتهم، وأسوأ UI time وأسوأ raster time.
+
+<CodeBlock label="baseline المكتبة في Readly (profile mode)">
+
+```text
+scenario: library, 4000 books, 5 flings down + 5 up, ~10s
+frames: 612   janky: 74 (12%)
+UI:     avg 11.8ms   worst 48ms
+raster: avg 4.9ms    worst 9ms
+```
+
+</CodeBlock>
+
+من الأرقام دي لوحدها عرفنا حاجة كبيرة: الـ raster عمره ماعدّى 9ms، والـ UI وصل 48ms. يعني المشكلة في كود Dart (build أو layout)، مش في الرسم. كل حاجة لها علاقة بالـ GPU (الـ opacity، والـ shadows، والـ clipping) مش هي السبب دلوقتي، ومالوش لازمة نلمسها. باقي الوحدة بيمشي على الـ timeline ده ويصلّح حاجة حاجة.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### الـ UI ولا الـ raster؟ قراية الـ jank
+
+| اللي شايفه | معناه غالبًا | دوّر في |
+| --- | --- | --- |
+| الـ UI أحمر والـ raster تمام | كود Dart: build كبير، أو layout تقيل، أو شغل بتاعك في الـ build | Track widget builds وTrack layouts، والـ CPU profiler، و[درس الـ rebuilds](/course/performance/rebuilds/) و[درس الـ main isolate](/course/performance/main-isolate/) |
+| الـ raster أحمر والـ UI تمام | الرسم نفسه تقيل: `saveLayer` (Opacity، ShaderMask، ColorFilter)، وclipping كتير، وصور كبيرة | الـ Frame analysis، وفي DevTools: Render Opacity layers وRender Clip layers، و[درس الصور](/course/performance/images/) |
+| الاتنين أحمر | غالبًا layout تقيل بيطلّع layer tree كبير، أو صور بتتفك وبتترسم | ابدأ بالـ UI، لأنه اللي بيحدد شغل الـ raster |
+| frame واحد أحمر غامق أول مرة بس | shader compilation | مع Impeller (الافتراضي على iOS وعلى Android API 29 وأحدث) الـ shaders بتتعمل compile قبل كده، فده بقى نادر. لو شايفه، اتأكد إن Impeller مش مقفول |
+
+الجدول ده بيوفّر عليك أيام. فريق Readly كان ناوي يشيل الـ shadows من الـ book cards. الـ raster كان 5ms. كانوا هيشيلوا حاجة حلوة من التصميم عشان مشكلة مش موجودة.
+
+### «في الـ debug كله بيقطّع»
+
+صح، وده طبيعي. في الـ debug الكود JIT ومعاه checks كتير، وأول مرة أي function بتتنادى ممكن تقف لحد ما تتعمل compile. الـ frame اللي بياخد 30ms في الـ debug ممكن ياخد 6ms في الـ profile. لو صلّحت حاجة عشان الـ debug أبطأ، غالبًا بتصلّح حاجة مش موجودة.
+
+بس الـ debug مفيد في حاجة واحدة: <b>العدّ</b>. widget بيتبني 40 مرة في ثانية في الـ debug هيتبني 40 مرة في الـ profile كمان. العدد مابيتغيرش بالـ mode، الوقت هو اللي بيتغير.
+
+### الـ Enhance tracing خلّى كل حاجة أبطأ
+
+فعّلت Track widget builds وTrack layouts وTrack paints، وسجّلت. الـ janky frames بقوا 30% بدل 12%. هل المشكلة كبرت؟ لأ. الـ tracing نفسه ليه تمن: كل widget بيتبني بيسجّل event. الـ Flutter docs بتقول إن أوقات الـ events دي مش بتمثّل التكلفة الحقيقية.
+
+القاعدة: <b>الـ Enhance tracing عشان تعرف «مين»، ومن غيره عشان تعرف «قد إيه»</b>. سجّل مرة بيه عشان تلاقي الـ widgets اللي بتتبني، واقفله وسجّل تاني عشان الأرقام اللي هتحطها في الـ baseline.
+
+### «على موبايلي ناعم خالص»
+
+الموبايل بتاع المطوّر غالبًا أحدث وأسرع من 80% من المستخدمين. الـ frame اللي بياخد 6ms عليه ممكن ياخد 20ms على موبايل متوسط. والعكس كمان بيحصل: موبايلك 120Hz، فميزانيته 8ms، وممكن يقطّع في حاجة الموبايل المتوسط الـ 60Hz بيعدّيها.
+
+- <b>جهاز مرجعي للفريق:</b> موبايل متوسط ثابت، كل القياسات عليه. الأرقام اللي من أجهزة مختلفة مابتتقارنش.
+- <b>الشاشة الـ 120Hz:</b> لو جهازك 120Hz، الـ overlay والـ DevTools بيحسبوا الميزانية على 8ms. خليك فاكر ده وانت بتقارن.
+
+### القياس بالإيد مابيتكررش
+
+كل مرة بتعمل الـ fling بإيدك بسرعة مختلفة، فالرقم بيتغير 3% من غير ما الكود يتغير. عشان تقارن قبل وبعد بجد، خلي الـ scroll يتعمل بكود. الـ `integration_test` فيه `traceAction` بيسجّل الـ timeline للحركة دي:
+
+<CodeBlock label="integration_test/library_scroll_perf_test.dart">
+
+```dart
+void main() {
+  final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+
+  testWidgets('library scroll', (tester) async {
+    await tester.pumpWidget(ReadlyTestApp(books: fakeBooks(4000))); // fakes from the integration lesson
+    await tester.pumpAndSettle();
+    final list = find.byType(Scrollable).first;
+
+    await binding.traceAction(() async {
+      for (var i = 0; i < 5; i++) {
+        await tester.fling(list, const Offset(0, -2000), 4000);
+        await tester.pumpAndSettle();
+      }
+    }, reportKey: 'library_scroll');
+  });
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="test_driver/perf_driver.dart">
+
+```dart
+import 'package:flutter_driver/flutter_driver.dart' as driver;
+import 'package:integration_test/integration_test_driver.dart';
+
+Future<void> main() => integrationDriver(
+      responseDataCallback: (data) async {
+        if (data == null) return;
+        final timeline = driver.Timeline.fromJson(
+          data['library_scroll'] as Map<String, dynamic>,
+        );
+        final summary = driver.TimelineSummary.summarize(timeline);
+        await summary.writeTimelineToFile('library_scroll', pretty: true, includeSummary: true);
+      },
+    );
+```
+
+</CodeBlock>
+
+```bash
+flutter drive --driver=test_driver/perf_driver.dart \
+  --target=integration_test/library_scroll_perf_test.dart --profile
+```
+
+الـ summary بيطلع في `build/library_scroll.timeline_summary.json` بأرقام زي `average_frame_build_time_millis` و`worst_frame_build_time_millis` و`missed_frame_build_budget_count`، ونفسهم للـ rasterizer. الـ `missed_frame_build_budget_count` هو عدد الـ frames اللي الـ UI فيها عدّى الميزانية، وده الرقم اللي تحطه في الـ PR. والـ fakes هي نفسها بتاعة [درس الـ integration tests](/course/testing/integration/)، فالرقم مش معتمد على النت.
+
+### المستخدم مش في DevTools
+
+الـ DevTools بيقيس الموبايل اللي في إيدك. بس الـ jank اللي في التقييمات بيحصل على أجهزة انت عمرك ما هتشوفها. هنا الـ monitoring اللي في [درس الـ Observability](/course/production/observability/): Sentry بيسجّل الـ slow frames (أكتر من الميزانية) والـ frozen frames (أكتر من 700ms) لكل شاشة، فتعرف أنهي شاشة بتقطّع عند المستخدمين فعلًا، مش بس عندك.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>مفيش optimization من غير رقمين:</b> رقم قبل، ورقم بعد، على نفس الجهاز ونفس السيناريو. الـ PR اللي بيقول «حسّن الأداء» من غير الرقمين دول بيترجع.
+- <b>اسأل «مين اتأخر» قبل «إزاي أسرّع»:</b> الـ UI ولا الـ raster. نص الـ optimizations الغلط في الدنيا سببها إن حد صلّح الـ thread اللي مش متأخر.
+- <b>الأسوأ أهم من المتوسط:</b> متوسط 8ms ممكن يكون جواه 20 frame بـ 50ms، والمستخدم بيفتكر الـ 20 دول. بص على الـ worst وعدد الـ missed frames، أو الـ p90 لو عندك.
+- <b>الميزانية للشاشة، مش للـ app:</b> الشاشات اللي فيها scroll وanimations (المكتبة، والكتالوج) ليها ميزانية صارمة. شاشة الإعدادات ممكن frame فيها يتأخر من غير ما حد يحس. وفّر وقتك للشاشات اللي بتتحرك.
+- <b>الـ regressions في الـ CI:</b> الـ `traceAction` على جهاز ثابت (أو Firebase Test Lab) في nightly، والـ build بيفشل لو الـ `missed_frame_build_budget_count` زاد أكتر من حد. الأداء اللي مش متقاس بيرجع يبوظ في صمت.
+
+<Note kind="interview" title="سؤال interview">
+
+«الـ app بيقطّع. بتعمل إيه؟» مش بفتح الكود. بشغّل `flutter run --profile` على جهاز حقيقي متوسط، وبعمل الحركة اللي بتقطّع، وبفتح DevTools Performance. أول سؤال: الـ frames الحمرا بسبب الـ UI thread ولا الـ raster؟ لو الـ UI، بفعّل Track widget builds وبشوف مين بيتبني وبفتح الـ CPU profiler. لو الـ raster، بدوّر على saveLayer وclipping وصور كبيرة. وبسجّل baseline بأرقام (janky frames، وأسوأ frame) قبل أي تغيير، وبقيس تاني بعده. ولو قدرت، بحوّل السيناريو لـ integration test بـ `traceAction` عشان يتكرر في الـ CI.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«ليه ماينفعش تقيس الأداء في الـ debug mode؟» لأن الـ debug بيعمل compile بـ JIT ومعاه asserts وchecks كتير، فهو أبطأ بكتير، والـ JIT نفسه بيعمل pauses مش موجودة في الـ release. الـ profile mode بيعمل compile AOT زي الـ release، ومعاه بس الـ tracing اللي DevTools محتاجه. الحاجة الوحيدة اللي ينفع تعرفها من الـ debug هي العدد: widget اتبنى كام مرة، مش أخد قد إيه.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### إزاي الفريق اشتغل على «المكتبة بتقطّع»
+
+<BeforeAfter>
+
+<Side label="قبل: تخمين" kind="before">
+
+```text
+1. run in debug on the emulator: "everything stutters"
+2. add const everywhere, remove the cover shadows,
+   wrap the list in RepaintBoundary
+3. run in debug again: "feels smoother?"
+4. PR: "perf improvements"
+   - no numbers
+   - shadows gone (raster was never the problem)
+   - nobody knows which change did what
+```
+
+</Side>
+
+<Side label="بعد: قياس" kind="after">
+
+```text
+1. flutter run --profile on the reference phone
+2. baseline (DevTools, tracing OFF):
+   612 frames, 74 janky (12%), UI worst 48ms, raster worst 9ms
+   -> the UI thread, not the raster
+3. one recording with Track widget builds ON:
+   LibraryView builds on every SyncStatus change
+4. fix ONE thing, measure again with tracing OFF
+5. PR: "library: 74 -> 9 janky frames on the reference phone"
+   + the traceAction test so it stays fixed
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: يومين شغل، وتغييرات مالهاش علاقة ببعض، ومش عارفين أنهي واحدة فرقت، وشلنا حاجة من التصميم على الفاضي. بعد: نص ساعة قياس قالت إن المشكلة في الـ UI thread، وتسجيلة واحدة بالـ tracing قالت مين. التغيير واحد، والرقم قبل وبعد في الـ PR، والتست بيحرس الرقم. الـ rebuild اللي اتلقى هنا هو موضوع [الدرس الجاي](/course/performance/rebuilds/).
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="perf-measure-1">
+<Ask>الـ DevTools بيقول: الـ UI thread worst 48ms، والـ raster worst 9ms. حد اقترح يشيل الـ shadows من أغلفة الكتب. رأيك؟</Ask>
+<Answer>
+
+مش هيفرق. الـ shadows شغل raster، والـ raster عمره ما عدّى الميزانية. المشكلة في الـ UI thread: build أو layout أو كود Dart تقيل. الخطوة الجاية Track widget builds والـ CPU profiler على الـ frames الحمرا.
+
+</Answer>
+</Question>
+
+<Question id="perf-measure-2">
+<Ask>ليه الـ frame budget على شاشة 120Hz نص بتاع 60Hz، وده يفرق إزاي في القياس؟</Ask>
+<Answer>
+
+الشاشة بتطلب frame كل 1/120 ثانية، يعني 8.3ms بدل 16.6ms، والـ UI والـ raster كل واحد لازم يخلص فيهم. كود بياخد 12ms تمام على 60Hz وبيقطّع على 120Hz. فلازم تعرف الجهاز اللي بتقيس عليه، وماتقارنش أرقام أجهزة مختلفة.
+
+</Answer>
+</Question>
+
+<Question id="perf-measure-3">
+<Ask>فعّلت Track widget builds وTrack layouts، والـ janky frames بقوا الضعف. المشكلة كبرت؟</Ask>
+<Answer>
+
+لأ. الـ tracing نفسه ليه تمن لأنه بيسجّل event لكل widget، وأوقاته مش بتمثّل التكلفة الحقيقية. استخدمه عشان تعرف مين بيتبني، واقفله وسجّل تاني عشان أرقام الـ baseline.
+
+</Answer>
+</Question>
+
+<Question id="perf-measure-4">
+<Ask>إيه اللي ينفع تعرفه من الـ debug mode عن الأداء، وإيه اللي ماينفعش؟</Ask>
+<Answer>
+
+ينفع تعرف العدد: widget اتبنى كام مرة، وquery اتنادت كام مرة. ده مش بيتغير بالـ mode. ماينفعش تعرف الوقت: الـ debug JIT ومعاه checks، فالأرقام أبطأ بكتير وفيها pauses مش موجودة في الـ release. الوقت بيتقاس في profile mode على جهاز حقيقي.
+
+</Answer>
+</Question>
+
+<Question id="perf-measure-5">
+<Ask>إزاي تخلي قياس الـ scroll يتكرر بنفس الطريقة قبل وبعد التغيير، ويتحرس في الـ CI؟</Ask>
+<Answer>
+
+integration test بيعمل الـ fling بكود جوه `binding.traceAction(..., reportKey: ...)`، وdriver بيحوّل الـ timeline لـ `TimelineSummary` ويكتبه، والتشغيل بـ `flutter drive ... --profile` على جهاز ثابت. الرقم اللي بتراقبه زي `missed_frame_build_budget_count`، والـ CI يفشل لو زاد عن حد.
+
+</Answer>
+</Question>
+
+</Quiz>

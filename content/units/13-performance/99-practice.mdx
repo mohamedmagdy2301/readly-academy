@@ -1,0 +1,24 @@
+---
+title: "التطبيق والمهام"
+description: "مهام وحدة الـ Performance في Readly: baseline بالأرقام على جهاز مرجعي، وكل تصليح معاه رقم قبل ورقم بعد، من الـ rebuilds والقوائم والصور لحد الـ memory والـ startup وتمن الطبقات."
+type: "practice"
+---
+
+<Tasks>
+<Task id="perf-practice-1">اختار جهاز مرجعي (Android متوسط من سنتين أو أكتر) واكتب سيناريوهين ثابتين: scroll في المكتبة بـ 4000 كتاب fake لمدة 10 ثواني، وcold start لحد ما الكتب تظهر. سجّل الـ baseline في profile mode من غير Enhance tracing: عدد الـ frames، والـ janky، وأسوأ UI وأسوأ raster. واكتب في `docs/perf/baseline.md` الـ thread اللي متأخر في كل سيناريو (درس «القياس»).</Task>
+<Task id="perf-practice-2">حوّل سيناريو الـ scroll لـ integration test بـ `binding.traceAction` وdriver بيكتب الـ `TimelineSummary`، وشغّله بـ `flutter drive --profile`. حط `missed_frame_build_budget_count` والـ worst frame في الـ README بتاع `docs/perf/`، واكتب الحد اللي لو اتعدّى الـ build يعتبر regression (درس «القياس»).</Task>
+<Task id="perf-practice-3">فعّل Track widget build counts وعدّ الـ rebuilds في سيناريو الـ sync (20 عملية والمكتبة مفتوحة). نزّل كل `context.watch` من build الصفحات لـ widgets صغيرة بـ `select`، وغيّر كل `MediaQuery.of(context).size` لـ `MediaQuery.sizeOf`، وحط `RepaintBoundary` حوالين مؤشر الـ sync بعد ما تتأكد بـ Highlight repaints. اكتب عدد builds الـ `LibraryView` قبل وبعد في الـ PR (درس «الـ rebuilds»).</Task>
+<Task id="perf-practice-4">فعّل `prefer_const_constructors` و`prefer_const_literals_to_create_immutables` في `analysis_options.yaml` وشغّل `dart fix --apply`، ودوّر على كل method بترجّع widget في الـ presentation وحوّل اللي فيها `context.select` أو بتتبني كتير لـ widget classes. وقيس: هل الـ janky frames اتغيرت؟ اكتب الرقم حتى لو ماتغيرش، واشرح ليه (درس «الـ rebuilds»).</Task>
+<Task id="perf-practice-5">حوّل `LibraryBody` لـ `CustomScrollView` بـ `SliverPrototypeExtentList.builder` لكل قسم، و`ValueKey(book.id)` لكل tile، و`findChildIndexCallback` بـ Map. شيل أي `shrinkWrap: true` جوه scroll تاني في الـ app. قيس أول frame للمكتبة وسحب الـ scrollbar لنصها، قبل وبعد، وجرّب بحجم خط النظام الأكبر (درس «القوائم الطويلة»).</Task>
+<Task id="perf-practice-6">اعمل `BookCover` و`CoverSize` بـ `cached_network_image` و`memCacheWidth` مضروب في الـ DPR وplaceholder ثابت بنفس الحجم، وغيّر كل `Image.network` لغلاف في الـ app ليه. شغّل Highlight oversized images على المكتبة والكتالوج وصفحة الكتاب لحد ما مفيش صورة مقلوبة، وضيف `precacheImage` للغلاف الكبير مع الضغطة على الكتاب بنفس الـ provider. سجّل حجم الـ ImageCache وأسوأ raster frame في الكتالوج قبل وبعد (درس «الصور»).</Task>
+<Task id="perf-practice-7">سجّل CPU profile وانت بتغيّر حالة كتاب في المكتبة. أي `sort` أو `where().toList()` أو تجميع جوه `build` ينتقل للـ query (`COLLATE NOCASE`) أو للـ Cubit مرة لكل ليستة جديدة، و`toReadlyDate` يستخدم formatter متخزن لكل locale. اتأكد إن مفيش HydratedCubit شايل بيانات موجودة في drift. وحط `Timeline.timeSync` على أي حساب فاضل، واكتب وقته قبل وبعد (درس «الشغل التقيل على الـ main isolate»).</Task>
+<Task id="perf-practice-8">اعمل سيناريو الـ memory: افتح صفحة كتاب واكتب ملاحظة وارجع، 20 مرة، بـ GC وsnapshot قبل وبعد. صلّح أي class زاد 20، وتابع الـ retaining path لكل واحد واكتبه في الـ PR. وضيف `leak_tracker_flutter_testing` بـ `flutter_test_config.dart`، وwidget test بيفتح الـ `NoteEditor` ويقفله (درس «الـ Memory والتسريب»).</Task>
+<Task id="perf-practice-9">حط `TimelineTask` على كل خطوة في الـ `bootstrap` و`Timeline.instantSync('library.firstContent')` في الـ `LibraryCubit`، وقيس cold start بـ `--trace-startup` وبالعلامة. قسّم الخطوات لـ «قبل أول frame» و«بالتوازي» و«بعد أول frame»، وشيل أي طلب شبكة من قبل `runApp`، وجرّب الفتح من غير نت. اكتب الجدول قبل وبعد في `docs/perf/startup.md` (درس «وقت فتح الـ app»).</Task>
+<Task id="perf-practice-10">اعمل `benchmark/layers_bench.dart` اللي في درس «تمن الطبقات» على الـ entities بتاعة Readly، وشغّله بـ `dart compile exe`، وشغّل نفس الكود على الموبايل المرجعي في profile mode من شاشة debug مخفية. اكتب الجدول للجهازين، وقرر بالأرقام: هل فيه mapper في Readly محتاج يتغير؟ اكتب القرار في `docs/adr/` (درس «تمن الطبقات في الـ Clean Architecture»).</Task>
+</Tasks>
+
+<Deliverable>Readly ليه baseline مكتوب على جهاز مرجعي، وكل تصليح في الوحدة دي معاه رقم قبل ورقم بعد في الـ PR بتاعه. الـ scroll في المكتبة بـ 4000 كتاب من غير janky frames تقريبًا، وفتح المكتبة وسحب الـ scrollbar أقل من frame، والأغلفة متفكة بحجمها ومتخزنة على الـ disk، وفتح وقفل صفحة الكتاب 20 مرة مابيسيبش ولا object وراه، والـ app بيفتح من غير نت في نفس الوقت. والـ integration test بتاع الـ scroll شغال وبيحرس الأرقام دي.</Deliverable>
+
+<ReviewQuestion>اختار تصليح واحد عملته في الوحدة دي، واحكي رحلته كاملة بالأرقام: السيناريو والجهاز، والـ baseline، وإزاي عرفت الـ thread المتأخر، وإيه الأداة اللي وصلتك للسطر (Rebuild Stats، أو CPU profiler، أو Memory diff، أو TimelineTask)، والتصليح، والقياس بعده. وبعدين قول: فيه تصليح جربته وطلع مافرقش؟ إيه اللي القياس علّمهولك فيه؟</ReviewQuestion>
+
+<LogBox id="perf-practice-log" />

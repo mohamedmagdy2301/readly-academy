@@ -1,0 +1,27 @@
+<svg viewBox="0 0 760 300" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="الـ UI thread والـ raster thread شغالين زي خط إنتاج على كل vsync. frame 3 اتأخر في الـ UI 38ms، فالـ raster مالقاش حاجة يرسمها عند الـ vsync اللي بعده: jank">
+<g stroke="var(--line)" stroke-width="1.2" stroke-dasharray="4 4">
+<line x1="110" y1="40" x2="110" y2="230"/><line x1="230" y1="40" x2="230" y2="230"/><line x1="350" y1="40" x2="350" y2="230"/><line x1="470" y1="40" x2="470" y2="230"/><line x1="590" y1="40" x2="590" y2="230"/><line x1="710" y1="40" x2="710" y2="230"/>
+</g>
+<g font-size="10" fill="var(--muted)" text-anchor="middle">
+<text x="110" y="32">vsync</text><text x="230" y="32">+16.6ms</text><text x="350" y="32">+33ms</text><text x="470" y="32">+50ms</text><text x="590" y="32">+66ms</text><text x="710" y="32">+83ms</text>
+</g>
+<text x="16" y="100" font-size="13" fill="var(--ink)" font-weight="600">UI thread</text>
+<text x="16" y="116" font-size="9" fill="var(--muted)">build · layout · Dart</text>
+<text x="16" y="180" font-size="13" fill="var(--ink)" font-weight="600">Raster</text>
+<text x="16" y="196" font-size="9" fill="var(--muted)">layer tree → GPU</text>
+<g font-size="11" text-anchor="middle" fill="var(--ink)">
+<rect x="112" y="88" width="70" height="34" rx="6" fill="var(--accent-soft)" stroke="var(--accent)"/><text x="147" y="109">F1 · 7ms</text>
+<rect x="232" y="88" width="80" height="34" rx="6" fill="var(--accent-soft)" stroke="var(--accent)"/><text x="272" y="109">F2 · 9ms</text>
+<rect x="352" y="88" width="226" height="34" rx="6" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="1.6"/><text x="465" y="109">F3 · 38ms</text>
+<rect x="592" y="88" width="66" height="34" rx="6" fill="var(--accent-soft)" stroke="var(--accent)"/><text x="625" y="109">F4 · 6ms</text>
+<rect x="232" y="168" width="44" height="34" rx="6" fill="var(--good-soft)" stroke="var(--good)"/><text x="254" y="189">F1</text>
+<rect x="352" y="168" width="48" height="34" rx="6" fill="var(--good-soft)" stroke="var(--good)"/><text x="376" y="189">F2</text>
+<rect x="472" y="168" width="110" height="34" rx="6" fill="none" stroke="var(--warn)" stroke-dasharray="5 4"/><text x="527" y="189" fill="var(--warn)" class="ar" direction="rtl">فاضي: jank</text>
+<rect x="592" y="168" width="48" height="34" rx="6" fill="var(--good-soft)" stroke="var(--good)"/><text x="616" y="189">F3</text>
+<rect x="712" y="168" width="40" height="34" rx="6" fill="var(--good-soft)" stroke="var(--good)"/><text x="732" y="189">F4</text>
+</g>
+<path d="M 182 122 C 200 150, 215 160, 236 166" fill="none" stroke="var(--muted)" stroke-width="1.2" marker-end="url(#mk-mut)"/>
+<path d="M 578 122 C 586 150, 590 158, 596 166" fill="none" stroke="var(--warn)" stroke-width="1.4" marker-end="url(#mk-warn)"/>
+<text x="380" y="262" text-anchor="middle" font-size="12" fill="var(--ink)" class="ar" direction="rtl">كل frame بيتبني في الـ UI وبيترسم في الـ raster عند الـ vsync اللي بعده</text>
+<text x="380" y="282" text-anchor="middle" font-size="12" fill="var(--warn)" class="ar" direction="rtl">F3 خد 38ms في الـ UI، فالـ raster مالقاش حاجة جديدة يرسمها مرتين: الـ scroll قطّع</text>
+</svg>

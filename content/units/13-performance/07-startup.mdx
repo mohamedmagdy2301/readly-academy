@@ -1,0 +1,302 @@
+---
+title: "وقت فتح الـ app"
+description: "من الضغطة على الأيقونة لحد ما المكتبة تظهر: تقيسه بـ --trace-startup وبـ TimelineTask في الـ bootstrap، وتشيل الشبكة من قبل أول frame، وتشغّل اللي مستقل بالتوازي، وتأجّل اللي أول frame مش محتاجه، والـ lazy registration في get_it، والفخ اللي بيحصل لما تأجّل حاجة أول frame محتاجها."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="المحل اللي مابيفتحش بابه لحد ما الجرد يخلص">
+
+صاحب محل بيوصل الصبح، وقبل ما يفتح الباب بيعمل كل حاجة: يعدّ الفلوس، ويجرد المخزن، ويتصل بالمورد يسأله على الأسعار الجديدة، ويرتّب الفاترينة، ويسقي الزرع. الزباين واقفين بره ساعة. وأغلبهم داخل يشتري حاجة واحدة من على أول رف.
+
+صاحب محل تاني بيفتح الباب أول ما يعدّ الفلوس اللي في الدرج، لأن من غيرها مايقدرش يبيع. والجرد والزرع بيتعملوا وهو شغال، في الوقت اللي مفيش فيه زباين. والمورد بيتصل بيه بعدين، ولو الأسعار اتغيرت يعدّلها. واللي بيقدر يتعمل في نفس الوقت (حد بيرتّب الفاترينة وحد بيعدّ الفلوس) بيتعمل في نفس الوقت.
+
+</Analogy>
+
+الباب هو أول frame مفيد: الشاشة اللي المستخدم فتح الـ app عشانها، مش الـ splash. والفلوس اللي في الدرج هي اللي أول frame محتاجها فعلًا: الـ settings (عشان الثيم مايوَمّضش)، والـ session (عشان تعرف تروح للـ login ولا المكتبة). وكل اللي غير كده يتأجّل لبعد ما الباب يفتح، أو يتعمل بالتوازي، أو مايتعملش خالص لحد ما حد يحتاجه.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### المشكلة: 2.9 ثانية لحد المكتبة
+
+على الموبايل المرجعي، cold start (الـ app مقفول تمامًا ومش في الـ recent apps): من الضغطة على الأيقونة لحد ما الكتب تظهر في المكتبة، 2.9 ثانية. المستخدم بيشوف الـ splash، وبعدين spinner في المكتبة، وبعدين الكتب.
+
+### القياس 1: --trace-startup
+
+```bash
+flutter run --profile --trace-startup   # runs, records the startup, then exits
+```
+
+بيكتب `build/start_up_info.json` فيه أوقات بالـ microseconds من لحظة ما الـ engine بدأ:
+
+```json
+{
+  "engineEnterTimestampMicros": 96025565262,
+  "timeToFrameworkInitMicros": 412000,
+  "timeToFirstFrameRasterizedMicros": 1630000,
+  "timeToFirstFrameMicros": 1598000,
+  "timeAfterFrameworkInitMicros": 1186000
+}
+```
+
+- <b>`timeToFrameworkInitMicros`:</b> لحد ما Flutter نفسه جاهز. ده شغل الـ engine، ومش في إيدك كتير.
+- <b>`timeToFirstFrameMicros`:</b> لحد أول frame اتبنى. الفرق بينه وبين الـ framework init هو `timeAfterFrameworkInitMicros`: ده الـ `main()` بتاعك والـ bootstrap وأول build. وده اللي في إيدك.
+- <b>بس أول frame مش هو المكتبة:</b> أول frame ممكن يبقى spinner. الرقم ده مش بيقول إمتى الكتب ظهرت.
+
+### القياس 2: علّم كل خطوة في الـ bootstrap
+
+<CodeBlock label="bootstrap بعلامات في الـ timeline">
+
+```dart
+Future<void> bootstrap(AppConfig config) async {
+  final boot = TimelineTask()..start('boot');
+  WidgetsFlutterBinding.ensureInitialized();
+
+  final deps = TimelineTask(parent: boot)..start('setupDependencies');
+  await setupDependencies(config);
+  deps.finish();
+  // ... the rest of bootstrap, each step in its own TimelineTask
+  boot.finish();
+}
+
+// LibraryCubit: the moment the user actually sees books
+void _onBooks(List<Book> books) {
+  if (state is LibraryLoading) Timeline.instantSync('library.firstContent');
+  emit(LibraryLoaded(books));
+}
+```
+
+</CodeBlock>
+
+الـ `TimelineTask` بيعمل event ليه بداية ونهاية ممكن يعدّي على `await`، والـ `Timeline.instantSync` بيحط علامة في لحظة. افتح DevTools بعد ما الـ app يفتح في profile mode، وفي الـ Timeline events هتلاقي كل خطوة بوقتها، والعلامة `library.firstContent` هي الرقم اللي المستخدم بيحس بيه.
+
+### اللي طلع في Readly
+
+الـ bootstrap اتجمّع من كذا درس: الـ prefs من [درس الـ Settings](/course/di-scale/settings/)، والـ tokens من [درس الـ Session](/course/di-scale/session/)، والـ Hydrated storage من [درس الـ Hydrated](/course/state-management/hydrated-replay/)، والـ Workmanager من [درس Offline-first](/course/offline/offline/)، وSentry من [درس الـ Observability](/course/production/observability/). وكل واحد ضاف `await` تحت اللي قبله:
+
+| الخطوة | الوقت | أول frame محتاجها؟ |
+| --- | --- | --- |
+| `SharedPreferencesWithCache.create` | 45ms | أيوه: الثيم واللغة |
+| `tokens.clearIfReinstalled()` (secure storage) | 140ms | أيوه: الـ session |
+| `HydratedStorage.build` | 160ms | الـ `CatalogFiltersCubit` بس، والكتالوج مش أول شاشة |
+| `Workmanager().initialize` | 110ms | لأ |
+| `await CheckForUpdate()` قبل `runApp` (حد ضافه عشان يعرف يبدأ بـ `/update`) | 700ms على 4G، ولحد الـ timeout من غير نت | لأ |
+| `registerSingleton<SyncService>(SyncService(...)..start())` | 90ms، وبيبدأ drain بطلبات على النت | لأ |
+| `SentryFlutter.init` | 60ms | لأ، بس لازم بدري عشان يمسك أي crash |
+| أول query في drift (فتح الـ DB في isolate + الـ migrations) | 220ms، بعد أول frame والمكتبة spinner | أيوه: دي المكتبة |
+
+المجموع قبل أول frame حوالي 1.3 ثانية من الكود بتاعنا، وبعدها 220ms كمان لحد الكتب. والأسوأ: من غير نت، الـ `CheckForUpdate` بيستنى الـ timeout قبل ما الـ app يفتح أصلًا. الـ app بتاع offline-first مابيفتحش offline.
+
+### الإصلاحات بالترتيب
+
+<b>1. مفيش شبكة قبل أول frame.</b> الـ `CheckForUpdate` يتنادى بعد `runApp`. والـ redirect بتاع go_router (اللي في [درس الـ Future](/course/dart-async/future/) كان بيستنى `policy()`) مايستناش الشبكة في أول route: بيقرا آخر نتيجة معروفة من `UpdateStatusCubit` صغير (Cubit جديد في الدرس ده، شايل `UpdateStatus?`)، والـ router بيتعمله refresh لما النتيجة توصل. ده نفس الـ «fail open» اللي [درس الـ release](/course/production/release/) قاله: اللي عنده نسخة قديمة جدًا هيتنقل لـ `/update` بعد ثانية، وده أحسن من إن كل الناس تستنى.
+
+<b>2. اللي مستقل يتعمل بالتوازي:</b>
+
+```dart
+final prefs = await SharedPreferencesWithCache.create(
+  cacheOptions: const SharedPreferencesWithCacheOptions(),
+);
+final tokens = SecureTokenStore(const FlutterSecureStorage(), prefs); // needs prefs
+await Future.wait([
+  tokens.clearIfReinstalled(),
+  _buildHydratedStorage(), // independent of tokens
+]);
+```
+
+الـ tokens محتاجة الـ prefs، فالـ prefs الأول. بس الـ tokens والـ Hydrated storage مالهمش علاقة ببعض، فبيستنوا مع بعض. الوقت بقى أطول واحد فيهم، مش المجموع.
+
+<b>3. اللي أول frame مش محتاجه يتأجّل لبعده:</b>
+
+```dart
+runApp(const ReadlyApp());
+
+// after the first frame is on screen
+WidgetsBinding.instance.addPostFrameCallback((_) {
+  unawaited(Workmanager().initialize(callbackDispatcher));
+  getIt<SyncService>().start(); // drain the queue now that the user sees the app
+});
+```
+
+<b>4. الـ registration يفضل lazy، والـ constructor مايشتغلش:</b> زي ما [درس الـ DI](/course/di-scale/di/) قال، `registerLazySingleton` مابيعملش الـ object لحد ما حد يطلبه. حد غيّر `SyncService` لـ `registerSingleton` وحط `start()` في الـ constructor، فبقى بيتعمل ويبدأ شغل شبكة وقت التسجيل نفسه. رجّعناه lazy، والـ `start()` بقى نداء صريح بعد أول frame.
+
+<b>5. الـ DB تبدأ تفتح بدري:</b> أول query بيفتح الـ DB ويعمل الـ migrations، وده 220ms بعد أول frame. لو بدأناه وقت الـ bootstrap من غير `await`، الفتح بيحصل في isolate الـ DB بالتوازي مع الـ startup:
+
+```dart
+// in setupDependencies, right after registering AppDatabase
+unawaited(getIt<AppDatabase>().customSelect('SELECT 1').get()); // opens + migrates in the background
+```
+
+<Diagram name="d-perf-startup">
+
+قبل: كل خطوة await ورا اللي قبلها، وطلب شبكة قبل أول frame، والـ DB بتتفتح بعد ما المكتبة طلعت spinner. بعد: اللي أول frame بيقراه بس، والمستقل بالتوازي، والباقي بعد ما المستخدم شاف الـ app.
+
+</Diagram>
+
+القياس بعد: الكود بتاعنا قبل أول frame من 1.3 ثانية لـ 260ms، و`library.firstContent` من 2.9 ثانية لـ 1.1 ثانية من الضغطة على الأيقونة. ومن غير نت، الـ app بيفتح في نفس الوقت.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### أجّلت حاجة وأول frame كان محتاجها
+
+بعد الإصلاحات، حد قال «طيب نأجّل الـ prefs كمان». الـ app فتح أبيض لجزء من الثانية وقلب أسود عند اللي مختار dark. ده بالظبط الـ flash اللي [درس الـ Settings](/course/di-scale/settings/) حلّه بإنه يحمّل الـ prefs قبل `runApp`. وفي حالة تانية، حد أجّل `clearIfReinstalled`، فالـ `AuthCubit.checkSession()` قرا token من التثبيت القديم.
+
+القاعدة: قبل ما تأجّل حاجة، اسأل «مين بيقراها sync في أول build؟». الـ `SettingsCubit` بيقرا الـ prefs sync في الـ constructor، والـ `AuthCubit` بيقرا الـ tokens. دول جوه الباب. ولو أجّلت حاجة وحد لسه بيطلبها من get_it قبل ما تتسجّل، هتشوف `StateError` إن الـ type مش registered، أو `LateInitializationError`. الـ crash ده أحسن من الـ flash، لأنه على الأقل بيقولك.
+
+### الـ splash الطويلة «عشان الـ branding»
+
+الفريق اقترح animation للـ logo مدتها 3 ثواني، والـ init يبدأ بعدها «عشان الـ animation ماتقطّعش». ده بيحط حد أدنى للـ startup: مهما الـ bootstrap بقى سريع، المستخدم هيستنى 3 ثواني كل مرة. وفي [درس Escore](/course/performance/escore/) هتشوف ده بالظبط في مشروع حقيقي.
+
+- <b>الـ native splash:</b> بتظهر من أول ما الـ process يبدأ لحد أول frame، من غير أي كود Dart. خليها هي الـ branding.
+- <b>لو فيه animation:</b> يشتغل بالتوازي مع الـ init، وينتهي لما الـ init ينتهي، مش العكس. ولو الـ init بيقطّع الـ animation، ده معناه إن الـ init فيه شغل تقيل على الـ main، وده موضوع [درس الـ main isolate](/course/performance/main-isolate/).
+
+### الـ HydratedStorage بيقرا أكتر من اللي محتاجه
+
+الـ `HydratedStorage.build` بياخد 160ms لأنه بيفتح الـ box ويقرا كل الـ states المتخزنة في الذاكرة. لو حد عمل hydrate لحاجة كبيرة (زي الـ `LibraryCubit` في [درس الـ main isolate](/course/performance/main-isolate/))، الرقم ده بيكبر مع حجم المكتبة. والـ storage لازم يبقى جاهز قبل أول `HydratedCubit` يتعمل، فمش هتعرف تأجّله بسهولة لو أول شاشة فيها hydrated Cubit.
+
+الحل إن الـ hydrated state تفضل صغيرة: فلاتر، ومسودات، وإعدادات شاشة. والبيانات مكانها drift، اللي بيفتح في isolate لوحده ومابيقراش غير اللي الـ query طلبه.
+
+### Android: الـ app بيفتح من الـ background أسرع بكتير
+
+قست مرة 2.9 ومرة 0.6. الفرق إن التانية كانت warm start: الـ process لسه عايش في الـ background، فمفيش engine ولا Dart VM ولا bootstrap. القياس اللي بيهم هو الـ cold start، لأنه أول تجربة وأسوأ تجربة. اقفل الـ app من الـ recent apps، أو `adb shell am force-stop <package>`، قبل كل قياس.
+
+### الـ app size والـ startup
+
+الـ binary الأكبر بياخد وقت أطول عشان يتحمّل من الـ storage، وده بيبان أكتر على الموبايلات الرخيصة. `flutter build appbundle --analyze-size` بيطلّع ملف تفتحه في DevTools (App Size tool) وبيوريك كل package واخدة قد إيه. لو فيه feature تقيلة ونادرة (استيراد Goodreads مثلًا)، Dart بيدعم `import 'goodreads_import.dart' deferred as goodreads;` و`await goodreads.loadLibrary()`. بس الـ deferred components في Flutter محتاجة إعداد Play Feature Delivery على Android، ومش مدعومة على iOS. لـ app بحجم Readly، ده غالبًا مايستاهلش، بس اعرف إنه موجود.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>قيس اللي المستخدم بيحس بيه:</b> مش «أول frame»، أول محتوى مفيد. علامة في الـ timeline لحظة ما الكتب ظهرت، وتقيس cold start على الجهاز المرجعي.
+- <b>قسّم الـ bootstrap لتلات خانات:</b> لازم قبل أول frame (settings، session، crash reporting)، وممكن بالتوازي، ويتأجّل لبعد أول frame (workers، sync، version check، analytics). كل `await` جديد في الـ bootstrap لازم يجاوب على السؤال ده في الـ review.
+- <b>مفيش شبكة على الـ startup path:</b> أي `await` لطلب قبل أول frame معناه إن الـ app مش بيفتح من غير نت، وبيفتح ببطء على نت ضعيف. ده تناقض مع أي app offline-first.
+- <b>الـ lazy هو الافتراضي:</b> `registerLazySingleton` و`registerFactory`، والـ constructors مابتعملش شغل (لا شبكة ولا listen ولا I/O). أي شغل بيبدأ بنداء صريح في مكان معروف.
+- <b>الـ startup بيبوظ حتة حتة:</b> كل درس ضاف 100ms وكان معقول لوحده. علامات الـ TimelineTask في الـ bootstrap، ورقم الـ cold start في كل release، بيمسكوا ده قبل ما يبقى 3 ثواني.
+
+<Note kind="interview" title="سؤال interview">
+
+«الـ app بياخد وقت عشان يفتح. بتعمل إيه؟» بقيس cold start في profile mode على جهاز متوسط: `flutter run --profile --trace-startup` بيدّيني لحد أول frame، وعلامات `TimelineTask` في الـ bootstrap بتقولي كل خطوة بتاخد قد إيه، وعلامة لحظة ما أول محتوى مفيد ظهر. بعدين بقسّم الخطوات: اللي أول frame محتاجها فعلًا (الـ settings عشان الثيم، والـ session عشان الـ route)، واللي مستقلة فتتعمل بـ `Future.wait`، واللي تتأجّل لبعد أول frame بـ `addPostFrameCallback`. وأي طلب شبكة قبل `runApp` بيطلع بره. والـ DI يفضل lazy، والـ constructors مابتعملش شغل.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«`registerSingleton` ولا `registerLazySingleton`، من ناحية الـ startup؟» الـ `registerSingleton` بيعمل الـ object وقت التسجيل، فكل حاجة بتتسجّل كده بتتعمل في الـ bootstrap قبل أول frame، حتى لو محدش هيستخدمها في أول شاشة. الـ `registerLazySingleton` بيأجّل لحد أول طلب. فالـ lazy هو الافتراضي، والـ `registerSingleton` لحاجة لازم تبقى جاهزة ومحتاجة `await` (زي الـ prefs) فبتتعمل بإيدك وتتسجّل. وفي الحالتين، الـ constructor مايبدأش شغل.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### الـ bootstrap
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+Future<void> bootstrap(AppConfig config) async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await setupDependencies(config);
+  // inside: prefs, then tokens, then hydrated,
+  // then Workmanager().initialize, then
+  // registerSingleton(SyncService(...)..start())
+
+  final update = await getIt<CheckForUpdate>()(); // network
+  final initial = update == UpdateStatus.required ? '/update' : '/library';
+
+  await SentryFlutter.init(
+    (o) => o.dsn = config.sentryDsn,
+    appRunner: () => runApp(ReadlyApp(initialLocation: initial)),
+  );
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+Future<void> bootstrap(AppConfig config) async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await setupDependencies(config);
+  // inside: prefs, then Future.wait([tokens, hydrated]);
+  // SyncService is lazy again, and AppDatabase starts opening unawaited
+
+  await SentryFlutter.init(
+    (o) => o.dsn = config.sentryDsn,
+    appRunner: () => runApp(const ReadlyApp()),
+  );
+
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    unawaited(Workmanager().initialize(callbackDispatcher));
+    getIt<SyncService>().start();
+    unawaited(getIt<UpdateStatusCubit>().check()); // the router redirect reads it
+  });
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: كل حاجة متسلسلة، وطلب شبكة بيقرر أول route، فمن غير نت الـ app بيستنى الـ timeout. والـ SyncService بيبدأ يبعت طلبات وقت التسجيل. بعد: قبل أول frame الحاجات اللي أول frame بيقراها بس، والمستقل منها بالتوازي. والـ version check بقى Cubit بيقرا منه الـ redirect لما النتيجة توصل، والـ worker والـ sync بعد ما المستخدم شاف الـ app. القياس: الكود بتاعنا قبل أول frame من 1.3s لـ 260ms، والكتب بتظهر بعد 1.1s بدل 2.9s، ومن غير نت نفس الوقت.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="perf-startup-1">
+<Ask>`timeToFirstFrameMicros` بقى 900ms، بس المستخدمين لسه بيقولوا الـ app بطيء في الفتح. إيه اللي ممكن يكون الرقم ده مش بيقيسه؟</Ask>
+<Answer>
+
+أول frame ممكن يكون spinner أو splash، مش المحتوى. اللي المستخدم بيحس بيه هو أول محتوى مفيد (الكتب ظهرت)، وده محتاج علامة بإيدك في الـ timeline (`Timeline.instantSync` لحظة أول LibraryLoaded). وكمان لازم تتأكد إنك بتقيس cold start مش warm.
+
+</Answer>
+</Question>
+
+<Question id="perf-startup-2">
+<Ask>`await CheckForUpdate()` قبل `runApp` عشان تقرر أول route. إيه المشكلة، وإيه البديل؟</Ask>
+<Answer>
+
+طلب شبكة على الـ startup path: على نت ضعيف كل الناس بتستنى، ومن غير نت الـ app بيستنى الـ timeout قبل ما يفتح، وده عكس الـ offline-first. البديل إن الـ check يتعمل بعد أول frame، ونتيجته في Cubit، والـ redirect بتاع go_router يقرا منه ويودّي لـ `/update` لما الإجابة توصل.
+
+</Answer>
+</Question>
+
+<Question id="perf-startup-3">
+<Ask>أجّلت تحميل الـ prefs لبعد `runApp` عشان الـ startup يبقى أسرع. إيه اللي هيحصل؟</Ask>
+<Answer>
+
+الـ `SettingsCubit` بيقرا الثيم واللغة sync في الـ constructor، فأول frame هيترسم بالقيم الافتراضية، وبعدين يتعاد لما الـ prefs تيجي: flash أبيض عند اللي مختار dark، وممكن لغة غلط. الـ prefs من الحاجات اللي أول frame محتاجها، فتفضل قبل `runApp`.
+
+</Answer>
+</Question>
+
+<Question id="perf-startup-4">
+<Ask>الـ tokens محتاجة الـ prefs، والـ HydratedStorage مالوش علاقة بالاتنين. إزاي ترتّبهم؟</Ask>
+<Answer>
+
+الـ prefs الأول بـ await، وبعدين `Future.wait([tokens.clearIfReinstalled(), buildHydratedStorage()])`. كده الوقت بقى الـ prefs + أطول واحد في الاتنين، بدل مجموع التلاتة.
+
+</Answer>
+</Question>
+
+<Question id="perf-startup-5">
+<Ask>`registerSingleton<SyncService>(SyncService(...)..start())`. إيه علاقة ده بالـ startup؟</Ask>
+<Answer>
+
+الـ `registerSingleton` بيعمل الـ object وقت التسجيل، يعني جوه الـ bootstrap قبل أول frame، والـ `start()` بيبدأ drain بطلبات شبكة وقت الـ startup نفسه. الصح `registerLazySingleton` من غير شغل في الـ constructor، و`start()` نداء صريح بعد أول frame.
+
+</Answer>
+</Question>
+
+</Quiz>

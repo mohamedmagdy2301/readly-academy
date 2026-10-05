@@ -1,0 +1,319 @@
+---
+title: "القوائم الطويلة"
+description: "مكتبة فيها 4000 كتاب: ليه Column جوه SingleChildScrollView وshrinkWrap بيبنوا كل حاجة، وListView.builder والـ slivers، وitemExtent وprototypeItem لما الـ scroll بيقفز، والـ keys وfindChildIndexCallback، والـ keep-alive اللي بياكل الذاكرة."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="المكتبة اللي بتفرش كل الكتب على الأرض">
+
+مكتبة فيها 4000 كتاب. أمين المكتبة الأول، كل ما زبون يدخل، بيطلّع الـ 4000 كتاب ويفرشهم على الأرض بالترتيب، عشان لو الزبون عايز يبص على أي واحد يلاقيه. الزبون بيستنى نص ساعة لحد ما الفرش يخلص، وبعدين بيبص على أول 10 ويمشي.
+
+أمين المكتبة التاني بيطلّع الرف اللي قدام الزبون بس، وكل ما الزبون يتحرك خطوة، بيرجّع الرف اللي ورا ويطلّع اللي قدام. ولو الزبون قال «وديني لحرف الميم»، الأمين ده محتاج يعرف الميم فين. لو كل الكتب نفس السُمك، بيحسبها في ثانية: كتاب 2100 × 3 سم. لو كل كتاب سُمكه مختلف، لازم يقيس كل كتاب لحد الميم.
+
+</Analogy>
+
+الأمين الأول هو `Column` جوه `SingleChildScrollView`، أو `ListView(children: [...])`: بيبني كل الـ items أول ما الشاشة تفتح. التاني هو `ListView.builder`: بيبني اللي ظاهر بس، واللي قريب منه. وسُمك الكتاب هو الـ <b>itemExtent</b>: لو Flutter عارف ارتفاع كل item من الأول، القفز لأي مكان في الليستة بيبقى حسبة، مش قياس.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### المشكلة: فتح المكتبة بياخد ثانيتين
+
+المكتبة في Readly فيها تلات أقسام: «بقرا دلوقتي»، و«عايز أقراه»، و«خلصته». حد كتبها كده لما كان عنده 30 كتاب:
+
+<CodeBlock label="LibraryBody: كل قسم ليستة جوه scroll واحد">
+
+```dart
+SingleChildScrollView(
+  child: Column(
+    children: [
+      for (final section in sections) ...[
+        SectionHeader(section.status),
+        ListView.builder(
+          shrinkWrap: true,                               // "it complained about unbounded height"
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: section.books.length,
+          itemBuilder: (context, i) => BookTile(book: section.books[i]),
+        ),
+      ],
+    ],
+  ),
+)
+```
+
+</CodeBlock>
+
+مستخدم عنده 4000 كتاب فتح المكتبة. القياس في profile mode على الموبايل المرجعي: أول frame للمكتبة 1900ms، والـ Track widget builds بيقول إن الـ `BookTile` اتبنى 4000 مرة في الـ frame ده. والـ memory زادت 90MB.
+
+الـ `ListView.builder` هنا مش lazy خالص. الـ `shrinkWrap: true` معناه «اتمدد على قد محتواك»، وعشان يعرف محتواه قد إيه، لازم يبني ويعمل layout لكل item. والـ `SingleChildScrollView` بيعمل layout لكل اللي جواه. فالـ builder اتحوّل لـ Column.
+
+### الحل: scroll واحد، وكل قسم sliver
+
+<CodeBlock label="CustomScrollView بأقسام lazy">
+
+```dart
+CustomScrollView(
+  slivers: [
+    for (final section in sections) ...[
+      SliverToBoxAdapter(child: SectionHeader(section.status)),
+      SliverList.builder(
+        itemCount: section.books.length,
+        itemBuilder: (context, i) => BookTile(book: section.books[i]),
+      ),
+    ],
+  ],
+)
+```
+
+</CodeBlock>
+
+الـ `CustomScrollView` هو الـ scroll الوحيد، والـ `SliverList.builder` بيبني الـ items اللي داخلة في الشاشة (والمسافة اللي حواليها) بس، حتى لو هو القسم التالت. القياس بعد: أول frame 140ms، والـ `BookTile` اتبنى 14 مرة، والـ memory زادت 6MB.
+
+| الأداة | بتبني إيه |
+| --- | --- |
+| `Column` جوه `SingleChildScrollView` | كل حاجة، أول مرة |
+| `ListView(children: [...])` | كل الـ widgets بتتعمل، والـ layout lazy. للقوائم القصيرة الثابتة بس |
+| `ListView.builder` / `SliverList.builder` | اللي ظاهر بس، والـ widget بيتعمل وقت ما يظهر |
+| أي builder ومعاه `shrinkWrap: true` جوه scroll تاني | كل حاجة، زي الـ Column |
+| `GridView.builder` / `SliverGrid.builder` | زي الـ builder، للـ grid |
+
+### itemExtent: لما المستخدم يسحب الـ scrollbar
+
+المكتبة فيها scrollbar تقدر تسحبه (`Scrollbar(interactive: true)`). المستخدم سحبه من فوق لنص الليستة. الـ frame ده خد 310ms.
+
+عشان Flutter يعرف إيه اللي هيظهر في نص الليستة، لازم يعرف الـ item رقم 2000 بيبدأ فين. ولو كل item ارتفاعه حسب محتواه، مفيش طريقة غير إنه يعمل layout للي قبله. وده بالظبط اللي الـ docs بتقوله: لما تحدد الـ `itemExtent` أو الـ `prototypeItem`، الـ scrolling بيستخدم المعلومة دي ويوفّر شغل، خصوصًا لما مكان الـ scroll بيتغير مرة واحدة كتير.
+
+```dart
+// every BookTile is exactly 72 logical pixels
+SliverFixedExtentList.builder(
+  itemExtent: 72,
+  itemCount: section.books.length,
+  itemBuilder: (context, i) => BookTile(book: section.books[i]),
+)
+
+// or with ListView
+ListView.builder(itemExtent: 72, itemCount: books.length, itemBuilder: ...)
+```
+
+بعدها، القفز لنص الليستة بقى حسبة: 2000 × 72. الـ frame بقى 9ms.
+
+### prototypeItem: الارتفاع ثابت بس انت مش عارفه
+
+الـ 72 دي بتتكسر لو المستخدم كبّر الخط من إعدادات الموبايل: الـ `BookTile` بقى 88، والـ `itemExtent` لسه 72، فالنص اتقص. الـ `prototypeItem` بيحل ده: بتدّيه item نموذج، وFlutter بيقيسه مرة، وبيعتبر كل الـ items زيه.
+
+```dart
+ListView.builder(
+  prototypeItem: BookTile(book: Book.placeholder), // measured once, with the real text scale
+  itemCount: books.length,
+  itemBuilder: (context, i) => BookTile(book: books[i]),
+)
+// slivers: SliverPrototypeExtentList.builder(prototypeItem: ..., ...)
+```
+
+الشرط إن كل الـ items فعلًا نفس الارتفاع. لو فيه tile بسطرين عنوان، هيتقص. الـ `BookTile` في Readly بيقص العنوان على سطر واحد (`maxLines: 1`) عشان كده بالظبط.
+
+ولو الارتفاعات مختلفة بس معروفة من البيانات (header بـ 40 وكتاب بـ 72 في نفس الليستة مثلًا)، فيه `itemExtentBuilder` في `ListView.builder`، و`SliverVariedExtentList` في الـ slivers: function بتاخد الـ index وبترجّع الارتفاع.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### الـ keys: الـ tile بيفتكر حاجة مش بتاعته
+
+ده اتشرح بالتفصيل في [درس أنواع الـ Cubit المتقدمة](/course/state-management/cubit-types-advanced/): لما الـ tile عنده state (Cubit، أو animation، أو checkbox)، ومن غير key، الـ ListView بيربط الـ state بالمكان مش بالكتاب. كتاب اتضاف فوق، والـ state بتاعة «Matilda» بقت على «Dune». الحل `ValueKey(book.id)`.
+
+اللي يهمنا هنا الأداء: مع الـ key، لما الترتيب يتغير، Flutter بيحتاج يعرف الـ key ده بقى في index كام. من غير مساعدة، الـ ListView مش هيلاقي الـ element القديم، فهيرميه ويعمل جديد، والـ state هتضيع. الـ `findChildIndexCallback` بيقوله:
+
+<CodeBlock label="findChildIndexCallback بـ Map مش loop">
+
+```dart
+final indexById = {for (var i = 0; i < books.length; i++) books[i].id: i}; // built once per list
+
+ListView.builder(
+  itemCount: books.length,
+  findChildIndexCallback: (key) => indexById[(key as ValueKey<BookId>).value],
+  itemBuilder: (context, i) => BookTile(key: ValueKey(books[i].id), book: books[i]),
+)
+```
+
+</CodeBlock>
+
+- <b>الـ Map مش loop:</b> الـ callback بيتنادى لكل item ظاهر في كل layout بعد التغيير. لو بيدوّر بـ `for` على 4000 كتاب، ده 4000 × 14 مقارنة في كل frame. الـ Map بيخليها lookup واحد.
+- <b>الـ Map مكانها مش الـ build:</b> لو الليستة نفسها بتتبني كتير، الـ Map تتعمل مع الليستة في الـ state أو في الـ Cubit، مش كل build.
+
+### الـ keep-alive اللي بياكل الذاكرة
+
+حد عمل `BookTile` بـ `AutomaticKeepAliveClientMixin` و`wantKeepAlive => true`، عشان الغلاف «مايحمّلش تاني» لما المستخدم يرجع بالـ scroll. بعد scroll في المكتبة كلها، كل الـ 4000 tile عايشين: الـ widgets، والـ elements، والـ render objects، والصور. الـ memory وصلت 400MB.
+
+الـ keep-alive بيقول للـ ListView «ماترميش الـ item ده لما يخرج من الشاشة». ده مفيد لـ tab فيه form المستخدم كتب فيه، مش لـ tile ممكن يتبني تاني في ms. والغلاف مش محتاج keep-alive عشان مايحمّلش تاني: ده شغل الـ image cache، وده موضوع [درس الصور](/course/performance/images/).
+
+ولو عايز المستخدم يشوف الـ items اللي جاية من غير ما تتبني وهو بيعمل scroll، فيه مسافة بيبني فيها الـ ListView قبل ما الـ item يظهر. الـ parameter القديم اسمه `cacheExtent` واتعمله deprecate في Flutter الحديث، والجديد `scrollCacheExtent` بـ `ScrollCacheExtent.pixels(...)` أو `ScrollCacheExtent.viewport(...)`. ماتكبّروش من غير قياس: كل pixel زيادة items بتتبني وماحدش شايفها.
+
+### الـ Grid بتاع الأغلفة
+
+وضع الـ grid في المكتبة (`BookGrid` من [درس أنواع الـ Cubit](/course/state-management/cubit-types/)) بيعرض الأغلفة. نفس القواعد، بشكل grid:
+
+<CodeBlock label="BookGrid">
+
+```dart
+GridView.builder(
+  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+    maxCrossAxisExtent: 140,   // as many columns as fit, each at most 140
+    childAspectRatio: 2 / 3,   // a book cover: every cell has a known size
+    mainAxisSpacing: 12,
+    crossAxisSpacing: 12,
+  ),
+  itemCount: books.length,
+  itemBuilder: (context, i) => BookCoverCell(key: ValueKey(books[i].id), book: books[i]),
+)
+```
+
+</CodeBlock>
+
+الـ `childAspectRatio` الثابت بيدّي الـ grid نفس ميزة الـ `itemExtent`: كل خلية حجمها معروف، فالقفز لأي مكان حسبة. والمشكلة اللي هتقابلها في الـ grid مش الـ widgets، دي الصور، والدرس الجاي كله عنها.
+
+### Grid صغير جوه كل row
+
+حد عمل الـ «مقترحات» في الكتالوج كـ ListView، وكل row فيه `GridView.builder(shrinkWrap: true, physics: NeverScrollableScrollPhysics(), itemCount: 2)` عشان يعرض كتابين جنب بعض. كل row بقى فيه viewport كامل بحساباته عشان يرصّ خليتين. الـ `Row` بـ `Expanded` لكل خلية بيعمل نفس الشكل بجزء من التمن. القاعدة: الـ GridView والـ ListView للحاجات اللي بتعمل scroll أو اللي عددها كبير، مش للـ layout.
+
+### الـ pagination والقوائم المحلية
+
+الكتالوج بيتجاب صفحة ورا صفحة من السيرفر، زي [درس الـ Pagination](/course/presentation/pagination/)، والـ `ListView.builder` هناك بيبني اللي ظاهر بس. المكتبة مختلفة: الـ 4000 كتاب في drift على الموبايل، والـ stream بيرجّعهم كلهم. هل محتاجين pagination للمكتبة كمان؟
+
+القياس قال لأ: 4000 entity في الذاكرة حوالي 2MB، والـ `toEntity` لهم أقل من 1ms (زي ما هتشوف في [درس تمن الطبقات](/course/performance/cost-of-layers/)). اللي كان غالي هو بناء الـ widgets، والـ builder حلّه. الـ pagination المحلي (`LIMIT` و`OFFSET` في drift) بيضيف تعقيد في البحث والترتيب والـ scrollbar، ومش هيستاهل غير لو المكتبة بقت 50 ألف كتاب، أو كل row فيه بيانات كبيرة.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>أي ليستة طولها مش معروف: builder.</b> الـ `ListView(children:)` والـ Column للحاجات القصيرة الثابتة (شاشة إعدادات، form). لو العدد جاي من البيانات، builder من أول يوم، حتى لو النهارده 30.
+- <b>scroll واحد في الشاشة:</b> لو محتاج كذا ليستة وheaders في نفس الـ scroll، `CustomScrollView` وslivers. الـ `shrinkWrap: true` جوه scroll تاني علامة إن الشاشة محتاجة slivers. والـ error بتاع «unbounded height» مش بيتحل بـ shrinkWrap، بيتحل بإنك تفهم مين المفروض يعمل scroll.
+- <b>الارتفاع الثابت ميزة:</b> صمّم الـ tiles بارتفاع ثابت لما تقدر (`maxLines`، وحجم غلاف ثابت)، واستخدم `prototypeItem` أو `itemExtent`. ده بيخلي الـ scrollbar والقفز والـ `jumpTo` رخاص، وبيمنع الـ scrollbar إنه يتنطط وانت بتعمل scroll.
+- <b>الـ keys للـ identity، مش للأداء:</b> حطها لما الـ item عنده state أو الترتيب بيتغير، ومعاها `findChildIndexCallback` بـ Map. ماتحطش `UniqueKey()` أبدًا: ده key جديد كل build، فكل tile بيتعمل من الصفر.
+- <b>الـ keep-alive للـ state اللي المستخدم عمله، مش للـ cache:</b> form متكتب فيه، أو tab مفتوح على مكان معين. الصور والبيانات ليهم cache بتاعهم.
+
+<Note kind="interview" title="سؤال interview">
+
+«ليه `ListView.builder` مع `shrinkWrap: true` جوه `SingleChildScrollView` بطيء؟» لأن الـ shrinkWrap بيخلي الليستة تاخد ارتفاع محتواها، وعشان تعرفه لازم تبني وتعمل layout لكل الـ items. فالـ builder بيبطّل يبقى lazy، والـ 4000 item بيتبنوا أول ما الشاشة تفتح. الحل scroll واحد: `CustomScrollView` وكل ليستة `SliverList.builder`، فكل حاجة بتتبني وقت ما تظهر.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«`itemExtent` و`prototypeItem` بيفيدوا في إيه؟» بيقولوا للـ scrolling ارتفاع كل item من الأول، فمكان أي item بقى حسبة (index × extent) بدل ما يعمل layout لكل اللي قبله. الفرق بيبان لما الـ scroll بيتغير مرة واحدة كتير: سحب الـ scrollbar، أو `jumpTo`، أو فهرس الحروف. والـ `prototypeItem` أأمن من رقم ثابت، لأنه بيتقاس بحجم الخط الحقيقي بتاع المستخدم.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### LibraryBody
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+SingleChildScrollView(
+  child: Column(
+    children: [
+      for (final s in sections) ...[
+        SectionHeader(s.status),
+        ListView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: s.books.length,
+          itemBuilder: (context, i) => BookTile(book: s.books[i]),
+        ),
+      ],
+    ],
+  ),
+)
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+Scrollbar(
+  interactive: true,
+  child: CustomScrollView(
+    slivers: [
+      for (final s in sections) ...[
+        SliverToBoxAdapter(child: SectionHeader(s.status)),
+        SliverPrototypeExtentList.builder(
+          prototypeItem: BookTile(book: Book.placeholder),
+          itemCount: s.books.length,
+          itemBuilder: (context, i) => BookTile(
+            key: ValueKey(s.books[i].id),
+            book: s.books[i],
+          ),
+        ),
+      ],
+    ],
+  ),
+)
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: أول frame 1900ms لأن الـ 4000 tile اتبنوا، و90MB زيادة، وسحب الـ scrollbar لنص الليستة 310ms. بعد: أول frame 140ms، و14 tile، و6MB، وسحب الـ scrollbar 9ms. والـ keys جاهزة لو الـ tile بقى عنده state، وكل قسم ارتفاع الـ tiles فيه بيتقاس مرة واحدة بحجم الخط الحقيقي.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="perf-lists-1">
+<Ask>`ListView.builder` بـ `shrinkWrap: true` و`NeverScrollableScrollPhysics` جوه `SingleChildScrollView`. ليه فتح المكتبة بياخد ثانيتين مع 4000 كتاب؟</Ask>
+<Answer>
+
+الـ shrinkWrap بيخلي الليستة تاخد ارتفاع محتواها كله، فلازم تبني وتعمل layout لكل الـ 4000 item عشان تعرفه، والـ SingleChildScrollView بيعمل layout لكل اللي جواه. الـ builder بطّل يبقى lazy. الحل CustomScrollView واحد، وكل قسم SliverList.builder.
+
+</Answer>
+</Question>
+
+<Question id="perf-lists-2">
+<Ask>سحب الـ scrollbar لنص المكتبة بياخد 310ms. إيه السبب، وإيه الحل لو الـ tiles كلها نفس الارتفاع بس الارتفاع بيتغير مع حجم الخط؟</Ask>
+<Answer>
+
+من غير ارتفاع معروف، Flutter لازم يعمل layout لكل الـ items اللي قبل المكان الجديد عشان يعرف هو فين. الحل `prototypeItem` (أو `SliverPrototypeExtentList`): tile نموذج بيتقاس مرة بحجم الخط الحقيقي، وكل الـ items بتاخد ارتفاعه، فالمكان بقى حسبة. الـ `itemExtent` برقم ثابت هيقص النص لو المستخدم كبّر الخط.
+
+</Answer>
+</Question>
+
+<Question id="perf-lists-3">
+<Ask>`findChildIndexCallback` مكتوب بـ `for` بيدوّر في الليستة على الـ id. إيه المشكلة؟</Ask>
+<Answer>
+
+الـ callback بيتنادى لكل item ظاهر في كل layout بعد التغيير، فالـ loop بيبقى 4000 مقارنة × عدد الـ items الظاهرين في كل frame. الحل Map من الـ id للـ index، بتتعمل مرة مع الليستة مش في كل build، والـ callback يبقى lookup واحد.
+
+</Answer>
+</Question>
+
+<Question id="perf-lists-4">
+<Ask>`BookTile` بـ `AutomaticKeepAliveClientMixin` عشان الغلاف مايحمّلش تاني. إيه اللي بيحصل بعد scroll في المكتبة كلها؟</Ask>
+<Answer>
+
+كل tile عدّى على الشاشة بيفضل عايش بالـ element والـ render object والصورة، فالـ memory بتكبر مع الـ scroll لحد ما تبقى 4000 tile في الذاكرة. الـ keep-alive للـ state اللي المستخدم عمله (form، tab)، والغلاف مايتحمّلش تاني بسبب الـ image cache، مش الـ keep-alive.
+
+</Answer>
+</Question>
+
+<Question id="perf-lists-5">
+<Ask>المكتبة 4000 كتاب محليين في drift. تعمل pagination بـ LIMIT وOFFSET؟</Ask>
+<Answer>
+
+مش من غير قياس، وغالبًا لأ. الـ 4000 entity حوالي 2MB في الذاكرة والـ mapping أقل من 1ms، واللي كان غالي بناء الـ widgets والـ builder حلّه. الـ pagination المحلي بيصعّب البحث والترتيب والـ scrollbar. بيستاهل لو العدد بقى عشرات الآلاف أو الـ rows تقيلة.
+
+</Answer>
+</Question>
+
+</Quiz>

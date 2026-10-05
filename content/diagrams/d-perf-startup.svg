@@ -1,0 +1,32 @@
+<svg viewBox="0 0 760 300" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="الـ bootstrap قبل: كل خطوة await ورا اللي قبلها ومعاها طلب شبكة، والكتب بتظهر بعد 2.9 ثانية. بعد: الحاجات المستقلة بالتوازي، والباقي بعد أول frame، والكتب بعد 1.1 ثانية">
+<text x="20" y="58" font-size="13" font-weight="600" fill="var(--ink)">before</text>
+<text x="20" y="188" font-size="13" font-weight="600" fill="var(--ink)">after</text>
+<g font-size="9" fill="var(--ink)" text-anchor="middle">
+<rect x="80" y="40" width="80" height="26" rx="4" fill="var(--surface)" stroke="var(--muted)"/><text x="120" y="57">engine</text>
+<rect x="160" y="40" width="9" height="26" fill="var(--accent-soft)" stroke="var(--accent)"/>
+<rect x="169" y="40" width="28" height="26" fill="var(--accent-soft)" stroke="var(--accent)"/><text x="183" y="80">tokens</text>
+<rect x="197" y="40" width="32" height="26" fill="var(--accent-soft)" stroke="var(--accent)"/><text x="213" y="94">hydrated</text>
+<rect x="229" y="40" width="22" height="26" fill="var(--warn-soft)" stroke="var(--warn)"/><text x="240" y="80">wm</text>
+<rect x="251" y="40" width="140" height="26" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="1.6"/><text x="321" y="57">CheckForUpdate 700ms</text>
+<rect x="391" y="40" width="18" height="26" fill="var(--warn-soft)" stroke="var(--warn)"/><text x="400" y="94">sync</text>
+<rect x="409" y="40" width="12" height="26" fill="var(--accent-soft)" stroke="var(--accent)"/>
+<rect x="421" y="40" width="70" height="26" fill="var(--surface)" stroke="var(--muted)" stroke-dasharray="4 3"/><text x="456" y="57">spinner</text>
+<rect x="491" y="40" width="44" height="26" fill="var(--surface)" stroke="var(--muted)"/><text x="513" y="57">DB</text>
+<rect x="80" y="170" width="80" height="26" rx="4" fill="var(--surface)" stroke="var(--muted)"/><text x="120" y="187">engine</text>
+<rect x="160" y="170" width="9" height="26" fill="var(--accent-soft)" stroke="var(--accent)"/>
+<rect x="169" y="170" width="32" height="12" fill="var(--accent-soft)" stroke="var(--accent)"/>
+<rect x="169" y="184" width="28" height="12" fill="var(--accent-soft)" stroke="var(--accent)"/>
+<text x="185" y="210">tokens + hydrated</text>
+<rect x="201" y="170" width="12" height="26" fill="var(--accent-soft)" stroke="var(--accent)"/>
+<rect x="213" y="170" width="44" height="26" fill="var(--good-soft)" stroke="var(--good)"/><text x="235" y="187">build</text>
+<rect x="257" y="170" width="38" height="26" fill="var(--good-soft)" stroke="var(--good)"/><text x="276" y="187">books</text>
+<rect x="300" y="170" width="200" height="26" rx="4" fill="none" stroke="var(--muted)" stroke-dasharray="4 3"/><text x="400" y="187">after first frame: wm, sync, update check</text>
+</g>
+<g stroke="var(--ink)" stroke-width="1.2">
+<line x1="535" y1="34" x2="535" y2="72"/><line x1="295" y1="164" x2="295" y2="226"/>
+</g>
+<text x="545" y="57" font-size="12" fill="var(--warn)" font-weight="600">books: 2.9s</text>
+<text x="305" y="224" font-size="12" fill="var(--good)" font-weight="600">books: 1.1s</text>
+<text x="380" y="124" text-anchor="middle" font-size="12" fill="var(--ink)" class="ar" direction="rtl">قبل: كل await ورا اللي قبله، وطلب شبكة بيقرر أول route، والـ DB بتتفتح بعد أول frame</text>
+<text x="380" y="270" text-anchor="middle" font-size="12" fill="var(--ink)" class="ar" direction="rtl">بعد: قبل أول frame اللي بيتقري فيه بس، والمستقل بالتوازي، والـ DB بتتفتح في isolate بتاعها وقت الـ boot</text>
+</svg>

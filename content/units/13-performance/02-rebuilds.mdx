@@ -1,0 +1,397 @@
+---
+title: "الـ rebuilds: تعدّها وتقللها"
+description: "إزاي تعدّ الـ rebuilds بـ DevTools وبكود، وليه const بيوقّف الـ rebuild عند حده، وwidget class مش method، والـ child في الـ builders، وMediaQuery.sizeOf، وRepaintBoundary، وإمتى الـ rebuild مش مشكلة أصلًا."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="الميكروفون اللي في المبنى كله">
+
+شركة فيها 200 موظف، وعندها ميكروفون واحد بيوصل لكل الأدوار. كل ما جواب يوصل لحد، الاستقبال بيقول في الميكروفون: «جواب لأستاذ أحمد». الـ 200 موظف بيبطّلوا شغل، ويرفعوا راسهم، ويسمعوا، ويرجعوا يكمّلوا. الجواب وصل لواحد، والشغل اتعطّل عند الكل.
+
+الحل مش إنك تمنع الجوابات. الحل إن الجواب يروح لمكتب أحمد على طول، والباقيين مايعرفوش عنه حاجة. ولو فيه لوحة معلّقة على الحيطة مابتتغيرش (اسم الشركة مثلًا)، محدش محتاج يطبعها تاني كل ما الميكروفون يتكلم.
+
+</Analogy>
+
+الـ rebuild هو الميكروفون. لما widget بيسمع على state (بـ `context.watch` أو `BlocBuilder`)، أي تغيير بيعيد بناءه هو <b>وكل اللي تحته</b>. الجواب اللي يروح للمكتب على طول هو إن الـ widget اللي محتاج المعلومة بس هو اللي يسمع. واللوحة اللي على الحيطة هي الـ `const`: widget مابيتغيرش، فـ Flutter بيعدّيه من غير ما يبنيه تاني.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### المشكلة: المكتبة بتتبني مع كل عملية sync
+
+في [درس القياس](/course/performance/measure/) الـ baseline قال إن الـ UI thread هو اللي متأخر، وتسجيلة واحدة بـ Track widget builds قالت مين: `LibraryView` بتتبني مع كل تغيير في الـ `SyncStatusCubit`. ده الكود:
+
+<CodeBlock label="LibraryView: الـ badge بتاع الـ sync">
+
+```dart
+class LibraryView extends StatelessWidget {
+  const LibraryView({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final pending = context.watch<SyncStatusCubit>().state.pending; // the whole page listens
+    final compact = MediaQuery.of(context).size.width < 360;
+    return Scaffold(
+      appBar: AppBar(
+        title: const LibraryTitle(),
+        actions: [if (pending > 0) Badge.count(count: pending, child: const Icon(Icons.sync))],
+      ),
+      // the BlocBuilder<LibraryCubit> and the 4000-book list; can't be const: it takes `compact`
+      body: LibraryBody(compact: compact),
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+وانت بتعمل scroll، الـ `SyncService` بيفضّي الـ queue: 20 عملية، وكل عملية بتغيّر الـ `pending` وبتعمل emit. الـ `pending` رقم في الـ AppBar، بس الـ `watch` في أول الـ build، فالصفحة كلها بتتبني 20 مرة أو أكتر.
+
+### عدّ الـ rebuilds
+
+قبل ما تصلّح، اعرف العدد. فيه أكتر من طريقة، من الأدق للأسرع:
+
+1. <b>DevTools، Rebuild Stats:</b> في الـ Performance view، فعّل <b>Track widget build counts</b> (موجود من DevTools 2.36). كل frame في الـ Frame analysis بيعرض الـ widgets اللي اتبنت فيه وعددها، وفي tool اسمها <b>Rebuild Stats</b> بتجمع العدد على كل الـ frames اللي سجّلتها. ده اللي بتحطه في الـ PR.
+2. <b>Track widget builds في الـ timeline:</b> بيوريك كل widget اتبنى كـ event جوه الـ frame، فتعرف أنهي frame اتبنى فيه إيه.
+3. <b>الـ `debugPrintRebuildDirtyWidgets`:</b> `debugPrintRebuildDirtyWidgets = true;` في `main` (debug بس) بيطبع كل widget اتعلّم إنه محتاج يتبني في كل frame. كتير جدًا، بس بيوريك اللي محدش متوقعه.
+4. <b>عدّاد في widget واحد شاكك فيه:</b>
+
+<CodeBlock label="عدّاد بيتشال من الـ release لوحده">
+
+```dart
+int _libraryViewBuilds = 0;
+
+@override
+Widget build(BuildContext context) {
+  assert(() {
+    debugPrint('LibraryView build #${++_libraryViewBuilds}');
+    return true;
+  }()); // asserts are removed in profile and release
+  // ...
+}
+```
+
+</CodeBlock>
+
+الـ `assert` بالشكل ده بيخلي العدّاد يشتغل في الـ debug بس، والـ compiler بيشيله من الـ profile والـ release. والعدد زي ما قلنا في درس القياس مش بيتغير بالـ mode، فالـ debug كفاية عشان تعدّ.
+
+في Readly، سيناريو الـ baseline (scroll 10 ثواني والـ sync شغال) طلّع:
+
+| الـ widget | عدد الـ builds |
+| --- | --- |
+| `LibraryView` | 41 |
+| `LibraryBody` | 41 |
+| `BookTile` | حوالي 500 (12 ظاهرين × 41) |
+| الـ `Badge` في الـ AppBar | 41 |
+
+الـ badge هو الوحيد اللي كان محتاج يتبني 41 مرة.
+
+### الصلّح: الـ widget اللي محتاج المعلومة هو اللي يسمع
+
+<CodeBlock label="SyncBadge بيسمع لوحده">
+
+```dart
+class SyncBadge extends StatelessWidget {
+  const SyncBadge({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final pending = context.select((SyncStatusCubit c) => c.state.pending);
+    if (pending == 0) return const SizedBox.shrink();
+    return Badge.count(count: pending, child: const Icon(Icons.sync));
+  }
+}
+
+// LibraryView: listens to nothing now
+appBar: AppBar(title: const LibraryTitle(), actions: const [SyncBadge()]),
+```
+
+</CodeBlock>
+
+الـ `context.select` والـ `BlocSelector` والـ `buildWhen` اتشرحوا بالتفصيل في [درس flutter_bloc](/course/state-management/flutter-bloc-widgets/)، ومش هنعيدهم. اللي يهمنا هنا إن الـ `select` بقى جوه widget صغير، فالـ rebuild حدوده الـ badge.
+
+<Diagram name="d-perf-rebuild-scope">
+
+نفس الـ 41 emit من الـ SyncStatusCubit في الحالتين. قبل: الـ watch في LibraryView بيعيد بناء الصفحة والليستة كلها. بعد: الـ SyncBadge بس اللي بيسمع، والصفحة اتبنت مرة.
+
+</Diagram>
+
+وبعد التغيير، نفس السيناريو: `LibraryView` اتبنت مرة، و`SyncBadge` 41، والـ janky frames في الـ baseline نزلت من 74 لـ 9.
+
+### الـ const: Flutter بيقف عنده
+
+لما الأب بيتبني، Flutter بيقارن كل widget جديد بالقديم اللي في نفس المكان. لو الاتنين <b>نفس الـ object بالظبط</b> (`identical`)، بيعدّيه هو وكل اللي تحته من غير ما ينادي `build`. والـ `const` هو اللي بيخلي ده يحصل: `const LibraryBody()` في كل build هو نفس الـ instance، لأن الـ compiler بيعمله مرة واحدة.
+
+```dart
+body: const LibraryBody(),   // identical every time: Flutter skips this whole subtree
+body: LibraryBody(),         // a new object every build: build() runs again
+```
+
+- <b>شرطه:</b> كل الـ arguments تبقى const هي كمان. `BookTile(book: book)` مستحيل يبقى const، لأن الكتاب جاي وقت التشغيل.
+- <b>الـ lint:</b> `prefer_const_constructors` و`prefer_const_literals_to_create_immutables` في `analysis_options.yaml`، والـ IDE بيحطهم لوحده بـ `dart fix --apply`.
+- <b>مش سحر:</b> الـ const بيوفّر الـ build للجزء اللي مابيتغيرش. لو المشكلة إن widget بيسمع على state مالوش علاقة بيه، الـ const مش هيحلها.
+
+### widget class مش method
+
+<BeforeAfter>
+
+<Side label="method بيرجّع widget" kind="before">
+
+```dart
+@override
+Widget build(BuildContext context) => Column(
+      children: [
+        _buildHeader(context),   // runs on every build of the page
+        _buildStats(context),
+        const LibraryBody(),
+      ],
+    );
+```
+
+</Side>
+
+<Side label="widget لوحده" kind="after">
+
+```dart
+@override
+Widget build(BuildContext context) => const Column(
+      children: [
+        LibraryHeader(),   // its own build, its own context
+        LibraryStats(),    // select() inside it rebuilds only it
+        LibraryBody(),
+      ],
+    );
+```
+
+</Side>
+
+</BeforeAfter>
+
+الـ method جزء من الـ build بتاع الأب، فأي rebuild للأب بيناديها، ومايقدرش يبقى const، وماعندوش `context` لوحده، فأي `select` جواه بيعيد بناء الأب كله. الـ widget class ليه `Element` لوحده: ممكن يبقى const فيتعدّى، والـ `select` جواه بيعيد بناءه هو بس، وبيظهر باسمه في DevTools. والـ Flutter docs في صفحة الـ best practices بتقول نفس الكلام: StatelessWidget بدل function.
+
+### الـ child اللي مابيتغيرش في الـ builders
+
+```dart
+AnimatedBuilder(
+  animation: _pulse,
+  child: const BookCover(size: CoverSize.large), // built once
+  builder: (context, child) => Transform.scale(scale: _pulse.value, child: child),
+)
+```
+
+الـ builder بيتنادى كل frame طول ما الـ animation شغال، 60 مرة في الثانية. أي حاجة مابتعتمدش على الـ animation تتحط في `child`، وبتتبني مرة واحدة وتتعدّى للـ builder. ونفس الـ parameter موجود في `ValueListenableBuilder` و`TweenAnimationBuilder` وغيرهم.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### الكيبورد بيعيد بناء صفحة الكتاب 15 مرة
+
+المستخدم داس على «اكتب ملاحظة» في صفحة الكتاب. الكيبورد طلع بـ animation، والـ Track widget builds بيقول إن `BookDetailsView` كلها (الغلاف، والوصف، وليستة الملاحظات) اتبنت في كل frame من الـ animation.
+
+<CodeBlock label="BookDetailsView">
+
+```dart
+@override
+Widget build(BuildContext context) {
+  final width = MediaQuery.of(context).size.width; // depends on ALL of MediaQueryData
+  final coverWidth = width < 600 ? width * 0.4 : 240.0;
+  // ...
+}
+```
+
+</CodeBlock>
+
+الـ `MediaQuery.of(context)` بيسجّل الـ widget إنه معتمد على الـ `MediaQueryData` كلها. والكيبورد وهو طالع بيغيّر الـ `viewInsets` في كل frame، فكل widget نادى `MediaQuery.of` بيتبني مع كل frame، حتى لو كل اللي محتاجه العرض.
+
+```dart
+final width = MediaQuery.sizeOf(context).width; // rebuilds only when the size changes
+```
+
+الـ `MediaQuery.sizeOf` والـ methods اللي زيه (`paddingOf`، `viewInsetsOf`، `textScalerOf`...) بيسجّلوا الاعتماد على حاجة واحدة بس. القياس بعدها: `BookDetailsView` اتبنت مرة لما الكيبورد طلع، والـ widget اللي محتاج الـ `viewInsets` (الـ editor) هو اللي بيتبني.
+
+### extension شكلها بريء ووراها watch
+
+```dart
+extension SettingsX on BuildContext {
+  bool get isCompact => watch<SettingsCubit>().state.density == Density.compact;
+}
+
+// in BookTile.build
+padding: context.isCompact ? _compactPadding : _normalPadding,
+```
+
+الـ `context.isCompact` شكله زي `Theme.of(context)`، بس جواه `watch` على الـ `SettingsCubit` كله. كل tile ظاهر بقى بيتبني مع أي تغيير في الإعدادات، حتى اللغة والثيم اللي ليهم rebuild من فوق أصلًا. ومحدش هيلاحظ من قراية `BookTile`.
+
+- <b>الـ extension يستخدم `select`:</b> `select((SettingsCubit c) => c.state.density) == Density.compact`، فالـ tile بيتبني لما الـ density تتغير بس.
+- <b>أو مايبقاش extension:</b> الـ density تتحط في الـ `ThemeData` كـ `ThemeExtension`، وده مكانها الطبيعي. وهتشوف في [درس Escore](/course/performance/escore/) extension زي دي موجودة في 500 مكان.
+
+### الـ const مافرقش في القياس
+
+قبل ما الـ `SyncBadge` يتعمل، حد قضّى يوم يحط `const` في كل حتة في Readly، والـ janky frames نزلت من 74 لـ 70 بس. ليه؟ الـ const اتحط على الـ `Icon` والـ `SizedBox` والـ `Text` الثابتة، وكلهم كانوا رخاص أصلًا. الحاجة الغالية، `LibraryBody` والليستة اللي جواها، مايقدرش يبقى const لأنه بياخد `compact`، فكان لسه بيتبني 41 مرة. والسبب نفسه، إن `LibraryView` بتسمع على `SyncStatusCubit`، الـ const مالوش علاقة بيه.
+
+الـ const عادة كويسة والـ lint بيعملها لوحده. بس مش بديل للقياس: الـ timeline قال «LibraryView بتتبني 41 مرة»، والحل كان في السطر اللي فيه الـ `watch`.
+
+### الـ rebuild قليل والـ frames لسه بتتأخر: الـ repaint
+
+مؤشر الـ sync في أول المكتبة `CircularProgressIndicator` بيلف طول ما الـ sync شغال. الـ rebuilds قليلة، بس الـ raster بقى 11ms بدل 5 وقت الـ sync. فعّل <b>Highlight repaints</b> من الـ Inspector في DevTools: كل جزء بيترسم تاني بيتلوّن بإطار لونه بيتغير. لقينا إن الليستة كلها بتترسم مع كل frame من الـ spinner.
+
+الـ paint في Flutter بيطلع لفوق لحد أقرب `RepaintBoundary`. الـ spinner كان جوه header في نفس الـ layer مع الـ ListView، فكل frame من الـ animation بيرسم الـ layer كلها.
+
+```dart
+const RepaintBoundary(child: SyncSpinner()) // its own layer: only this repaints
+```
+
+- <b>الـ ListView بيعمل RepaintBoundary لكل item أصلًا</b> (`addRepaintBoundaries: true`)، فماتلفّش الـ tiles بإيدك.
+- <b>الـ RepaintBoundary مش ببلاش:</b> كل واحد layer زيادة وذاكرة. حطه حوالين حاجة بتترسم كتير جنب حاجة بتترسم قليل، واتأكد بـ Highlight repaints قبل وبعد.
+
+### الـ BlocBuilder بيتبني والـ state هي هي
+
+الـ `SyncStatusCubit` كان بيعمل `emit(SyncStatus(pending: n, failing: f))` بعد كل عملية، حتى لو الأرقام ماتغيرتش. لو الـ state مالهاش `==` بالقيم، كل emit بيعدّي وكل اللي بيسمع بيتبني. الـ `select` بيحمي الـ badge لأنه بيقارن الرقم نفسه، بس أي `BlocBuilder` من غير `buildWhen` هيتبني. الحل في الـ state: Equatable أو freezed، زي [درس تصميم الـ State](/course/state-management/state-design/). الـ Cubit بيقارن الـ state الجديدة بالقديمة قبل الـ emit، ولو متساويين مابيعملش emit خالص.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>الـ rebuild مش عدو:</b> Flutter معمول يبني آلاف الـ widgets في الـ frame. widget صغير بيتبني 40 مرة في الثانية عادي. المشكلة لما widget كبير بيتبني بسبب حاجة مش بيعرضها، أو أي widget بيتبني كل frame (animation، كيبورد، scroll). دوّر على دول.
+- <b>دوّر على مصادر التكرار:</b> streams بتطلّع كتير (الـ sync، والـ WebSocket)، والـ animations، والكيبورد، والـ scroll listeners. أي widget بيسمع على واحد منهم لازم يبقى صغير ومحدود.
+- <b>الـ select في أوطى widget:</b> الـ widget اللي بيعرض المعلومة هو اللي يسمع عليها. ولو مش عارف تعمل كده من غير ما تعمل widget جديد، اعمل widget جديد. الـ widgets في Flutter رخيصة، والـ methods اللي بترجّع widgets هي اللي غالية.
+- <b>الـ buildWhen بيتكسر بسهولة:</b> الـ select والـ BlocSelector بيقارنوا اللي بيعرضوه بالظبط. الـ buildWhen بيقارن حاجة انت كتبتها بإيدك، ولو غلط، الشاشة بتعرض حاجة قديمة. وده اللي هتشوفه في [درس Escore](/course/performance/escore/).
+- <b>العدد في الـ PR:</b> «LibraryView: 41 → 1 build في سيناريو الـ sync». رقم بيتقري في ثانية، وبيقنع أكتر من أي شرح.
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي تقلل الـ rebuilds في Flutter؟» الأول بعدّها: Rebuild Stats أو Track widget builds في DevTools، أو `debugPrintRebuildDirtyWidgets`. وبعدين بدوّر على widget كبير بيتبني بسبب حاجة مش بيعرضها، وبنزّل الـ listening لأوطى widget محتاجها بـ `select` أو `BlocSelector`. وبقسّم الشاشة لـ widget classes مش methods، عشان كل واحد يبقى ليه حدود rebuild، وبستخدم `const` عشان Flutter يعدّي الأجزاء الثابتة، والـ `child` في الـ builders اللي بتشتغل كل frame. وبستخدم `MediaQuery.sizeOf` بدل `MediaQuery.of(context).size` عشان الكيبورد مايعيدش بناء كل حاجة. وبعدّ تاني بعد التغيير.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«الـ const بيفرق في الأداء إزاي؟» الـ const widget بيتعمل مرة واحدة وقت الـ compile، فكل build للأب بيدّي نفس الـ instance. Flutter لما بيلاقي الـ widget الجديد `identical` للقديم، بيعدّيه هو وكل اللي تحته من غير ما ينادي `build`. ده بيوفّر الأجزاء الثابتة في الشاشة. بس مش بيحل widget بيسمع على state غلط، ولا بيشتغل لو أي argument جاي وقت التشغيل.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### LibraryView: من صفحة بتسمع على كل حاجة لصفحة مابتسمعش على حاجة
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+class LibraryView extends StatelessWidget {
+  const LibraryView({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final pending = context.watch<SyncStatusCubit>().state.pending;
+    final width = MediaQuery.of(context).size.width;
+    return Scaffold(
+      appBar: AppBar(
+        title: _buildTitle(context),
+        actions: [
+          if (pending > 0)
+            Badge.count(count: pending, child: Icon(Icons.sync)),
+        ],
+      ),
+      body: Column(
+        children: [
+          _buildSyncHeader(context), // the spinner
+          Expanded(child: LibraryBody(compact: width < 360)),
+        ],
+      ),
+    );
+  }
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+class LibraryView extends StatelessWidget {
+  const LibraryView({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final compact = MediaQuery.sizeOf(context).width < 360;
+    return Scaffold(
+      appBar: AppBar(
+        title: const LibraryTitle(),
+        actions: const [SyncBadge()],
+      ),
+      body: Column(
+        children: [
+          const RepaintBoundary(child: SyncHeader()),
+          Expanded(child: LibraryBody(compact: compact)),
+        ],
+      ),
+    );
+  }
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: كل emit من الـ sync بيعيد بناء الصفحة كلها، والكيبورد (لو ظهر من البحث) بيعيد بناءها كل frame، والـ spinner بيرسم الليستة معاه. بعد: الصفحة بتتبني لما عرض الشاشة يتغير بس، والـ badge بيسمع لوحده، والـ spinner في layer لوحده. القياس في سيناريو الـ baseline: `LibraryView` من 41 build لـ 1، والـ janky frames من 74 لـ 9، والـ raster وقت الـ sync من 11ms لـ 5.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="perf-rebuilds-1">
+<Ask>`context.watch<SyncStatusCubit>()` في أول build صفحة المكتبة، عشان رقم في الـ AppBar. إيه اللي بيحصل مع كل عملية sync، وإيه الصلّح؟</Ask>
+<Answer>
+
+الصفحة كلها بتتبني مع كل emit: الـ Scaffold والـ AppBar والـ body. الصلّح إن الرقم يتعرض في widget صغير (`SyncBadge`) فيه `context.select` على الـ `pending` بس، والصفحة ماتسمعش على حاجة. كده الـ rebuild حدوده الـ badge.
+
+</Answer>
+</Question>
+
+<Question id="perf-rebuilds-2">
+<Ask>ليه `const LibraryBody()` بيوفّر build، و`LibraryBody()` لأ، مع إن الاتنين نفس الـ widget؟</Ask>
+<Answer>
+
+الـ const بيتعمل مرة واحدة، فكل build للأب بيدّي نفس الـ instance. Flutter بيقارن الجديد بالقديم، ولو `identical` بيعدّيه هو وكل اللي تحته. من غير const، كل build بيعمل object جديد، فـ Flutter بيبنيه تاني.
+
+</Answer>
+</Question>
+
+<Question id="perf-rebuilds-3">
+<Ask>`_buildHeader(context)` method في صفحة، وجواها `context.select`. ليه ده أسوأ من `LibraryHeader()` widget class؟</Ask>
+<Answer>
+
+الـ method جزء من build الأب، فبيتنادى مع كل rebuild للأب، ومايقدرش يبقى const، والـ context اللي جواه هو context الأب، فالـ select بيعيد بناء الصفحة كلها. الـ widget class ليه Element وcontext لوحده، فالـ select بيعيد بناءه هو بس، وممكن يبقى const، وبيبان باسمه في DevTools.
+
+</Answer>
+</Question>
+
+<Question id="perf-rebuilds-4">
+<Ask>صفحة الكتاب بتتبني كلها في كل frame والكيبورد طالع. إيه السبب الأشهر؟</Ask>
+<Answer>
+
+`MediaQuery.of(context)` في الـ build: بيسجّل الاعتماد على الـ MediaQueryData كلها، والكيبورد بيغيّر الـ viewInsets كل frame. الحل `MediaQuery.sizeOf(context)` أو الـ method اللي بيجيب الحاجة اللي محتاجها بس، فالـ widget بيتبني لما هي تتغير.
+
+</Answer>
+</Question>
+
+<Question id="perf-rebuilds-5">
+<Ask>الـ rebuilds قليلة، بس الـ raster بقى 11ms وقت ما الـ spinner بيلف فوق الليستة. بتدوّر إزاي، وإيه الحل؟</Ask>
+<Answer>
+
+Highlight repaints في DevTools بيوريك إيه اللي بيترسم تاني كل frame. الـ paint بيطلع لأقرب RepaintBoundary، فالـ spinner بيرسم الـ layer اللي فيها الليستة. الحل `RepaintBoundary` حوالين الـ spinner بس، وتتأكد بـ Highlight repaints والـ raster time بعدها.
+
+</Answer>
+</Question>
+
+</Quiz>
