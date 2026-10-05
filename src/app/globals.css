@@ -192,7 +192,7 @@ h4{margin:0 0 8px;font-size:17px}
 p{margin:0 0 14px;max-width:74ch}
 ul,ol{padding-inline-start:22px;margin:0 0 14px;max-width:74ch}
 li{margin-bottom:7px}
-code{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.85em;background:var(--accent-soft);padding:1px 6px;border-radius:5px;direction:ltr;unicode-bidi:isolate}
+code{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.85em;background:var(--accent-soft);padding:1px 6px;border-radius:5px;direction:ltr;unicode-bidi:isolate;overflow-wrap:anywhere}
 .level{background:var(--surface);border:1px solid var(--line);border-inline-start:5px solid var(--c);border-radius:14px;padding:6px 22px 16px;margin-top:18px}
 .level.l1{--c:var(--good)}.level.l2{--c:var(--accent)}.level.l3{--c:var(--deep)}.level.l4{--c:var(--warn)}
 .lvl-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:12px 0 6px}

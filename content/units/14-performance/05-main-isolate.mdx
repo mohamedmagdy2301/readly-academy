@@ -22,11 +22,11 @@ minutes: 30
 
 ### المشكلة: كل تغيير في المكتبة بيقطّع
 
-بعد ما [درس القوائم](/course/performance/lists/) صلّح فتح المكتبة، لسه فيه frame واحد بيقطّع كل ما المستخدم يغيّر حالة كتاب، أو يضيف كتاب. الـ Flutter frames chart: frame واحد UI بـ 38ms، والـ raster 4ms. يعني كود Dart.
+بعد ما [درس القوائم](/course/performance/lists/) صلّح فتح المكتبة، لسه فيه frame واحد بيقطّع كل ما المستخدم يغيّر حالة كتاب، أو يضيف كتاب. الـ Flutter frames chart: frame واحد UI بـ 20ms، والـ raster 4ms. يعني كود Dart.
 
 ### من الـ frame للـ function
 
-1. <b>دوس على الـ frame الأحمر</b> في الـ Performance view، وروح على Timeline events. الـ `BUILD` واخد 31ms. جواه `BookList` لوحده 29ms.
+1. <b>دوس على الـ frame الأحمر</b> في الـ Performance view، وروح على Timeline events. الـ `BUILD` واخد 17ms. جواه `BookList` لوحده 14.5ms.
 2. <b>الـ widget اتبنى مرة واحدة</b>، يعني مش مشكلة rebuilds زي [درس الـ rebuilds](/course/performance/rebuilds/). الـ build نفسه تقيل.
 3. <b>افتح الـ CPU Profiler</b>، وسجّل وانت بتعمل نفس الحركة، واختار <b>Bottom Up</b>: الـ functions مترتبة بالوقت اللي اتصرف فيها هي نفسها. فوق خالص: `List.sort`، و`String.toLowerCase`، و`_compareTitles`.
 4. <b>الـ Call Tree</b> بيقولك مين نادى عليهم: `BookList.build` ← `_groupByLetter` ← `sort`.
@@ -46,7 +46,7 @@ int _compareTitles(Book a, Book b) => a.title.toLowerCase().compareTo(b.title.to
 
 </CodeBlock>
 
-الغريب إن الـ query في `BooksDao` أصلًا بيرتّب بالعنوان، من [درس الـ Streams في Readly](/course/dart-async/watch/). بس SQLite بيرتّب case-sensitive افتراضيًا، فـ «Zebra» كانت بتيجي قبل «alice»، وحد صلّحها بـ sort تاني في Dart بـ `toLowerCase`. الـ sort ده لـ 4000 عنوان اتقاس 2.3ms على لابتوب، وعلى الموبايل المرجعي حوالي 9ms. والتجميع بالحرف بعده. وكل build بيعيدهم، حتى لو الكتب ماتغيرتش.
+الغريب إن الـ query في `BooksDao` أصلًا بيرتّب بالعنوان، من [درس الـ Streams في Readly](/course/dart-async/watch/). بس SQLite بيرتّب case-sensitive افتراضيًا، فـ «Zebra» كانت بتيجي قبل «alice»، وحد صلّحها بـ sort تاني في Dart بـ `toLowerCase`. الـ sort ده لـ 4000 عنوان اتقاس 2.3ms على لابتوب، وعلى الموبايل المرجعي حوالي 9ms. والتجميع بالحرف بعده 5.5ms. وكل build بيعيدهم، حتى لو الكتب ماتغيرتش.
 
 ### سمّيها في الـ timeline قبل ما تصلّح
 
@@ -90,7 +90,7 @@ void _onBooks(List<Book> books) => emit(LibraryLoaded(books, sections: groupByLe
 - <b>التجميع راح للـ Cubit:</b> بيتعمل مرة لما الليستة تتغير، مش مع كل build. والـ build بقى بيقرا `state.sections` بس.
 - <b>الـ build بقى pure ورخيص:</b> بيحوّل state لـ widgets ومابيحسبش.
 
-القياس بعد: الـ frame بتاع تغيير الترتيب UI بـ 7ms، والـ `library.sortAndGroup` اختفى من الـ timeline، وظهر مكانه `library.group` في الـ Cubit بـ 1.5ms مرة واحدة لما الليستة اتغيرت.
+القياس بعد: الـ frame بتاع تغيير حالة كتاب UI بـ 7ms، والـ `library.sortAndGroup` اختفى من الـ timeline، وظهر مكانه `library.group` في الـ Cubit بـ 1.5ms مرة واحدة لما الليستة اتغيرت.
 
 </Level>
 
@@ -242,14 +242,14 @@ LibraryScrollView(sections: state.sections)
 
 </BeforeAfter>
 
-قبل: كل emit بيعمل JSON لـ 4000 كتاب (18ms)، وكل build بيرتّب ويجمّع (حوالي 9ms ومعاهم التجميع)، وكل tile بيعمل formatter. والـ frame بتاع تغيير حالة كتاب كان 38ms. بعد: الترتيب في الـ SQL، والتجميع مرة لكل ليستة جديدة في الـ Cubit، والـ persistence شغل drift. نفس الـ frame بقى 7ms. ومفيش ولا `Isolate.run` في الحل، لأن الشغل ماكانش محتاج يتعمل أصلًا.
+قبل: كل build بيرتّب (9ms) ويجمّع (5.5ms)، وكل tile بيعمل formatter، فالـ frame بتاع تغيير حالة كتاب كان 20ms. ولما الـ HydratedCubit اتضاف، كل emit زوّد JSON لـ 4000 كتاب (18ms)، فالمشكلتين مع بعض وصّلوا الـ frame لـ 38ms. بعد: الترتيب في الـ SQL، والتجميع مرة لكل ليستة جديدة في الـ Cubit، والـ persistence شغل drift. نفس الـ frame بقى 7ms. ومفيش ولا `Isolate.run` في الحل، لأن الشغل ماكانش محتاج يتعمل أصلًا.
 
 </LessonPart>
 
 <Quiz>
 
 <Question id="perf-main-isolate-1">
-<Ask>الـ frame UI بـ 38ms، والـ Track widget builds بيقول إن `BookList` اتبنى مرة واحدة بس. إيه معنى ده، وبتعمل إيه بعدها؟</Ask>
+<Ask>الـ frame UI بـ 20ms، والـ Track widget builds بيقول إن `BookList` اتبنى مرة واحدة بس. إيه معنى ده، وبتعمل إيه بعدها؟</Ask>
 <Answer>
 
 المشكلة مش عدد الـ rebuilds، المشكلة إن الـ build الواحد تقيل. بتفتح الـ CPU Profiler على نفس الحركة، والـ Bottom Up بيقولك أنهي function واخدة الوقت، والـ Call Tree بيقولك مين نادى عليها. وبتحط `Timeline.timeSync` على الحتة دي عشان تقيسها قبل وبعد.
