@@ -1,0 +1,561 @@
+---
+title: "نقسّم Readly خطوة خطوة"
+description: "من `lib/features` لـ workspace: الخريطة قبل ما تنقل، والـ app في `apps/readly`، والـ core اللي بيتقسم لـ 3، وpackage لكل feature من الأوراق لفوق، وفين الـ domain، وإيه اللي يفضل في الـ app."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="نقل مكتب وهو شغال">
+
+شركة بتنقل من دور واحد مفتوح لمكاتب منفصلة، بس مش هتقفل يوم واحد. فمابيشيلوش كل حاجة مرة واحدة يوم الجمعة ويدعوا إن كل حاجة تشتغل السبت. بيبدأوا بالأوضة اللي محدش بيطلب منها حاجة: المخزن. بينقلوه، ويتأكدوا إن الشغل ماشي، وبعدين الأوضة اللي بعدها. وقبل ما ينقلوا أي حاجة، بيرسموا خريطة: مين بيروح لمين كل يوم، وفين الناس اللي محتاجين يقعدوا جنب بعض.
+
+</Analogy>
+
+التقسيم الصح بيمشي بنفس الطريقة: <b>خريطة الأول</b> (مين بيعمل import لمين)، وبعدين <b>package package من تحت لفوق</b>: الحاجات اللي مابتعتمدش على حاجة الأول، وبعدين اللي بيعتمد عليها. وكل خطوة PR لوحده، والـ app شغال والتستات خضرا بعد كل واحد. درس «التوسّع» في الوحدة 6 وراك الشكل النهائي، والدرس ده الطريق ليه.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### الخطوة 0: الخريطة
+
+ده Readly قبل التقسيم، زي ما بدأ في [درس المشروع](/course/start/project/):
+
+```text
+readly/
+├─ lib/
+│  ├─ main_dev.dart / main_prod.dart
+│  ├─ core/        # Result, Failure, guard, BookId, network, ui ...
+│  ├─ di/          # get_it setup
+│  ├─ router/      # go_router + redirect
+│  ├─ l10n/
+│  └─ features/{auth,catalog,library,notes,settings}/
+└─ test/
+```
+
+قبل ما تنقل ملف، اعرف مين بيعمل import لمين بين الـ features. سطرين shell كفاية:
+
+<CodeBlock label="tool/feature_imports.sh">
+
+```bash
+#!/bin/sh
+# "from -> to" for every import that crosses a feature boundary
+for dir in lib/features/*/; do
+  from=$(basename "$dir")
+  grep -rhoE "^import 'package:readly/features/[a-z_]+/" "$dir" \
+    | sed -E "s|.*features/([a-z_]+)/|\1|" \
+    | grep -vx "$from" \
+    | sed "s|^|$from -> |"
+done | sort | uniq -c | sort -rn
+```
+
+</CodeBlock>
+
+<CodeBlock label="الناتج">
+
+```text
+   3 catalog -> library     # BookLookup, Book
+   2 notes -> library       # BookLookup
+   1 library -> notes       # BookDetailsPage shows NotesSection
+```
+
+</CodeBlock>
+
+3 حاجات بتقولها الخريطة:
+
+- <b>الـ library في النص:</b> الكتالوج والملاحظات محتاجينها. فهي أول feature تتنقل، وكل اللي بيعتمد عليها بعدها.
+- <b>فيه دايرة:</b> الـ notes محتاجة الـ library، والـ library محتاجة الـ notes عشان صفحة الكتاب بتعرض الملاحظات. لازم تتفك قبل التقسيم، وإلا هيبقى عندك package بتعتمد على package بتعتمد عليها.
+- <b>الـ auth والـ settings مالهمش imports من features:</b> سهلين، بس مش مستعجلين.
+
+الـ `di/` والـ `router/` مش في الخريطة، وده مقصود: هم الـ composition root، وشغلتهم إنهم يعرفوا كل الـ features. هيفضلوا في الـ app.
+
+### فك الدايرة قبل ما تنقل
+
+`BookDetailsPage` في الـ library بتعمل `NotesSection(bookId)` من الـ notes. الصفحة مش محتاجة تعرف الملاحظات، محتاجة <b>مكان</b> تتحط فيه حاجة تحت التفاصيل:
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+// features/library/presentation/book_details_page.dart
+import 'package:readly/features/notes/presentation/notes_section.dart';
+
+class BookDetailsPage extends StatelessWidget {
+  const BookDetailsPage({required this.id, super.key});
+  final String id;
+
+  @override
+  Widget build(BuildContext context) => ListView(children: [
+        BookDetailsHeader(id: id),
+        NotesSection(bookId: id), // library knows notes
+      ]);
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+// features/library/presentation/book_details_page.dart
+class BookDetailsPage extends StatelessWidget {
+  const BookDetailsPage({required this.id, this.below = const [], super.key});
+  final String id;
+  final List<Widget> below; // whatever the app wants under the details
+
+  @override
+  Widget build(BuildContext context) => ListView(children: [
+        BookDetailsHeader(id: id),
+        ...below,
+      ]);
+}
+
+// router/app_router.dart: the app knows both features
+GoRoute(
+  path: '/library/:id',
+  builder: (context, state) {
+    final id = state.pathParameters['id']!;
+    return BookDetailsPage(id: id, below: [NotesSection(bookId: id)]);
+  },
+)
+```
+
+</Side>
+
+</BeforeAfter>
+
+الـ library بقت بتقول «أنا عندي مكان تحت»، والـ app هو اللي بيقرر يحط فيه إيه. السهم `library -> notes` اختفى، والـ `BookDetailsPage` بقت تنفع في app تاني من غير ملاحظات. وده نفس الـ composition root بتاع [درس الـ DI](/course/di-scale/di/)، بس للـ widgets: اللي بيعرف الكل هو اللي بيوصّل.
+
+### الخطوة 1: الـ app في `apps/readly`
+
+<CodeBlock label="من غير ما تغيّر سطر كود">
+
+```bash
+mkdir -p apps
+git mv lib test pubspec.yaml analysis_options.yaml l10n.yaml android ios apps/readly/
+git mv apps/readly/analysis_options.yaml .   # one analysis_options for the workspace
+```
+
+</CodeBlock>
+
+<CodeBlock label="pubspec.yaml (root جديد)">
+
+```yaml
+name: readly_workspace
+publish_to: none
+environment:
+  sdk: ^3.6.0
+workspace:
+  - apps/readly
+```
+
+</CodeBlock>
+
+وفي `apps/readly/pubspec.yaml` بتزوّد `resolution: workspace`. اسم الـ package لسه `readly`، فكل `import 'package:readly/...'` شغال زي ما هو. الـ `git mv` بيحافظ على الـ history، و`git log --follow` بيلاقي الملفات في مكانها الجديد. شغّل `flutter pub get` من الـ root، و`flutter test` من `apps/readly`، وعدّل الـ paths في الـ CI. ده أول PR، ومافيهوش ولا سطر Dart.
+
+### الخطوة 2: الـ core بيتقسم لـ 3
+
+`lib/core` كان «الحاجات المشتركة». بس المشتركة دي مش نوع واحد. كل ملف فيه بيتسأل سؤال واحد: <b>بيعمل import لإيه؟</b>
+
+| الملفات | بتعمل import لـ | تروح |
+| --- | --- | --- |
+| `result.dart`، `failures.dart`، `book_id.dart`، `use_case.dart`، `clock.dart`، `token_store.dart`، `streams/debounce.dart` | `dart:` بس | `core` |
+| `errors/guard.dart`، `network/*`، `in_flight.dart`، `cancel_scope.dart` | dio | `core_network` |
+| `ui/error_view.dart`، `theme/*`، `presentation/action_status.dart`، `bloc/transformers.dart` | Flutter أو bloc | `core_ui` |
+| `config/app_config.dart` | الـ flavors | يفضل في الـ app |
+
+<CodeBlock label="packages/core/pubspec.yaml">
+
+```yaml
+name: core
+publish_to: none
+resolution: workspace
+environment:
+  sdk: ^3.6.0
+dependencies:
+  meta: ^1.16.0
+dev_dependencies:
+  test: ^1.25.0
+```
+
+</CodeBlock>
+
+مفيش `flutter` في الـ dependencies، ودي أهم حاجة في الملف. `core` بيستخدمها كل package، ومن ضمنهم الـ domain بتاع كل feature. لو `core` فيها Flutter، كل domain بقى بيجيب Flutter معاه من غير ما يكتب import.
+
+<CodeBlock label="packages/core/lib/core.dart (الـ barrel)">
+
+```dart
+export 'src/book_id.dart';
+export 'src/clock.dart';
+export 'src/failures.dart';
+export 'src/result.dart';
+export 'src/streams/debounce.dart';
+export 'src/token_store.dart';
+export 'src/use_case.dart';
+```
+
+</CodeBlock>
+
+وبعدين الـ imports القديمة كلها بتتغير لـ import واحد:
+
+<CodeBlock label="من package:readly/core لـ package:core">
+
+```bash
+# every old core import becomes the barrel import
+grep -rlE "package:readly/core/(result|failures|book_id|use_case|clock|token_store)" apps/readly/lib apps/readly/test \
+  | xargs sed -i -E "s#package:readly/core/(result|failures|book_id|use_case|clock|token_store)\.dart#package:core/core.dart#"
+```
+
+</CodeBlock>
+
+الملف اللي كان بيعمل import لـ `result.dart` و`failures.dart` هيبقى فيه `import 'package:core/core.dart'` مرتين، و`flutter analyze` هيعلّم عليه بـ `duplicate_import`، فبتشيل السطر الزيادة. وبعدين `core` بيتضاف في `dependencies` بتاع `apps/readly`، و`- packages/core` في الـ root. والتستات بتاعة الملفات دي بتتنقل لـ `packages/core/test/` وبتتشغّل بـ `dart test`، من غير Flutter.
+
+`core_network` و`core_ui` نفس الخطوات. `core_network` بيعتمد على `core` وdio، و`core_ui` على `core` وFlutter.
+
+<Note kind="info" title="مفيش package اسمها shared">
+
+الـ «shared» في Readly متقسمة حسب نوعها: `core` للـ types اللي الـ domain بيستخدمها، و`core_network` للشبكة، و`core_ui` للـ design system والـ widgets المشتركة وhelpers الـ presentation. كل واحدة اسمها بيقول فيها إيه، فلما حد يحاول يحط `LibraryPage` في `core_ui`، الاسم نفسه بيقول إنها مش مكانها. ودرس [«امتى التقسيم يستاهل»](/course/modularization/why-packages/) بيقول ليه ده مهم.
+
+</Note>
+
+### الخطوة 3: package لكل feature، من الأوراق لفوق
+
+الترتيب من الخريطة: <b>library</b> الأول لأن catalog وnotes معتمدين عليها، وبعدين <b>notes</b> و<b>catalog</b>، وفي الآخر <b>auth</b>. كل feature PR لوحده.
+
+<CodeBlock label="packages/feature_library/">
+
+```text
+packages/feature_library/
+├─ pubspec.yaml          # core, core_network, core_ui, drift, flutter_bloc
+├─ lib/
+│  ├─ feature_library.dart     # the barrel: the only door
+│  ├─ testing.dart             # fakes and builders for other packages' tests
+│  └─ src/
+│     ├─ domain/   book.dart, book_status.dart, book_lookup.dart, library_repository.dart, ...
+│     ├─ data/     book_dto.dart, library_remote_source.dart, library_repository_impl.dart, ...
+│     ├─ presentation/  library_cubit.dart, library_page.dart, book_details_page.dart, ...
+│     ├─ library_di.dart       # registerLibrary(GetIt)
+│     └─ library_routes.dart   # the routes this feature owns
+└─ test/                       # moved from apps/readly/test/features/library
+```
+
+</CodeBlock>
+
+<CodeBlock label="packages/feature_library/lib/feature_library.dart">
+
+```dart
+// what other packages may use, nothing more
+export 'src/domain/book.dart';
+export 'src/domain/book_lookup.dart';
+export 'src/domain/book_status.dart';
+export 'src/library_di.dart' show registerLibrary;
+export 'src/library_routes.dart' show libraryRoutes;
+export 'src/presentation/book_details_page.dart' show BookDetailsPage;
+```
+
+</CodeBlock>
+
+- <b>الـ `show`:</b> الـ `library_di.dart` ممكن يبقى فيه helpers تانية. الـ `show` بيصدّر الاسم اللي انت قاصده بس، فالـ API مابيكبرش لوحده.
+- <b>الـ `LibraryRepository` مش متصدّر:</b> محدش بره الـ library محتاجه. الـ notes والـ catalog محتاجين `BookLookup`، وده الـ contract الصغير اللي اتعمل في [درس SOLID في Readly](/course/quality/solid-in-readly/). الـ app بيسجّل الـ Impl عن طريق `registerLibrary` من غير ما يشوفه، زي [درس حراسة المعمارية](/course/quality/architecture-guards/).
+- <b>الـ `testing.dart`:</b> `FakeBookLookup` و`BookBuilder` كانوا في `test/helpers` وبيستخدمهم تستات الـ notes والـ catalog. الـ `test/` مش بيتشاف من بره الـ package، فبيتنقلوا لـ `lib/testing.dart`، ملف منفصل عن الـ barrel، والتستات التانية بتعمل `import 'package:feature_library/testing.dart'`.
+
+### فين الـ domain؟
+
+جوه كل feature، في `src/domain/`. مش package لوحدها لكل الـ features، ومش package لكل domain:
+
+| الاختيار | النتيجة |
+| --- | --- |
+| `readly_domain` واحدة لكل الـ features | كل الـ domains شايفة بعض، والحد بين الـ features اتكسر جوه الـ domain |
+| `library_domain` و`library_data` و`library_presentation` | 3 pubspecs لكل feature، وكل تغيير بيلمس التلاتة |
+| `src/domain/` جوه `feature_library` | الحد بين الـ features في الـ pubspec، واتجاه الطبقات في الـ architecture test |
+
+الـ domain بيطلع package لوحده لما يبقى فيه حد عايزه <b>من غير</b> باقي الـ feature، زي app للأدمن مش محتاج drift ولا الشاشات. ودي حالة درس «domain واحد لأكتر من app». ولحد ما ده يحصل، الـ domain جوه الـ feature.
+
+والـ `BookId` في `core` مش في الـ library، لأن الكتالوج والمكتبة والملاحظات التلاتة بيتكلموا بيه، وكلهم معتمدين على `core` أصلًا. الـ type اللي كل الـ features بتستخدمه مكانه الـ package اللي كلهم تحتها.
+
+### الخطوة 4: اللي بيفضل في الـ app
+
+<CodeBlock label="apps/readly/lib بعد التقسيم">
+
+```text
+apps/readly/lib/
+├─ main_dev.dart / main_prod.dart
+├─ bootstrap.dart
+├─ config/app_config.dart
+├─ di/setup.dart            # registerCore + registerX for each feature + resetOnLogout
+├─ router/app_router.dart   # shell, tabs, redirect, routes from every feature
+└─ settings/                # presentation + a small store, no domain
+```
+
+</CodeBlock>
+
+<CodeBlock label="apps/readly/lib/di/setup.dart">
+
+```dart
+void setupDependencies(AppConfig config) {
+  registerCore(getIt, config);  // Clock, TokenStore impl, the two Dio clients
+  registerLibrary(getIt);
+  registerNotes(getIt);
+  registerCatalog(getIt);
+  registerAuth(getIt);
+  registerSettings(getIt);      // still in the app
+  resetOnLogout();
+}
+```
+
+</CodeBlock>
+
+- <b>الـ settings في الـ app:</b> مالهاش domain، ومحدش محتاجها غير الـ app، و[درس الـ Settings](/course/di-scale/settings/) قال إنها store صغير وCubit. لو بقت package، هتكسب pubspec وbarrel ومش هتكسب حدود.
+- <b>الـ `resetOnLogout` في الـ app:</b> هو اللي بيعرف إن الـ logout لازم يمسح cache الكتالوج والصور والـ DB. ده تنسيق بين features، ومكانه الحتة الوحيدة اللي بتعرفهم كلهم، زي [درس الـ Session](/course/di-scale/session/).
+
+<Diagram name="d-mod-readly-graph">
+
+Readly بعد التقسيم والأرقام ترتيب النقل: الـ core الأول، وبعدين الـ library لأن اتنين معتمدين عليها، وبعدين الباقي، والـ app فوق الكل بيجمّع.
+
+</Diagram>
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### الـ guard جاب dio لـ core
+
+أول محاولة نقل `core/errors/guard.dart` لـ `packages/core` مع `Result` و`Failure`، لأنهم «مع بعض». الـ `guard` بيمسك `DioException`، فـ `core` بقت محتاجة dio في الـ pubspec. ومن غير ما حد يكتب import، كل domain في كل feature بقى بيعتمد على dio، لأن الـ domain بيعتمد على `core`.
+
+السؤال الصح: مين بيستخدم `guard`؟ الـ repositories بس، يعني طبقة الـ data. فمكانه `core_network`:
+
+<CodeBlock label="الـ guard في المكان اللي بيستخدمه">
+
+```dart
+// packages/core_network/lib/src/guard.dart
+import 'package:core/core.dart'; // Result, Failure, CacheException
+import 'package:dio/dio.dart';
+
+Future<Result<T>> guard<T>(Future<T> Function() run) async {
+  try {
+    return Success(await run());
+  } on DioException catch (e) {
+    return Err(mapDio(e));
+  } on CacheException catch (e) {
+    return Err(CacheFailure(e.message));
+  }
+}
+```
+
+</CodeBlock>
+
+الـ `CacheException` والـ `Failure` نفسهم Dart صافي فيفضلوا في `core`. القاعدة: الحاجة بتروح للـ package اللي فيها الـ dependencies بتاعتها، مش للـ package اللي فيها «أصحابها».
+
+### الـ imports النسبية اتكسرت كلها
+
+الملفات اللي كانت بتعمل `import '../../../core/result.dart'` اتكسرت أول ما الفولدر اتنقل. وفيه اللي بيعمل `import '../domain/book.dart'`، ودي سليمة لأن الملفين اتنقلوا مع بعض.
+
+القاعدة اللي بتسهّل: <b>جوه الـ package، relative. بين الـ packages، barrel.</b> الـ import من package لـ package لازم يبقى `package:core/core.dart`، والـ import جوه نفس الـ package يفضل relative (أو `package:feature_library/src/...`). وبعد كل خطوة، `flutter analyze` من الـ root هيقولك كل import مكسور قبل ما تشغّل حاجة.
+
+### الـ freezed والـ part files
+
+الـ `book_dto.dart` فيه `part 'book_dto.freezed.dart';` و`part 'book_dto.g.dart';`. اتنقل للـ package الجديدة والـ generated files لسه في `apps/readly`. النتيجة compile errors في كل DTO.
+
+الـ generated files بتتنقل مع الملف اللي ولّدها أو بتتولّد من جديد جوه الـ package الجديدة، والـ package لازم يبقى فيها `build_runner` والـ generators في `dev_dependencies` بتاعتها. ودي بداية درس «الـ codegen والـ CI»: كل package ليها codegen بتاعها، والـ CI لازم يعرف ده.
+
+### الترجمة: الـ feature مش قادرة توصل لـ AppLocalizations
+
+الـ `LibraryPage` كانت بتستخدم `AppLocalizations.of(context).libraryEmpty`، والـ `AppLocalizations` بيتولّد من `lib/l10n` في الـ app. الـ library بقت package، ومش ممكن تعمل import من الـ app، لأن الـ app معتمد عليها.
+
+<b>كل feature ليها ARB بتاعتها</b>، والـ strings المشتركة (حاول تاني، مفيش نت) في `core_ui`:
+
+<CodeBlock label="packages/feature_library/l10n.yaml">
+
+```yaml
+arb-dir: lib/src/l10n
+template-arb-file: library_en.arb
+output-localization-file: library_localizations.dart
+output-class: LibraryLocalizations
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ app بيجمّع الـ delegates">
+
+```dart
+MaterialApp.router(
+  localizationsDelegates: const [
+    CoreUiLocalizations.delegate,
+    LibraryLocalizations.delegate,
+    NotesLocalizations.delegate,
+    CatalogLocalizations.delegate,
+    AuthLocalizations.delegate,
+    AppLocalizations.delegate, // settings and the shell
+    GlobalMaterialLocalizations.delegate,
+    GlobalWidgetsLocalizations.delegate,
+    GlobalCupertinoLocalizations.delegate,
+  ],
+  supportedLocales: const [Locale('ar'), Locale('en')],
+  // ...
+)
+```
+
+</CodeBlock>
+
+كل package فيها `flutter: generate: true` في الـ pubspec، و`flutter_localizations` و`intl` في الـ dependencies، وبتولّد الـ class بتاعها بـ `flutter gen-l10n` من جواها. الـ strings بتاعة كل feature بقت جنب الكود اللي بيستخدمها، ولو feature اتشالت، الـ strings بتاعتها بتمشي معاها. وتفاصيل الـ ARB والـ placeholders والـ plural زي [درس الترجمة](/course/presentation/l10n/) بالظبط.
+
+### الـ routes: الكتالوج عايز يفتح صفحة في المكتبة
+
+كل feature بتصدّر الـ routes بتاعتها، والـ app بيجمّعهم في الـ shell. بس الكتالوج عايز يودّي على `/library/:id` بعد «ضيف لمكتبتي». لو عمل import لـ `LibraryPage` عشان يعمل `Navigator.push`، رجعنا نربط الـ presentation ببعض.
+
+التنقل بين الـ features بيبقى <b>بالـ path</b>، مش بالـ widget:
+
+<CodeBlock label="الـ path جزء من الـ public API">
+
+```dart
+// packages/feature_library/lib/src/library_routes.dart
+abstract final class LibraryPaths {
+  static const library = '/library';
+  static String book(BookId id) => '/library/${id.value}';
+}
+
+// packages/feature_catalog/lib/src/presentation/catalog_details_page.dart
+// catalog already depends on feature_library (BookLookup), so this adds no edge
+context.go(LibraryPaths.book(book.id));
+```
+
+</CodeBlock>
+
+الكتالوج معتمد على الـ library أصلًا، فـ `LibraryPaths` مازوّدش سهم جديد في الخريطة. ولو feature مش معتمدة على التانية وعايزة تودّي عليها، ماتزوّدش dependency عشان path: الـ app يدّيها callback، زي الـ `below` في `BookDetailsPage`. والـ redirect والـ guards فاضلين في الـ app زي [درس الـ Router](/course/presentation/router/)، لأنهم بيعرفوا الـ session وكل الـ routes.
+
+### الـ database بتاعة drift: بتاعة مين؟
+
+الـ `AppDatabase` في [درس التخزين المحلي](/course/data-network/local-storage/) فيه جداول الـ library والـ sync queue، ومع الوقت جداول الـ notes. لو `AppDatabase` في `feature_library`، الـ notes هتحتاج تعتمد على data بتاعة الـ library. ولو في `core`، `core` بقت تعرف كل الجداول.
+
+فيه طريقين:
+
+- <b>DB واحدة يجمّعها الـ app:</b> drift عنده <b>modular code generation</b>، اللي بيخلي كل package تعرّف جداولها والـ queries بتاعتها، والـ database class بيتعمل في الـ app ويجمّعهم، ومعاه الـ `schemaVersion` والـ migrations. التفاصيل والـ `build.yaml` في [docs drift](https://drift.simonbinder.eu/generation_options/modular/).
+- <b>DB لكل feature:</b> حدود أنضف، بس الـ logout لازم يمسح كذا DB، ومفيش transaction بين جدول في الـ library وجدول في الـ notes.
+
+Readly بيختار الأولاني: الـ `ownerId` والـ wipe بتوع [درس الـ Session](/course/di-scale/session/) معمولين على إن فيه DB واحدة، ومسح ملف واحد أضمن من مسح أربعة.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>من الأوراق لفوق، وPR لكل package:</b> الـ package اللي مابتعتمدش على حاجة بتتنقل الأول، فكل خطوة بتعتمد على حاجة اتنقلت خلاص. والـ big bang (كل الـ packages في PR واحد) مستحيل يتعمله review، ولو حاجة باظت مش هتعرف أنهي خطوة.
+- <b>فك الدواير وانت لسه فولدرات:</b> فك الدايرة في فولدرات تعديل في ملفين. بعد التقسيم، الدايرة مش هتتبني أصلًا، فهتضطر تفكها وانت في نص النقل.
+- <b>الـ barrel صغير ومقصود:</b> `export 'src/...'` لكل ملف بيرجّعك للشقة المفتوحة بـ pubspec زيادة. صدّر اللي فيه حد بره محتاجه فعلًا، وزوّد لما حد يطلب.
+- <b>الـ core تحت الكل، فخليه صغير وDart صافي:</b> كل سطر في `core` كل الـ packages بتعتمد عليه، وأي dependency فيه بتوصل لكل domain. اللي محتاج dio في `core_network`، واللي محتاج Flutter في `core_ui`.
+- <b>الـ app هو الـ composition root لكل حاجة:</b> الـ DI، والـ routes، والـ delegates بتوع الترجمة، والـ widgets اللي بتجمع features (زي `below`). أي حاجة محتاجة تعرف أكتر من feature مكانها هنا، مش في feature منهم.
+- <b>اسم الفولدر = اسم الـ package:</b> الـ architecture test والـ CI والسكريبتات بيفترضوا ده. `packages/library/` واسمها `feature_library` هتكسر حاجة في يوم.
+
+<Note kind="interview" title="سؤال interview">
+
+«قسّمت app كبير لـ packages إزاي؟» بدأت بخريطة الـ imports بين الـ features عشان أعرف مين في النص وفين الدواير، وفكيت الدواير وأنا لسه فولدرات. بعدين نقلت الـ app لـ `apps/` في workspace من غير تغيير كود، وبعدين package package من تحت لفوق: الـ core اتقسم حسب الـ dependencies (Dart صافي، وnetwork، وUI)، وبعدين الـ features بترتيب اللي محدش معتمد عليه الأول، كل واحدة PR والتستات خضرا. كل feature ليها barrel صغير وfunction تسجيل وroutes، والـ domain جوه الـ feature في `src/domain`، والـ app فضل الـ composition root: الـ DI والـ router والترجمة والحاجات اللي بتجمع أكتر من feature.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### الـ router بعد ما كل feature بقت بتصدّر routes بتاعتها
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+// lib/router/app_router.dart: imports every page of every feature
+import '../features/catalog/presentation/catalog_page.dart';
+import '../features/catalog/presentation/catalog_details_page.dart';
+import '../features/library/presentation/library_page.dart';
+import '../features/library/presentation/book_details_page.dart';
+import '../features/notes/presentation/notes_section.dart';
+// ... 14 more page imports
+
+StatefulShellRoute.indexedStack(branches: [
+  StatefulShellBranch(routes: [
+    GoRoute(path: '/library', builder: (_, __) => const LibraryPage(), routes: [
+      // every nested route of every feature, written here
+    ]),
+  ]),
+  // ...
+])
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+// apps/readly/lib/router/app_router.dart
+import 'package:feature_catalog/feature_catalog.dart';
+import 'package:feature_library/feature_library.dart';
+import 'package:feature_notes/feature_notes.dart';
+
+StatefulShellRoute.indexedStack(branches: [
+  StatefulShellBranch(routes: libraryRoutes(
+    // the app fills the slot: library never imports notes
+    bookBelow: (id) => [NotesSection(bookId: id)],
+  )),
+  StatefulShellBranch(routes: catalogRoutes()),
+  StatefulShellBranch(routes: [settingsRoute]), // still in the app
+])
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: الـ router بيعمل import لكل صفحة في كل feature، وأي route جديدة في الـ library تعديل في ملف الـ app. بعد: كل feature بتملك الـ routes بتاعتها وبتصدّرها من الـ barrel، والـ app بيجمّع الفروع ويملّى الـ slots. الـ `libraryRoutes` بتاخد `bookBelow` وبتديه لـ `BookDetailsPage(below: ...)`، فالـ library لسه مش عارفة إن فيه ملاحظات. والـ redirect والـ session والتابات فاضلين في الـ app، لأنهم بتوع الـ app كله.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="mod-split-1">
+<Ask>الخريطة قالت `catalog -> library` و`notes -> library` و`library -> notes`. تبدأ النقل بإيه، وتعمل إيه الأول؟</Ask>
+<Answer>
+
+الأول تفك الدايرة `library -> notes` وانت لسه فولدرات، لأن بعد التقسيم مش هتعرف تبني package معتمدة على package معتمدة عليها. وبعد الـ core، الـ library أول feature تتنقل لأن الـ catalog والـ notes معتمدين عليها، فلما ييجي دورهم يلاقوها package جاهزة.
+
+</Answer>
+</Question>
+
+<Question id="mod-split-2">
+<Ask>`guard` بيمسك `DioException`. ليه مايتحطش في `core` جنب `Result` و`Failure`؟</Ask>
+<Answer>
+
+لأن `core` كل الـ packages بتعتمد عليها، ومن ضمنهم الـ domain بتاع كل feature. لو `core` فيها dio، كل domain بقى بيعتمد على dio من غير ما يكتب import. والـ `guard` بيستخدمه الـ data layer بس، فمكانه `core_network`. القاعدة: الحاجة تروح للـ package اللي فيها الـ dependencies بتاعتها.
+
+</Answer>
+</Question>
+
+<Question id="mod-split-3">
+<Ask>`BookDetailsPage` في الـ library كانت بتعرض `NotesSection` من الـ notes. فكيت الدايرة إزاي من غير ما الصفحة تفقد الملاحظات؟</Ask>
+<Answer>
+
+الصفحة بقت بتاخد `below: List<Widget>`، يعني مكان فاضي من غير ما تعرف هيتحط فيه إيه. والـ app (الـ router) هو اللي بيبني الصفحة وبيحط فيها `NotesSection`، لأن الـ app بيعرف الـ features الاتنين. الـ library بطّلت تعمل import للـ notes.
+
+</Answer>
+</Question>
+
+<Question id="mod-split-4">
+<Ask>ليه الـ domain في Readly جوه كل feature package، مش package واحدة `readly_domain`؟</Ask>
+<Answer>
+
+لأن package domain واحدة بتخلي كل الـ domains شايفة بعض، فالحد بين الـ features يتكسر جوه الـ domain من غير ما أي pubspec يمنع. جوه الـ feature، الحد بين الـ features في الـ pubspec، واتجاه الطبقات بيحرسه الـ architecture test. والـ domain بيطلع package لوحده بس لما حد يحتاجه من غير باقي الـ feature، زي app أدمن.
+
+</Answer>
+</Question>
+
+<Question id="mod-split-5">
+<Ask>`LibraryPage` بتستخدم `AppLocalizations` اللي بيتولّد في الـ app، وبعد التقسيم مابقتش تشوفه. الحل؟</Ask>
+<Answer>
+
+كل feature ليها ARB وclass ترجمة بتاعتها (`LibraryLocalizations`) بتتولّد جوه الـ package، والـ strings المشتركة في `core_ui`. والـ app بيحط كل الـ delegates في `localizationsDelegates`. الـ feature مش ممكن تعمل import من الـ app، لأن الـ app معتمد عليها.
+
+</Answer>
+</Question>
+
+</Quiz>

@@ -1,0 +1,26 @@
+---
+title: "التطبيق والمهام"
+description: "مهام وحدة الـ Modularization في Readly: من خريطة الـ imports لحد workspace فيه package لكل feature، والـ dependency rule في تست بيقرا الـ pubspecs، وapp أدمن بيشارك الـ domain، وCI بيشغّل اللي اتغير بس."
+type: "practice"
+draft: true
+---
+
+<Tasks>
+<Task id="mod-practice-1">شغّل سكريبت الـ imports بين الـ features على Readly، وعدّ كمان الـ commits اللي لمست أكتر من feature في آخر 3 شهور. اكتب ADR فيه الأرقام دي، وقرارك: packages دلوقتي ولا modular monolith الأول، والحدود اللي اخترتها وليه (درس «امتى التقسيم يستاهل»).</Task>
+<Task id="mod-practice-2">لو الخريطة فيها دايرة (زي `BookDetailsPage` اللي بتعرض `NotesSection`)، فكّها وانت لسه فولدرات: الصفحة تاخد `below`، والـ router هو اللي يحط الـ section. وشغّل السكريبت تاني واتأكد إن السهم اختفى.</Task>
+<Task id="mod-practice-3">انقل الـ app لـ `apps/readly` بـ `git mv`، واعمل الـ root pubspec بـ `workspace:`، وزوّد `resolution: workspace`. اتأكد إن فيه `pubspec.lock` واحد في الـ root، وإن `git log --follow` لسه بيلاقي history ملف زي `library_cubit.dart`. ولو الفريق على Dart 3.11، جرّب `packages/*` بدل الليستة (درس «الـ pub workspaces»).</Task>
+<Task id="mod-practice-4">قسّم `lib/core` لـ `core` و`core_network` و`core_ui` بالجدول اللي في الدرس: كل ملف بيروح للـ package اللي فيها الـ dependencies بتاعته. انقل `guard` لـ `core_network`، واتأكد إن `packages/core/pubspec.yaml` مافيهوش Flutter ولا dio، وإن تستاتها بتعدّي بـ `dart test`.</Task>
+<Task id="mod-practice-5">طلّع `feature_library` الأول، وبعدين notes وcatalog وauth، كل واحدة PR. كل package فيها barrel صغير بـ `show`، و`registerX`، والـ routes بتاعتها، و`testing.dart` للـ fakes اللي التستات التانية محتاجاها. والـ settings تفضل في الـ app (درس «نقسّم Readly خطوة خطوة»).</Task>
+<Task id="mod-practice-6">انقل الترجمة: ARB لكل feature بـ `l10n.yaml` جواها، والـ strings المشتركة في `core_ui`، والـ app بيجمّع الـ delegates. واتأكد إن مفيش feature بتعمل import من `apps/readly` (درس «نقسّم Readly خطوة خطوة»).</Task>
+<Task id="mod-practice-7">ضيف `tools/architecture/test/package_graph_test.dart`: كل package عضو في الـ workspace، و`core` Dart صافي ومابتعتمدش على حد، والـ `core_*` على `core` بس، والـ features على الـ core و`featureEdges` بأسبابها، ومحدش بيعتمد على app، ومفيش دواير، والـ barrels مابتعملش re-export لـ packages تانية. وبعدين اكسر كل قاعدة في branch وشوف التست بيفشل برسالة مفهومة (درس «الـ dependency rule من الـ pubspec»).</Task>
+<Task id="mod-practice-8">اعمل `NoteCounts` في الـ library والـ notes تنفّذه، واعرض «3 ملاحظات» جنب كل كتاب في المكتبة من غير ما `feature_library` تعتمد على `feature_notes`. وضيف CODEOWNERS على الـ pubspecs و`tools/architecture`.</Task>
+<Task id="mod-practice-9">طلّع `library_domain` (Book وBookStatus والقواعد اللي جواهم) لـ package Dart صافية، واعمل `apps/readly_admin` (Flutter web) فيه شاشة واحدة: مكتبة مستخدم بالـ `SupportBook`، وزرار «خلصه» بيستخدم `book.canBeFinished`. اتأكد إن الأدمن مابيعتمدش على `feature_library` ولا drift، وإن تست الـ graph بيقبل الـ `_domain` packages (درس «domain واحد لأكتر من app»).</Task>
+<Task id="mod-practice-10">اكتب `tools/architecture/bin/affected.dart`، وحوّل الـ CI لـ `check` و`changes` و`test` (matrix بـ `fromJSON`) و`ci-ok` كـ required check وحيد. جرّب 3 PRs: واحد بيغيّر الـ notes، وواحد بيغيّر `library_domain`، وواحد بيغيّر الـ README، واكتب في الـ PR كام job اشتغل ووقت كل CI قبل وبعد (درس «الـ codegen والـ CI»).</Task>
+<Task id="mod-practice-11">شغّل `dart run build_runner build --workspace` من الـ root وقارن وقته بالـ loop على الـ packages. واتأكد إن الـ check بتاع «generated code up to date» بيفشل لو عدّلت DTO ومولّدتش.</Task>
+</Tasks>
+
+<Deliverable>Readly workspace: `apps/readly` و`apps/readly_admin`، و`core` و`core_network` و`core_ui` و`library_domain`، وpackage لكل feature بـ barrel صغير وتسجيل وroutes. الـ dependency rule بين الـ packages متشيكة في تست بيقرا الـ pubspecs، ومفيش دواير، والـ core والـ domain بيتختبروا بـ `dart test`. والأدمن بيستخدم نفس `Book` ونفس القواعد من غير ما يشوف drift. والـ CI على الـ PR بيشغّل الـ packages اللي اتغيرت واللي بيعتمدوا عليها بس، وعلى main كله، بـ check واحد required.</Deliverable>
+
+<ReviewQuestion>ارسم الـ graph بتاع Readly بعد التقسيم من الـ pubspecs (مش من دماغك). وبعدين جاوب: لو المنتج طلب إن صفحة الكتالوج تعرض «عدد الملاحظات اللي كتبتها على الكتاب ده»، هتحط الكود فين، وأنهي أسهم هتتغير في الرسمة، ولو مفيش سهم هيتغير، إزاي؟ ولو فيه، إيه اللي هيتعدّل في التست وCODEOWNERS هيطلب موافقة مين؟</ReviewQuestion>
+
+<LogBox id="mod-log" />

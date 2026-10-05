@@ -1,0 +1,362 @@
+---
+title: "domain واحد لأكتر من app"
+description: "Readly محتاج app للأدمن بيشتغل على نفس الكتب ونفس القواعد. إزاي تطلّع الـ domain لـ package Dart صافية يستخدمها الاتنين، وإيه اللي يتشارك وإيه اللي كل app يكتبه لنفسه، وإيه اللي بيحصل لما الـ domain يتغير."
+minutes: 30
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="كتاب الوصفات والفرعين">
+
+مطعم بقى عنده نشاط تاني: catering للأفراح. المطبخ مختلف، والتغليف مختلف، والزبون مختلف، والكميات مختلفة. بس «المسقعة» لازم تبقى نفس المسقعة: نفس المكونات، ونفس القاعدة إن الباذنجان يتقلي قبل ما يتحط في الفرن. فعملوا <b>كتاب وصفات واحد</b> للاتنين. كتاب الوصفات مافيهوش «إزاي ترص الأطباق في الصالة» ولا «إزاي تحمّل العلب في العربية»، دي حاجة كل فرع بيعملها بطريقته.
+
+وفيه غلطتين معروفين. الأولى إن الـ catering ياخد المطبخ كله بتاع المطعم، بالترابيزات والكاشير. والتانية إن كل فرع يكتب الوصفة من دماغه، وبعد سنة المسقعة في الفرح بقت طعمها حاجة تانية.
+
+</Analogy>
+
+الوصفات هي الـ <b>domain</b>: الـ entities والـ value objects والقواعد. والمطبخ والصالة هما الـ data والـ presentation، وكل app ليه بتوعه. والدرس ده عن إزاي تطلّع كتاب الوصفات من `feature_library` لـ package يستخدمها app تاني، من غير ما تاخد المطبخ معاه، ومن غير ما الوصفات تتنسخ وتبعد عن بعض.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### الـ app التاني: Readly Admin
+
+فريق الدعم محتاج أداة: يدوّر على مستخدم، يشوف مكتبته وحالة كل كتاب، والعمليات اللي واقفة في الـ sync، ويصلّح حالة كتاب لو المستخدم اشتكى. هتبقى Flutter web، بيكلّم endpoints الأدمن في الـ backend (`GET /admin/users/:id/library`) بتوكن أدمن.
+
+الأداة دي محتاجة من Readly:
+
+| محتاجه | ليه |
+| --- | --- |
+| `Book` و`BookStatus` و`BookId` | نفس الكتاب بنفس الحالات |
+| `canBeFinished` و`markAsFinished()` | الأدمن مايقدرش يعلّم كتاب «خلصته» لو المستخدم مابدأش يقراه، نفس قاعدة الـ app |
+| الـ `Failure` والـ `Result` | نفس طريقة التعامل مع الأخطاء |
+| الـ theme والـ widgets المشتركة | نفس شكل الكتاب والغلاف |
+
+ومش محتاج: drift والـ sync queue (الأدمن أونلاين بس)، والـ `LibraryCubit` والشاشات (الأدمن شاشاته جداول وفلاتر)، والـ `LibraryRepository` (الأدمن بيقرا مكتبة أي مستخدم، مش مكتبته هو).
+
+### 3 طرق، واحدة بس صح
+
+| الطريقة | اللي بيحصل |
+| --- | --- |
+| الأدمن يعتمد على `feature_library` كلها | بياخد drift والـ sync service والشاشات وget_it registrations. وdrift على الويب محتاج إعداد مخصوص لـ DB الأدمن مش هيستخدمها |
+| الأدمن ينسخ `Book` و`BookStatus` | بعد 3 شهور الـ app زوّد حالة `abandoned`، والأدمن لسه مايعرفهاش، وبيعرض الكتاب «غير معروف» |
+| الـ domain يطلع package لوحده، والاتنين يعتمدوا عليه | كل app بياخد الوصفات بس، ولما الـ domain يتغير، الاتنين بيتعمل لهم compile على النسخة الجديدة |
+
+<CodeBlock label="packages/library_domain/pubspec.yaml">
+
+```yaml
+name: library_domain
+publish_to: none
+resolution: workspace
+environment:
+  sdk: ^3.6.0
+dependencies:
+  core:
+  equatable: ^2.0.7
+dev_dependencies:
+  test: ^1.25.0
+```
+
+</CodeBlock>
+
+<CodeBlock label="packages/library_domain/lib/library_domain.dart">
+
+```dart
+export 'src/book.dart';
+export 'src/book_status.dart';
+```
+
+</CodeBlock>
+
+<CodeBlock label="packages/library_domain/lib/src/book.dart">
+
+```dart
+import 'package:core/core.dart';
+import 'package:equatable/equatable.dart';
+
+import 'book_status.dart';
+
+class Book extends Equatable {
+  const Book({required this.id, required this.title, required this.status});
+
+  final BookId id;
+  final String title;
+  final BookStatus status;
+
+  // the rules both apps must agree on
+  bool get canBeFinished => status == BookStatus.reading;
+  bool get canBeReviewed => status == BookStatus.finished;
+  Book markAsFinished() => Book(id: id, title: title, status: BookStatus.finished);
+
+  @override
+  List<Object?> get props => [id, title, status];
+}
+```
+
+</CodeBlock>
+
+- <b>Dart صافي:</b> `core` و`equatable` بس. فبيشتغل على الموبايل والويب والـ server، وتستاته بـ `dart test`، والـ compiler بيمنع أي Flutter زي درس [«الـ dependency rule من الـ pubspec»](/course/modularization/enforce-rule/).
+- <b>القاعدة جوه الـ entity:</b> الـ `canBeFinished` مكتوبة في `Book` نفسه، مش في `MarkBookAsFinished`. ده اللي بيخلي المشاركة سهلة: الـ use case بتاع الـ app بيعتمد على `LibraryRepository` بتاع المستخدم، والأدمن عنده use case تاني بـ repository تاني، بس الاتنين بيسألوا نفس `book.canBeFinished`. الـ entity الغنية اللي في [درس الـ Domain](/course/domain-errors/domain/) بتدفع هنا.
+- <b>مفيش `fromJson`:</b> كل app بيكلّم endpoints مختلفة، فكل app ليه الـ DTOs بتاعته في الـ data layer بتاعه.
+
+### مين بيعتمد على مين
+
+<CodeBlock label="الـ pubspecs بعد الاستخراج">
+
+```yaml
+# packages/feature_library/pubspec.yaml
+dependencies:
+  core:
+  core_network:
+  core_ui:
+  library_domain: # Book moved here; the use cases and the repository stay
+
+# packages/feature_notes/pubspec.yaml
+dependencies:
+  core:
+  feature_library: # BookLookup, as before
+  library_domain:  # Book: declared, not re-exported by feature_library
+
+# apps/readly_admin/pubspec.yaml
+dependencies:
+  core:
+  core_network:
+  core_ui:
+  library_domain: # no feature_library, no drift, no sync
+```
+
+</CodeBlock>
+
+الـ `feature_library` مابتعملش re-export لـ `library_domain` من الـ barrel بتاعها. زي ما درس الـ dependency rule قال: الـ barrel يصدّر كوده بس، واللي محتاج `Book` يكتب `library_domain` في الـ pubspec بتاعه، فالسهم يبان.
+
+وتست الـ graph بتاع الدرس اللي فات محتاج قاعدة جديدة للنوع ده: أي package اسمها بينتهي بـ `_domain` بتعتمد على `core` بس، ومافيهاش Flutter، والـ features والـ apps مسموحلهم يعتمدوا عليها من غير ما تدخل `featureEdges`، لأنها مش feature:
+
+```dart
+bool isDomain(String name) => name.endsWith('_domain');
+
+test('domain packages: plain Dart, core only', () {
+  for (final p in packages.where((p) => isDomain(p.name))) {
+    expect(internal(p).difference({'core'}), isEmpty, reason: p.name);
+    expect(p.deps, isNot(contains('flutter')), reason: p.name);
+  }
+});
+// and in the features test: allowed = {...core*, ...ours.where(isDomain), ...?featureEdges[p.name]}
+```
+
+والـ `feature_library` نفسها خسّت: فيها الـ use cases (`AddBookToLibrary` و`MarkBookAsFinished`)، والـ `LibraryRepository` و`BookLookup`، والـ data، والشاشات. يعني «الـ library من ناحية المستخدم»، والوصفات بقت في مكان تاني.
+
+<Diagram name="d-mod-shared-domain">
+
+الـ app والأدمن الاتنين بيعتمدوا على `library_domain`، وكل واحد ليه data وpresentation بتوعه. الأدمن مابيعتمدش على `feature_library`، فمابيشوفش drift ولا الـ sync.
+
+</Diagram>
+
+### الأدمن بيستخدم نفس القاعدة
+
+<CodeBlock label="apps/readly_admin/lib/support/domain/force_finish_book.dart">
+
+```dart
+import 'package:core/core.dart';
+import 'package:library_domain/library_domain.dart';
+
+import 'support_repository.dart';
+
+class ForceFinishBook {
+  ForceFinishBook(this._support);
+  final SupportRepository _support;
+
+  Future<Result<Book>> call(UserId user, Book book) async {
+    // the same rule as the reader app, from the same line of code
+    if (!book.canBeFinished) return const Err(ValidationFailure('Book not started'));
+    final finished = book.markAsFinished();
+    return switch (await _support.updateUserBook(user, finished)) {
+      Success() => Success(finished),
+      Err(:final failure) => Err(failure),
+    };
+  }
+}
+```
+
+</CodeBlock>
+
+الـ use case ده شبه `MarkBookAsFinished`، بس بيكلّم `SupportRepository` بـ `UserId`، لأن الأدمن بيعدّل مكتبة حد تاني. الحاجة المشتركة هي القاعدة (`canBeFinished`)، مش الـ use case. ولو المنتج قرر بكرة إن «خلصته» مسموحة من «عايز أقراه» كمان، سطر واحد في `Book` بيغيّر الـ app والأدمن مع بعض.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### الأدمن محتاج حقول الـ app مالوش دعوة بيها
+
+الأدمن عايز يعرض جنب كل كتاب: آخر مرة اتزامن، وآخر error لو العملية dead. أول حل: نزوّد `lastSyncedAt` و`lastError` في `Book`. دلوقتي `Book` في الـ app فيه حقلين دايمًا null، وكل `copyWith` وكل تست بيتعامل معاهم.
+
+الـ entity المشتركة فيها اللي الاتنين متفقين عليه بس. الحاجات الخاصة بالأدمن بتلف الـ entity من بره:
+
+<CodeBlock label="الأدمن بيلف Book، مش بيوسّعه">
+
+```dart
+// apps/readly_admin/lib/support/domain/support_book.dart
+class SupportBook {
+  const SupportBook(this.book, {this.lastSyncedAt, this.lastError});
+  final Book book;            // the shared entity, untouched
+  final DateTime? lastSyncedAt;
+  final String? lastError;    // from the dead op, if any
+
+  bool get isStuck => lastError != null;
+}
+```
+
+</CodeBlock>
+
+### الـ shared domain بقى بيكبر من الناحيتين
+
+بعد 6 شهور `library_domain` فيه `Note` (عشان الأدمن بيعرض الملاحظات)، و`ImportProgress` (عشان حد افتكره «domain»)، و`AdminRole`. الـ package اللي كانت كتاب وصفات بقت الـ `shared` اللي [درس «امتى التقسيم يستاهل»](/course/modularization/why-packages/) حذّر منها.
+
+القاعدة: <b>الحاجة بتدخل الـ shared domain لما app تاني محتاجها فعلًا، ومعناها واحد في الاتنين.</b> `AdminRole` بتاع الأدمن بس، فمكانه في الأدمن. و`Note` بتاعة الـ notes، فلو الأدمن محتاجها، يبقى `notes_domain` منفصل، مش `Note` جوه `library_domain`. وكل كام شهر اسأل: إيه في الـ package دي مابيستخدمهوش غير app واحد؟ يرجع لمكانه.
+
+### الـ app زوّد حالة والأدمن اتكسر
+
+الـ app زوّد `BookStatus.abandoned`. الـ PR اتعمله review واتدمج، والـ CI بتاع الـ app أخضر. تاني يوم، build الأدمن فشل: `switch (book.status)` في جدول الأدمن مابقاش exhaustive.
+
+ده أحسن نتيجة ممكنة: الـ compiler قالك كل مكان محتاج يتعامل مع الحالة الجديدة، بدل ما الأدمن يعرض «غير معروف» في production. المشكلة الحقيقية إن ده ظهر تاني يوم في build تاني، مش في نفس الـ PR. أي تغيير في package مشتركة لازم يشغّل تستات وanalyze <b>كل اللي بيعتمد عليها</b>، ومن ضمنهم الـ app التاني. وده بالظبط الـ «affected packages» في درس [«الـ codegen والـ CI»](/course/modularization/codegen-ci/): لما `library_domain` تتغير، الـ CI بيشغّل `feature_library` و`feature_notes` و`readly` و`readly_admin`.
+
+### الـ domain مابيتبنيش على الويب
+
+حد حط في `library_domain` function بتقرا ملف Goodreads: `File(path).readAsLines()`. الـ app على الموبايل شغال. الأدمن على الويب مش بيتبني: `dart:io` مش موجود في الويب.
+
+الـ domain المشترك بيتبني على كل platform أي app بيستخدمه بيشتغل عليها. القراية من ملف شغل الـ data layer، والـ domain ياخد `List<String>` أو `Stream<String>`. والـ allowlist بتاعة الـ domain في [درس حراسة المعمارية](/course/quality/architecture-guards/) (`dart:async` و`dart:collection` و`dart:math`) كانت هتمنع `dart:io` من الأول، لو `library_domain` داخلة في الـ scan. فزوّدها: كل package اسمها بينتهي بـ `_domain` تتعامل كأنها `src/domain` كلها.
+
+### الأدمن في repo تاني
+
+فريق تاني بيعمل الأدمن في repo منفصل. مايقدرش يعتمد على `library_domain` بالـ workspace. الاختيارات:
+
+| الطريقة | إزاي | التمن |
+| --- | --- | --- |
+| git dependency | `library_domain: { git: { url: ..., path: packages/library_domain, ref: library_domain-v1.4.0 } }` | كل تحديث PR في الـ repo التاني، وtags بنسخ |
+| private pub server | `library_domain: { hosted: https://pub.readly.dev, version: ^1.4.0 }` | سيرفر تشغّله، وpublish لكل نسخة، وsemver حقيقي |
+| monorepo | الأدمن يبقى `apps/readly_admin` في نفس الـ workspace | الفريقين في نفس الـ repo والـ CI |
+
+أول اختيارين بيحوّلوا `library_domain` لـ <b>منتج</b>: ليه نسخ وchangelog، والتغيير اللي بيكسر major version، والأدمن ممكن يفضل على نسخة قديمة شهور. ده تمن حقيقي، ومحتاج سبب حقيقي (فريق مستقل، أو release cycle مختلف). من غيره، monorepo: التغيير والتأثير بتاعه في نفس الـ PR.
+
+### الـ backend مش Dart
+
+الـ backend بتاع Readly Node/Express. مش ممكن يستخدم `library_domain`. وده طبيعي: المشاركة بالكود بتنفع جوه لغة واحدة. بين لغتين، اللي بيتشارك هو <b>الـ contract</b>: الـ OpenAPI اللي بيوصف الـ endpoints، والتستات اللي بتتأكد إن الاتنين ماشيين عليه، زي [درس الـ API contract](/course/api-errors/api-contract/). والقاعدة نفسها (مفيش «خلصته» من غير «بقراه») لازم السيرفر يتحقق منها هو كمان، لأن الـ app مش المكان الوحيد اللي بيبعت requests.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>الـ shared kernel صغير ومقصود:</b> في الـ DDD اسمه shared kernel: جزء من الـ domain فريقين أو اتنين apps متفقين عليه، وأي تغيير فيه بيتفق عليه الاتنين. كل ما يكبر، كل تغيير بيبقى أصعب، فيفضل فيه اللي معناه واحد في الاتنين بس.
+- <b>التكرار أحيانًا أرخص من الربط:</b> لو الأدمن عنده «كتاب» معناه مختلف (نسخة من الكتالوج للتنسيق، مش كتاب في مكتبة حد)، يبقى ده type تاني، حتى لو الحقول شبه بعض. ربط حاجتين مختلفين في type واحد بيخلي كل app يدفع تمن تغييرات التاني.
+- <b>شارك القواعد، مش الـ use cases:</b> الـ use case فيه «مين بيعمل إيه ومنين»، وده بيختلف بين app المستخدم والأدمن. القاعدة نفسها (الـ invariant والـ transitions) هي اللي لازم تبقى واحدة، ومكانها الـ entity أو الـ value object.
+- <b>الـ domain المشترك بيتبني في كل مكان:</b> Dart صافي، ومن غير `dart:io`، ومن غير `fromJson`. اللي مايتبنيش على الويب أو في الـ server مش domain.
+- <b>monorepo لحد ما يبقى فيه سبب:</b> package بنسخ في repo تاني معناها semver وchangelog ونسخ قديمة عايشة. ده مناسب لفريق مستقل فعلًا. لأي حاجة أقل من كده، الـ workspace بيخلي التغيير وأثره في PR واحد.
+
+<Note kind="interview" title="سؤال interview">
+
+«عندك app للمستخدم وapp للأدمن بيستخدموا نفس الـ entities. بتشاركهم إزاي؟» بطلّع الـ domain المشترك لـ package Dart صافية: الـ entities والـ value objects والقواعد اللي جواهم، من غير data ولا Flutter ولا `fromJson`. كل app ليه data layer وuse cases وشاشات بتوعه، لأن الأدمن بيكلّم endpoints تانية وبيعدّل بيانات غيره. الحقول الخاصة بالأدمن في type بيلف الـ entity، مش جواها. والاتنين في نفس الـ workspace، والـ CI بيشغّل كل اللي بيعتمد على الـ package لما تتغير، فلو حالة جديدة اتضافت، الـ compiler بيوري كل switch في الأدمن في نفس الـ PR.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### الأدمن قبل وبعد الـ library_domain
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+// apps/readly_admin/lib/models/book.dart: a copy, 3 months old
+class AdminBook {
+  AdminBook.fromJson(Map<String, dynamic> j)
+      : id = j['key'] as String,
+        title = j['title'] as String,
+        status = j['status'] as String; // 'reading', 'finished', ...
+  final String id;
+  final String title;
+  final String status;
+
+  // the rule, rewritten from memory
+  bool get canFinish => status != 'finished';
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+// apps/readly_admin/lib/support/data/support_book_dto.dart
+class SupportBookDto {
+  // fromJson for the admin endpoint, as usual
+  SupportBook toDomain() => SupportBook(
+        Book(id: bookId, title: title, status: status.toDomain()),
+        lastSyncedAt: lastSyncedAt,
+        lastError: lastError,
+      );
+}
+
+// apps/readly_admin/lib/support/presentation/book_row.dart
+if (row.book.canBeFinished) FinishButton(onPressed: ...)
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: الأدمن عنده نسخة من الكتاب بـ status كـ String، والقاعدة اتكتبت من الذاكرة وغلط: `canFinish` بتسمح بـ «خلصته» من «عايز أقراه»، والـ app مابيسمحش. ومحدش هيعرف لحد ما مستخدم يشتكي إن الدعم غيّر حالة كتابه لحاجة الـ app نفسه مابيعملهاش. بعد: الـ DTO بتاع الأدمن بيحوّل لنفس `Book`، والـ enum نفسه، والقاعدة من نفس السطر. والـ data layer لسه بتاع الأدمن، فالـ endpoint بتاعه يقدر يتغير من غير ما الـ app يحس.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="mod-shared-1">
+<Ask>ليه الأدمن مايعتمدش على `feature_library` على طول بدل ما نطلّع `library_domain`؟</Ask>
+<Answer>
+
+لأنه هياخد معاه كل حاجة في الـ feature: drift والـ sync service والشاشات وتسجيلات get_it، وهو محتاج الـ entities والقواعد بس. وdrift على الويب محتاج إعداد لـ DB الأدمن مش هيستخدمها. الـ `library_domain` فيها الوصفات بس، وكل app ليه مطبخه.
+
+</Answer>
+</Question>
+
+<Question id="mod-shared-2">
+<Ask>الأدمن عايز `lastSyncedAt` جنب كل كتاب. تزوّده في `Book`؟</Ask>
+<Answer>
+
+لأ. `Book` المشترك فيه اللي الاتنين متفقين عليه. الأدمن يعمل type بيلف `Book`، زي `SupportBook(book, lastSyncedAt: ..., lastError: ...)`. كده الـ app مايشيلش حقول دايمًا null، والأدمن يزوّد اللي هو عايزه من غير ما يغيّر الـ shared domain.
+
+</Answer>
+</Question>
+
+<Question id="mod-shared-3">
+<Ask>ليه القاعدة `canBeFinished` في `Book` نفسه بتسهّل المشاركة أكتر من لو كانت جوه `MarkBookAsFinished`؟</Ask>
+<Answer>
+
+لأن الـ use case مربوط بـ repository معين: بتاع الـ app بيعدّل مكتبة المستخدم، وبتاع الأدمن بيعدّل مكتبة أي مستخدم بـ `UserId`. فمش ممكن يتشاركوا نفس الـ use case. القاعدة في الـ entity بيستخدمها الاتنين من نفس السطر، وكل app يكتب الـ use case بتاعه.
+
+</Answer>
+</Question>
+
+<Question id="mod-shared-4">
+<Ask>الـ app زوّد `BookStatus.abandoned`، وتاني يوم build الأدمن فشل. إيه اللي اشتغل صح وإيه اللي اشتغل غلط؟</Ask>
+<Answer>
+
+الصح: الـ compiler مسك كل `switch` في الأدمن مابقاش exhaustive بدل ما يعرض حالة غلط في production. الغلط: إن ده ظهر بعد الدمج. أي تغيير في package مشتركة لازم الـ CI يشغّل كل اللي بيعتمد عليها، ومن ضمنهم الأدمن، في نفس الـ PR.
+
+</Answer>
+</Question>
+
+<Question id="mod-shared-5">
+<Ask>الأدمن في repo تاني. إيه اللي بيتغير لو اعتمد على `library_domain` بـ git dependency؟</Ask>
+<Answer>
+
+الـ `library_domain` بقت منتج ليه نسخ: tags، وchangelog، والتغيير اللي بيكسر محتاج major version، والأدمن ممكن يفضل على نسخة قديمة. وأثر التغيير مابقاش بيظهر في نفس الـ PR. ده يستاهل لو الفريق مستقل فعلًا أو الـ release cycle مختلف، غير كده الـ monorepo أرخص.
+
+</Answer>
+</Question>
+
+</Quiz>

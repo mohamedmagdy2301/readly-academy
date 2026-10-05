@@ -1,0 +1,36 @@
+<svg viewBox="0 0 760 300" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Escore: 12 feature في دايرة imports واحدة، و4 features بس بره الدايرة">
+<rect x="16" y="16" width="540" height="220" rx="18" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="2"/>
+<text x="286" y="40" text-anchor="middle" font-size="12.5" fill="var(--warn)" font-weight="600" class="ar" direction="rtl" unicode-bidi="embed">دايرة واحدة: من أي feature توصل لأي feature</text>
+<g font-size="11.5" fill="var(--ink)" text-anchor="middle" font-weight="600">
+<rect x="34" y="58" width="116" height="34" rx="8" fill="var(--surface)" stroke="var(--warn)" stroke-width="1.5"/><text x="92" y="80">tournaments</text>
+<rect x="164" y="58" width="116" height="34" rx="8" fill="var(--surface)" stroke="var(--warn)" stroke-width="1.5"/><text x="222" y="80">matches</text>
+<rect x="294" y="58" width="116" height="34" rx="8" fill="var(--surface)" stroke="var(--warn)" stroke-width="1.5"/><text x="352" y="80">following</text>
+<rect x="424" y="58" width="116" height="34" rx="8" fill="var(--surface)" stroke="var(--warn)" stroke-width="1.5"/><text x="482" y="80">discover</text>
+<rect x="34" y="122" width="116" height="34" rx="8" fill="var(--surface)" stroke="var(--warn)" stroke-width="1.5"/><text x="92" y="144">events</text>
+<rect x="164" y="122" width="116" height="34" rx="8" fill="var(--surface)" stroke="var(--warn)" stroke-width="1.5"/><text x="222" y="144">clubs</text>
+<rect x="294" y="122" width="116" height="34" rx="8" fill="var(--surface)" stroke="var(--warn)" stroke-width="1.5"/><text x="352" y="144">news</text>
+<rect x="424" y="122" width="116" height="34" rx="8" fill="var(--surface)" stroke="var(--warn)" stroke-width="1.5"/><text x="482" y="144">auth</text>
+<rect x="34" y="186" width="116" height="34" rx="8" fill="var(--surface)" stroke="var(--warn)" stroke-width="1.5"/><text x="92" y="208">more</text>
+<rect x="164" y="186" width="116" height="34" rx="8" fill="var(--surface)" stroke="var(--warn)" stroke-width="1.5"/><text x="222" y="208">settings</text>
+<rect x="294" y="186" width="116" height="34" rx="8" fill="var(--surface)" stroke="var(--warn)" stroke-width="1.5"/><text x="352" y="208">app_config</text>
+<rect x="424" y="186" width="116" height="34" rx="8" fill="var(--surface)" stroke="var(--warn)" stroke-width="1.5"/><text x="482" y="208" font-size="10">tournament_suggestions</text>
+</g>
+<path d="M 150 70 L 162 70" stroke="var(--warn)" stroke-width="1.4" marker-end="url(#mk-warn)"/>
+<path d="M 164 82 L 152 82" stroke="var(--warn)" stroke-width="1.4" marker-end="url(#mk-warn)"/>
+<text x="157" y="104" text-anchor="middle" font-size="9.5" fill="var(--warn)">42 / 25</text>
+<path d="M 294 75 L 282 75" stroke="var(--warn)" stroke-width="1.4" marker-end="url(#mk-warn)"/>
+<path d="M 482 120 Q 470 106 418 100 Q 360 96 352 94" fill="none" stroke="var(--warn)" stroke-width="1.2" marker-end="url(#mk-warn)"/>
+<path d="M 222 184 Q 300 170 352 158" fill="none" stroke="var(--warn)" stroke-width="1.2" marker-end="url(#mk-warn)"/>
+<path d="M 150 203 L 162 203" stroke="var(--warn)" stroke-width="1.2" marker-end="url(#mk-warn)"/>
+<path d="M 482 156 L 482 184" stroke="var(--warn)" stroke-width="1.2" marker-end="url(#mk-warn)"/>
+<rect x="584" y="16" width="160" height="220" rx="18" fill="var(--good-soft)" stroke="var(--good)" stroke-width="2"/>
+<text x="664" y="40" text-anchor="middle" font-size="12" fill="var(--good)" font-weight="600" class="ar" direction="rtl" unicode-bidi="embed">جاهزين يطلعوا packages</text>
+<g font-size="11.5" fill="var(--ink)" text-anchor="middle" font-weight="600">
+<rect x="604" y="58" width="120" height="32" rx="8" fill="var(--surface)" stroke="var(--good)" stroke-width="1.5"/><text x="664" y="79">search</text>
+<rect x="604" y="102" width="120" height="32" rx="8" fill="var(--surface)" stroke="var(--good)" stroke-width="1.5"/><text x="664" y="123" font-size="10.5">notification_inbox</text>
+<rect x="604" y="146" width="120" height="32" rx="8" fill="var(--surface)" stroke="var(--good)" stroke-width="1.5"/><text x="664" y="167">splash</text>
+<rect x="604" y="190" width="120" height="32" rx="8" fill="var(--surface)" stroke="var(--good)" stroke-width="1.5"/><text x="664" y="211">layout</text>
+</g>
+<text x="380" y="266" text-anchor="middle" font-size="11.5" fill="var(--muted)" class="ar" direction="rtl" unicode-bidi="embed">الأسهم أمثلة بس. جوه الدايرة: 111 import من presentation لـ presentation، و19 من domain لـ domain</text>
+<text x="380" y="288" text-anchor="middle" font-size="11.5" fill="var(--muted)" class="ar" direction="rtl" unicode-bidi="embed">والـ DI والـ router بيعرفوا الكل، وده صح: هم الـ app</text>
+</svg>

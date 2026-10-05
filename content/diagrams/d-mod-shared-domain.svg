@@ -1,0 +1,33 @@
+<svg viewBox="0 0 760 330" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="الـ app والأدمن بيعتمدوا على library_domain، والأدمن مابيعتمدش على feature_library">
+<rect x="60" y="14" width="220" height="50" rx="10" fill="var(--accent)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="170" y="36" text-anchor="middle" font-size="13" fill="#fff" font-weight="600">apps/readly</text>
+<text x="170" y="54" text-anchor="middle" font-size="10.5" fill="#e8f2fb" class="ar" direction="rtl" unicode-bidi="embed">موبايل، أوفلاين</text>
+<rect x="480" y="14" width="220" height="50" rx="10" fill="var(--accent)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="590" y="36" text-anchor="middle" font-size="13" fill="#fff" font-weight="600">apps/readly_admin</text>
+<text x="590" y="54" text-anchor="middle" font-size="10.5" fill="#e8f2fb" class="ar" direction="rtl" unicode-bidi="embed">ويب، أونلاين بس</text>
+<rect x="30" y="112" width="140" height="62" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="100" y="138" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">feature_library</text>
+<text x="100" y="158" text-anchor="middle" font-size="10" fill="var(--muted)">use cases · drift · UI</text>
+<rect x="190" y="112" width="130" height="62" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="255" y="138" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">feature_notes</text>
+<text x="255" y="158" text-anchor="middle" font-size="10" fill="var(--muted)">...</text>
+<rect x="480" y="112" width="220" height="62" rx="10" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="6 4"/>
+<text x="590" y="136" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">support/ (in the admin app)</text>
+<text x="590" y="156" text-anchor="middle" font-size="10" fill="var(--muted)">SupportRepository · ForceFinishBook</text>
+<line x1="150" y1="66" x2="104" y2="108" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#mk-mut)"/>
+<line x1="190" y1="66" x2="250" y2="108" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#mk-mut)"/>
+<line x1="590" y1="66" x2="590" y2="108" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#mk-mut)"/>
+<rect x="270" y="210" width="220" height="50" rx="10" fill="var(--good-soft)" stroke="var(--good)" stroke-width="2"/>
+<text x="380" y="232" text-anchor="middle" font-size="13" fill="var(--ink)" font-weight="600">library_domain</text>
+<text x="380" y="250" text-anchor="middle" font-size="10.5" fill="var(--muted)">Book · BookStatus · canBeFinished</text>
+<line x1="100" y1="176" x2="300" y2="208" stroke="var(--good)" stroke-width="1.6" marker-end="url(#mk-good)"/>
+<line x1="255" y1="176" x2="340" y2="208" stroke="var(--good)" stroke-width="1.6" marker-end="url(#mk-good)"/>
+<line x1="590" y1="176" x2="460" y2="208" stroke="var(--good)" stroke-width="1.6" marker-end="url(#mk-good)"/>
+<line x1="255" y1="112" x2="172" y2="130" stroke="var(--accent)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#mk-acc)"/>
+<text x="214" y="104" text-anchor="middle" font-size="9.5" fill="var(--accent)">BookLookup</text>
+<path d="M 480 90 L 330 90" fill="none" stroke="var(--warn)" stroke-width="1.6" stroke-dasharray="4 4"/>
+<text x="405" y="84" text-anchor="middle" font-size="10.5" fill="var(--warn)" class="ar" direction="rtl" unicode-bidi="embed">مفيش سهم: الأدمن مايعرفش feature_library</text>
+<rect x="30" y="280" width="700" height="38" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="380" y="304" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">core · core_network · core_ui</text>
+<line x1="380" y1="262" x2="380" y2="276" stroke="var(--ink)" stroke-width="1.5" marker-end="url(#mk-ink)"/>
+</svg>

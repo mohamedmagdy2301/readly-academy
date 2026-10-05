@@ -1,0 +1,262 @@
+---
+title: "امتى التقسيم لـ packages يستاهل"
+description: "التقسيم لـ packages بيشتري حدود حقيقية وAPI واضح وتستات أسرع، وبيدفع تمنها pubspecs وحركة أصعب بين الحدود. إمتى الحسبة بتكسب، وإمتى بتبقى تعقيد على الفاضي."
+minutes: 25
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="الشقة المفتوحة والشقة اللي فيها أبواب">
+
+شقة جديدة لـ 3 أصحاب، من غير ولا حيطة جوه. كل حاجة سهلة: عايز الشاحن؟ تمد إيدك وتاخده من على أي مكتب. بعد سنة بقوا 8، والشاحن بتاعك بقى دايمًا عند حد تاني، والكتب متلخبطة، ومحدش عارف الحاجة دي بتاعة مين. فقرروا يبنوا أبواب: كل أوضة ليها صاحب، وأي حاجة عايزها من أوضة تانية بتطلبها من الشباك، مش بتدخل تاخدها.
+
+الأبواب حلت المشكلة، بس ليها تمن: كل باب ليه مفتاح، ونقل دولاب من أوضة لأوضة بقى مشوار، ولو حطيت الحيطة في المكان الغلط، هتفضل تلف حواليها كل يوم. ولو الـ 3 الأوائل بنوا الأبواب من أول يوم، كانوا هيدفعوا تمنها سنة كاملة من غير ما يحتاجوها، وغالبًا كانوا هيبنوها في أماكن غلط، لأنهم لسه ماعرفوش مين هيقعد فين.
+
+</Analogy>
+
+الشقة المفتوحة هي app واحد بفولدرات: أي ملف يقدر يعمل import لأي ملف. الأبواب هي الـ <b>packages</b>: كل package ليها `pubspec.yaml` بيقول هي معتمدة على مين، وbarrel file هو الشباك اللي بتطلب منه، والـ `src/` هو جوه الأوضة. والسؤال في الدرس ده مش «الـ packages حلوة ولا وحشة»، السؤال: <b>المشروع بتاعك وصل للمرحلة اللي الأبواب فيها أرخص من الفوضى؟</b>
+
+</Level>
+
+<Level n="2" title="بتكسب إيه وبتدفع إيه">
+
+### اللي بتكسبه
+
+| المكسب | من غير packages | بالـ packages |
+| --- | --- | --- |
+| الحدود | اتفاق في الـ review، وarchitecture test لو عملته | الـ pubspec بيقول مين يعرف مين، والـ lint بيوقف أي import مش مكتوب فيه |
+| الـ public API | أي class في أي ملف متاح للكل | الـ barrel هو الـ API، والـ `src/` تفاصيل |
+| الـ domain صافي | تست بيدوّر على `package:flutter` في الـ imports | الـ package مافيهاش Flutter في الـ pubspec، وتستاتها بتشتغل بـ `dart test` |
+| التستات | `flutter test` على المشروع كله | `flutter test` على الـ package اللي اتغيرت واللي بيعتمدوا عليها بس |
+| الـ codegen | `build_runner` على كل الملفات مع كل تغيير | `build_runner` على الـ package اللي فيها الـ DTOs بس |
+| الـ ownership | «الـ library بتاعة مين؟» سؤال من غير إجابة مكتوبة | فولدر ليه pubspec، ينفع يبقى ليه سطر في `CODEOWNERS` |
+| إعادة الاستخدام | copy-paste لـ app تاني | الـ app التاني بيعتمد على نفس الـ package |
+
+أهم سطرين في الجدول هما الأولانيين. الحدود في الفولدرات موجودة في دماغك، والحدود في الـ packages مكتوبة في ملف بيتعمله review، والأدوات بتقراه.
+
+<CodeBlock label="نفس الـ import في الحالتين">
+
+```dart
+// lib/features/notes/domain/add_note.dart (folders)
+import 'package:readly/features/library/data/library_repository_impl.dart';
+// compiles. Only a reviewer (or the architecture test) can stop it.
+
+// packages/feature_notes/lib/src/domain/add_note.dart (packages)
+import 'package:feature_library/src/data/library_repository_impl.dart';
+// implementation_imports: error. It never reaches the PR.
+```
+
+</CodeBlock>
+
+### اللي بتدفعه
+
+| التمن | بيبان في إيه |
+| --- | --- |
+| pubspecs أكتر | كل package ليها dependencies وsdk constraint، وتغيير نسخة package خارجية بيلمس كذا ملف |
+| الحركة بين الحدود أصعب | نقل class من feature لـ core بقى: انقل الملف، وصدّره في barrel، وعدّل الـ imports في كل حتة، وغيّر الـ pubspec |
+| الـ DI بيتقسم | كل feature بتسجّل نفسها (`registerLibrary`)، والـ app بيجمّع |
+| الحاجات المشتركة محتاجة مكان | الترجمة، والـ assets، والـ theme، والـ routes: كل واحدة محتاجة قرار هتعيش فين |
+| الـ tooling | الـ CI لازم يلف على الـ packages، والـ build_runner والـ coverage كمان |
+| الحدود الغلط غالية | لو قسّمت في المكان الغلط، كل feature جديدة بتعدّي الحد ده، وتصليحه نقل ملفات بين packages |
+
+آخر سطر هو أخطرهم. الـ import الغلط بين فولدرين بيتصلّح في دقيقة. الحد الغلط بين packages بيتصلّح في PR كبير، وكل يوم قبله بيكلّفك.
+
+### العلامات اللي بتقول «قسّم»
+
+| العلامة | ليه بتفرق |
+| --- | --- |
+| فيه app تاني محتاج نفس الكود | admin، أو app لعميل تاني، أو widget للـ home screen. ده الدافع الأقوى، ودرس «domain واحد لأكتر من app» بيفصّله |
+| الفريق كبر وكل جزء ليه ناس | 3 فرق شغالين في نفس الـ `lib/` بيدوسوا على بعض. الـ package بتدّي كل فريق حدود وAPI يتفقوا عليه |
+| الحدود بتتكسر وانت حاطط guards | الـ architecture test بيوقف 3 PRs في الأسبوع على نفس الحد، والـ allowlist بتكبر مش بتصغر |
+| الـ codegen والتستات بطيئين | `build_runner` بياخد 4 دقايق على كل تغيير في DTO، والـ CI بيشغّل 2000 تست على تغيير في feature واحدة |
+| عايز الـ domain صافي بالـ compiler | مش بتست بيدوّر في النص، لكن بـ package مافيهاش Flutter أصلًا |
+
+### العلامات اللي بتقول «استنى»
+
+- <b>مطوّر واحد أو اتنين، وapp واحد:</b> الحدود اللي في دماغك هي هي الحدود اللي في الكود، ومحدش هيكسرها غيرك. الفولدرات مع الـ architecture test من [درس حراسة المعمارية](/course/quality/architecture-guards/) كفاية.
+- <b>المنتج لسه بيتغير كل أسبوعين:</b> لو لسه مش عارف الـ catalog والـ library هيبقوا feature واحدة ولا اتنين، أي حد هتحطه دلوقتي تخمين. والتخمين الغلط في package أغلى من التخمين الغلط في فولدر.
+- <b>«Clean Architecture يعني packages»:</b> لأ. الـ dependency rule عن اتجاه الـ imports، والفولدرات بتعرف تحترمه. الـ packages أداة بتفرضه، مش شرط ليه.
+- <b>عشان الـ build يبقى أسرع:</b> `flutter build` بيعمل compile للبرنامج كله مرة واحدة سواء مقسّم أو لأ. المكسب في السرعة بيبان في التستات والـ codegen والـ CI، مش في الـ APK.
+
+<Note kind="info" title="فيه مرحلة في النص">
+
+بين «فولدرات وخلاص» و«packages» فيه مرحلة اسمها <b>modular monolith</b>: app واحد، بس الفولدرات متقسمة كأنها packages: كل feature فيها ملف واحد هو الـ public API، والباقي تحت `src/`، والـ architecture test بيمنع أي حد يعدّي من غير الملف ده. وده بالظبط اللي Readly كان عليه في الوحدة 7. ميزته إن التقسيم بعد كده بيبقى نقل فولدرات، مش إعادة تفكير.
+
+</Note>
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### قسّمنا بالطبقات بدل الـ features
+
+أول تقسيم بييجي في دماغ ناس كتير: `domain` package، و`data` package، و`presentation` package. شكله منطقي لأنه شبه رسمة الطبقات.
+
+<CodeBlock label="التقسيم بالطبقات">
+
+```text
+packages/
+├─ readly_domain/        # Book, Note, User, every use case
+├─ readly_data/          # every DTO, every repository impl
+└─ readly_presentation/  # every Cubit, every page
+```
+
+</CodeBlock>
+
+المشكلة إن أي feature جديدة بتلمس الـ 3 packages. والأخطر: كل الـ features جوه `readly_domain` شايفة بعض، فالـ notes تقدر تلمس أي حاجة في الـ library من غير ما أي pubspec يقول ده. يعني التقسيم ده بيحرس اتجاه الطبقات، وده الـ architecture test كان بيعمله أصلًا، ومابيحرسش الحدود بين الـ features، ودي اللي كانت بتتكسر.
+
+التقسيم بالـ features (`feature_library` و`feature_notes`) بيحرس الحدود بين الـ features بالـ pubspec، واتجاه الطبقات جوه كل feature بيفضل شغل الـ architecture test. ده نفس سبب الـ feature-first في [درس الطبقات](/course/foundations/layers/)، بس على مستوى أكبر.
+
+### الحد اتحط في المكان الغلط
+
+الفريق عمل `feature_catalog` و`feature_library`، وبعد شهرين المنتج قرر إن صفحة تفاصيل الكتاب واحدة: من الكتالوج ومن المكتبة، فيها زرار «ضيف لمكتبتي» وحالة القراية والملاحظات. دلوقتي الصفحة محتاجة حاجات من 3 packages، وكل تعديل فيها PR بيلمس 3 pubspecs.
+
+العلامة إن الحد غلط: <b>أغلب الـ PRs بتعدّيه</b>. الحد الصح بيخلي أغلب التغييرات جوه package واحدة. وعشان تعرف ده قبل ما تقسّم، عدّ:
+
+<CodeBlock label="كام commit لمس أكتر من feature">
+
+```bash
+# for each commit in the last 6 months: which features did it touch?
+git log --since="6 months ago" --name-only --format="--%h" -- lib/features \
+  | awk '/^--/ { if (n > 1) multi++; total++; n = 0; delete seen; next }
+         /^lib\/features\// { split($0, p, "/"); if (!seen[p[3]]++) n++ }
+         END { if (n > 1) multi++; print multi " of " total " commits touch more than one feature" }'
+```
+
+</CodeBlock>
+
+لو الرقم عالي بين اتنين features بالذات، غالبًا هم feature واحدة، أو الحاجة اللي بيتشاركوها لسه مالهاش مكان. وده نفس اللي هتعمله في Escore في آخر الوحدة، بس بالـ imports بدل الـ commits.
+
+### الـ package اللي اسمها shared
+
+أول ما تقسّم، هتلاقي حاجات مش عارف تحطها فين: widget بتستخدمه feature واتنين، extension على `DateTime`، enum. أسهل حل `packages/shared`. وبعد 6 شهور الـ shared فيها 120 ملف، وكل الـ packages بتعتمد عليها، وأي تغيير فيها بيعيد كل التستات. والأسوأ إنها بقت الباب الخلفي: feature عايزة حاجة من feature تانية؟ تنقلها للـ shared، والحد اتكسر من غير ما حد يحس.
+
+الحل إن مفيش package اسمها حاجة عامة. كل package اسمها بيقول هي فيها إيه: `core` للـ Result والـ Failure، و`core_network` لـ dio، و`core_ui` للـ theme والـ widgets المشتركة. ولما حاجة ماتلاقيلهاش مكان، غالبًا مكانها جوه الـ feature اللي بتستخدمها، لحد ما feature تانية تحتاجها فعلًا. وده نفس كلام [درس الطبقات](/course/foundations/layers/) عن الـ core اللي بيكبر من غير ضابط، بس هنا الغلطة بتتكلّف أكتر.
+
+### التقسيم بدري: 11 pubspec و3 شاشات
+
+ده الـ anti-pattern اللي في [درس الـ anti-patterns](/course/quality/anti-patterns/): package لكل طبقة لكل feature في مشروع فيه 3 شاشات ومطوّر واحد. كل feature جديدة 3 pubspecs، وكل rename بيلمس 5 ملفات. والكود مابقاش أحسن، بقى أبطأ في التغيير.
+
+العلامة إنك قسّمت بدري: الـ packages بتتغير مع بعض في كل PR. لو `feature_notes` و`notes_data` و`notes_domain` بيتعدّلوا مع بعض في 9 من 10 PRs، يبقوا package واحدة.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>القرار بالأرقام مش بالذوق:</b> قبل ما تقسّم، اعرف: كام import بين الـ features؟ كام commit بيلمس أكتر من feature؟ كام دقيقة الـ build_runner والتستات؟ الأرقام دي بتقولك فين الحدود الطبيعية، وبتقولك بعد التقسيم المكسب حصل ولا لأ.
+- <b>الـ packages قرار ليه تمن رجوع:</b> دمج packages أصعب من تقسيم فولدرات. فلو مش متأكد، ابدأ بالـ modular monolith: فولدرات شكلها packages، وbarrel لكل feature، والـ architecture test. التقسيم بعدها نقل فولدرات.
+- <b>الحد اللي يستاهل package هو الحد اللي ثابت:</b> الـ core والـ network والـ design system بيتغيروا ببطء، وتقسيمهم بدري آمن. الـ features اللي لسه المنتج بيرسم حدودها، استنى عليها.
+- <b>package لكل feature، مش لكل طبقة:</b> الطبقات جوه الـ feature بتتحرس بالـ architecture test، والـ features بتتحرس بالـ pubspec. التقسيم بالطبقة بيضاعف عدد الـ pubspecs ومابيحرسش الحدود اللي بتتكسر فعلًا.
+- <b>اعرف انت بتحل أنهي مشكلة:</b> «الفريق بيدوس على بعض» حلها packages وownership. «الـ domain بيعمل import لـ Flutter» حلها تست، أو package للـ domain بس. «الـ CI بطيء» ممكن يتحل بالـ caching والـ sharding من غير ما تقسّم أصلًا. ماتستخدمش أكبر أداة لكل مشكلة.
+
+<Note kind="interview" title="سؤال interview">
+
+«امتى تقسّم Flutter app لـ packages؟» لما المشكلة اللي بتحلها موجودة فعلًا: app تاني محتاج نفس الكود، أو فريق كبير كل جزء ليه ناس والحدود بتتكسر رغم الـ guards، أو الـ codegen والتستات بقوا بطيئين على المشروع كله. وبقسّم بالـ features مش بالطبقات، لأن الحدود اللي بتتكسر هي اللي بين الـ features، والطبقات جوه كل feature بيحرسها architecture test. ولمشروع صغير أو منتج لسه بيتغير، modular monolith: فولدر لكل feature فيه barrel و`src/`، وتست بيمنع الـ imports الغلط. كده الحدود محروسة، والتقسيم بعد كده نقل فولدرات مش إعادة تصميم.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«إيه عيوب الـ multi-package؟» pubspecs أكتر لازم تتظبط، ونقل الكود بين الحدود بقى أصعب، والـ DI والترجمة والـ assets والـ routes محتاجين قرار هيعيشوا فين، والـ CI والـ codegen لازم يعرفوا يلفّوا على الـ packages. وأغلى حاجة إن الحد الغلط تصليحه نقل ملفات بين packages، فلازم الحدود تبقى مبنية على أرقام (الـ imports والـ commits)، مش على شكل الرسمة.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### القرار مكتوب: ADR بدل نقاش كل شهر
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```text
+Slack, every few weeks:
+- "shouldn't we split into packages?"
+- "Very Good does it"
+- "it's overkill for us"
+- (no data, no decision, same thread next month)
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```markdown
+# ADR 011: Split Readly into a pub workspace
+
+## Context
+4 features, 2 core areas. The architecture test blocked
+9 PRs last month, 7 of them on catalog -> library.
+build_runner: 3m40s for any DTO change.
+An admin app needs Book and its rules (Q3).
+
+## Decision
+Packages per feature + core, core_network, core_ui.
+Layers stay folders, guarded by tools/architecture.
+settings stays in the app (no domain).
+
+## Consequences
+Every feature exports registerX() and its routes.
+CI runs affected packages on PRs, everything on main.
+Revisit if two packages change together in most PRs.
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: كل واحد بيقول رأيه، ومحدش جاب رقم، فالنقاش بيرجع كل شهر. بعد: الـ ADR فيه الأرقام اللي خلّت القرار يستاهل (الـ PRs اللي اتوقفت، ووقت الـ codegen، والـ admin app)، والحدود اللي اختارها والسبب، وإمتى يرجعوا يراجعوه. ونفس فكرة الـ ADR من [درس التوسّع](/course/di-scale/scale/): القرار وسببه وعواقبه، مكتوبين وقت ما اتاخدوا.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="mod-why-1">
+<Ask>مطوّر لوحده بيعمل app فيه 5 شاشات، وعايز يقسّمه لـ 6 packages «عشان يبقى Clean». تقوله إيه؟</Ask>
+<Answer>
+
+إن Clean Architecture عن اتجاه الـ imports، والفولدرات بتعرف تحترمه. التقسيم هيكلّفه pubspecs وDI متقسم وصعوبة في نقل الكود، ومفيش حد غيره هيكسر الحدود أصلًا. الأحسن فولدر لكل feature فيه barrel و`src/`، وarchitecture test بيمنع الـ imports الغلط. ولما يجي app تاني أو فريق، التقسيم يبقى نقل فولدرات.
+
+</Answer>
+</Question>
+
+<Question id="mod-why-2">
+<Ask>ليه التقسيم لـ `readly_domain` و`readly_data` و`readly_presentation` مابيحلّش مشكلة إن الـ notes بتلمس internals الـ library؟</Ask>
+<Answer>
+
+لأن الـ notes والـ library الاتنين جوه نفس الـ packages، فشايفين بعض من غير ما أي pubspec يمنع. التقسيم ده بيحرس اتجاه الطبقات بس، وده الـ architecture test كان بيعمله. الحدود بين الـ features بتتحرس لما كل feature تبقى package، والـ pubspec بتاعها يقول هي بتعتمد على مين.
+
+</Answer>
+</Question>
+
+<Question id="mod-why-3">
+<Ask>إزاي تعرف إن الحد بين packages اتحط في المكان الغلط؟</Ask>
+<Answer>
+
+لما أغلب الـ PRs بتعدّيه: نفس الـ packages بتتعدّل مع بعض في أغلب التغييرات، أو feature بتعمل import لحاجات كتير من التانية. الحد الصح بيخلي أغلب التغييرات جوه package واحدة. وتقيس ده بعدد الـ commits اللي بتلمس أكتر من feature، وعدد الـ imports بينهم.
+
+</Answer>
+</Question>
+
+<Question id="mod-why-4">
+<Ask>الفريق عايز يقسّم لـ packages عشان «الـ APK يتبني أسرع». ده صح؟</Ask>
+<Answer>
+
+لأ. `flutter build` بيعمل compile للبرنامج كله مرة واحدة، مقسّم أو لأ. المكسب في السرعة بيبان في التستات (تشغّل package واحدة واللي بيعتمدوا عليها)، والـ codegen (build_runner على package أصغر)، والـ CI اللي بيشتغل على اللي اتغير بس.
+
+</Answer>
+</Question>
+
+<Question id="mod-why-5">
+<Ask>إيه المشكلة في package اسمها `shared`؟</Ask>
+<Answer>
+
+إنها بتبقى مكان أي حاجة مالهاش مكان، فبتكبر وكل الـ packages بتعتمد عليها، وأي تغيير فيها بيعيد كل التستات. والأخطر إنها بتبقى باب خلفي: feature عايزة حاجة من التانية فتنقلها للـ shared، والحد اتكسر. الحل إن كل package اسمها بيقول فيها إيه (`core`، `core_network`، `core_ui`)، والحاجة اللي مالهاش مكان تفضل في الـ feature اللي بتستخدمها.
+
+</Answer>
+</Question>
+
+</Quiz>

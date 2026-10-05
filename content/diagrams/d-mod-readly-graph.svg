@@ -1,0 +1,38 @@
+<svg viewBox="0 0 760 360" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Readly بعد التقسيم: الـ app فوق، والـ features في النص، والـ core تحت، وأرقام ترتيب النقل">
+<rect x="280" y="14" width="200" height="50" rx="10" fill="var(--accent)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="380" y="36" text-anchor="middle" font-size="13" fill="#fff" font-weight="600">apps/readly</text>
+<text x="380" y="54" text-anchor="middle" font-size="10.5" fill="#e8f2fb">di · router · l10n · settings</text>
+<circle cx="490" cy="20" r="11" fill="var(--warn)"/><text x="490" y="24.5" text-anchor="middle" font-size="11.5" fill="#fff" font-weight="700">0</text>
+<rect x="20" y="148" width="160" height="48" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="100" y="177" text-anchor="middle" font-size="12.5" fill="var(--ink)" font-weight="600">feature_auth</text>
+<circle cx="182" cy="150" r="11" fill="var(--warn)"/><text x="182" y="154.5" text-anchor="middle" font-size="11.5" fill="#fff" font-weight="700">4</text>
+<rect x="206" y="148" width="160" height="48" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="286" y="177" text-anchor="middle" font-size="12.5" fill="var(--ink)" font-weight="600">feature_catalog</text>
+<circle cx="368" cy="150" r="11" fill="var(--warn)"/><text x="368" y="154.5" text-anchor="middle" font-size="11.5" fill="#fff" font-weight="700">3</text>
+<rect x="392" y="148" width="160" height="48" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="472" y="177" text-anchor="middle" font-size="12.5" fill="var(--ink)" font-weight="600">feature_notes</text>
+<circle cx="554" cy="150" r="11" fill="var(--warn)"/><text x="554" y="154.5" text-anchor="middle" font-size="11.5" fill="#fff" font-weight="700">3</text>
+<rect x="580" y="148" width="160" height="48" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2.2"/>
+<text x="660" y="177" text-anchor="middle" font-size="12.5" fill="var(--ink)" font-weight="600">feature_library</text>
+<circle cx="742" cy="150" r="11" fill="var(--warn)"/><text x="742" y="154.5" text-anchor="middle" font-size="11.5" fill="#fff" font-weight="700">2</text>
+<line x1="380" y1="66" x2="104" y2="144" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#mk-mut)"/>
+<line x1="380" y1="66" x2="288" y2="144" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#mk-mut)"/>
+<line x1="380" y1="66" x2="470" y2="144" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#mk-mut)"/>
+<line x1="380" y1="66" x2="656" y2="144" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#mk-mut)"/>
+<path d="M 554 198 Q 566 214 578 198" fill="none" stroke="var(--accent)" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#mk-acc)"/>
+<path d="M 286 198 Q 470 250 652 198" fill="none" stroke="var(--accent)" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#mk-acc)"/>
+<text x="470" y="244" text-anchor="middle" font-size="10.5" fill="var(--accent)">BookLookup (barrel)</text>
+<rect x="20" y="272" width="720" height="58" rx="12" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="140" y="298" text-anchor="middle" font-size="13" fill="var(--ink)" font-weight="600">core</text>
+<text x="140" y="317" text-anchor="middle" font-size="10.5" fill="var(--muted)">Dart only</text>
+<text x="380" y="298" text-anchor="middle" font-size="13" fill="var(--ink)" font-weight="600">core_network</text>
+<text x="380" y="317" text-anchor="middle" font-size="10.5" fill="var(--muted)">dio · guard</text>
+<text x="620" y="298" text-anchor="middle" font-size="13" fill="var(--ink)" font-weight="600">core_ui</text>
+<text x="620" y="317" text-anchor="middle" font-size="10.5" fill="var(--muted)">Flutter · theme · widgets</text>
+<circle cx="740" cy="274" r="11" fill="var(--warn)"/><text x="740" y="278.5" text-anchor="middle" font-size="11.5" fill="#fff" font-weight="700">1</text>
+<line x1="100" y1="198" x2="100" y2="268" stroke="var(--ink)" stroke-width="1.5" marker-end="url(#mk-ink)"/>
+<line x1="250" y1="198" x2="250" y2="268" stroke="var(--ink)" stroke-width="1.5" marker-end="url(#mk-ink)"/>
+<line x1="450" y1="198" x2="450" y2="268" stroke="var(--ink)" stroke-width="1.5" marker-end="url(#mk-ink)"/>
+<line x1="700" y1="198" x2="700" y2="268" stroke="var(--ink)" stroke-width="1.5" marker-end="url(#mk-ink)"/>
+<text x="380" y="350" text-anchor="middle" font-size="11" fill="var(--muted)" class="ar" direction="rtl" unicode-bidi="embed">الأرقام ترتيب النقل: الـ app لـ apps/ الأول، بعدين الـ core، بعدين الـ library، والباقي فوقها</text>
+</svg>

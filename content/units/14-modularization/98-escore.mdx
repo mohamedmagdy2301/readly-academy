@@ -1,0 +1,208 @@
+---
+title: "في Escore: الحدود بين الـ features"
+description: "16 feature في app واحد من غير packages: 12 منهم في دايرة imports واحدة، والـ Team عايش في feature المتابعة، والـ core بيعمل import من الـ features، والـ auth بيمسح caches 3 features تانيين. لو اتقسم، الحدود هتبقى فين، ونبدأ منين."
+minutes: 20
+draft: true
+---
+
+الوحدة دي قالت إن التقسيم بيبدأ بخريطة: مين بيعمل import لمين، وفين الدواير، وفين الحاجة اللي الكل محتاجها. Escore مش متقسم لـ packages: app واحد فيه 16 feature و1739 ملف Dart. ودروس Escore اللي فاتت عدّت الـ imports بين كل اتنين features (matches بتعمل import من tournaments 42 مرة، وtournaments من matches 25). هنا هنبص على نفس الـ imports كـ <b>graph</b>، ونسأل سؤال الدرس: لو عايزين نقسّمه بكرة، ينفع؟ والحدود تبقى فين؟
+
+### الخريطة: 12 feature في دايرة واحدة
+
+سكريبت صغير بيقرا كل `import 'package:escore_app/features/...'` ويعمل منها graph: كل feature نقطة، وكل import سهم. وبعدين بيدوّر على الـ <b>strongly connected components</b>: مجموعات كل نقطة فيها تقدر توصل لكل نقطة تانية بالأسهم. أي مجموعة فيها أكتر من feature يبقى جواها دايرة.
+
+| المجموعة | الـ features |
+| --- | --- |
+| دايرة واحدة كبيرة | tournaments، matches، following، news، events، clubs، discover، auth، more، settings، app_config، tournament_suggestions |
+| لوحدهم | search، notification_inbox، splash، layout |
+
+12 من 16. يعني من أي feature فيهم، لو مشيت ورا الـ imports، هتوصل لأي واحدة تانية فيهم. والنتيجة العملية: <b>مفيش ولا واحدة من الـ 12 ينفع تطلع package لوحدها النهارده</b>. أي واحدة هتطلعها هتحتاج تعتمد على package هي نفسها معتمدة عليها. ودرس [«الـ dependency rule من الـ pubspec»](/course/modularization/enforce-rule/) قال إن ده بالظبط اللي تست الدواير بيمنعه.
+
+<Diagram name="d-mod-escore-graph">
+
+الـ features في Escore بعد ما الـ imports اتحولت لـ graph. الـ 12 اللي في النص كل واحدة فيهم توصل للتانية، والـ 4 اللي بره بس هم اللي ينفع يطلعوا packages النهارده.
+
+</Diagram>
+
+### الدايرة معمولة من إيه
+
+مش كل الأسهم زي بعض. لو قسّمت الـ imports اللي بين الـ features حسب الطبقة اللي بيبدأ منها والطبقة اللي رايح لها:
+
+| من → لـ | العدد |
+| --- | --- |
+| presentation → presentation | 111 |
+| presentation → domain | 83 |
+| data → data | 35 |
+| domain → domain | 19 |
+| data → domain | 10 |
+| data → presentation | 4 |
+| presentation → data | 1 |
+
+3 أنواع من المشاكل مستخبية في الجدول ده.
+
+#### 1. الـ Team عايش في feature المتابعة
+
+<CodeBlock label="مين بيعمل import لـ following/domain/entities/team_entity.dart">
+
+```text
+clubs/domain/entities/club_entity.dart
+clubs/domain/entities/club_list_item_entity.dart
+discover/domain/entities/clubs_teams_item_entity.dart
+events/domain/entities/event_entity.dart
+events/domain/entities/event_list_item_entity.dart
+events/domain/entities/club_standing_entry_entity.dart
+```
+
+</CodeBlock>
+
+الـ `TeamEntity` و`GameEntity` و`PlayerEntity` في `features/following/domain/entities/`. ليه؟ لأن المتابعة كانت أول feature محتاجة فرق ولاعيبة. بس الفريق مش «حاجة بتاعة المتابعة»: هو جزء من عالم الـ esports اللي الـ app كله بيتكلم عنه، زي الـ `BookId` في Readly. ونفس الحكاية `MatchEntity` في matches بيعمل import لـ `PlayerGroupEntity` من tournaments، و`PlayerFeaturedMatchEntity` في following بيعمل import لـ `MatchEntity`.
+
+ولو شلت كل حاجة غير الـ domain وعملت الـ graph تاني، لسه فيه دايرة: <b>discover وtournaments وmatches وfollowing</b>. الـ entities بتوعهم بيشاوروا على بعض. وده مش غلط في الكود، ده شكل الـ domain نفسه: الماتش فيه فرق، والفريق ليه ماتشات وبطولات، والبطولة فيها مجموعات. الـ entities دي <b>shared kernel</b> واحد، زي ما درس [«domain واحد لأكتر من app»](/course/modularization/shared-domain/) سمّاه: package واحدة كل الـ features تحتها، مش 4 features كل واحدة شايلة حتة.
+
+#### 2. الـ Cubit في الـ feature الغلط
+
+<CodeBlock label="tournaments بتعمل import من matches">
+
+```text
+matches/presentation/cubit/tournament_fixtures/tournament_fixtures_cubit.dart   (3)
+matches/presentation/cubit/tournament_fixtures/tournament_fixtures_state.dart   (2)
+matches/presentation/widgets/matches_section/matches/team_logo_widget.dart      (2)
+```
+
+</CodeBlock>
+
+الـ `TournamentFixturesCubit` في فولدر matches، وصفحة البطولة بتعمل import ليه. ودرس Escore في وحدة الـ DI لاحظ إن فيه 3 Cubits اسمهم `Tournament...` قاعدين في matches. ده نص سهم `tournaments -> matches` تقريبًا، وتصليحه نقل ملفات مش إعادة تصميم. والـ `TeamLogoWidget` widget بيستخدمه أكتر من feature، فمكانه الـ design system المشترك.
+
+ونفس الشكل في `following -> matches`: الـ `NextMatchesCubit` والـ `NextMatchesSliderSection` بتوع matches معمول لهم import جوه صفحات المتابعة. ده تركيب شاشات: صفحة feature فيها section من feature تانية. وفي Readly اتحل بالـ `below` في `BookDetailsPage`: الصفحة بتقول «عندي مكان»، والـ app هو اللي بيحط الـ section.
+
+#### 3. الـ auth بيمسح caches الكل
+
+<CodeBlock label="features/auth/data/repositories/auth_repository_impl.dart">
+
+```dart
+import 'package:escore_app/features/discover/presentation/utils/discover_feed_cache.dart';
+import 'package:escore_app/features/news/presentation/utils/news_list_cache.dart';
+import 'package:escore_app/features/tournaments/presentation/utils/tournament_cache.dart';
+import 'package:escore_app/features/tournaments/presentation/utils/tournaments_list_cache.dart';
+
+/// Wipe in-memory caches that are scoped per user/identity.
+void _clearIdentityScopedCaches() {
+  TournamentCache.clear();
+  TournamentsListCache.clear();
+  DiscoverFeedCache.clear();
+  NewsListCache.clearIdentityScoped();
+}
+```
+
+</CodeBlock>
+
+الـ data layer بتاع الـ auth بيعمل import للـ presentation بتاع 3 features. وده من الـ 4 أسهم `data -> presentation` في الجدول. السبب مفهوم: لما المستخدم يتغير، الـ caches القديمة لازم تتمسح عشان مايشوفش بيانات حد تاني. بس دلوقتي أي feature جديدة عندها cache بالمستخدم لازم حد يفتكر يضيفها في الـ auth.
+
+ده نفس سؤال الـ logout في [درس الـ Session](/course/di-scale/session/): التنسيق بين features مكانه الحتة اللي بتعرفهم كلهم، الـ composition root. أو كل feature تسجّل نفسها: الـ auth يعرّف `IdentityScoped` فيه `clear()`، وكل cache بيتسجّل تحته في get_it، والـ auth ينادي الكل من غير ما يعرف هم مين. السهم بقى من الـ features للـ auth، مش العكس.
+
+### الـ core مش تحت
+
+درس Escore في وحدة الجودة عدّ 24 ملف في `core/` بيعملوا import من features. لما تبصلهم بعين الـ packages، أكبر اتنين:
+
+<CodeBlock label="core/extensions/localization_extansions.dart">
+
+```dart
+import 'package:escore_app/features/settings/presentation/cubit/settings/settings_cubit.dart';
+import 'package:escore_app/features/settings/presentation/cubit/settings/settings_state.dart';
+
+extension StringTranslation on String {
+  String tr(BuildContext context) {
+    final state = context.watch<SettingsCubit>().state;
+    if (state is SettingsLoaded && state.translations.containsKey(this)) {
+      return state.translations[this].toString();
+    }
+    // ...fallbacks
+  }
+}
+```
+
+</CodeBlock>
+
+الترجمة، اللي كل widget في الـ app بيستخدمها، بتقرا من `SettingsCubit`. فالـ `core/language` و`core/extensions` و`core/utils` بيعتمدوا على الـ presentation بتاع الـ settings، و11 ملف في `core/` (من غير الـ DI) بيعملوا import للـ Cubit ده. لو `core` بقت package، دي أول حاجة هتمنعها: الـ core مش ممكن تعتمد على feature. الحل إن الترجمات تتقري من `Localizations` (أو من object صغير في `core_ui` الـ settings بتملّاه)، فالـ settings تبقى هي اللي معتمدة على الـ core، مش العكس.
+
+والتاني `core/extensions/navigator_extensions.dart`: 342 سطر، و38 method زي `goToTeamDetailsEntity` و`goToMatchDetailsEntity`، وبيعمل import لـ entities من 6 features. ده router بتاع الـ app كله لابس اسم «extension في الـ core». مكانه الـ app، أو كل feature تصدّر الـ paths بتاعتها زي `LibraryPaths` في [درس تقسيم Readly](/course/modularization/split-readly/).
+
+### هل الـ dependency rule محترمة؟
+
+| المستوى | الحالة |
+| --- | --- |
+| جوه كل feature | غالبًا آه: نفس الهيكل في كل feature، والاستثناءات معروفة من الدروس اللي فاتت (4 ملفات domain فيها Flutter، وملف domain بيعمل import لـ data) |
+| بين الـ features | مفيش قاعدة أصلًا: 12 في دايرة واحدة |
+| الـ core | معكوسة: الـ core بيعتمد على features، أهمهم الـ settings |
+| الـ DI والـ router | صح: بيعرفوا كل الـ features، وده شغلهم كـ composition root |
+
+وفيه حاجة حلوة لازم تتقال: `search` فيها 19 ملف و<b>صفر</b> imports من features تانية. ومعاها `notification_inbox` و`splash` و`layout`. دول جاهزين يطلعوا packages النهارده لو حد عايز.
+
+### لو اتقسم: الحدود هتبقى فين
+
+<CodeBlock label="الشكل اللي الخريطة بتقترحه">
+
+```text
+apps/escore/            # DI, router, navigation, layout, splash, identity reset
+packages/
+├─ core/                # Failure, Either helpers, pagination meta (no feature imports)
+├─ core_network/        # DioConsumer, interceptors, RefreshZone
+├─ core_ui/             # styles, shared widgets (TeamLogo, cards), tr() without SettingsCubit
+├─ esports_domain/      # Game, Team, Player, Club, Tournament, Match, PlayerGroup, standings
+├─ feature_tournaments/ feature_matches/ feature_following/ feature_news/
+├─ feature_events/ feature_clubs/ feature_discover/ feature_auth/ feature_settings/
+└─ feature_search/ feature_notification_inbox/ ...
+```
+
+</CodeBlock>
+
+- <b>`esports_domain`:</b> الـ entities اللي بتشاور على بعض في دايرة الـ domain تبقى package واحدة. أي feature محتاجة فريق أو ماتش تعتمد عليها، ومحدش يعتمد على following عشان `TeamEntity`.
+- <b>الـ `core` بيتنضّف الأول:</b> الترجمة من غير `SettingsCubit`، والـ navigation للـ app، والـ `core/models` اللي بتعمل import لـ `GameModel` من following تتنقل.
+- <b>الـ presentation هي الشغل الحقيقي:</b> جرّبنا في السكريبت نحرّك كل الـ entities والـ models لـ package مشتركة ونرجّع الـ Cubits المتسابة لـ tournaments: الدايرة صغرت بس ماختفتش: فضل فيها 10 features، ومعاهم الـ package المشتركة نفسها، لأن entity فيها لسه بتعمل import من matches. السبب الـ 111 import بين الـ presentation: sections وCubits من features جوه شاشات features تانية. ودول محتاجين قرار لكل واحد: widget مشترك يروح `core_ui`، وsection من feature تانية الـ app يركّبه، وتنقل يبقى بالـ path.
+
+والترتيب: الـ core يبطّل يعتمد على features، وبعدين `esports_domain`، وبعدين الملفات اللي في الـ feature الغلط، وبعدين الـ caches بالـ hook، وبعدين الـ presentation واحدة واحدة. وكل خطوة السكريبت يتشغّل ويطلّع عدد الـ features اللي في دواير، والرقم ده يدخل الـ CI كـ ratchet: يقل بس، زي الـ allowlist في [درس حراسة المعمارية](/course/quality/architecture-guards/).
+
+والإجابة الأمينة على «نقسّم بكرة؟»: لأ. Escore جاهز للـ <b>modular monolith</b> الأول: نفس الفولدرات، بس كل feature ليها ملف public API، وتست بيمنع أي import جديد يعدّي من غيره، والدواير بتتفك واحدة واحدة. ولما الدايرة الكبيرة تختفي، التقسيم لـ packages بيبقى نقل فولدرات، زي ما درس [«امتى التقسيم يستاهل»](/course/modularization/why-packages/) قال.
+
+### الأدمن: domain مشترك من غير كود مشترك
+
+Escore عنده لوحة أدمن، بس هي Next.js مش Flutter. فمفيش `esports_domain` ممكن يتشارك بينهم: لغتين مختلفتين. اللي بيتشارك فعلًا هو الـ API: الـ envelope (`success` و`data` و`meta`) متوصّف في ملف overview مكتوب بإيده، والـ backend فيه swagger-jsdoc. والـ dashboard بيفك الـ envelope بإيده في كل ملف resource، والـ app عنده `ResponseHandler` بيعمل ده لوحده. يعني نفس القاعدة مكتوبة مرتين بطريقتين. ده المكان اللي درس الـ shared domain قال فيه: بين لغتين، الـ contract هو اللي بيتشارك، وأحسن شكل ليه OpenAPI بيتولّد منه الكود في الناحيتين، زي [درس الـ API contract](/course/api-errors/api-contract/).
+
+### لو هنعيدها
+
+1. الـ entities اللي بتوصف عالم الـ app (فرق ولاعيبة وماتشات) في مكان واحد من أول يوم، مش في أول feature احتاجتها.
+2. الـ core مايعملش import من `features/` أبدًا، وتست بيمنع ده من أول commit.
+3. كل feature ليها ملف public API واحد، وأي import لـ feature تانية بيعدّي منه.
+4. التنسيق بين features (الـ logout وتغيير المستخدم والـ navigation) في الـ composition root أو بـ hooks، مش feature بتعرف caches التانيين.
+5. سكريبت الدواير في الـ CI من بدري: الدايرة بتتبني import ورا import، وأول import هو الوحيد اللي سهل يتمنع.
+
+<Quiz>
+
+<Question id="escore-mod-1">
+<Ask>12 feature من 16 في Escore في strongly connected component واحد. يعني إيه عمليًا لو عايز تقسّم لـ packages؟</Ask>
+<Answer>
+
+إن مفيش ولا واحدة من الـ 12 ينفع تطلع package لوحدها، لأن من أي واحدة فيهم تقدر توصل لأي واحدة تانية بالـ imports. أي package هتعملها هتحتاج تعتمد على package هي نفسها معتمدة عليها، والـ packages مالهاش دواير. لازم الدواير تتفك الأول وهي فولدرات، والـ 4 اللي بره الدايرة (search وnotification_inbox وsplash وlayout) هم بس اللي جاهزين.
+
+</Answer>
+</Question>
+
+<Question id="escore-mod-2">
+<Ask>ليه الحل لـ `TeamEntity` اللي في following مش إنها تتنقل لـ clubs أو لـ tournaments؟</Ask>
+<Answer>
+
+لأن الفريق مش بتاع feature واحدة: clubs وdiscover وevents وtournaments كلهم محتاجينه. نقله لـ feature تانية بيغيّر مين في النص بس. والـ domain-only graph فيه دايرة بين discover وtournaments وmatches وfollowing، لأن الـ entities نفسها بتشاور على بعض. فدول shared kernel واحد: package زي `esports_domain` كل الـ features تعتمد عليها، ومحدش يعتمد على feature عشان entity.
+
+</Answer>
+</Question>
+
+<Question id="escore-mod-3">
+<Ask>الـ auth repository بيعمل import لـ caches 3 features عشان يمسحها لما المستخدم يتغير. إيه المشكلة، والحل؟</Ask>
+<Answer>
+
+الـ data layer بتاع الـ auth بقى معتمد على الـ presentation بتاع 3 features، وده جزء من الدايرة، وأي feature جديدة عندها cache لازم حد يفتكر يضيفها في الـ auth. الحل إن الـ auth يعرّف contract (`IdentityScoped` فيه `clear()`)، وكل feature تسجّل الـ caches بتاعتها تحته، والـ auth ينادي الكل من غير ما يعرفهم. أو التنسيق ده يتنقل للـ composition root زي الـ `resetOnLogout` في Readly. في الحالتين السهم بقى من الـ features للـ auth.
+
+</Answer>
+</Question>
+
+</Quiz>

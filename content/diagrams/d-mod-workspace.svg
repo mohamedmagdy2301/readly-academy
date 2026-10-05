@@ -1,0 +1,34 @@
+<svg viewBox="0 0 760 330" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="الـ pub workspace: root فيه lock واحد وpackage_config واحد، والأعضاء بيقولوا resolution: workspace">
+<rect x="150" y="14" width="420" height="96" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="360" y="38" text-anchor="middle" font-size="13" fill="var(--ink)" font-weight="600">readly/ (root)</text>
+<text x="360" y="60" text-anchor="middle" font-size="11.5" fill="var(--ink)">pubspec.yaml → workspace: [apps/readly, packages/...]</text>
+<text x="360" y="80" text-anchor="middle" font-size="11.5" fill="var(--ink)">pubspec.lock (one)</text>
+<text x="360" y="99" text-anchor="middle" font-size="11.5" fill="var(--ink)">.dart_tool/package_config.json (one)</text>
+<rect x="612" y="30" width="132" height="64" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="678" y="56" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">pub.dev</text>
+<text x="678" y="76" text-anchor="middle" font-size="10.5" fill="var(--muted)">dio, drift, intl ...</text>
+<line x1="572" y1="62" x2="608" y2="62" stroke="var(--muted)" stroke-width="1.6" marker-end="url(#mk-mut)"/>
+<text x="678" y="114" text-anchor="middle" font-size="10.5" fill="var(--muted)" class="ar" direction="rtl" unicode-bidi="embed">نسخة واحدة من كل package</text>
+<rect x="16" y="196" width="168" height="62" rx="10" fill="var(--accent)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="100" y="222" text-anchor="middle" font-size="12.5" fill="#fff" font-weight="600">apps/readly</text>
+<text x="100" y="242" text-anchor="middle" font-size="10.5" fill="#e8f2fb">resolution: workspace</text>
+<rect x="204" y="196" width="168" height="62" rx="10" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="288" y="222" text-anchor="middle" font-size="12.5" fill="var(--ink)" font-weight="600">feature_notes</text>
+<text x="288" y="242" text-anchor="middle" font-size="10.5" fill="var(--muted)">resolution: workspace</text>
+<rect x="392" y="196" width="168" height="62" rx="10" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="476" y="222" text-anchor="middle" font-size="12.5" fill="var(--ink)" font-weight="600">feature_library</text>
+<text x="476" y="242" text-anchor="middle" font-size="10.5" fill="var(--muted)">resolution: workspace</text>
+<rect x="580" y="196" width="164" height="62" rx="10" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="662" y="222" text-anchor="middle" font-size="12.5" fill="var(--ink)" font-weight="600">core</text>
+<text x="662" y="242" text-anchor="middle" font-size="10.5" fill="var(--muted)">resolution: workspace</text>
+<line x1="100" y1="194" x2="250" y2="114" stroke="var(--accent)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#mk-acc)"/>
+<line x1="288" y1="194" x2="320" y2="114" stroke="var(--accent)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#mk-acc)"/>
+<line x1="476" y1="194" x2="420" y2="114" stroke="var(--accent)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#mk-acc)"/>
+<line x1="662" y1="194" x2="500" y2="114" stroke="var(--accent)" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#mk-acc)"/>
+<text x="62" y="162" text-anchor="middle" font-size="10.5" fill="var(--accent)" class="ar" direction="rtl" unicode-bidi="embed">بيتحل في الـ root</text>
+<line x1="186" y1="227" x2="200" y2="227" stroke="var(--ink)" stroke-width="1.6" marker-end="url(#mk-ink)"/>
+<line x1="374" y1="227" x2="388" y2="227" stroke="var(--ink)" stroke-width="1.6" marker-end="url(#mk-ink)"/>
+<line x1="562" y1="227" x2="576" y2="227" stroke="var(--ink)" stroke-width="1.6" marker-end="url(#mk-ink)"/>
+<rect x="16" y="282" width="728" height="34" rx="8" fill="var(--good-soft)" stroke="var(--good)" stroke-width="1.5"/>
+<text x="380" y="304" text-anchor="middle" font-size="12" fill="var(--good)" font-weight="600" class="ar" direction="rtl" unicode-bidi="embed">الأسهم السودا dependencies بين الأعضاء: بتتحل للفولدر اللي جنبك، من غير path ومن غير pub.dev</text>
+</svg>

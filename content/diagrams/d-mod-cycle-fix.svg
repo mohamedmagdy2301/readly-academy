@@ -1,0 +1,31 @@
+<svg viewBox="0 0 760 300" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="فك الدايرة بين الـ library والـ notes: الـ library بتعرّف NoteCounts والـ notes بتنفّذه">
+<text x="180" y="28" text-anchor="middle" font-size="13" fill="var(--warn)" font-weight="600" class="ar" direction="rtl" unicode-bidi="embed">قبل: دايرة</text>
+<text x="560" y="28" text-anchor="middle" font-size="13" fill="var(--good)" font-weight="600" class="ar" direction="rtl" unicode-bidi="embed">بعد: سهم واحد</text>
+<line x1="380" y1="16" x2="380" y2="284" stroke="var(--line)" stroke-width="1.5" stroke-dasharray="4 4"/>
+<rect x="30" y="120" width="130" height="48" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="95" y="149" text-anchor="middle" font-size="12.5" fill="var(--ink)" font-weight="600">feature_notes</text>
+<rect x="210" y="120" width="140" height="48" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="280" y="149" text-anchor="middle" font-size="12.5" fill="var(--ink)" font-weight="600">feature_library</text>
+<path d="M 160 132 Q 185 108 208 132" fill="none" stroke="var(--ink)" stroke-width="1.6" marker-end="url(#mk-ink)"/>
+<text x="184" y="104" text-anchor="middle" font-size="10.5" fill="var(--muted)">BookLookup</text>
+<path d="M 210 158 Q 185 184 162 158" fill="none" stroke="var(--warn)" stroke-width="1.8" marker-end="url(#mk-warn)"/>
+<text x="186" y="200" text-anchor="middle" font-size="10.5" fill="var(--warn)" class="ar" direction="rtl" unicode-bidi="embed">عدد الملاحظات</text>
+<text x="190" y="246" text-anchor="middle" font-size="11" fill="var(--muted)" class="ar" direction="rtl" unicode-bidi="embed">مين يتبني الأول؟ التست بيقع:</text>
+<text x="190" y="266" text-anchor="middle" font-size="11" fill="var(--warn)">[feature_library, feature_notes, feature_library]</text>
+<rect x="500" y="44" width="120" height="40" rx="10" fill="var(--accent)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="560" y="69" text-anchor="middle" font-size="12" fill="#fff" font-weight="600">apps/readly</text>
+<rect x="400" y="130" width="130" height="48" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="465" y="159" text-anchor="middle" font-size="12.5" fill="var(--ink)" font-weight="600">feature_notes</text>
+<rect x="580" y="118" width="160" height="104" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="660" y="140" text-anchor="middle" font-size="12.5" fill="var(--ink)" font-weight="600">feature_library</text>
+<rect x="598" y="154" width="124" height="28" rx="6" fill="var(--surface)" stroke="var(--good)" stroke-width="1.5"/>
+<text x="660" y="173" text-anchor="middle" font-size="11.5" fill="var(--ink)">NoteCounts</text>
+<rect x="598" y="186" width="124" height="28" rx="6" fill="var(--surface)" stroke="var(--line)" stroke-width="1.2"/>
+<text x="660" y="205" text-anchor="middle" font-size="11.5" fill="var(--ink)">LibraryCubit</text>
+<line x1="532" y1="148" x2="594" y2="164" stroke="var(--ink)" stroke-width="1.6" marker-end="url(#mk-ink)"/>
+<text x="560" y="140" text-anchor="middle" font-size="10" fill="var(--muted)">implements</text>
+<line x1="540" y1="86" x2="474" y2="126" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#mk-mut)"/>
+<line x1="580" y1="86" x2="646" y2="114" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#mk-mut)"/>
+<text x="560" y="250" text-anchor="middle" font-size="11" fill="var(--muted)" class="ar" direction="rtl" unicode-bidi="embed">registerNotes بيسجّل NotesRepositoryImpl كـ NoteCounts،</text>
+<text x="560" y="270" text-anchor="middle" font-size="11" fill="var(--muted)" class="ar" direction="rtl" unicode-bidi="embed">والـ library مابتعرفش مين وراه</text>
+</svg>

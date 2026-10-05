@@ -1,0 +1,450 @@
+---
+title: "الـ codegen والـ CI في الـ monorepo"
+description: "الـ build_runner في كل package ومن الـ root، والـ generated code اللي لازم يفضل محدّث، والـ CI اللي بيشغّل الـ packages اللي اتغيرت واللي بيعتمدوا عليها بس، والـ caching اللي بيشيل دقايق من كل PR."
+minutes: 30
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="مصنع فيه خطوط إنتاج">
+
+مصنع عربيات فيه 8 خطوط: الموتور، والفرامل، والكراسي، والدهان... المورد غيّر نوع المسامير اللي في الكراسي. لو المصنع وقّف الـ 8 خطوط وعمل فحص لكل عربية من الأول، هيضيّع يوم. ولو فحص خط الكراسي بس، ممكن يفوّت إن الكرسي بقى مش راكب على الشاسيه. الفحص الصح: <b>الخط اللي اتغير، وكل خط بيركّب حاجة منه</b>. والقطع اللي بتتعمل كل يوم بنفس الشكل؟ بتتجهز وتتخزن جنب الخط، مش بتتصنّع من الأول مع كل عربية.
+
+</Analogy>
+
+في الـ monorepo، الـ PR اللي غيّر سطر في `feature_notes` مش محتاج يشغّل تستات `feature_auth`. بس لو غيّر `library_domain`، لازم يشغّل كل اللي بيعتمد عليها، ومن ضمنهم app الأدمن. والـ Flutter SDK والـ pub cache بيتنزّلوا بنفس الشكل في كل run، فمكانهم الـ cache. والـ codegen في النص: كل package بتولّد بتاعها، والـ CI لازم يتأكد إن اللي في الـ repo محدّث.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### مين بيولّد إيه
+
+| الـ package | الـ generators | بيولّد |
+| --- | --- | --- |
+| `core`، `library_domain` | ولا حاجة | Dart صافي، ولا حتى freezed |
+| `core_network` | ولا حاجة | |
+| `feature_library` | freezed، json_serializable، drift_dev | الـ DTOs، والجداول والـ queries |
+| `feature_notes` | freezed، json_serializable، drift_dev | نفس الحكاية |
+| `feature_catalog`، `feature_auth` | freezed، json_serializable | الـ DTOs |
+| `apps/readly` | drift_dev | الـ `AppDatabase` اللي بيجمّع الجداول |
+
+كل package بتولّد بتعمل حاجتين في الـ pubspec بتاعها: الـ annotations في `dependencies` (`freezed_annotation`، `json_annotation`، `drift`)، و`build_runner` والـ generators في `dev_dependencies`. ده مش ذوق: الـ `depend_on_referenced_packages` هيعلّم على أي import لـ annotation مش في الـ pubspec، والـ build_runner بيشغّل الـ builders اللي في الـ package نفسها.
+
+### تشغيل build_runner
+
+<CodeBlock label="package واحدة، أو الـ workspace كله">
+
+```bash
+# one package
+cd packages/feature_library && dart run build_runner build
+
+# every package in the workspace, in one build (build_runner 2.11+)
+dart run build_runner build --workspace
+dart run build_runner watch --workspace   # while developing
+```
+
+</CodeBlock>
+
+- <b>الـ `--workspace`:</b> بيبني كل الـ packages اللي في الـ workspace مع بعض في build واحد، والـ `.dart_tool` بتاع الـ build بيتعمل في الـ root مش في كل package. ده أسرع بكتير من loop بيشغّل build_runner 6 مرات، كل مرة بيقوم من الأول ويحلّل نفس الـ dependencies.
+- <b>الـ `build_runner` في الـ root:</b> عشان `dart run build_runner` يشتغل من الـ root، الـ root pubspec محتاج `build_runner` في الـ `dev_dependencies` بتاعه.
+- <b>لسه بيتطور:</b> الـ README بتاع build_runner بيوصف الـ `--workspace` إنه لسه experimental وممكن يتغير. على جهازك استخدمه، وفي الـ CI لو حصلت مشكلة، الـ loop على الـ packages هو الـ fallback.
+
+### الـ generated code في الـ repo
+
+Readly بيعمل commit للـ `.g.dart` والـ `.freezed.dart`، زي [درس حراسة المعمارية](/course/quality/architecture-guards/): أي clone بيتعمله compile من غير ما يولّد، والـ reviewer بيشوف لو تغيير صغير في DTO غيّر 300 سطر generated. والتمن إن الـ CI لازم يتأكد إنهم محدّثين: يولّد من جديد، ويتأكد إن `git diff` فاضي.
+
+### الـ DI لما كل feature package
+
+Readly بيسجّل كل feature بـ function منها (`registerLibrary(getIt)`)، والـ app بينادي الكل. لو المشروع بيستخدم injectable زي في آخر [درس الـ DI](/course/di-scale/di/)، كل feature package بتعلن نفسها <b>micro package</b>:
+
+<CodeBlock label="injectable في package">
+
+```dart
+// packages/feature_library/lib/src/library_module.dart
+import 'package:injectable/injectable.dart';
+
+@InjectableInit.microPackage()
+void initLibraryPackage() {} // never called: it tells the generator to emit a module
+```
+
+</CodeBlock>
+
+الـ generator بيطلّع class اسمها على اسم الـ package (`FeatureLibraryPackageModule`) فيها كل التسجيلات. والـ `@InjectableInit` في الـ app بيضم الـ micro packages اللي بيعتمد عليها لوحده، ولو محتاج ترتيب معين، فيه `externalPackageModulesBefore` و`externalPackageModulesAfter`. والـ feature لسه بتصدّر الـ module من الـ barrel بس، والـ Impl جوه `src/`.
+
+### الـ CI: اللي اتغير واللي بيعتمد عليه
+
+الـ CI بتاع [درس استراتيجية التست](/course/testing/strategy/) بيلف على `apps/readly packages/*` ويشغّل كله. مع 10 packages، ده بقى 14 دقيقة على كل PR، حتى لو الـ PR غيّر سطر في الـ notes.
+
+الفكرة: الـ PR بيغيّر ملفات، والملفات جوه packages، وكل package ليها ناس معتمدين عليها في الـ pubspecs. اللي محتاج يتشغّل هو <b>الـ packages اللي اتغيرت، وكل اللي بيعتمد عليها، مباشرة أو من بعيد</b>. ولو اتغير ملف في الـ root (الـ lock، أو `analysis_options.yaml`، أو الـ workflow نفسه)، كل حاجة.
+
+<CodeBlock label="tools/architecture/bin/affected.dart">
+
+```dart
+// usage (from tools/architecture):
+//   git diff --name-only origin/main...HEAD | dart run bin/affected.dart
+// prints a JSON list of package folders, like ["apps/readly","packages/feature_notes"]
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:yaml/yaml.dart';
+
+// a change in any of these can affect every package
+const _global = ['pubspec.yaml', 'pubspec.lock', 'analysis_options.yaml', '.github/', 'tools/'];
+
+typedef Package = ({String path, Set<String> deps});
+
+Map<String, Package> readPackages(String root) {
+  final result = <String, Package>{};
+  for (final parent in ['packages', 'apps']) {
+    for (final dir in Directory('$root/$parent').listSync().whereType<Directory>()) {
+      final file = File('${dir.path}/pubspec.yaml');
+      if (!file.existsSync()) continue;
+      final yaml = loadYaml(file.readAsStringSync()) as YamlMap;
+      Set<String> keys(String field) =>
+          ((yaml[field] as YamlMap?)?.keys.cast<String>() ?? const <String>[]).toSet();
+      final folder = dir.path.replaceAll(r'\', '/').split('/').last;
+      result[yaml['name'] as String] = (
+        path: '$parent/$folder',
+        deps: {...keys('dependencies'), ...keys('dev_dependencies')},
+      );
+    }
+  }
+  return result;
+}
+
+/// [start] plus everything that depends on it, directly or not.
+Set<String> withDependents(Set<String> start, Map<String, Package> packages) {
+  final result = {...start};
+  var grew = true;
+  while (grew) {
+    grew = false;
+    for (final MapEntry(key: name, value: p) in packages.entries) {
+      if (!result.contains(name) && p.deps.any(result.contains)) {
+        result.add(name);
+        grew = true;
+      }
+    }
+  }
+  return result;
+}
+
+void main() {
+  final packages = readPackages('../..');
+  final changed = <String>[
+    for (String? line; (line = stdin.readLineSync()) != null;)
+      if (line!.isNotEmpty) line,
+  ];
+
+  final affected = changed.any((f) => _global.any(f.startsWith))
+      ? packages.keys.toSet()
+      : withDependents({
+          for (final MapEntry(key: name, value: p) in packages.entries)
+            if (changed.any((f) => f.startsWith('${p.path}/'))) name,
+        }, packages);
+
+  stdout.write(jsonEncode([for (final name in affected) packages[name]!.path]..sort()));
+}
+```
+
+</CodeBlock>
+
+- <b>نفس قراية الـ pubspecs:</b> زي تست الـ graph في [درس الـ dependency rule](/course/modularization/enforce-rule/). الـ pubspecs هي الرسمة، فأي أداة محتاجة تعرف مين بيعتمد على مين بتقراها منها.
+- <b>الـ `dev_dependencies` محسوبة:</b> لو `feature_notes` بتستخدم `FakeBookLookup` من `package:feature_library/testing.dart` في التستات بس، تغيير الـ library لازم يشغّل تستات الـ notes.
+- <b>`pubspec.yaml` في الليستة:</b> بالـ `startsWith` ده بيطابق الـ root بس، لأن pubspec أي package بيبدأ بـ `packages/` أو `apps/`. والـ root فيه الـ workspace والـ overrides، فأي تغيير فيه ممكن يغيّر نسخ كل حاجة.
+
+<Diagram name="d-mod-affected">
+
+الـ PR غيّر `library_domain`. الـ CI بيشغّلها هي وكل اللي بيعتمد عليها: `feature_library`، و`feature_notes` و`feature_catalog` من خلالها، والـ app والأدمن. والـ core والـ auth مابيتلمسوش.
+
+</Diagram>
+
+<CodeBlock label=".github/workflows/ci.yml">
+
+```yaml
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }} # a new push replaces the old run
+
+jobs:
+  # format + analyze + architecture: cheap, always the whole workspace (guards lesson)
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version-file: pubspec.yaml
+          cache: true
+      - run: flutter pub get
+      - run: dart format --output=none --set-exit-if-changed .
+      - run: flutter analyze
+      - working-directory: tools/architecture
+        run: dart test
+
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      packages: ${{ steps.affected.outputs.packages }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the diff needs main's history
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version-file: pubspec.yaml
+          cache: true
+      - run: flutter pub get
+      - id: affected
+        working-directory: tools/architecture
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            files="pubspec.yaml" # main: run everything
+          else
+            files=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
+          fi
+          echo "packages=$(echo "$files" | dart run bin/affected.dart)" >> "$GITHUB_OUTPUT"
+
+  test:
+    needs: changes
+    if: needs.changes.outputs.packages != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(needs.changes.outputs.packages) }}
+    name: test (${{ matrix.package }})
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version-file: pubspec.yaml
+          cache: true
+      - run: flutter pub get
+      - name: Generated code is up to date
+        working-directory: ${{ matrix.package }}
+        run: |
+          grep -q build_runner pubspec.yaml || exit 0
+          dart run build_runner build
+          git diff --exit-code -- .
+      - name: Tests
+        working-directory: ${{ matrix.package }}
+        run: |
+          [ -d test ] || exit 0
+          # plain Dart packages run on the Dart VM: a Flutter import won't compile
+          if grep -q "sdk: flutter" pubspec.yaml; then flutter test; else dart test; fi
+
+  # the only required check: green when everything that ran is green
+  ci-ok:
+    needs: [check, changes, test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          [ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" = "false" ]
+```
+
+</CodeBlock>
+
+- <b>الـ `changes` job:</b> بيحسب الليستة ويطلّعها output، والـ `test` بيعملها matrix بـ `fromJSON`. كل package job لوحدها، بتشتغل بالتوازي، واسمها في الـ PR بيقول هي مين.
+- <b>على `main` كله:</b> الـ push بيعدّي `pubspec.yaml` كأنه اتغير، فكل الـ packages تتشغّل. الـ PR سريع، والـ main هو الضمان إن مفيش حاجة عدّت من بين الأصابع، وكمان هو اللي بيملّى الـ caches (تحت).
+- <b>`dart test` للـ packages الصافية:</b> الـ `grep "sdk: flutter"` بيلاقي `flutter:` أو `flutter_test:` من الـ SDK. لو مش موجودين، الـ package Dart صافي، فبتتشغّل على الـ VM، وأي import لـ Flutter مش هيتعمله compile.
+- <b>الـ `ci-ok`:</b> ده الـ check الوحيد اللي بتعلّمه required في الـ branch protection. ليه؟ تحت في المشاكل.
+
+### الـ caching
+
+اللي بيتنزّل في كل run بنفس الشكل: الـ Flutter SDK (حوالي دقيقة)، والـ pub cache (كل الـ packages الخارجية). الـ `subosito/flutter-action` بـ `cache: true` بيعمل cache للاتنين. ولو عايز تتحكم بنفسك في الـ pub cache، `actions/cache`:
+
+<CodeBlock label="pub cache بإيدك">
+
+```yaml
+- uses: actions/cache@v4
+  with:
+    path: ~/.pub-cache
+    key: ${{ runner.os }}-pub-${{ hashFiles('pubspec.lock') }}
+    restore-keys: |
+      ${{ runner.os }}-pub-
+```
+
+</CodeBlock>
+
+- <b>key واحد للـ workspace كله:</b> فيه `pubspec.lock` واحد في الـ root، فالـ hash بتاعه بيتغير بس لما نسخة package تتغير. قبل الـ workspace كان فيه lock لكل package، وكان لازم `hashFiles('**/pubspec.lock')`.
+- <b>الـ `restore-keys`:</b> لو الـ lock اتغير، مفيش cache بنفس الـ key، فبياخد أحدث واحد بيبدأ بـ `Linux-pub-`، والـ `pub get` بينزّل الفرق بس.
+- <b>مين يشوف cache مين:</b> الـ run بيقدر يستخدم الـ caches اللي اتعملت في نفس الـ branch أو في الـ default branch، والـ PR يقدر كمان ياخد من الـ base branch بتاعه. بس PR مايشوفش cache PR تاني. فلو `main` مابيشتغلش عليه الـ CI، كل PR بيبدأ من الصفر. وده سبب تاني إن الـ push على `main` لازم يشغّل.
+- <b>الحدود:</b> 10 GB للـ repo، وأي cache ماحدش استخدمه 7 أيام بيتمسح. فـ cache بـ key متغير كل commit (زي hash الملفات كلها) بيملّى المساحة ويطرد الـ caches المفيدة.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### الـ PR واقف على check «Expected» ومش بيتشغّل
+
+قبل الـ `changes` job، حد عمل workflow لكل package بـ `paths`:
+
+```yaml
+# .github/workflows/notes.yml
+on:
+  pull_request:
+    paths: ['packages/feature_notes/**']
+```
+
+والـ checks بتاعتهم required. PR غيّر الـ catalog بس، فـ workflow الـ notes مااشتغلش، والـ check بتاعه فضل «Pending» للأبد، والـ PR مش راضي يتدمج. ده مكتوب في docs GitHub: الـ workflow اللي اتعدّى بسبب الـ paths، الـ checks بتاعته بتفضل Pending.
+
+وفوق ده، الـ `paths` مابتعرفش الـ dependents: تغيير في `library_domain` مش هيشغّل workflow الـ notes، لأن الـ path مش جوه `feature_notes`.
+
+الحل اللي في الـ workflow فوق: workflow واحد بيشتغل دايمًا، والقرار جواه في الـ `changes`، وcheck واحد required (`ci-ok`) بيبقى أخضر لما كل اللي اشتغل أخضر. الـ job اللي اتعدّى بـ `if` نتيجته `skipped`، والـ `ci-ok` بيعدّيها.
+
+### الـ matrix فاضية والـ workflow وقع
+
+PR غيّر الـ README بس. الـ `affected.dart` طلّع `[]`، والـ matrix بـ `fromJSON('[]')` فاضية، والـ run وقع بـ error بدل ما يعدّي.
+
+الـ `if: needs.changes.outputs.packages != '[]'` على الـ `test` job بيحلها: لو مفيش packages، الـ job بيتعدّى خالص، والـ `ci-ok` بيلاقيه `skipped` فيبقى أخضر.
+
+### الـ diff فاضي في الـ CI
+
+`git diff origin/main...HEAD` اشتغل على جهازك، وفي الـ CI طلّع error إن `origin/main` مش موجود. الـ `actions/checkout` by default بيعمل clone لـ commit واحد بس (`fetch-depth: 1`)، فمفيش `main` ولا history يتقارن بيه.
+
+الـ `fetch-depth: 0` في الـ `changes` job بيجيب الـ history كله. لو الـ repo كبير والـ clone ده بطيء، تقدر تجيب الـ base branch بس بـ `git fetch origin main --depth=50` بعد الـ checkout. والـ jobs التانية مش محتاجة history، فخليهم على الـ default.
+
+### تحديث package في الـ lock ماشغّلش حاجة
+
+حد حدّث `dio` في `core_network/pubspec.yaml`، والـ lock اتغير. الـ `affected` شغّل `core_network` واللي بيعتمدوا عليها. بس حد تاني حدّث `intl` بـ `flutter pub upgrade` من الـ root، فاتغير الـ `pubspec.lock` بس، من غير ولا pubspec عضو. لو الـ lock مش في `_global`، مفيش تستات اتشغّلت، والنسخة الجديدة دخلت main من غير ما حد يجربها.
+
+عشان كده الـ `pubspec.lock` في الليستة: تغيير نسخة أي package خارجية ممكن يأثّر على أي حد. وده التمن المعقول: التحديثات دي مش كل يوم، ولما تحصل تستحق run كامل.
+
+### الـ coverage بقى بيقيس جزء
+
+الـ coverage threshold في [درس استراتيجية التست](/course/testing/strategy/) كان بيتحسب على كل الـ packages. دلوقتي الـ PR بيشغّل 2 من 10، فالـ lcov فيه ملفاتهم بس، والرقم بقى بيقيس حاجة تانية.
+
+اختار واحدة: يا threshold لكل package (كل package job بيتحقق من الـ coverage بتاعه هو)، يا الـ threshold على `main` بس، اللي بيشغّل كله. الأولى أدق وبتمسك النزول في نفس الـ PR. التانية أبسط، بس النزول بيبان بعد الدمج.
+
+### الـ generated code check فشل وانت ماعدّلتش DTO
+
+الـ `git diff --exit-code` فشل في `feature_library`، والـ diff في `.g.dart` كله: ترتيب مختلف وتعليق فيه نسخة الـ generator. جهازك عليه نسخة `json_serializable` غير اللي في الـ CI.
+
+ده بيحصل لما حد بيولّد قبل ما يعمل `pub get` بعد تحديث الـ lock. الـ workspace بيضمن إن فيه lock واحد، بس مابيضمنش إنك شغّلت `pub get`. القاعدة: `flutter pub get` بعد أي pull، والـ generated يتولّد من نفس الـ lock اللي في الـ repo. ولو الـ check ده بقى يزعج من غير سبب، ده مؤشر إن الفريق بيولّد بنسخ مختلفة، مش إن الـ check غلط.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>الـ PR سريع، والـ main كامل:</b> الـ PR بيشغّل الـ affected بس عشان الناس ماتستناش، والـ main بيشغّل كله عشان أي حاجة الحساب فوّتها تبان فورًا، والـ caches تتملّى. والحاجات التقيلة (الـ mutation، والـ integration على أجهزة) بالليل، زي درس استراتيجية التست.
+- <b>الـ graph من الـ pubspecs، مش من إيدك:</b> ليستة «لو اتغيرت X شغّل Y» مكتوبة في الـ workflow بتقدم أول ما حد يضيف dependency. السكريبت بيقرا الحقيقة كل run.
+- <b>check واحد required:</b> الـ jobs بتتغير (packages بتتضاف، والـ matrix بتكبر)، والـ branch protection مش لازم تتعدّل مع كل واحدة. الـ `ci-ok` ثابت، وهو اللي بيقرر.
+- <b>قيس قبل ما تعقّد:</b> لو الـ CI كله 5 دقايق، الـ affected logic مش هتوفّر حاجة تستاهل. اتعمل لما الرقم بقى بيضايق الناس فعلًا، وبعد ما تعمله قارن الوقت المتوسط للـ PR قبل وبعد.
+- <b>اعمل cache للي بطيء وثابت:</b> الـ SDK والـ pub cache بيتغيروا نادرًا وبياخدوا دقايق، فـ cache. الـ `.dart_tool/build` بتاع build_runner بيتغير مع كل commit، والـ cache بتاعه بيبوظ بسهولة، فجرّبه بس لو الـ codegen هو أبطأ step فعلًا، وقيس.
+- <b>`--workspace` محليًا، والـ CI حسب الحاجة:</b> build واحد للكل أسرع بكتير على جهازك. في الـ CI، الـ matrix بتولّد package package، وده بيخلي كل job مستقل. لو الـ codegen بقى بطيء، جرّب job واحد بـ `--workspace` بدل الـ check جوه الـ matrix.
+
+<Note kind="interview" title="سؤال interview">
+
+«الـ CI بتاع الـ monorepo بياخد 15 دقيقة. تعمل إيه؟» الأول أقيس الوقت رايح فين. بعدين: الـ checks الرخيصة (format وanalyze والـ architecture) job لوحدها بتفشل في دقيقة. والتستات تتشغّل على الـ packages اللي اتغيرت وكل اللي بيعتمد عليها، محسوبة من الـ pubspecs، كـ matrix بالتوازي، ولو اتغير الـ lock أو ملف في الـ root، كله. والـ main بيشغّل كله دايمًا. وcache للـ Flutter SDK والـ pub cache بـ key من الـ `pubspec.lock` الواحد. والـ required check واحد بيجمّع النتايج، عشان الـ jobs اللي بتتعدّى ماتفضلش Pending.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### الـ CI قبل وبعد
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```yaml
+# every PR, whatever it touched: ~14 min
+- run: flutter pub get
+- name: Generated code
+  run: |
+    for pkg in packages/* apps/*; do
+      grep -q build_runner "$pkg/pubspec.yaml" || continue
+      (cd "$pkg" && dart run build_runner build) || exit 1
+    done
+    git diff --exit-code
+- name: Tests
+  run: |
+    for pkg in apps/* packages/*; do
+      [ -d "$pkg/test" ] || continue
+      (cd "$pkg" && flutter test) || exit 1
+    done
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```yaml
+# PR touching feature_notes: check + 2 jobs in parallel
+#   test (packages/feature_notes)
+#   test (apps/readly)
+# PR touching library_domain: 5 jobs
+# PR touching the README: check only
+# push to main: all packages, caches refreshed
+ci-ok:
+  needs: [check, changes, test]
+  if: always()
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: كل PR بيولّد ويختبر كل package ورا التانية، وأول package تفشل بتوقف الباقي فمش هتعرف غير مشكلة واحدة. بعد: الـ PR بيشغّل اللي ممكن يتأثر بس، بالتوازي، وكل package في سطر لوحدها في الـ PR، والـ main بيشغّل كله. والـ required check واحد مابيتغيرش مع عدد الـ packages.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="mod-codegen-1">
+<Ask>PR غيّر ملف في `packages/library_domain`. الـ CI لازم يشغّل إيه؟</Ask>
+<Answer>
+
+`library_domain` وكل اللي بيعتمد عليها مباشرة أو من بعيد: `feature_library`، و`feature_notes` و`feature_catalog` (لأنهم معتمدين على الـ library أو على الـ domain)، و`apps/readly`، و`apps/readly_admin`. والـ core والـ auth لأ، لأنهم مابيعتمدوش عليها.
+
+</Answer>
+</Question>
+
+<Question id="mod-codegen-2">
+<Ask>ليه workflow لكل package بـ `on.pull_request.paths` مش حل كويس لو الـ checks بتاعتهم required؟</Ask>
+<Answer>
+
+لأن الـ workflow اللي بيتعدّى بسبب الـ paths، الـ checks بتاعته بتفضل Pending، فالـ PR مش هيتدمج. وكمان الـ paths مابتعرفش الـ dependents: تغيير في package مشتركة مش هيشغّل workflow اللي معتمد عليها. الحل workflow واحد بيحسب الـ affected من الـ pubspecs، وcheck واحد required بيجمّع النتايج.
+
+</Answer>
+</Question>
+
+<Question id="mod-codegen-3">
+<Ask>`flutter pub upgrade intl` غيّر الـ `pubspec.lock` بس. الـ CI يشغّل إيه، وليه؟</Ask>
+<Answer>
+
+كل الـ packages. الـ lock بيحدد نسخة كل package خارجية لكل الـ workspace، فتغييره ممكن يأثر على أي حد، حتى لو مفيش pubspec عضو اتغير. عشان كده `pubspec.lock` في ليستة الملفات اللي بتشغّل كله.
+
+</Answer>
+</Question>
+
+<Question id="mod-codegen-4">
+<Ask>إيه فايدة الـ `pubspec.lock` الواحد في الـ caching؟</Ask>
+<Answer>
+
+إن الـ cache key للـ pub cache بيبقى `hashFiles('pubspec.lock')` لملف واحد، وبيتغير بس لما نسخة package خارجية تتغير. والـ `restore-keys` بتاخد أقرب cache لو الـ lock اتغير، فالـ `pub get` بينزّل الفرق بس.
+
+</Answer>
+</Question>
+
+<Question id="mod-codegen-5">
+<Ask>الـ PRs بقت بتاخد caches قديمة أو مفيش caches خالص، مع إن `cache: true` موجود. إيه أول حاجة تبص عليها؟</Ask>
+<Answer>
+
+إن الـ CI بيشتغل على الـ push لـ `main`. الـ PR يقدر ياخد caches من الـ branch بتاعه ومن الـ base branch، بس مش من PRs تانية. لو `main` مابيعملش caches، كل PR بيبدأ من الصفر. وكمان اتأكد إن الـ key مش متغير كل commit، لأن ده بيملّى الـ 10 GB ويطرد الـ caches المفيدة.
+
+</Answer>
+</Question>
+
+</Quiz>

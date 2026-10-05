@@ -1,0 +1,427 @@
+---
+title: "الـ dependency rule من الـ pubspec"
+description: "بعد التقسيم، الـ pubspecs هي الرسمة الحقيقية للمعمارية. إزاي تخليها هي اللي بتفرض القاعدة: تست بيقرا الـ graph ويمنع الدواير والأسهم الممنوعة، وdomain صافي بالـ compiler، وتواصل بين features من غير ما السهم يتعكس."
+minutes: 30
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="الكارت اللي بيفتح الأبواب">
+
+في مبنى شركة كبير، كل موظف معاه كارت. الكارت مش مكتوب عليه «ماتدخلش المعمل»، الكارت ببساطة مابيفتحش باب المعمل. محدش محتاج يفتكر القاعدة، ومحدش محتاج يقف على الباب. وليستة الأبواب اللي كل كارت بيفتحها مكتوبة في سيستم واحد عند الأمن، وأي تعديل فيها بيعدّي على مدير. ولو حد طلب كارته يفتح المعمل، السؤال اللي بيتسأل: «ليه؟»، مش «مين نسي يقفل الباب؟».
+
+</Analogy>
+
+قبل التقسيم، الـ dependency rule كانت يافطة: «الـ domain مايعرفش Flutter»، «الـ notes ماتلمسش الـ library غير من الـ barrel»، ومعاها architecture test بيدوّر في الـ imports. بعد التقسيم، كل package ليها كارت: الـ `pubspec.yaml`. اللي مش مكتوب فيه مش هيتفتح. والدرس ده عن إزاي تخلي الكارت ده هو القاعدة فعلًا: إيه اللي بيمنع حد يكتب في الكارت أي باب، وإيه اللي الكارت مابيقدرش يمنعه.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### الـ graph مكتوب في الـ pubspecs
+
+افتح الـ `dependencies` في كل pubspec في Readly، وهتلاقي الرسمة كلها:
+
+| الـ package | بتعتمد على (من بتوعنا) |
+| --- | --- |
+| `core` | ولا حاجة |
+| `core_network` | `core` |
+| `core_ui` | `core` |
+| `feature_library` | `core`، `core_network`، `core_ui` |
+| `feature_notes` | `core`، `core_network`، `core_ui`، `feature_library` |
+| `feature_catalog` | `core`، `core_network`، `core_ui`، `feature_library` |
+| `feature_auth` | `core`، `core_network`، `core_ui` |
+| `readly` (الـ app) | كله |
+
+والـ dependency rule على مستوى الـ packages بقت جمل تتقري من الجدول ده:
+
+1. <b>`core` تحت الكل:</b> مابتعتمدش على أي package من بتوعنا، ومافيهاش Flutter.
+2. <b>الـ `core_*` بتعتمد على `core` بس.</b>
+3. <b>الـ features بتعتمد على الـ core</b>، وعلى features تانية بالاسم بس، وكل سهم ليه سبب.
+4. <b>محدش بيعتمد على الـ app.</b>
+5. <b>مفيش دواير.</b>
+
+### نصين: الـ pubspec والـ lint
+
+الـ pubspec لوحده مش كفاية. زي ما [درس حراسة المعمارية](/course/quality/architecture-guards/) شرح، الـ workspace بيعمل resolution واحدة، فأي package تقدر تعمل import لأي package تانية حتى لو مش في الـ pubspec بتاعها، والـ compiler مش هيعترض. اللي بيربط الكود بالـ pubspec هو `depend_on_referenced_packages: error`: أي import لـ package مش مكتوبة في الـ pubspec بتاعك يبقى error.
+
+يعني الحماية جملتين:
+
+- <b>الكود ماينفعش يعمل import لحاجة مش في الـ pubspec</b>: ده شغل الـ lint، وهو شغال من الوحدة 7.
+- <b>الـ pubspec ماينفعش يبقى فيه سهم ممنوع</b>: ده محدش بيمسكه لحد دلوقتي.
+
+التانية هي الثغرة. لو حد في `feature_library` عايز `NotesSection`، الـ lint هيقوله «ضيف `feature_notes` في الـ pubspec»، وهو هيضيفها، والـ lint هيسكت. الكارت اتعدّل، ومحدش سأل «ليه؟».
+
+### تست بيقرا الـ graph
+
+نفس package الـ `tools/architecture` من درس الحراسة، بتست جديد بيقرا الـ pubspecs بدل الـ imports. محتاج `yaml` في الـ `dev_dependencies` بتاعتها:
+
+<CodeBlock label="tools/architecture/test/package_graph_test.dart">
+
+```dart
+import 'dart:io';
+
+import 'package:test/test.dart';
+import 'package:yaml/yaml.dart';
+
+typedef Package = ({String name, String path, Set<String> deps, Object? resolution});
+
+// dart test runs from tools/architecture: the repo root is two levels up
+final _roots = [Directory('../../packages'), Directory('../../apps')];
+
+List<Package> readPackages() => [
+      for (final root in _roots)
+        for (final dir in root.listSync().whereType<Directory>())
+          if (File('${dir.path}/pubspec.yaml').existsSync()) _read(dir),
+    ];
+
+Package _read(Directory dir) {
+  final yaml = loadYaml(File('${dir.path}/pubspec.yaml').readAsStringSync()) as YamlMap;
+  final deps = (yaml['dependencies'] as YamlMap?)?.keys.cast<String>().toSet() ?? {};
+  return (
+    name: yaml['name'] as String,
+    path: dir.path.replaceAll(r'\', '/'),
+    deps: deps,
+    resolution: yaml['resolution'],
+  );
+}
+
+bool isCore(String name) => name == 'core' || name.startsWith('core_');
+bool isFeature(String name) => name.startsWith('feature_');
+
+// every feature -> feature edge, with its reason. Adding one is an architecture decision.
+const featureEdges = {
+  'feature_notes': {'feature_library'}, // BookLookup
+  'feature_catalog': {'feature_library'}, // BookLookup.watchLibraryIds
+};
+
+void main() {
+  final packages = readPackages();
+  final ours = {for (final p in packages) p.name};
+  final apps = {for (final p in packages) if (p.path.contains('/apps/')) p.name};
+  Set<String> internal(Package p) => p.deps.intersection(ours);
+
+  test('the scan sees the workspace', () {
+    expect(packages.length, greaterThanOrEqualTo(8), reason: 'moved folders? fix the paths');
+  });
+
+  test('every package is a workspace member', () {
+    for (final p in packages) {
+      expect(p.resolution, 'workspace', reason: '${p.path}: add `resolution: workspace`');
+    }
+  });
+
+  test('core is plain Dart and depends on nothing of ours', () {
+    final core = packages.singleWhere((p) => p.name == 'core');
+    expect(internal(core), isEmpty);
+    expect(core.deps, isNot(contains('flutter')));
+  });
+
+  test('core_* depend on core only', () {
+    for (final p in packages.where((p) => isCore(p.name) && p.name != 'core')) {
+      expect(internal(p), {'core'}, reason: p.name);
+    }
+  });
+
+  test('features depend on core and on the listed features only', () {
+    for (final p in packages.where((p) => isFeature(p.name))) {
+      final allowed = {...ours.where(isCore), ...?featureEdges[p.name]};
+      expect(internal(p).difference(allowed), isEmpty, reason: p.name);
+    }
+  });
+
+  test('nothing depends on an app', () {
+    for (final p in packages) {
+      expect(p.deps.intersection(apps), isEmpty, reason: p.name);
+    }
+  });
+
+  test('no cycles', () {
+    final graph = {for (final p in packages) p.name: internal(p)};
+    expect(findCycle(graph), isNull);
+  });
+}
+
+/// Returns the first cycle found, like [a, b, a], or null.
+List<String>? findCycle(Map<String, Set<String>> graph) {
+  const visiting = 1, done = 2;
+  final state = <String, int>{};
+  final path = <String>[];
+
+  List<String>? visit(String node) {
+    state[node] = visiting;
+    path.add(node);
+    for (final next in graph[node] ?? const <String>{}) {
+      if (state[next] == visiting) return [...path.sublist(path.indexOf(next)), next];
+      if (state[next] == null) {
+        final cycle = visit(next);
+        if (cycle != null) return cycle;
+      }
+    }
+    state[node] = done;
+    path.removeLast();
+    return null;
+  }
+
+  for (final node in graph.keys) {
+    if (state[node] == null) {
+      final cycle = visit(node);
+      if (cycle != null) return cycle;
+    }
+  }
+  return null;
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `featureEdges` هو الكارت المكتوب:</b> أي سهم بين features لازم يبقى هنا، وجنبه سبب. اللي عايز يضيف سهم بيعدّل الملف ده في نفس الـ PR، فالـ reviewer بيشوف السؤال قدامه.
+- <b>الـ `internal`:</b> الـ deps الخارجية (dio وdrift) مش شغل التست ده، فبيقارن بـ packages الـ workspace بس.
+- <b>`no cycles` مع إن الـ features متحكومة بليستة:</b> لأن الليستة نفسها ممكن تتعدّل غلط. لو حد زوّد `'feature_library': {'feature_notes'}`، تست الـ features هيعدّي (السهم في الليستة)، وتست الدواير هو اللي هيقول `[feature_library, feature_notes, feature_library]`.
+- <b>`resolution: workspace`:</b> package اتعملت ونسيت السطر ده بتعمل resolution لوحدها، بـ lock تاني ونسخ تانية. ده بيمسكها في أول PR.
+
+### الـ domain صافي بالـ compiler مش بالتست
+
+الـ architecture test في درس الحراسة بيمنع `package:flutter` في `src/domain` بـ allowlist على الـ imports. بعد التقسيم فيه حماية أقوى لأي package مالهاش Flutter في الـ pubspec: <b>تشغّل تستاتها بـ `dart test`</b>.
+
+<CodeBlock label="لو حد عمل import لـ Flutter في core">
+
+```text
+$ cd packages/core && dart test
+Error: Dart library 'dart:ui' is not available on this platform.
+Context: The unavailable library 'dart:ui' is imported through these packages:
+
+package:core => package:flutter => dart:ui
+```
+
+</CodeBlock>
+
+الـ Dart VM مافيهوش `dart:ui`، فأي حاجة بتوصل لـ Flutter، مباشرة أو من package تانية، مش هتتعمل compile. ده مش lint ممكن يتسكت ولا تست ممكن يتعدّل، ده الـ compiler. وعشان كده `core` مافيهاش Flutter، والـ CI بيشغّلها بـ `dart test` مش `flutter test`.
+
+<Diagram name="d-mod-cycle-fix">
+
+الـ library عايزة عدد الملاحظات. لو عملت import للـ notes، السهم اتعكس واتعملت دايرة. بدل كده الـ library بتعرّف الـ contract اللي محتاجاه (`NoteCounts`)، والـ notes بتنفّذه وبتسجّله في get_it، والـ app بينادي التسجيل. الأسهم بين الـ packages ماتغيرتش.
+
+</Diagram>
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### الـ library عايزة حاجة من الـ notes
+
+المنتج عايز كل كتاب في المكتبة يبان جنبه «3 ملاحظات». الـ `LibraryCubit` محتاج العدد، والعدد عند الـ notes. أول حل: `feature_library` تعتمد على `feature_notes`. التست هيقع على الدايرة، لأن الـ notes معتمدة على الـ library أصلًا.
+
+الحل نفس فكرة الـ Dependency Inversion في [درس الطبقات](/course/foundations/layers/)، بس بين packages: <b>اللي محتاج الحاجة هو اللي يعرّف شكلها</b>.
+
+<CodeBlock label="الـ library بتعرّف، والـ notes بتنفّذ">
+
+```dart
+// packages/feature_library/lib/src/domain/note_counts.dart (exported by the barrel)
+abstract interface class NoteCounts {
+  Stream<Map<BookId, int>> watchCounts();
+}
+
+// packages/feature_notes/lib/src/data/notes_repository_impl.dart
+class NotesRepositoryImpl implements NotesRepository, NoteCounts {
+  // ...
+  @override
+  Stream<Map<BookId, int>> watchCounts() => _local.watchCountsByBook();
+}
+
+// packages/feature_notes/lib/src/notes_di.dart
+void registerNotes(GetIt getIt) {
+  getIt
+    ..registerLazySingleton(() => NotesRepositoryImpl(getIt(), getIt()))
+    ..registerLazySingleton<NotesRepository>(() => getIt<NotesRepositoryImpl>())
+    ..registerLazySingleton<NoteCounts>(() => getIt<NotesRepositoryImpl>());
+  // ...
+}
+```
+
+</CodeBlock>
+
+الـ `LibraryCubit` بياخد `NoteCounts` من الـ constructor ومايعرفش مين وراه. السهم لسه `notes -> library`، والـ `featureEdges` ماتغيرش. وده نفس اللي حصل مع `BookLookup` بالعكس: هناك الـ notes كانت محتاجة من الـ library، فالـ library صدّرت contract. هنا الـ library محتاجة من الـ notes، فالـ library برضه اللي عرّفت الـ contract، والـ notes نفّذته.
+
+ولو app مافيهوش notes خالص (الأدمن مثلًا)، الـ app بيسجّل implementation فاضي:
+
+```dart
+final class NoNoteCounts implements NoteCounts {
+  const NoNoteCounts();
+  @override
+  Stream<Map<BookId, int>> watchCounts() => Stream.value(const {});
+}
+```
+
+### الـ barrel صدّر dio للكل
+
+حد في `core_network` كتب في الـ barrel `export 'package:dio/dio.dart';` عشان الـ features ماتحتاجش تضيف dio. دلوقتي `feature_catalog` بتستخدم `Options` و`CancelToken` من `package:core_network/core_network.dart`، والـ lint ساكت لأن الـ import لـ `core_network` وهي في الـ pubspec.
+
+ده سهم مستخبي: الـ catalog بقت معتمدة على dio من غير ما حد يشوف ده في الـ pubspec بتاعها. ولو `core_network` قررت تغيّر dio بـ http، الـ catalog هتتكسر، مع إن الـ pubspec بتاعها مافيهوش dio.
+
+الـ barrel يصدّر الحاجات بتاعة الـ package بس. واللي محتاج dio يكتبه في الـ pubspec بتاعه، فالسهم يبقى ظاهر. والتست يمسك ده:
+
+<CodeBlock label="الـ barrels مابتصدّرش packages تانية">
+
+```dart
+test('barrels export only their own code', () {
+  for (final p in packages) {
+    final barrel = File('${p.path}/lib/${p.name}.dart');
+    if (!barrel.existsSync()) continue;
+    final leaks = RegExp(r'''^export\s+'package:(\w+)/''', multiLine: true)
+        .allMatches(barrel.readAsStringSync())
+        .map((m) => m[1])
+        .where((pkg) => pkg != p.name);
+    expect(leaks, isEmpty, reason: '${p.name} re-exports $leaks');
+  }
+});
+```
+
+</CodeBlock>
+
+الاستثناء الوحيد اللي ممكن تقبله: type من package تانية جزء من الـ API بتاعك فعلًا، زي `Stream` من `dart:async`. والـ `dart:` مش بتطابق الـ regex أصلًا.
+
+### الـ dev_dependencies بتعدّي من الباب الخلفي
+
+`feature_library` عايزة تست بيتأكد إن الـ `BookDetailsPage` بتعرض الملاحظات صح، فحد حط `feature_notes` في الـ `dev_dependencies`. التست بتاع الـ graph بيقرا `dependencies` بس، فعدّى.
+
+التست ده مكانه مش الـ library. هو بيختبر حاجة الـ app بيجمّعها (الصفحة والـ `below`)، فمكانه تستات الـ app. وعشان ده مايعدّيش تاني، الـ `_read` يقرا الـ `dev_dependencies` كمان ويحطهم مع الـ `deps`. أدوات التست (`test` و`flutter_test` و`bloc_test`) مش هتفرق، لأن `internal` بيقارن بـ packages الـ workspace بس:
+
+```dart
+final dev = (yaml['dev_dependencies'] as YamlMap?)?.keys.cast<String>() ?? const [];
+return (name: ..., deps: {...deps, ...dev}, ...); // a feature's tests follow the same rules
+```
+
+### الـ pubspec اتعدّل ومحدش من الـ architecture شافه
+
+التست بيمسك الأسهم اللي مش في `featureEdges`. بس `featureEdges` نفسه ملف عادي، وأي حد يقدر يضيف سطر في نفس الـ PR. فالمطلوب إن التعديل ده يتشاف من الناس الصح:
+
+<CodeBlock label=".github/CODEOWNERS">
+
+```text
+# the architecture lives in these files: changes need a second look
+/pubspec.yaml                                    @readly/architecture
+/packages/*/pubspec.yaml                         @readly/architecture
+/apps/*/pubspec.yaml                             @readly/architecture
+/tools/architecture/                             @readly/architecture
+```
+
+</CodeBlock>
+
+مع الـ branch protection («Require review from Code Owners»)، أي PR بيلمس pubspec أو التست محتاج موافقة من حد في الفريق ده. والـ PR اللي بيضيف feature بيلمس الـ pubspec بتاعها بس، فالـ review ده مش بيبطّأ الشغل اليومي، بيظهر بس لما الرسمة بتتغير.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>الـ pubspec هو الرسمة:</b> الرسمة اللي في الـ README بتقدم، والـ pubspecs مابتقدمش لأن الكود مش هيتعمله compile من غيرها. لو عايز رسمة للـ docs، ولّدها من الـ pubspecs في الـ CI (نفس الـ `readPackages` بتطلع Mermaid)، ماترسمهاش بإيدك.
+- <b>كل سهم بين features ليه سبب مكتوب:</b> الـ `featureEdges` مش ليستة استثناءات، هو الـ API بين الـ features. لو بقى فيه سهم من كل feature لكل feature، الـ packages مابقتش بتحرس حاجة.
+- <b>الـ contract عند اللي محتاجه:</b> لو feature محتاجة حاجة من feature معتمدة عليها، ماتعكسش السهم: عرّف interface في الـ domain بتاعك، والتانية تنفّذه، والـ app يوصّل. نفس `BookLookup` و`NoteCounts`.
+- <b>الـ compiler أقوى من التست، والتست أقوى من الـ review:</b> package من غير Flutter وبتتشغّل بـ `dart test` مستحيل تعمل import لـ Flutter. الـ lint بيمنع الـ import اللي مش في الـ pubspec. التست بيمنع الـ pubspec الغلط. والـ CODEOWNERS بيخلي تعديل التست نفسه قرار. كل طبقة بتغطي ثغرة التانية.
+- <b>الـ layers جوه الـ feature لسه شغل الـ architecture test:</b> الـ pubspec بيحرس الحدود بين الـ packages بس. الـ presentation اللي بتعمل import للـ data جوه نفس الـ feature مش هيبان في أي pubspec، وده اللي تست الـ imports في درس الحراسة لسه بيعمله.
+
+<Note kind="interview" title="سؤال interview">
+
+«قسّمتوا لـ packages، إيه اللي يمنع حد يكسر الحدود؟» 3 حاجات. الـ `depend_on_referenced_packages` كـ error، لأن الـ workspace بيعمل resolution واحدة والـ import لـ package مش في الـ pubspec بيتعمله compile عادي. وتست بيقرا الـ pubspecs نفسها: الـ core مابتعتمدش على حد، والـ features بتعتمد على features معينة بس في ليستة بأسبابها، ومحدش بيعتمد على الـ app، ومفيش دواير. وCODEOWNERS على الـ pubspecs والتست، فأي تغيير في الرسمة بيعدّي على حد من الـ architecture. وفوق ده الـ core والـ domain packages مافيهاش Flutter وبتتختبر بـ `dart test`، فالـ compiler نفسه بيرفض أي import لـ Flutter.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«feature A معتمدة على B، وB محتاجة معلومة من A. تعمل إيه؟» ماعكسش السهم، لأن ده دايرة. B تعرّف interface صغير في الـ domain بتاعها بالشكل اللي محتاجاه، وA تنفّذه، والـ composition root يسجّل implementation A تحت الـ interface ده. B مابتعرفش A، والسهم الوحيد لسه A → B. ولو app مافيهوش A، يسجّل implementation فاضي.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### القاعدة مكتوبة فين
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```markdown
+<!-- README.md -->
+## Architecture rules
+- core must not depend on features
+- features talk through barrels only
+- notes may use library; nothing else
+- please don't add feature deps without asking
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+// tools/architecture/test/package_graph_test.dart
+const featureEdges = {
+  'feature_notes': {'feature_library'}, // BookLookup
+  'feature_catalog': {'feature_library'}, // BookLookup.watchLibraryIds
+};
+// + core plain Dart, core_* -> core, nothing -> apps, no cycles,
+//   barrels don't re-export, every package a workspace member
+
+// .github/CODEOWNERS
+// /packages/*/pubspec.yaml  @readly/architecture
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: القواعد صح، بس مكتوبة لبني آدم، وبتتكسر أول ما حد مستعجل أو جديد. «please don't» مش check. بعد: نفس القواعد، بس بتتشيك على كل PR، والاستثناءات ليستة فيها سبب لكل سطر، وتغيير الليستة نفسها بيحتاج موافقة. الـ README يقدر يشاور على التست بدل ما يكرر القواعد.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="mod-enforce-1">
+<Ask>`depend_on_referenced_packages` شغال كـ error. إيه اللي لسه مش ممسوك؟</Ask>
+<Answer>
+
+إن الـ pubspec نفسه يتعدّل. الـ lint بيضمن إن الكود مابيعملش import لحاجة مش في الـ pubspec، بس لو حد ضاف `feature_notes` في الـ pubspec بتاع الـ library، الـ lint هيسكت. اللي بيمسك ده تست بيقرا الـ pubspecs ويقارن بالأسهم المسموحة، وCODEOWNERS على الـ pubspecs.
+
+</Answer>
+</Question>
+
+<Question id="mod-enforce-2">
+<Ask>`LibraryCubit` محتاج عدد الملاحظات لكل كتاب، والـ notes معتمدة على الـ library. تعمل إيه؟</Ask>
+<Answer>
+
+الـ library تعرّف `NoteCounts` في الـ domain بتاعها وتصدّره، والـ notes تنفّذه في الـ repository بتاعها وتسجّله بـ `registerLazySingleton<NoteCounts>`. الـ Cubit بياخده من الـ constructor ومايعرفش مين وراه، والسهم لسه `notes -> library` من غير دايرة.
+
+</Answer>
+</Question>
+
+<Question id="mod-enforce-3">
+<Ask>ليه `dart test` في `packages/core` أقوى من architecture test بيدوّر على `package:flutter` في الـ imports؟</Ask>
+<Answer>
+
+لأنه الـ compiler. الـ Dart VM مافيهوش `dart:ui`، فأي حاجة بتوصل لـ Flutter، مباشرة أو من package تانية، مش هتتعمل compile. التست ممكن يبقى فيه regex غلط أو مسار اتغير، والـ lint ممكن يتسكت. الـ compiler مالوش استثناءات.
+
+</Answer>
+</Question>
+
+<Question id="mod-enforce-4">
+<Ask>`core_network` بتعمل `export 'package:dio/dio.dart';` في الـ barrel. إيه المشكلة لو الـ lint ساكت؟</Ask>
+<Answer>
+
+إن كل package بتعتمد على `core_network` بقت بتستخدم dio من غير ما يبان في الـ pubspec بتاعها، فالسهم لـ dio مستخبي. ولو `core_network` غيّرت dio، كل دول هيتكسروا. الـ barrel يصدّر كود الـ package نفسها بس، واللي محتاج dio يكتبه في الـ pubspec بتاعه.
+
+</Answer>
+</Question>
+
+<Question id="mod-enforce-5">
+<Ask>التست فيه `featureEdges` بالأسهم المسموحة، وفيه كمان تست للدواير. ليه الاتنين؟</Ask>
+<Answer>
+
+لأن `featureEdges` نفسه ممكن يتعدّل غلط. لو حد زوّد `feature_library -> feature_notes` في الليستة، تست الـ features هيعدّي لأن السهم بقى «مسموح»، وتست الدواير هو اللي هيمسك `[feature_library, feature_notes, feature_library]`.
+
+</Answer>
+</Question>
+
+</Quiz>

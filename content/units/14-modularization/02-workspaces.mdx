@@ -1,0 +1,367 @@
+---
+title: "الـ pub workspaces من الصفر"
+description: "resolution واحدة لكل الـ packages: الـ root pubspec، و`resolution: workspace`، والـ lock الواحد، والـ globs، والمشاكل اللي بتظهر أول أسبوع. وmelos امتى يلزم وامتى الـ workspace لوحده كفاية."
+minutes: 25
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="عمارة بخزان مية واحد">
+
+عمارة فيها 8 شقق. زمان كل شقة كان ليها موتور وخزان على السطح: كل واحد بيشتري الموتور اللي يعجبه، وبيصلّحه وقت ما يحب. والنتيجة 8 موتورات بـ 8 مقاسات، وقطع غيار مختلفة لكل واحد، والسباك محتاج يطلع 8 مرات. وفي يوم اتحط خزان واحد بموتور واحد للعمارة كلها. دلوقتي كل الشقق بتاخد نفس المية بنفس الضغط، والصيانة مرة واحدة. بس لو شقة عايزة ضغط مختلف، لازم العمارة كلها تتفق.
+
+</Analogy>
+
+قبل الـ workspaces، كل package في الـ monorepo كانت شقة لوحدها: `pub get` جواها، و`pubspec.lock` بتاعها، و`.dart_tool/package_config.json` بتاعها. وكان ممكن `feature_library` تشتغل بـ `intl` 0.19 و`feature_notes` بـ 0.20 في نفس الـ repo، ومحدش يعرف لحد ما الـ app يجمّعهم. الـ <b>pub workspace</b> هو الخزان الواحد: <b>resolution واحدة</b> لكل الـ packages، وlock واحد في الـ root، و`pub get` واحد.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### الـ root والأعضاء
+
+الـ workspace محتاج حاجتين: pubspec في الـ root فيه ليستة الـ packages، وكل package بتقول إنها عضو.
+
+<CodeBlock label="pubspec.yaml (الـ root)">
+
+```yaml
+name: readly_workspace
+publish_to: none
+environment:
+  sdk: ^3.6.0
+workspace:
+  - apps/readly
+  - packages/core
+  - packages/core_network
+  - packages/core_ui
+  - packages/feature_auth
+  - packages/feature_catalog
+  - packages/feature_library
+  - packages/feature_notes
+  - tools/architecture
+```
+
+</CodeBlock>
+
+<CodeBlock label="packages/feature_library/pubspec.yaml">
+
+```yaml
+name: feature_library
+publish_to: none
+resolution: workspace
+environment:
+  sdk: ^3.6.0
+dependencies:
+  core:
+  core_network:
+  core_ui:
+  drift: ^2.28.0
+  flutter:
+    sdk: flutter
+  flutter_bloc: ^9.1.0
+dev_dependencies:
+  bloc_test: ^10.0.0
+  flutter_test:
+    sdk: flutter
+```
+
+</CodeBlock>
+
+- <b>`resolution: workspace`:</b> بيقول لـ pub «ماتعملّيش resolution لوحدي، أنا جزء من الـ workspace اللي فوق».
+- <b>`sdk: ^3.6.0`:</b> الـ workspaces نزلت في Dart 3.6، وكل عضو لازم الـ constraint بتاعه يبدأ من 3.6 أو أعلى. الـ packages الخارجية اللي بتعتمد عليها مش مطلوب منها كده.
+- <b>`core:` من غير نسخة:</b> أي dependency على package عضو في الـ workspace بتتحل للنسخة اللي جنبك على الديسك، مهما كان مكتوب إيه. لو حطيت نسخة (`core: ^1.0.0`)، النسخة المحلية لازم تحققها، وإلا الـ resolution بيفشل.
+- <b>`publish_to: none`:</b> الـ packages دي داخلية، و`dart pub publish` بالغلط هيقف.
+
+### `pub get` واحد
+
+<CodeBlock label="من الـ root">
+
+```bash
+flutter pub get
+```
+
+</CodeBlock>
+
+بيعمل 3 حاجات:
+
+1. <b>resolution واحدة:</b> بيجمع dependencies كل الأعضاء، ويلاقي نسخة واحدة لكل package خارجية تنفع للكل.
+2. <b>`pubspec.lock` واحد</b> في الـ root، و<b>`.dart_tool/package_config.json` واحد</b> في الـ root، والـ analyzer والـ compiler بيقروا منه لأي package جوه.
+3. <b>بينضّف:</b> أي `pubspec.lock` أو `.dart_tool/package_config.json` قديم جنب أي عضو بيتمسح، عشان مايبقاش فيه مصدرين للحقيقة.
+
+ونفس الأمر تقدر تشغّله من جوه أي package، والنتيجة واحدة: pub بيطلع للـ root ويعمل resolution للكل.
+
+<Diagram name="d-mod-workspace">
+
+كل عضو بيقول `resolution: workspace`، والـ root بيعمل resolution واحدة: lock واحد وpackage_config واحد. والـ dependencies بين الأعضاء بتتحل للفولدر اللي جنبك، مش لـ pub.dev.
+
+</Diagram>
+
+### الـ globs: من غير ماتنسى package
+
+من Dart 3.11، الليستة تقبل glob، فأي فولدر جوه `packages/` فيه `pubspec.yaml` بيبقى عضو لوحده:
+
+<CodeBlock label="pubspec.yaml (الـ root) بالـ globs">
+
+```yaml
+environment:
+  sdk: ^3.11.0 # globs in `workspace:` need 3.11
+workspace:
+  - apps/*
+  - packages/*
+  - tools/architecture
+```
+
+</CodeBlock>
+
+كده لما حد يعمل package جديدة، مش محتاج يفتكر يضيفها في الـ root. وخلي بالك إن ده معناه إن الـ root لازم يبقى `^3.11.0`، فلازم الفريق كله والـ CI على Dart 3.11 أو أحدث.
+
+### الأوامر اليومية
+
+| عايز | الأمر |
+| --- | --- |
+| تشوف الأعضاء | `dart pub workspace list` (وفيه `--json` للسكريبتات) |
+| تجيب الـ dependencies للكل | `flutter pub get` من أي مكان |
+| تضيف dependency لـ package | `cd packages/feature_notes && flutter pub add uuid` |
+| تشغّل أمر pub في package من بره | `dart pub -C packages/core outdated` |
+| تشغّل تستات package | `cd packages/feature_library && flutter test` |
+| تحلّل الكل | `flutter analyze` من الـ root |
+| تنسّق الكل | `dart format .` من الـ root |
+
+- <b>الـ IDE:</b> افتح فولدر الـ root بس. الـ analyzer بيشوف كل الـ packages من الـ package_config الواحد، و«Go to definition» بيروح للكود اللي جنبك مش لنسخة في الـ pub cache.
+- <b>`flutter test` مش من الـ root:</b> كل package ليها فولدر `test` بتاعها، والتستات بتتشغّل من جوه الـ package. الـ loop اللي في الـ CI بتاع [درس حراسة المعمارية](/course/quality/architecture-guards/) بيعمل ده.
+
+### melos: امتى يلزم
+
+melos أداة من المجتمع للـ monorepos، كانت بتعمل الـ linking بين الـ packages قبل ما pub يعرف يعمله. من melos 7، بقى مبني على الـ pub workspaces، والـ `melos.yaml` اتشال: الإعدادات بقت تحت `melos:` في نفس الـ root pubspec. يعني melos مابقاش بيحل مشكلة الـ resolution، الـ workspace حلها. اللي بيضيفه حاجات فوقها:
+
+<CodeBlock label="pubspec.yaml (الـ root) مع melos">
+
+```yaml
+dev_dependencies:
+  melos: ^8.0.0
+
+melos:
+  scripts:
+    test:
+      exec: flutter test
+      packageFilters:
+        dirExists: test
+    generate:
+      exec:
+        command: dart run build_runner build
+        concurrency: 1
+      packageFilters:
+        dependsOn: build_runner
+```
+
+</CodeBlock>
+
+<CodeBlock label="الاستخدام">
+
+```bash
+dart run melos bootstrap   # pub get for the workspace + bootstrap hooks
+dart run melos run test    # flutter test in every package that has test/
+# only packages changed since main, plus everything that depends on them
+dart run melos exec --diff=origin/main...HEAD --include-dependents -- flutter test
+```
+
+</CodeBlock>
+
+| محتاجه | الـ workspace لوحده | melos |
+| --- | --- | --- |
+| resolution واحدة وlock واحد | آه | آه (هو بيستخدم الـ workspace) |
+| أمر على كل الـ packages | shell loop من 4 سطور | `melos exec` بفلاتر |
+| الـ packages اللي اتغيرت واللي بيعتمدوا عليها | سكريبت بتكتبه (درس الـ CI) | `--diff` و`--include-dependents` |
+| نسخ وchangelogs لـ packages بتتنشر | بإيدك | `melos version` من الـ commits |
+
+القاعدة في Readly: الـ packages مش بتتنشر، والسكريبتات قليلة، فالـ workspace لوحده كفاية، والـ «اللي اتغير» بسكريبت صغير في درس الـ CI. لو عندك packages بتتنشر على pub.dev بنسخ وchangelogs، أو 30 package وسكريبتات كتير، melos بيوفّر وقت حقيقي.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### package عايزة نسخة والتانية عايزة نسخة
+
+`feature_catalog` عاملة `intl: ^0.19.0`، و`core_ui` اتحدّثت لـ `intl: ^0.20.0`. الـ `pub get` فشل: مفيش نسخة واحدة تنفع للاتنين.
+
+قبل الـ workspace، ده كان هيعدّي: كل package بنسختها، والمشكلة تظهر بعدين في الـ app. الـ workspace بيطلّعها دلوقتي، وده المقصود: الـ app في الآخر بيتجمّع بنسخة واحدة من كل package، فالأحسن تعرف من أول `pub get` إن فيه تعارض. الحل إنك توحّد النسخة في كل الـ pubspecs، في نفس الـ PR.
+
+وعشان ده مايتكررش مع كل package، اكتب النسخة في مكان واحد بس: الـ dependency الخارجية تتكتب في الـ package اللي بتستخدمها فعلًا، ولو كذا package بيستخدموها، يبقوا كلهم بنفس الـ constraint. وأداة زي `dart pub outdated` من الـ root بتوريك كل النسخ مرة واحدة.
+
+### الـ pub get بيفشل بسبب pubspec مالوش لازمة
+
+حد عمل فولدر `packages/examples/pubspec.yaml` عشان يجرب حاجة، أو كان فيه `pubspec.yaml` قديم في فولدر `packages/` نفسه. الـ `pub get` بيفشل.
+
+الـ workspace مابيقبلش أي `pubspec.yaml` في فولدر بين الـ root والأعضاء، لأنه مش عارف ده عضو ولا لأ. الحل: يا تشيل الملف، يا تخليه عضو (تضيفه في `workspace:` بـ `resolution: workspace`). وده كمان سبب إن الـ app بيتحط في `apps/readly` مش في الـ root نفسه: الـ root بتاع الـ workspace بس.
+
+### الـ dependency_overrides في 3 أماكن
+
+package خارجية فيها bug، والـ fix لسه في branch. فحد حط `dependency_overrides` في `feature_library`، وبعدين حد تاني حط override تاني لنفس الـ package في `core_network` بـ commit مختلف.
+
+في الـ workspace كل الـ overrides بتتجمع، ونفس الـ package مايتعملهاش override غير مرة واحدة. فحطهم كلهم في الـ root pubspec، ومعاهم comment بالسبب ولينك الـ issue، عشان أي حد يعرف امتى يشيلهم:
+
+<CodeBlock label="الـ overrides في الـ root بس">
+
+```yaml
+dependency_overrides:
+  # waiting for a release with the cancel fix
+  some_package:
+    git:
+      url: https://github.com/someone/some_package
+      ref: 3f2c1ab
+```
+
+</CodeBlock>
+
+### الصورة اختفت بعد ما نقلناها لـ core_ui
+
+صورة الغلاف الافتراضية كانت في `assets/` بتاع الـ app، واتنقلت مع الـ widget لـ `core_ui`. الـ widget بقى بيرسم مربع فاضي.
+
+الـ asset اللي في package تانية بيتطلب باسم الـ package:
+
+<CodeBlock label="asset من package">
+
+```yaml
+# packages/core_ui/pubspec.yaml
+flutter:
+  assets:
+    - assets/images/
+```
+
+```dart
+// packages/core_ui/lib/src/widgets/book_cover.dart
+Image.asset('assets/images/cover_placeholder.png', package: 'core_ui')
+```
+
+</CodeBlock>
+
+الـ `package:` بيخلي Flutter يدوّر في `packages/core_ui/assets/...` جوه الـ bundle. ونفس الحكاية في الـ fonts اللي بتتعرّف في package: الـ `fontFamily` بيتكتب بالـ package كمان (`TextStyle(fontFamily: 'Cairo', package: 'core_ui')`).
+
+### package جديدة والـ workspace مش شايفها
+
+حد عمل `packages/feature_stats` بـ `resolution: workspace`، ونسي يضيفها في الـ root. الـ `pub get` بيفشل لأن الـ package بتقول إنها في workspace مش لاقيها في الليستة. ولو نسي `resolution: workspace` كمان، الـ package بتعمل resolution لوحدها، وبيبقى عندها lock تاني، ونرجع للمشكلة القديمة.
+
+الحل الأول: الـ globs (`packages/*`) لو الفريق على Dart 3.11. والحل التاني: الـ architecture test يقرا الـ pubspecs ويتأكد إن كل فولدر فيه pubspec عضو. ده بييجي في درس «الـ dependency rule من الـ pubspec».
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>الـ resolution الواحدة ميزة مش قيد:</b> الـ app في الآخر بنسخة واحدة من كل package. الـ workspace بيطلّع التعارض في `pub get` بدل ما يطلع في runtime أو في build الـ release. لو package محتاجة نسخة مختلفة فعلًا، دي علامة إنها مش المفروض تبقى في نفس الـ app.
+- <b>الـ root فاضي:</b> pubspec فيه الـ `workspace:` والـ dev tools المشتركة (لو فيه)، و`analysis_options.yaml`، والـ CI. الـ app نفسه عضو في `apps/` زي أي package، فالـ root مايبقاش package بيتعمله build.
+- <b>melos لما المشكلة تبان:</b> ابدأ بالـ workspace وسكريبتين. لما السكريبتات تكتر، أو تبدأ تنشر packages بنسخ، أو محتاج «اللي اتغير واللي بيعتمد عليه» في أكتر من مكان، melos بيستاهل dependency زيادة.
+- <b>الـ globs ولا ليستة صريحة:</b> الـ glob أسهل ومابيتنسيش. الليستة الصريحة بتخلي إضافة package قرار بيظهر في الـ diff بتاع الـ root. لو الفريق بيعمل packages كتير، glob. لو الـ packages قليلة وثابتة، الليستة بتقول للـ reviewer «فيه package جديدة» بوضوح.
+- <b>Flutter واحد للكل:</b> الـ workspace مش بيحل إن كل واحد على نسخة Flutter مختلفة. ثبّت النسخة في الـ root (`environment: flutter:`) واقراها في الـ CI بـ `flutter-version-file`، زي [درس استراتيجية التست](/course/testing/strategy/).
+
+<Note kind="interview" title="سؤال interview">
+
+«إيه الفرق بين pub workspaces وmelos؟» الـ workspace جزء من pub نفسه من Dart 3.6: الـ root pubspec فيه ليستة الأعضاء، وكل عضو بيقول `resolution: workspace`، فبيبقى فيه resolution واحدة وlock واحد وpackage_config واحد، والـ packages بتشوف بعض محليًا. melos أداة فوقه: من melos 7 بقى مبني على الـ workspace وإعداداته في نفس الـ pubspec، وبيضيف سكريبتات على الـ packages بفلاتر، و`--diff` مع `--include-dependents` للـ packages اللي اتغيرت، و`melos version` للنسخ والـ changelogs. لـ app داخلي بـ 8 packages، الـ workspace لوحده كفاية. لـ packages بتتنشر أو monorepo كبير بسكريبتات كتير، melos.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### من packages منفصلة بـ path لـ workspace
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```yaml
+# apps/readly/pubspec.yaml
+dependencies:
+  core:
+    path: ../../packages/core
+  feature_library:
+    path: ../../packages/feature_library
+
+# packages/feature_library/pubspec.yaml
+dependencies:
+  core:
+    path: ../core
+
+# 9 pubspec.lock files, 9 package_config.json,
+# `flutter pub get` in every folder
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```yaml
+# pubspec.yaml (root)
+workspace:
+  - apps/readly
+  - packages/core
+  - packages/feature_library
+  # ...
+
+# apps/readly/pubspec.yaml
+resolution: workspace
+dependencies:
+  core:
+  feature_library:
+
+# 1 pubspec.lock, 1 package_config.json,
+# one `flutter pub get`
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: الـ `path:` كان بيعمل الـ linking، بس كل package بتعمل resolution لوحدها، فممكن نسختين من نفس الـ package الخارجية في نفس الـ repo، والـ analyzer بيفتح context لكل package، و`pub get` في كل فولدر. بعد: الـ `path:` اتشال، لأن الأعضاء بيتحلّوا محليًا لوحدهم. ولما تنقل: ضيف الـ `workspace:` في الـ root، و`resolution: workspace` في كل عضو، وشيل الـ `path:`، وشغّل `flutter pub get` مرة. الـ locks القديمة بتتمسح لوحدها، وامسحها من git في نفس الـ PR.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="mod-workspaces-1">
+<Ask>فين بيتعمل الـ `pubspec.lock` في الـ workspace، وليه ده مهم؟</Ask>
+<Answer>
+
+في الـ root بس، lock واحد لكل الأعضاء، ومعاه `.dart_tool/package_config.json` واحد. ده معناه إن كل package خارجية ليها نسخة واحدة في الـ repo كله، زي ما الـ app هيتجمّع في الآخر. والتعارض بيبان في `pub get` بدل ما يبان في الـ build.
+
+</Answer>
+</Question>
+
+<Question id="mod-workspaces-2">
+<Ask>`feature_notes/pubspec.yaml` فيه `core:` من غير نسخة ولا path. بيتحل لإيه؟</Ask>
+<Answer>
+
+للـ `packages/core` اللي في الـ workspace. أي dependency على عضو بيتحل للنسخة المحلية مهما كان مكتوب، ولو فيه version constraint، النسخة المحلية لازم تحققه.
+
+</Answer>
+</Question>
+
+<Question id="mod-workspaces-3">
+<Ask>عايز تكتب `workspace: [packages/*]`. محتاج إيه؟</Ask>
+<Answer>
+
+Dart 3.11 أو أحدث، والـ root pubspec يبقى `sdk: ^3.11.0`. أي فولدر جوه `packages/` فيه `pubspec.yaml` بيبقى عضو لوحده، فمحدش محتاج يفتكر يضيف الـ package الجديدة.
+
+</Answer>
+</Question>
+
+<Question id="mod-workspaces-4">
+<Ask>`core_ui` فيها صورة في `assets/images/`، والـ widget بتاعها بيرسم فاضي في الـ app. إيه الناقص؟</Ask>
+<Answer>
+
+الـ asset اللي في package تانية بيتطلب باسم الـ package: `Image.asset('assets/images/x.png', package: 'core_ui')`، والصورة لازم تبقى متعرّفة في `flutter: assets:` في الـ pubspec بتاع `core_ui` نفسه.
+
+</Answer>
+</Question>
+
+<Question id="mod-workspaces-5">
+<Ask>Readly فيه 8 packages داخلية مش بتتنشر. محتاج melos؟</Ask>
+<Answer>
+
+غالبًا لأ. الـ workspace بيعمل الـ resolution الواحدة والـ linking، والأوامر على كل الـ packages loop صغير، و«الـ packages اللي اتغيرت» سكريبت في الـ CI. melos بيستاهل لما يبقى فيه packages بتتنشر بنسخ وchangelogs (`melos version`)، أو سكريبتات كتير محتاجة فلاتر زي `--diff` و`--include-dependents`.
+
+</Answer>
+</Question>
+
+</Quiz>
