@@ -2,7 +2,6 @@
 title: "في Escore: الـ Real-time والـ Background"
 description: "Escore فيه WebSocket حقيقي للنتايج اللايف وFCM للإشعارات، ومفيش أي شغل في الخلفية. reconnect بـ backoff وjitter وping بإيده، وevent بيتعامل كإشارة بـ jitter على الـ REST، وCubitين بيعدّلوا نفس الـ subscriptions، وإشعار الضغطة عليه بتضيع، وقناة Android مش موجودة."
 minutes: 20
-draft: true
 ---
 
 الوحدة دي بنت real-time لـ Readly من الأول: الاختيار بين الطرق، وWebSocket في الـ data layer، والـ reconnect، والدمج مع الـ cache، وFCM، والـ sync في الخلفية، والتستات. Escore بيستخدم من دول اتنين بجد: <b>WebSocket</b> للنتايج اللايف (بـ `web_socket_channel` على الموبايل، و`ws` على سيرفر Express)، و<b>FCM</b> للإشعارات (بـ `firebase_messaging` و`flutter_local_notifications`). والتالت مش موجود خالص: <b>مفيش أي شغل في الخلفية</b>، لا workmanager ولا background fetch ولا isolates.

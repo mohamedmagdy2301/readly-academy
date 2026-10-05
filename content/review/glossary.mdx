@@ -105,3 +105,59 @@ description: "كل مصطلح بمعناه ومثال من Readly."
 | Reducer | في Redux: function نقية بتاخد الـ state والـ action وترجّع state جديدة | `readingGoalReducer` بيرجّع `GoalRules.up(goal)` مع `GoalIncreased()` |
 | Signal | قيمة reactive صغيرة، وأي `computed` أو widget قرأها بيتحدث لوحده لما تتغير | `signal(20)` لهدف القراية |
 | Strangler migration | نقل state management قديم شاشة شاشة، والجديد جنب القديم، لحد ما القديم يختفي | شاشة المكتبة من GetX لـ Cubit من غير ما الـ data layer تتلمس |
+| Event loop | الحلقة اللي بتشغّل الكود على thread واحد: تفضّي الـ microtasks كلها، وبعدين تاخد event واحد، وترجع تاني | الـ `await` في `LibraryCubit.load()` بيرجّع الـ thread للـ loop، فالـ UI بتكمّل وهي مستنية |
+| Microtask queue | طابور أولويته أعلى من الـ events: فيه كمالة الـ Futures بعد `await` و`scheduleMicrotask`، والـ timers والـ I/O بيستنوه يفضى | الكود اللي بعد `await _repo.refresh()` بيشتغل قبل أي `Timer` جاهز |
+| Unhandled async error | خطأ في Future مكانش عليه handler (`await` أو `catchError`) لحظة ما فشل، فبيروح للـ uncaught handler حتى لو عملتله await بعدين | Future الملاحظات اتعمل قبل await الكتاب وفشل في النص، والحل إنهم يتستنوا مع بعض بـ `.wait` |
+| Single-subscription stream | stream بمستمع واحد بس، بيخزّن القيم لحد ما حد يسمع، وبيدعم pause، والـ listen التاني بيرمي `Bad state` | الـ `watch()` بتاع drift، و`GoodreadsImporter.import` |
+| Broadcast stream | stream بأي عدد مستمعين ومابيخزّنش، فاللي يسمع متأخر بيفوته اللي فات | `SyncQueue.onEnqueued`: إشارة «في عملية جديدة» لأي حد مهتم |
+| async* | function بترجّع Stream وبتطلّع قيم بـ `yield`. بتبدأ مع أول listen، والـ cancel بيوقّفها عند أول `yield` بعده | `GoodreadsImporter.import` بيطلّع `ImportProgress` كل 100 كتاب |
+| switchMap | operator بيلغي الـ subscription اللي شغالة لما قيمة جديدة تيجي، فنتيجة آخر قيمة بس هي اللي بتوصل | البحث في الكتالوج: كل حرف جديد بيرمي نتيجة البحث اللي قبله |
+| exhaustMap | operator بيرمي القيم الجديدة طول ما في شغل شغال | زرار «احفظ الملاحظة» مابيبعتش طلبين لو اتداس مرتين |
+| Subscription leak | subscription مااتلغتش: المصدر ماسكها، وهي ماسكة الـ callback، والـ callback ماسك الـ Cubit، فمحدش بيتمسح والـ callback بيفضل يشتغل | `LibraryCubit` اتقفل ولسه بيستقبل من `watchLibrary()` لأن الـ `cancel()` مش في `close()` |
+| Isolate | worker ليه ذاكرته وevent loop بتاعه وبيشتغل على core تاني، والبيانات بتتنقل برسايل مش ذاكرة مشتركة | parsing ملف Goodreads في `Isolate.run` بدل ما يوقّف الشاشة |
+| ProviderContainer | المكان اللي الـ providers وstate بتاعتها بتعيش فيه. `ProviderScope` بيعمل واحد للـ app، وفي التست بتعمل واحد جديد لكل تست | `ProviderContainer.test(overrides: [...])` في تستات المكتبة |
+| ref.watch وref.read | الـ watch بيسمع ويعيد البناء لما القيمة تتغير وبيمسك الـ provider عايش، والـ read بيقرا مرة من غير ما يسمع | `ref.watch(libraryFiltersProvider)` في build، و`ref.read` جوه الـ `onPressed` |
+| autoDispose | الـ provider بيتمسح لما آخر listener يمشي، وده الافتراضي مع الـ codegen. و`keepAlive` للي لازم يعيش طول الـ app | الكتالوج بيتمسح لما الشاشة تتقفل، والـ repositories `keepAlive` |
+| family | provider بياخد parameter، وكل قيمة ليها instance وstate لوحدها | `bookDetailsProvider(bookId)`، والبحث بـ family بالكلمة |
+| AsyncNotifier | الـ class اللي شايلة state في Riverpod، والـ `build` بتاعها async وstate بتاعها `AsyncValue`، وبتعرض methods بتعدّلها | `BookDetails` مكان `BookDetailsCubit` |
+| ref.mounted | بيقول إن الـ provider لسه عايش بعد await. ولو الـ build ممكن يتعاد في النص، بتاخد ref الـ build قبل الـ await وتسأله هو | `final buildRef = ref;` قبل الـ await في `loadMore` |
+| Provider override | تبديل اللي provider بيرجّعه في الـ scope أو الـ container من غير ما تلمس الكود اللي بيستخدمه | `overrideWithValue` لـ `SharedPreferences` في `main`، وrepository fake في التست |
+| Spike | تجربة بوقت محدود في branch لوحده عشان تقيس قرار قبل ما تاخده، وبتخلص بـ ADR مش بـ merge | `spike/riverpod` و`docs/adr/012-riverpod-spike.md` |
+| Polling | الـ app بيسأل السيرفر كل فترة «في جديد؟»، والسيرفر بيفضل stateless | `GET /library` بـ ETag كـ fallback لو الشبكة بتقفل الـ WebSocket |
+| SSE | Server-Sent Events: اتصال HTTP مفتوح السيرفر بيبعت عليه events في اتجاه واحد، وبيكمّل من آخر id بعد الانقطاع | اتقارن بالـ WebSocket والـ polling في درس «Push ولا Pull» |
+| WebSocket | اتصال مفتوح في الاتجاهين، بيبدأ بطلب HTTP بيتحول (upgrade)، والسيرفر يقدر يبعت أي وقت | `RealtimeClient` في `core/realtime/` بيستقبل `book.upserted` ويكتبه في drift |
+| Heartbeat | ping دوري بيكشف إن الاتصال مات من غير ما يوصل close frame | ping كل 25 ثانية في `RealtimeClient` |
+| Close code | رقم بييجي مع قفل الـ WebSocket بيقول ليه اتقفل، والـ client بيقرر على أساسه يعيد ولا يقف | 4401 يعني الـ token خلص فـ refresh وreconnect، و4426 يعني نسخة قديمة فـ `UpdateRequired` |
+| Jitter | رقم عشوائي بيتزوّد على الـ backoff عشان الأجهزة كلها ماترجعش في نفس الثانية بعد deploy | `Backoff` في `core/retry/` المشترك بين `SyncService` و`RealtimeClient` |
+| Catch-up | بعد أي reconnect أو فجوة في أرقام الـ events، الـ client بيطلب اللي فاته من آخر cursor | `GET /library/changes?since=cursor`، والـ 410 معناه full refresh |
+| Tombstone | أثر بيفضل بعد الحذف شايل الـ version، عشان event قديم مايرجّعش الحاجة اللي اتمسحت | جدول `RemovedBooks` |
+| FCM token | العنوان اللي السيرفر بيبعت عليه push للجهاز ده. بيتغير، فبيتسجّل مع الـ login وكل refresh وبيتشال مع الـ logout | `DeviceRegistrar` بيسجّله بالـ installation id |
+| Silent push | push من غير إشعار ظاهر، بيصحّي الـ app يعمل شغل في الخلفية، والـ OS مش بيضمن إنه يوصل | إشارة للـ background sync إن في عمليات مستنية |
+| workmanager | package بيطلب من الـ OS يشغّل Dart callback في الخلفية في isolate جديد، والـ OS هو اللي بيقرر امتى | `runBackgroundSync` كل 15 دقيقة على Android |
+| Profile mode | build بـ AOT زي الـ release ومعاه الـ tracing بتاع DevTools. القياس في الـ debug ملوش معنى | `flutter run --profile` على الموبايل المرجعي |
+| Jank | frame اتأخر عن ميزانيته (حوالي 16ms على شاشة 60Hz)، فالحركة بتقطّع | الـ scroll في مكتبة فيها 4000 كتاب قبل الـ slivers |
+| UI thread وraster thread | الـ UI thread بيشغّل الـ Dart (build وlayout)، والـ raster بيرسم على الـ GPU. الـ frame الأحمر في أنهي واحد بيقولك تدوّر فين | `BUILD` واخد 31ms في الـ UI thread والـ raster تمام، يبقى المشكلة في الكود |
+| Sliver | جزء من scroll واحد بيتبني lazy على قد اللي ظاهر بس | `CustomScrollView` فيه `SliverList.builder` لكل قسم في المكتبة |
+| Decode size | الصورة في الذاكرة بعد الفك بتاخد العرض × الارتفاع × 4 bytes مهما كان حجم الملف، فبتتفك بالمقاس اللي هيتعرض بس | `BookCover` بـ `memCacheWidth` مضروب في الـ DPR |
+| Retaining path | سلسلة الـ references من الـ root لحد object، بتقولك مين ماسكه ومانعه يتمسح | الـ Diff بين snapshotين بعد ما صفحة الكتاب اتفتحت واتقفلت 20 مرة |
+| Cold start | الوقت من ضغطة الأيقونة لحد أول محتوى مفيد، والـ app مش في الذاكرة | `--trace-startup` وعلامة `library.firstContent` |
+| Baseline | القياس قبل أي تغيير على سيناريو وجهاز ثابتين، والرقم اللي كل تصليح بيتقارن بيه | 10 ثواني scroll في المكتبة وcold start على الموبايل المرجعي |
+| Modular monolith | app واحد بس كل feature في فولدر ليه barrel و`src/`، وتست بيحرس الحدود، من غير packages | Readly قبل وحدة الـ Modularization |
+| Pub workspace | root pubspec فيه ليستة الـ packages، وكل واحدة `resolution: workspace`، فبيبقى فيه lock واحد وresolution واحدة | `apps/readly` و`packages/feature_library` في نفس الـ workspace |
+| melos | أداة فوق الـ workspace بتشغّل سكريبتات على الـ packages بفلاتر، وبتعمل الـ versioning | مش محتاجينه في Readly: الـ workspace لوحده كفاية |
+| Shared domain package | package Dart صافية فيها الـ entities والقواعد اللي جواهم، بيستخدمها أكتر من app | `library_domain` بين `apps/readly` و`apps/readly_admin` |
+| Affected packages | الـ packages اللي اتغيرت وكل اللي بيعتمد عليها، محسوبة من الـ pubspecs، والـ CI بيشغّل تستاتهم بس | `tools/architecture/bin/affected.dart` |
+| Design token | قيمة تصميم ليها اسم بدورها مش بشكلها، والشاشات بتستخدم الاسم | `statusReading` في `ReadlyColors` بدل `Colors.green` |
+| ThemeExtension | طريقة تزوّد الثيم بأدوار مش موجودة في الـ ColorScheme، بقيمة light وdark و`copyWith` و`lerp` | `ReadlyColors` فيه ألوان حالات الكتاب |
+| Directional APIs | نسخ من الـ layout APIs بتتقلب مع اتجاه النص: start وend مكان left وright | `EdgeInsetsDirectional.only(start: 16)` |
+| Bidi isolate | علامتين (U+2068 وU+2069) حوالين نص اتجاهه مختلف عن الجملة، عشان علامات الترقيم ماتنطّش من مكانها | عنوان «Who Moved My Cheese?» جوه رسالة عربي في الـ ARB |
+| Semantics tree | الشجرة اللي Flutter بيبنيها لقارئ الشاشة جنب الـ widget tree | `MergeSemantics` على كارت الكتاب عشان يتقري مرة واحدة |
+| Touch target | أقل مساحة ينفع تتداس: 48×48 على Android و44×44 على iOS | `meetsGuideline(androidTapTargetGuideline)` في تستات `core_ui` |
+| Contrast ratio | نسبة الإضاءة بين النص وخلفيته، وأقل حاجة 4.5:1 للنص العادي | `contrast_test` على `StatusChip` في الثيمين |
+| Text scaling | تكبير الخط من إعدادات الموبايل، بيوصل من `MediaQuery.textScalerOf` ومش خطي في Android 14 | goldens بخط 200% على أصغر موبايل، و`withClampedTextScaling` للـ labels الصغيرة بس |
+| Threat model | صفحة بتقول مين ممكن يهاجم، وبيدخل منين، وعندك إيه يحميك، وإيه الناقص | `docs/security.md` مربوط ببنود OWASP Mobile Top 10 |
+| Certificate pinning | الـ app بيقبل شهادات من CA معينة بس، مش أي CA الجهاز بيثق فيها | `pinnedHttpClient` بـ `SecurityContext(withTrustedRoots: false)` |
+| App lock | قفل اختياري فوق الـ session بالبصمة أو PIN الجهاز، بيحمي من حد ماسك الموبايل وهو مفتوح | `AppLockCubit` بمهلة دقيقتين والـ redirect لـ `/unlock` |
+| Kill switch | flag بيقفل feature شغالة في الـ production في دقيقة من غير release، والـ fallback بتاعه on | `RecommendationsCubit` بيبطّل يبعت طلبات لما الـ flag يتقفل |
+| Percentage rollout | release flag بيتفتح لنسبة من المستخدمين وبتزيد بالتدريج، ومعاه رقم يرجّعك لـ 0% | خطة rollout لـ `readingGoal` |
+| Fractional indexing | ترتيب بـ rank نصي بين اللي قبله واللي بعده، فاتنين بيرتبوا من جهازين من غير conflict | الترتيب بالسحب في الرفوف المشتركة |

@@ -11,7 +11,7 @@ export default function CoursePage() {
     <CourseShell>
       <header className="section-head">
         <h1>الكورس</h1>
-        <p className="lede">{units.length} وحدات، و{units.reduce((n, u) => n + u.lessons.length, 0)} درس. امشي بالترتيب، وكل وحدة بتخلص بمهام تطبّقها في Readly.</p>
+        <p className="lede">{units.length} {units.length >= 3 && units.length <= 10 ? "وحدات" : "وحدة"}، و{units.reduce((n, u) => n + u.lessons.length, 0)} درس. امشي بالترتيب، وكل وحدة بتخلص بمهام تطبّقها في Readly.</p>
       </header>
       <div className="unit-grid">
         {units.map((u) => (

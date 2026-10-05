@@ -2,7 +2,6 @@
 title: "تختار state management إزاي: المقارنة الكاملة والـ migration"
 description: "المعايير اللي بتفرق فعلًا، والحلول كلها جنب بعض في جدول واحد، وشجرة قرار ونماذج مشاريع، وإمتى الخلط مقبول، وإزاي تنقل مشروع شغال من GetX أو provider لـ Cubit (أو من Cubit لـ Riverpod) شاشة شاشة، وإزاي تدافع عن اختيارك في interview وفي ADR."
 minutes: 40
-draft: true
 ---
 
 <Level n="1" title="الفكرة بتشبيه">
@@ -347,7 +346,7 @@ class HomeCubit extends Cubit<HomeState> {
 
 ### القاعدة: strangler، مش rewrite
 
-الـ <b>strangler</b> اسمه من نبات بيطلع حوالين شجرة قديمة، ويكبر واحدة واحدة لحد ما يبقى هو الشجرة. في الكود: الجديد بيتبني جنب القديم، وكل مرة بياخد حتة، والـ app شغال ومتسلّم في كل خطوة. ده نفس أسلوب [درس «Refactor feature قديمة لـ Clean»](/course/production/refactor/) في الوحدة 16، بس على مستوى الـ state management.
+الـ <b>strangler</b> اسمه من نبات بيطلع حوالين شجرة قديمة، ويكبر واحدة واحدة لحد ما يبقى هو الشجرة. في الكود: الجديد بيتبني جنب القديم، وكل مرة بياخد حتة، والـ app شغال ومتسلّم في كل خطوة. ده نفس أسلوب [درس «Refactor feature قديمة لـ Clean»](/course/production/refactor/) في الوحدة 17، بس على مستوى الـ state management.
 
 <Diagram name="d-sm-strangler">
 

@@ -2,7 +2,6 @@
 title: "أول Cubit سطر بسطر"
 description: "نبني ReadingGoalCubit من الصفر: في Dart لوحده الأول من غير Flutter، وبعدين على الشاشة بـ BlocProvider وBlocBuilder. وكل حتة في الـ Cubit: state وemit وstream وclose وonChange وonError، ودورة حياته، وأخطاء أول مرة."
 minutes: 40
-draft: true
 ---
 
 <Level n="1" title="الفكرة بتشبيه">
@@ -404,7 +403,7 @@ int _checked(int value) {
 </CodeBlock>
 
 - <b>`addError`:</b> مابيغيّرش الـ state، ومابيطلعش على الـ stream، والـ UI مش هتعرف بيه خالص. كل اللي بيعمله إنه بينادي `onError`.
-- <b>`onError`:</b> بيبلّغ الـ `BlocObserver.onError`، واللي هيبعته لـ Sentry ([درس «الـ Logging والـ Monitoring» في الوحدة 16](/course/production/observability/)). وتقدر تعمل override ليه زي `onChange`، برضه بـ `super`.
+- <b>`onError`:</b> بيبلّغ الـ `BlocObserver.onError`، واللي هيبعته لـ Sentry ([درس «الـ Logging والـ Monitoring» في الوحدة 17](/course/production/observability/)). وتقدر تعمل override ليه زي `onChange`، برضه بـ `super`.
 - <b>الـ emit بيعدّي من هنا كمان:</b> الـ `StateError` بتاع emit بعد close اللي فوق عدّى على `onError` الأول، وبعدين اترمى. فلو عندك observer، هتشوفه هناك.
 - <b>مش للـ Failures العادية:</b> النت فاصل مش bug، دي حالة المستخدم لازم يشوفها، يعني state. الـ `addError` للحاجات اللي «مش المفروض تحصل».
 

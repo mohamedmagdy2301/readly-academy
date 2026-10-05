@@ -2,7 +2,6 @@
 title: "الـ Data: الـ remote والـ local والـ sync"
 description: "الـ backend بالـ endpoints والـ fan-out، والـ DTOs والـ mappers على الـ fixtures، وجداول drift والـ migration، والـ outbox اللي بقى لازم يعرف حاجة غير الكتب، والـ events اللي بتكتب في drift، والـ dead letter لما تتشال من رف وعندك تعديل لسه ماتبعتش."
 minutes: 30
-draft: true
 ---
 
 في المرحلة دي الـ contracts اللي كتبتها في الـ domain بتلاقي حد ينفّذها. وهنا أغلب المفاجآت: الـ outbox اللي عندك معمول للكتب بس، والـ event ممكن يوصل قبل رد الطلب اللي انت بعته، وعضو ممكن يتشال من الرف وفي إيده تعديل لسه في الطابور.

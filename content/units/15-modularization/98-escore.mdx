@@ -2,7 +2,6 @@
 title: "في Escore: الحدود بين الـ features"
 description: "16 feature في app واحد من غير packages: 12 منهم في دايرة imports واحدة، والـ Team عايش في feature المتابعة، والـ core بيعمل import من الـ features، والـ auth بيمسح caches 3 features تانيين. لو اتقسم، الحدود هتبقى فين، ونبدأ منين."
 minutes: 20
-draft: true
 ---
 
 الوحدة دي قالت إن التقسيم بيبدأ بخريطة: مين بيعمل import لمين، وفين الدواير، وفين الحاجة اللي الكل محتاجها. Escore مش متقسم لـ packages: app واحد فيه 16 feature و1739 ملف Dart. ودروس Escore اللي فاتت عدّت الـ imports بين كل اتنين features (matches بتعمل import من tournaments 42 مرة، وtournaments من matches 25). هنا هنبص على نفس الـ imports كـ <b>graph</b>، ونسأل سؤال الدرس: لو عايزين نقسّمه بكرة، ينفع؟ والحدود تبقى فين؟

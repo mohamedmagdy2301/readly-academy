@@ -2,7 +2,6 @@
 title: "في Escore: الـ Domain والأخطاء"
 description: "entities منفصلة عن الـ models، و79 use case منهم 2 بس فيهم منطق، وFailure بتعرف dio وGetIt. إيه اللي نفع، وإيه اللي هتعمله غير كده."
 minutes: 20
-draft: true
 ---
 
 الوحدة دي قالت إن الـ domain هو المكان اللي القواعد بتعيش فيه، وإن الأخطاء لازم تبقى أنواع واضحة بيجبرك الـ compiler تتعامل معاها. في Escore الـ domain موجود في 13 feature، و`Either<Failure, T>` ماشي من الـ HTTP client لحد الـ Cubit. بس لما تبص جوه هتلاقي قصة أعقد شوية.

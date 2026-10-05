@@ -2,7 +2,6 @@
 title: "الأخطاء في Dart من الصفر"
 description: "throw وtry/catch وException وError، والأخطاء اللي بتهرب من الـ try في الـ Futures والـ Streams، وفين بتروح الأخطاء اللي محدش مسكها."
 minutes: 30
-draft: true
 ---
 
 <Level n="1" title="الفكرة بتشبيه">
@@ -414,7 +413,7 @@ void main() {
 - <b>الشاشة الرمادي:</b> لما `build` يرمي، Flutter بيحط `ErrorWidget` مكان الـ widget ده. في الـ debug ده الشاشة الحمرا اللي فيها الرسالة. في الـ release ده مستطيل رمادي من غير أي كلام، والمستخدم بيفتكر الـ app باظ. الـ `ErrorWidget.builder` بيخليك تحط بداله حاجة صغيرة زي «مش قادرين نعرض الجزء ده». وخليها widget بسيط مايعتمدش على حاجة، لأن لو هي كمان رمت، مفيش حد تحتها.
 - <b>الـ `return true`:</b> معناها «اتعاملت معاه». لو رجّعت false، الـ engine بيعتبره ماتمسكش ويطبعه هو كمان.
 - <b>الـ `runZonedGuarded`:</b> كان هو الطريقة قبل Flutter 3.3. دلوقتي `PlatformDispatcher.instance.onError` بيغطي نفس الأخطاء من غير zone. محتاجه بس لو عندك سبب للـ zone نفسه (زي `zoneValues`، أو تمسك `print`). ولو استخدمته، الـ `ensureInitialized` والـ `runApp` لازم يبقوا جوه نفس الـ zone، وإلا Flutter بيطلّع warning «Zone mismatch».
-- <b>الـ Sentry:</b> في درس الـ Observability في الوحدة 12 هتشوف إن `SentryFlutter.init` بيركّب الـ handlers دي بنفسه ويبعت الـ crash، وليه بنحط بتوعنا <b>قبل</b> الـ init وبنكتب فيها `debug` مش `error`، عشان الـ crash مايتسجلش مرتين. هنا لسه مفيش Sentry، فبنكتب `error`.
+- <b>الـ Sentry:</b> في درس الـ Observability في الوحدة 17 هتشوف إن `SentryFlutter.init` بيركّب الـ handlers دي بنفسه ويبعت الـ crash، وليه بنحط بتوعنا <b>قبل</b> الـ init وبنكتب فيها `debug` مش `error`، عشان الـ crash مايتسجلش مرتين. هنا لسه مفيش Sentry، فبنكتب `error`.
 
 ### `catch (e) {}` بلع الخطأ
 

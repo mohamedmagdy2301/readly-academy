@@ -2,7 +2,6 @@
 title: "في Escore: فيد «For You» بـ Riverpod"
 description: "شاشة حقيقية من Escore (فيد الأخبار المبني على اللي المستخدم متابعه) مكتوبة بـ Riverpod جنب الـ Cubit الأصلي: الـ refresh اللي بيرمش، والصفحة القديمة اللي بتغطي على الجديدة، والـ provider اللي بيظهر ويختفي مع الدخول. وإيه اللي هيبقى أحسن، وإيه اللي هيبقى أوحش."
 minutes: 20
-draft: true
 ---
 
 Escore مكتوب بـ flutter_bloc (Cubits بس، مفيش Bloc واحد) وget_it مكتوب بإيده من غير injectable: 18 ملف DI، حوالي 1470 سطر، وفيهم `setupNewsDI()` و`setupAuthDI()` وغيرهم بيتنادوا بالترتيب من `initializeServiceLocator()`. والـ domain بيرجّع `Either<Failure, T>` من dartz. يعني نفس شكل Readly تقريبًا، بأدوات مختلفة شوية.

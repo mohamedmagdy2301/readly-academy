@@ -2,7 +2,6 @@
 title: "الـ Bloc من الصفر: الـ events والـ transformers"
 description: "بدل ما الـ UI تنادي methods، بتبعت events. وكل نوع event بيقول هيتعامل إزاي مع اللي قبله: يستنى دوره، يترمي، يلغي القديم، ولا يشتغل جنبه."
 minutes: 40
-draft: true
 ---
 
 <Level n="1" title="الفكرة بتشبيه">
@@ -439,7 +438,7 @@ on<SearchQueryChanged>(
 
 ### `Bloc.transformer`: الـ default للـ app كله
 
-لو مش عاجبك إن الـ default `concurrent`، تقدر تغيّره للـ app كله في الـ bootstrap، جنب `Bloc.observer` بتاع [درس الـ Observability](/course/production/observability/) في الوحدة 16:
+لو مش عاجبك إن الـ default `concurrent`، تقدر تغيّره للـ app كله في الـ bootstrap، جنب `Bloc.observer` بتاع [درس الـ Observability](/course/production/observability/) في الوحدة 17:
 
 <CodeBlock label="bootstrap">
 

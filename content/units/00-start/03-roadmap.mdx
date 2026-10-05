@@ -1,31 +1,62 @@
 ---
 title: "خريطة الرحلة"
-description: "العشر محاور المتقدمة، والخط الزمني للـ 8 أسابيع."
+description: "المحاور المتقدمة، والـ 19 وحدة بالترتيب، والخط الزمني للـ 31 أسبوع."
 ---
 
-الكورس بيديك الـ «إيه»، والعشر محاور دي هي الـ «إزاي في مشروع حقيقي». آخر عمود بيقولك المحور في أنهي أسبوع.
+الكورس بيديك الـ «إيه»، والمحاور دي هي الـ «إزاي في مشروع حقيقي». العمودين الأخيرين بيقولولك المحور في أنهي وحدة وأنهي أسبوع.
 
-| المحور | المواضيع | ليه مهم | الأسبوع |
-| --- | --- | --- | --- |
-| حدود الـ features | الـ feature-first مقابل الـ layer-first، التواصل بين الـ features، الـ core كـ shared kernel، فرض الـ dependency rule بالـ lint | المعمارية بتبوظ لما حد يعمل import غلط ومحدش يلاحظ | 1، 6 |
-| نمذجة الـ Domain | الـ value objects (Email وMoney)، الـ invariants، الـ sealed classes في Dart 3، الـ extension types، freezed | الـ domain الفاضي من الـ logic هو السبب الأول إن الناس تشوف Clean Arch مجرد boilerplate | 2 |
-| التعامل مع الأخطاء | هرم Failures بـ sealed classes، Result type خاص بيك، التحويل عند الحدود بس، ترجمة الـ Failures لرسائل بـ flutter_localizations في الـ presentation (ووحدة كاملة للـ API والأخطاء من HTTP لحد عقد الـ API) | الـ exhaustive switch بيخلي الـ compiler يقولك لو نسيت حالة | 2 |
-| الـ Use cases | امتى تشيلها، تركيب use cases، الـ StreamUseCase، الـ params objects | تفرّق بين business logic حقيقي وpass-through ملوش لازمة | 2 |
-| طبقة الـ Data | الـ Dio interceptors (token refresh وretry)، الـ DTO mapping، الـ pagination، استراتيجيات الـ caching | ده المكان اللي فيه أغلب باجات الـ production | 3 |
-| الـ Offline-first | الـ local DB كمصدر وحيد للحقيقة (drift)، الـ stale-while-revalidate، الـ sync queue، حل الـ conflicts (ووحدة كاملة لـ Dart async والـ Streams: الـ event loop، والأخطاء في الـ Futures، والـ operators، وعمر الـ subscription، وstream المكتبة من drift للشاشة، والـ isolates) | الفرق بين app بيشتغل وapp محترم | 4 |
-| الـ Presentation | أنماط Cubit المتقدمة: debounce، تجاهل النتائج القديمة، منع الضغط المتكرر، الـ sealed states، الـ pagination، go_router redirect مع refreshListenable، الـ deep links (ووحدة كاملة للـ state management بتركيز على Cubit وBloc: كل أنواع الـ Cubit، وflutter_bloc، والـ HydratedCubit، والـ Bloc بالـ transformers، ومقارنة بـ Provider وRiverpod وGetX وغيرهم، وإزاي تختار وتنقل بينهم) | الـ race conditions في الـ UI هي أشهر باجات الـ state management | 5 |
-| الـ DI والإعدادات | injectable، الـ flavors (dev وstaging وprod)، الـ environments، تسجيل لكل feature | نفس الكود يشتغل على أكتر من backend ويتبدل في التست | 6 |
-| التقسيم لـ packages | الـ pub workspaces أو melos، package لكل feature، public API لكل package | الـ analyzer والـ CI بيمسكوا الـ imports الغلط بدل ما تعتمد على الـ review، والـ build أسرع في المشاريع الكبيرة | 6 |
-| الاختبارات والجودة | mocktail، bloc_test (بيشتغل مع Cubit)، golden، integration_test، الـ test data builders، الـ TDD، الـ coverage، الـ CI، الـ ADRs (ووحدة كاملة للاختبارات بكل أنواعها) | المعمارية النظيفة ملهاش لازمة من غير تستات بتستفيد منها | 7، 8 |
+| المحور | المواضيع | ليه مهم | الوحدة | الأسبوع |
+| --- | --- | --- | --- | --- |
+| حدود الـ features | الـ feature-first مقابل الـ layer-first، التواصل بين الـ features، الـ core كـ shared kernel، فرض الـ dependency rule بالـ lint | المعمارية بتبوظ لما حد يعمل import غلط ومحدش يلاحظ | 1، 6 | 1، 6 |
+| نمذجة الـ Domain | الـ value objects (Email وMoney)، الـ invariants، الـ sealed classes في Dart 3، الـ extension types، freezed | الـ domain الفاضي من الـ logic هو السبب الأول إن الناس تشوف Clean Arch مجرد boilerplate | 2 | 2 |
+| التعامل مع الأخطاء | هرم Failures بـ sealed classes، Result type خاص بيك، التحويل عند الحدود بس، ترجمة الـ Failures لرسائل في الـ presentation، وبعدين HTTP من الصفر وخريطة كل اللي ممكن يبوظ وعقد الـ API مع الـ backend | الـ exhaustive switch بيخلي الـ compiler يقولك لو نسيت حالة، والعقد المكتوب بيمنع إن update في السيرفر يكسر الـ app | 2، 9 | 2، 10–11 |
+| الـ Use cases | امتى تشيلها، تركيب use cases، الـ StreamUseCase، الـ params objects | تفرّق بين business logic حقيقي وpass-through ملوش لازمة | 2 | 2 |
+| طبقة الـ Data | الـ Dio interceptors (token refresh وretry)، الـ DTO mapping، الـ pagination، استراتيجيات الـ caching، الطلبات المتوازية والإلغاء | ده المكان اللي فيه أغلب باجات الـ production | 3، 9 | 3، 10–11 |
+| الـ Offline-first | الـ local DB كمصدر وحيد للحقيقة (drift)، الـ stale-while-revalidate، الـ sync queue، حل الـ conflicts | الفرق بين app بيشتغل وapp محترم | 4 | 4 |
+| الـ Presentation | أنماط Cubit المتقدمة: debounce، تجاهل النتائج القديمة، منع الضغط المتكرر، الـ sealed states، الـ pagination، go_router redirect مع refreshListenable، الـ deep links | الـ race conditions في الـ UI هي أشهر باجات الـ state management | 5 | 5 |
+| الـ DI والإعدادات | injectable، الـ flavors (dev وstaging وprod)، الـ environments، تسجيل لكل feature | نفس الكود يشتغل على أكتر من backend ويتبدل في التست | 6 | 6 |
+| الاختبارات والجودة | mocktail، bloc_test (بيشتغل مع Cubit)، golden، integration_test، الـ test data builders، الـ TDD، الـ coverage، الـ CI، الـ ADRs، واستراتيجية الاختبار في فريق | المعمارية النظيفة ملهاش لازمة من غير تستات بتستفيد منها | 7، 8 | 7–9 |
+| Dart Async والـ Streams | الـ event loop والـ microtasks، الأخطاء اللي بتهرب من الـ try، الـ Stream من `async*` لحد `StreamController`، الـ operators، عمر الـ subscription، stream المكتبة من drift للشاشة، الـ isolates | كل repository فيه await وكل Cubit بيسمع على stream، واللي مش فاهم الترتيب بيكتب race conditions وتسريب ذاكرة من غير ما يحس | 10 | 12–13 |
+| الـ State management | يعني إيه state، أدوات Flutter وProvider، كل أنواع الـ Cubit، flutter_bloc، الـ HydratedCubit، الـ Bloc بالـ transformers، GetX وMobX وRedux وsignals، وإزاي تختار وتنقل. وبعدين Readly كلها بـ Riverpod 3 من غير ما الـ domain والـ data يتغيروا | أكتر سؤال بيتسأل في interviews الـ Flutter، والـ spike بـ Riverpod بيثبت بالـ `git diff` إن المعمارية عازلة الـ presentation فعلًا | 11، 12 | 14–18 |
+| Real-time والـ Background | الـ polling والـ SSE والـ WebSocket والـ push وتختار إزاي، الـ WebSocket كـ data source بيكتب في drift، الـ reconnect والـ heartbeat والـ auth، FCM، workmanager، والتست بـ fake_async | المستخدم بقى عنده أكتر من جهاز، وكل طريق سريع لازم يبقى وراه طريق بطيء ومضمون | 13 | 19–20 |
+| الـ Performance | الـ profile mode والـ DevTools، الـ rebuilds، القوايم الطويلة، الصور، الشغل التقيل على الـ main isolate، الـ memory leaks، وقت الفتح، وتمن الطبقات بالأرقام | «الـ Clean Architecture بطيئة؟» سؤال interview، والإجابة لازم تبقى رقم مش رأي | 14 | 21–22 |
+| التقسيم لـ packages | الـ pub workspaces، package لكل feature، public API لكل package، الـ dependency rule من الـ pubspec، domain مشترك بين app وأدمن، الـ codegen والـ CI على اللي اتغير بس | الـ analyzer والـ CI بيمسكوا الـ imports الغلط بدل ما تعتمد على الـ review، والـ build أسرع في المشاريع الكبيرة | 6، 15 | 6، 23 |
+| الـ Design System والـ Accessibility | الـ tokens كـ ThemeExtension، مكتبة components في `core_ui`، الـ dark mode من غير if، الـ RTL والـ bidi، قارئ الشاشة، تكبير الخط 200%، تستات الـ contrast | جمهور عربي يعني RTL صح، واللي مكبّر الخط أو بيستخدم TalkBack لازم يقدر يستخدم الـ app | 16 | 24–25 |
+| الـ Production والأمان | Clean ولا MVVM بالكود والأرقام، الـ logging وSentry، الـ refactor لكود قديم، الـ flavors والـ release من الـ CI، الأسرار والتخزين الحساس والـ threat model، الـ feature flags والـ kill switch | تعرف إن الـ app بيقع قبل ما حد يشتكي، ومايسرّبش بيانات مستخدمينه، وتقفل أي feature في دقيقة من غير release | 17 | 26–27 |
+| المشروع الختامي | feature «الرفوف المشتركة» لوحدك: spec وعقد وADR، الـ domain بالـ TDD، الـ data أوفلاين ولايف، الشاشات والـ accessibility، الـ release ورا flag، ومراجعة بـ rubric | أول مرة تجمع كل اللي فات من غير كود جاهز، ودي القصة اللي هتحكيها في الـ interview | 18 | 28–31 |
 
-محور إضافي في الأسبوع 8: decision guide مكتوب بين Clean Arch وMVVM (اللي انت بتشتغل بيهم الاتنين)، كامتداد لمحاضرة 38.
+والـ decision guide المكتوب بين Clean Arch وMVVM (اللي انت بتشتغل بيهم الاتنين) بيتكتب في الأسبوع 26 مع وحدة الـ Production، كامتداد لمحاضرة 38.
 
 ### الخط الزمني
 
-8 أسابيع بعد المرحلة 0، وكل أسبوع بينتهي بـ deliverable في المشروع التطبيقي. لو أسبوع طوّل معاك عادي، المهم إن الـ deliverable يتسلم قبل ما تنتقل.
+31 أسبوع بعد المرحلة 0، بحوالي 8 لـ 10 ساعات في الأسبوع، وكل وحدة بتنتهي بـ deliverable في المشروع التطبيقي. لو أسبوع طوّل معاك عادي، المهم إن الـ deliverable يتسلم قبل ما تنتقل.
 
 <Diagram name="d-31a5d52906">
 
-المراحل من اليمين للشمال، والمعيّنات البرتقالي هي الـ deliverables اللي لازم تتسلم قبل ما تكمّل.
+كل صف وحدة، والأسابيع من اليمين للشمال. أول 8 أسابيع هي المسار الأساسي، والباقي تعمّق في كل جزء لوحده، وبعدين الـ production والمشروع الختامي. والمعيّنات البرتقالي هي الـ deliverables اللي لازم تتسلم قبل ما تكمّل.
 
 </Diagram>
+
+| الأسبوع | الوحدة | فيها إيه |
+| --- | --- | --- |
+| 0 | [البداية](/course/start/) | إزاي تستخدم الكورس، وإنهاء الكورس الحالي، والمشروع |
+| 1 | [الأساس](/course/foundations/) | ليه Architecture، وDart، والطبقات التلاتة، وأول feature ملف بملف |
+| 2 | [الـ Domain والأخطاء](/course/domain-errors/) | الـ entities والـ value objects والـ use cases، وResult وFailures |
+| 3 | [الـ Data والشبكة](/course/data-network/) | الـ DTO والـ repository، وdio والـ interceptors، وdrift والـ secure storage |
+| 4 | [Offline-first](/course/offline/) | الـ DB كمصدر وحيد للحقيقة، والـ sync queue، والـ conflicts |
+| 5 | [الـ Presentation](/course/presentation/) | Cubit، وgo_router، والترجمة، والـ Forms، والـ Pagination |
+| 6 | [الـ DI والتوسّع](/course/di-scale/) | get_it، والـ flavors، والتقسيم لـ packages، والإعدادات، والـ session |
+| 7 | [الجودة: SOLID والاختبارات](/course/quality/) | SOLID بالكود، وخريطة الاختبارات، وحراسة المعمارية بأدوات |
+| 8–9 | [الاختبارات من الصفر للاحتراف](/course/testing/) | كل نوع تست بالترتيب، والـ TDD، واستراتيجية الاختبار |
+| 10–11 | [الـ API والأخطاء من الصفر للاحتراف](/course/api-errors/) | HTTP، وخريطة الأخطاء، ومن الـ exception للشاشة، وعقد الـ API |
+| 12–13 | [Dart Async وStreams](/course/dart-async/) | الـ event loop، والـ Streams والـ operators، وعمر الـ subscription، والـ isolates |
+| 14–16 | [الـ State management من الصفر للاحتراف](/course/state-management/) | كل أنواع الـ Cubit، وflutter_bloc، والـ Bloc، والبدائل، وإزاي تختار |
+| 17–18 | [Riverpod في الـ Clean Architecture](/course/riverpod/) | Readly كلها بـ Riverpod من غير ما الـ domain والـ data يتغيروا |
+| 19–20 | [Real-time والـ Background](/course/realtime/) | WebSocket وdrift، والـ reconnect، والـ push، والـ background sync |
+| 21–22 | [الـ Performance](/course/performance/) | تقيس قبل ما تصلّح: الـ rebuilds والقوايم والصور والـ memory ووقت الفتح |
+| 23 | [الـ Modularization والـ Packages](/course/modularization/) | الـ pub workspaces، وتقسيم Readly، والـ dependency rule من الـ pubspec |
+| 24–25 | [الـ Design System والـ Accessibility](/course/design-system/) | الـ tokens، و`core_ui`، والـ dark mode، والـ RTL، وقارئ الشاشة |
+| 26–27 | [الـ Production والقرار](/course/production/) | Clean ولا MVVM، والـ monitoring، والـ release، والأمان، والـ feature flags |
+| 28–31 | [المشروع الختامي](/course/capstone/) | «الرفوف المشتركة» من الـ spec لحد المستخدمين |
+
+الوحدات من 8 لـ 16 بتعمّق في حاجة اتشرحت في المسار الأساسي، وأغلبها بيبدأ بإشارة للدرس اللي كان «الخريطة». لو وقتك ضيق، خلّص المسار الأساسي (الأسابيع 0 لـ 7)، وبعدين الـ Production، وارجع للتعمّق بالترتيب اللي شغلك محتاجه. بس المشروع الختامي محتاج كل اللي قبله.

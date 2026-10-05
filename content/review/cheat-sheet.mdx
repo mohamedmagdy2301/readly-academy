@@ -81,6 +81,18 @@ description: "كل قاعدة في سطر."
 
 </CheatCard>
 
+<CheatCard title="Dart Async والـ Streams">
+
+- الـ async بيحل الانتظار، مش الحساب: الشغل التقيل لـ `Isolate.run`.
+- كل Future ليه صاحب: `await` أو `.wait` أو `unawaited` بقصد.
+- الـ Futures اللي شغالة مع بعض تتستنى مع بعض: `.wait`.
+- الـ `timeout` والـ `eagerError` بيوقّفوا الانتظار، مش الشغل.
+- كل `listen` جنبه field، وكل field جنبه `cancel` في `close`.
+- `switchMap` للبحث، و`exhaustMap` للحفظ، و`asyncMap` للي لازم يتعمل كله.
+- `distinct` على ليست محتاج `ListEquality`.
+
+</CheatCard>
+
 <CheatCard title="Cubit وBloc">
 
 - Cubit default، وBloc لما الـ inputs بتتزاحم وكل نوع محتاج سياسة.
@@ -91,6 +103,80 @@ description: "كل قاعدة في سطر."
 - `read` في الـ callbacks، و`watch` و`select` في build.
 - الـ Cubit مايعرفش Flutter ولا Cubit تاني.
 - الـ transformer لكل `on<E>` لوحده، والـ default `concurrent`.
+
+</CheatCard>
+
+
+<CheatCard title="Riverpod">
+
+- الـ domain والـ data مايعرفوش Riverpod، وتست بيحرس ده.
+- `watch` في build، و`read` في الـ callbacks.
+- الـ repositories `keepAlive`، والشاشات autoDispose.
+- كل provider بيرجّع الـ contract، مش الـ Impl.
+- الفلتر اللي بيغيّر النتايج family parameter.
+- بعد أي await: `ref.mounted`، أو ref الـ build لو ممكن يتعاد.
+- التست بـ `ProviderContainer.test` والـ override للـ repository.
+
+</CheatCard>
+
+<CheatCard title="Real-time والخلفية">
+
+- الـ socket data source بيكتب في drift، والشاشة بتقرا من drift.
+- الـ event إشارة، والحقيقة في الـ API.
+- كل reconnect بـ backoff وjitter، وبعده catch-up بالـ cursor.
+- الكتابة من السيرفر مشروطة: مفيش تعديل محلي، والـ version أكبر.
+- الحذف بيسيب tombstone.
+- الـ push إشارة، والإشعار بيفتح link من allowlist.
+- الخلفية بونص، والضمان في الـ foreground.
+
+</CheatCard>
+
+<CheatCard title="الـ Performance">
+
+- مفيش optimization من غير رقم قبله ورقم بعده.
+- القياس في profile mode على جهاز متوسط بس.
+- اعرف الـ frame الأحمر في الـ UI ولا الـ raster قبل ما تصلّح.
+- الـ listening في أوطى widget محتاجه، بـ `select`.
+- ليستة طويلة: scroll واحد وslivers، من غير `shrinkWrap`.
+- الصورة تتفك بالمقاس اللي هيتعرض.
+- كل حاجة ليها dispose بتتعملها dispose.
+- الـ DI lazy، والـ constructors مابتعملش شغل.
+
+</CheatCard>
+
+<CheatCard title="الـ Packages">
+
+- قسّم لما المشكلة موجودة فعلًا، وبالأرقام.
+- بالـ features، مش بالطبقات.
+- فك الدواير وانت لسه فولدرات.
+- الـ pubspec هو الحد، وتست بيقرا الـ pubspecs.
+- `depend_on_referenced_packages` كـ error.
+- B محتاجة حاجة من A: interface في B وA تنفّذه.
+- الـ CI على اللي اتغير وكل اللي بيعتمد عليه.
+
+</CheatCard>
+
+<CheatCard title="الـ Design System والـ Accessibility">
+
+- الشاشات بتستخدم أدوار، مش ألوان ولا أرقام.
+- اللي ناقص من الـ ColorScheme في ThemeExtension.
+- الـ `if` الوحيد على الـ dark جوه دالة الثيم.
+- start وend، مش left وright.
+- النص الجاي من data بيتلف بـ bidi isolate.
+- كل حاجة بتتداس ليها label وtarget 48×48.
+- مفيش ارتفاع ثابت حوالين نص، والخط 200% بيتست.
+
+</CheatCard>
+
+<CheatCard title="الأمان والـ flags">
+
+- أي secret في الـ binary مش سر.
+- الـ tokens في الـ secure storage، والـ logout بيمسح كل حاجة.
+- الـ logs والـ Sentry مافيهمش بيانات المستخدم.
+- الـ pinning قرار من الـ threat model، وعلى الـ CA مش الشهادة.
+- الـ release flag الـ fallback بتاعه off، والـ kill switch on.
+- الـ flags بتتقرا عند الفتح، والـ kill switches بس لحظية.
+- كل release flag ليه تاريخ مسح.
 
 </CheatCard>
 

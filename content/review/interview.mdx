@@ -4,7 +4,7 @@ order: 0
 description: "أسئلة بتتسأل فعلًا، بإجابات نموذجية."
 ---
 
-أسئلة بتتسأل فعلًا عن Clean Architecture وCubit وdio. جاوب بصوت عالي الأول، وبعدين افتح الإجابة النموذجية وقارن.
+أسئلة بتتسأل فعلًا عن Clean Architecture وCubit وdio وكل موضوع في الكورس، مترتبة بأسبوعها في الخطة. جاوب بصوت عالي الأول، وبعدين افتح الإجابة النموذجية وقارن.
 
 ### SOLID
 
@@ -236,7 +236,7 @@ entry points منفصلة (main_dev وmain_prod)، وproductFlavors في Android
 </Answer>
 </Question>
 
-### الأسبوع 7: الاختبارات
+### الأسبوع 7–9: الاختبارات
 
 <Question id="interview-21">
 <Ask>إيه الفرق بين الـ fake والـ mock؟</Ask>
@@ -310,45 +310,7 @@ Red: أكتب تست صغير بيفشل وبيوصف السلوك اللي عا
 </Answer>
 </Question>
 
-### الأسبوع 8: الـ Production
-
-<Question id="interview-23">
-<Ask>بتقرر إزاي Clean ولا MVVM لمشروع جديد؟</Ask>
-<Answer>
-
-بمعايير محددة: كمية الـ business logic، وعمر المشروع، وحجم الفريق، ولو فيه offline أو قواعد معقدة. app عرض بيانات بسيط بيكفيه MVVM مع repositories. لو في قواعد business وتستات ومشروع طويل، بضيف الـ domain layer.
-
-</Answer>
-</Question>
-
-<Question id="interview-24">
-<Ask>بتعرف الـ crashes في الـ production إزاي؟</Ask>
-<Answer>
-
-Sentry أو Crashlytics مربوطين بـ FlutterError.onError وPlatformDispatcher.onError، والـ Failures غير المتوقعة بتتسجل مع context. وبتابع الـ release health بعد كل نسخة.
-
-</Answer>
-</Question>
-
-<Question id="interview-29">
-<Ask>تفرّق إزاي بين error لازم يتبعت لـ Sentry وerror يتعرض للمستخدم بس؟</Ask>
-<Answer>
-
-بسؤال واحد: مين يقدر يصلحه؟ لو المستخدم أو الظروف (النت فاصل، الـ session انتهت، input غلط، أو رد business زي 409 «الإيميل مستخدم»)، تبقى Failure متوقعة: رسالة مترجمة وbreadcrumb بس. لو المطوّر بس (bug، أو 4xx الـ endpoint مابيرجّعهوش، أو cache بايظ)، تتبعت لـ Sentry. والقرار في مكانين: `isReportable` جنب الـ sealed Failure، و`expected` جنب كل endpoint.
-
-</Answer>
-</Question>
-
-<Question id="interview-30">
-<Ask>عندك feature قديمة كلها في widget واحد. هتنقلها لـ Clean إزاي من غير ما توقف الشغل؟</Ask>
-<Answer>
-
-أبدأ بـ characterization tests بتكلّم الشاشة من بره والشبكة بـ fake `HttpClientAdapter`، فتفضل خضرا طول الطريق. بعدين PRs صغيرة، كل واحد بيطلع للمستخدمين لوحده: الـ repository ورا contract، وCubit في شاشة جديدة ورا flag، وuse case بس للعملية اللي فيها قاعدة، والـ entity للـ domain، وفي الآخر أمسح القديم. الـ global المشترك يفضل لحد ما آخر قاري يتنقل، والتقدم بقيسه بـ architecture test وallowlist بتصغر بس. والـ refactor مابيغيّرش سلوك.
-
-</Answer>
-</Question>
-
-### الـ API والأخطاء
+### الأسبوع 10–11: الـ API والأخطاء
 
 <Question id="interview-37">
 <Ask>إيه الفرق بين 401 و403؟ والـ app يتصرف إزاي في كل واحدة؟</Ask>
@@ -431,7 +393,54 @@ Sentry أو Crashlytics مربوطين بـ FlutterError.onError وPlatformDispa
 </Answer>
 </Question>
 
-### Cubit وBloc
+### الأسبوع 12–13: Dart Async والـ Streams
+
+<Question id="interview-59">
+<Ask>Dart single-threaded، يبقى إزاي بيعمل حاجات async؟ وإيه الفرق بين الـ microtask queue والـ event queue؟</Ask>
+<Answer>
+
+الكود بيشتغل على thread واحد في الـ isolate، بس الانتظار نفسه (الشبكة والديسك والـ timers) بيحصل بره في الـ OS أو الـ engine. لما النتيجة توصل بتدخل طابور، والـ event loop بيشغّلها لما الـ thread يفضى، والـ `await` بيعلّق الـ function ويرجّع الـ thread للـ loop فالـ UI بتكمّل. الـ loop بيفضّي الـ microtask queue كلها الأول (كمالة الـ Futures بعد `await` و`scheduleMicrotask`)، وبعدين ياخد event واحد (timer أو I/O أو gesture أو frame)، ويرجع للـ microtasks. فـ `Future.microtask` بيشتغل قبل `Future.delayed(Duration.zero)` دايمًا، والـ microtasks اللي مابتخلصش بتجمّد الـ app.
+
+</Answer>
+</Question>
+
+<Question id="interview-60">
+<Ask>`Future.wait` مع `eagerError: true` بيلغي الـ Futures التانية؟</Ask>
+<Answer>
+
+لأ. الـ Future في Dart مالوش cancel. الـ `eagerError` بيخلي الـ Future اللي راجع يكمل بأول خطأ على طول، بس الباقي بيكمّل شغله، ونتايجه وأخطاؤه بتضيع. لو الشغل ده كتابة، ممكن تقول للمستخدم «فشل» والحاجة تتعمل بعدها. ونفس الكلام لـ `timeout`: بيوقّف الانتظار، مش الشغل. الإلغاء الحقيقي لازم يبقى في الأداة نفسها: `CancelToken` في dio، أو `cancel()` للـ subscription.
+
+</Answer>
+</Question>
+
+<Question id="interview-61">
+<Ask>إيه الفرق بين asyncMap وswitchMap وexhaustMap؟</Ask>
+<Answer>
+
+التلاتة بياخدوا قيمة ويشغّلوا شغل async ليها. الـ `asyncMap` بيعمل الشغل واحد ورا التاني والقيم الجديدة بتستنى، فكل النتايج بتوصل بالترتيب، وده للعمليات اللي لازم تتعمل كلها. الـ `switchMap` بيلغي اللي شغال لما قيمة جديدة تيجي، فنتيجة آخر قيمة بس هي اللي بتوصل، وده البحث. الـ `exhaustMap` بيرمي القيم الجديدة طول ما في واحد شغال، وده زرار الحفظ. والإلغاء في `switchMap` بيلغي الـ subscription مش الـ Future نفسه، فالطلب بيكمّل ونتيجته بتترمي.
+
+</Answer>
+</Question>
+
+<Question id="interview-62">
+<Ask>إزاي الـ StreamSubscription بتعمل memory leak؟ وليه ممكن يجيلك «Cannot emit new states after calling close» مع إنك عملت cancel في الـ close؟</Ask>
+<Answer>
+
+المصدر (singleton أو الـ DB) ماسك الـ subscription، وهي ماسكة الـ callback، والـ callback ماسك الـ Cubit وكل اللي فيه. طول ما المصدر عايش محدش في السلسلة بيتمسح، والـ callback بيفضل يشتغل حتى بعد ما الشاشة اتقفلت. الحل إن اللي عمل listen يعمل cancel في الـ `close` أو الـ `dispose`. بس الـ cancel بيمنع events جديدة، مابيوقّفش callback شغال أصلًا: لو فيه `await` وبعده `emit`، والـ close حصل وهو مستني، الـ emit هيحصل على Cubit مقفول. فالشغل الـ async يتحط في الـ pipeline بـ `asyncMap` أو `switchMap` والـ callback يفضل sync، أو على الأقل `if (isClosed) return;` بعد الـ await.
+
+</Answer>
+</Question>
+
+<Question id="interview-63">
+<Ask>إيه الفرق بين async وisolate؟ وامتى `Isolate.run` وامتى `Isolate.spawn`؟</Ask>
+<Answer>
+
+الـ async بيخلي الـ isolate الواحد يعمل حاجة تانية وهو مستني حاجة بره، بس الكود كله لسه على thread واحد بالتناوب. الـ isolate التاني ليه ذاكرته وevent loop بتاعه وبيشتغل على core تاني، فهو اللي بيحل الحسابات التقيلة، والتمن إن البيانات بتتنسخ في الرسايل ومابيعرفش الـ singletons ولا الـ plugins من غير setup. الـ `Isolate.run` (واللي `compute` بيناديه على الموبايل) لشغل واحد: بيعمل isolate ويرجّع النتيجة ويموت، والخطأ بيترمي عند الـ await. الـ `Isolate.spawn` لـ isolate عايش فترة بتكلّمه برسايل كتير بـ ports، وانت المسؤول عن قفله وأخطاؤه.
+
+</Answer>
+</Question>
+
+### الأسبوع 14–16: Cubit وBloc
 
 <Question id="interview-46">
 <Ask>إيه اللي بيحصل لو عملت emit لـ state بتساوي الحالية؟ ولو عدّلت list جوه الـ state وعملت emit ليها؟</Ask>
@@ -546,6 +555,288 @@ GetX سريع في البداية، بس بيجمع الـ state والـ DI و�
 <Answer>
 
 مش بالأشهر. بسأل عن الفريق: يعرف إيه، ومين هيمسك المشروع بعدنا. وعن المشروع: هيعيش قد إيه، وفيه async وstreams قد إيه، ومحتاج traceability ولا لأ. وبعدين المعايير: الـ state immutable وتغييرها صريح، والـ logic بتتست من غير Flutter، والـ domain بيفضل نقي، والـ package متصانة. الـ setState والـ ValueNotifier للـ state المحلية في أي حالة. وللشاشات بختار Cubit default وBloc للـ inputs اللي بتتزاحم، أو Riverpod لو الفريق عايز DI وcaching في أداة واحدة. وبكتب القرار في ADR بالبدائل اللي اترفضت وليه.
+
+</Answer>
+</Question>
+
+### الأسبوع 17–18: Riverpod
+
+<Question id="interview-64">
+<Ask>لو قررتوا تغيّروا الـ state management بكرة، هيكلّفكم كام؟</Ask>
+<Answer>
+
+أبدأ بالحدود: الـ domain والـ data مابيعرفوش الـ state management، وده متحرس بتست في الـ CI بيمنع أي import لـ flutter_bloc أو riverpod جوههم، فالتحويل بيلمس الـ presentation والـ DI وتستاتهم بس. وبعدين رقم: عدد الـ Cubits ونوعهم، وكام يوم للشاشة حسب تعقيدها، وإننا نقدر ننقل شاشة شاشة والاتنين عايشين مع بعض. وبعدين التحفظ: مش هنعمله غير لو المعايير اللي في الـ ADR اتغيرت. الإجابة الضعيفة: «كتير، لأن الـ Cubits في كل حتة».
+
+</Answer>
+</Question>
+
+<Question id="interview-65">
+<Ask>لو شلت get_it وحطيت Riverpod، الـ data layer بتتغير؟</Ask>
+<Answer>
+
+لأ، لو كانت مكتوبة صح. الـ repositories والـ data sources بتاخد dependencies في الـ constructor ومابتعرفش مين بيعملها. اللي بيتغير هو الـ composition root: providers كل واحد بيقول محتاج إيه بـ `ref.watch` وبيرجّع الـ contract. اللي بيتجهز async (prefs وtokens) بيتجهز قبل `runApp` ويدخل بـ `overrideWithValue`، والـ flavors بـ overrides، والـ reset مع الـ logout بـ watch لحالة الدخول. واللي لازم أحرسه: مفيش class في الـ data بتاخد `Ref` (يبقى service locator)، والـ widgets ماتعملش watch للـ repositories مباشرة، لأن Riverpod مابيمنعش ده لوحده.
+
+</Answer>
+</Question>
+
+<Question id="interview-66">
+<Ask>إيه اللي بيخلّي provider بالـ autoDispose يفضل عايش؟</Ask>
+<Answer>
+
+أي listener: `ref.watch` أو `ref.listen` من widget أو من provider تاني عايش، أو `container.listen` في تست. الـ `ref.read` مابيمسكوش. والـ graph بيعيش من تحت لفوق: الشاشة بتمسك اللي بتعمله watch، وده بيمسك اللي تحته. ولما الشاشة تكون مستخبية تحت route تاني، الـ listeners بتتوقف (pause) في Riverpod 3 مش بتتشال، فمفيش حاجة بتتمسح ومفيش rebuilds. ولو عايز provider يعيش شوية بعد آخر listener، `ref.keepAlive()` مع timer بيقفل الـ link.
+
+</Answer>
+</Question>
+
+<Question id="interview-67">
+<Ask>إيه الفرق بين `isClosed` في الـ Cubit و`ref.mounted` في الـ Notifier؟</Ask>
+<Answer>
+
+`isClosed` معناه إن الـ Cubit اتقفل، ومفيش غيره. `ref.mounted` معناه إن الـ provider لسه عايش. بس الـ Notifier عنده حالة تالتة: الـ `build` ممكن يتعاد وانت مستني (invalidate أو dependency اتغيرت) والـ provider لسه عايش، فـ `ref.mounted` بيقول `true` والـ method بتكتب فوق الـ state الجديدة. الحل إني آخد `final buildRef = ref;` قبل الـ await وأسأل `buildRef.mounted` بعده، لأن كل build ليه Ref جديد والقديم بيقول `false`. ده نفس سؤال «أنا لسه على نفس الحاجة اللي بدأت عليها؟».
+
+</Answer>
+</Question>
+
+<Question id="interview-68">
+<Ask>انتو بتستخدموا Bloc. ليه مش Riverpod؟ وينفع الاتنين في نفس الـ app؟</Ask>
+<Answer>
+
+الإجابة القوية مش «Bloc أحسن»: عملنا spike وكتبنا المكتبة والكتالوج وصفحة الكتاب بـ Riverpod. الـ domain والـ data ماتغيروش ولا سطر، وده أهم نتيجة. Riverpod كسب في البحث والصفحات والقيم المشتقة، وتعادل أو خسر في الـ submit والـ optimistic، ولأن الـ app offline-first وdrift هو الـ cache، أكبر ميزة ليه كانت متغطية، فقررنا نفضل، والقرار في ADR بالتمن والشروط اللي تخلينا نراجعه. والاتنين في نفس الـ app ينفع تقنيًا، بس بقواعد: كل feature بأداة واحدة، ومصدر الحقيقة في الـ repository، ومفيش Notifier بيقرا Cubit أو العكس، والخليط ليه تاريخ نهاية والـ CI بيمنع إن القديم يزيد.
+
+</Answer>
+</Question>
+
+### الأسبوع 19–20: Real-time والـ Background
+
+<Question id="interview-69">
+<Ask>عندك feature محتاجة بيانات تتحدث لحظيًا. polling ولا WebSocket ولا SSE ولا push؟</Ask>
+<Answer>
+
+ابدأ بسؤالين: التأخير المقبول قد إيه، والـ app لازم يبقى مفتوح ولا لأ. دقيقة والشاشة مفتوحة: polling بـ ETag وbackoff، وسيرفر stateless. ثواني والشاشة مفتوحة: اتصال مفتوح، SSE لو اتجاه واحد وفيه resume جاهز، وWebSocket لو محتاج الاتجاهين. والـ app مقفول: push، بس كإشارة والبيانات من الـ API. وفي كل الحالات الاتصال المفتوح بيفوّت events، فلازم catch-up بـ cursor مع كل reconnect، والـ refresh العادي يفضل. والتمن: سيرفر stateful، وheartbeat، وreconnect بـ jitter، وauth للاتصال نفسه.
+
+</Answer>
+</Question>
+
+<Question id="interview-70">
+<Ask>إزاي تدخّل WebSocket في Clean Architecture؟</Ask>
+<Answer>
+
+الـ WebSocket مصدر بيانات، فمكانه الـ data layer. client واحد في core بيملك الاتصال (بيفتحه بعد الـ auth ويقفله في الـ logout والخلفية) وبيوزّع الرسايل. الـ data source بتاع كل feature بياخد الأنواع بتاعته ويحوّلها لـ DTOs بنفس الـ mapper بتاع الـ REST ويتجاهل اللي مايعرفهوش، وservice في الـ data layer بيكتب الـ events في الـ local DB، والشاشة بتقرا من الـ DB زي ما هي. كده مفيش Cubit بيعرف إن في socket، والـ offline شغال ببلاش، والتست بـ fake data source، والعقد مكتوب في AsyncAPI جنب الـ OpenAPI.
+
+</Answer>
+</Question>
+
+<Question id="interview-71">
+<Ask>إزاي تعمل reconnect لـ WebSocket صح؟</Ask>
+<Answer>
+
+الـ close code بيقرر. أكواد الشبكة والسيرفر بتستنى بـ exponential backoff مع jitter عشان آلاف الموبايلات مايرجعوش في نفس الثانية بعد deploy، والعداد بيتصفّر بس لما الاتصال يعيش فترة. الـ 4401 (الـ token خلص) معناها refresh بنفس الـ refresher بتاع الـ HTTP وreconnect، ولو اتكرر بعد refresh يبقى bug فبتبطّل. والأكواد اللي معناها «مش هينفع» (حساب مقفول، نسخة قديمة) بتوقف خالص. والـ heartbeat بيكشف الاتصال اللي مات من غير close frame، والـ connectivity تلميح بيقصّر الانتظار مش أكتر. والاتصال بيتقفل في الخلفية والـ logout، وبيرجع مع الـ resume ويعمل catch-up.
+
+</Answer>
+</Question>
+
+<Question id="interview-72">
+<Ask>الـ events بتوصل من WebSocket وممكن تتكرر أو تتأخر أو تضيع. إزاي تضمن إن الـ local DB صح؟</Ask>
+<Answer>
+
+كل كتابة جاية من السيرفر مشروطة: الصف مايكونش عليه تعديل محلي لسه ماتبعتش، والـ version اللي جاي أكبر من اللي عندك. كده التكرار والتأخير مالهمش أثر والترتيب مايفرقش. الحذف بيسيب tombstone بالـ version عشان event قديم مايرجّعش الصف. والضايع بيتكشف بـ seq: الـ cursor بيتحرك بس فوق أرقام متصلة، وأي فجوة أو reconnect بيعمل catch-up بـ `since=cursor`، والـ cursor بيتحفظ في نفس الـ transaction مع الداتا. ولو الـ cursor أقدم من اللي السيرفر محتفظ بيه، full refresh. وكل الطرق بتعدّي على نفس قاعدة الكتابة.
+
+</Answer>
+</Question>
+
+<Question id="interview-73">
+<Ask>إزاي تعمل sync للتعديلات الأوفلاين والـ app مقفول؟</Ask>
+<Answer>
+
+workmanager بيطلب من الـ OS يشغّل callback في isolate جديد: periodic كل 15 دقيقة على Android (وفي iOS النظام بيقرر)، وone-off بشرط الشبكة لما الـ app يروح الخلفية وفي عمليات مستنية، وsilent push كإشارة. الـ callback top-level بـ `@pragma('vm:entry-point')`، وبيبني DI خاص بالخلفية من غير UI ولا sockets، وبيعمل drain واحد بـ timeout أقل من الـ 30 ثانية بتاعة iOS. والمشاكل: drain في isolateين (claim atomic في الـ DB)، وعمليات اتقطعت في النص (الـ idempotency key)، والـ refresh token بين isolateين (الخلفية ماتمسحش الـ tokens). وفي الآخر ده بونص، والضمان هو الـ sync في الـ foreground.
+
+</Answer>
+</Question>
+
+### الأسبوع 21–22: الـ Performance
+
+<Question id="interview-74">
+<Ask>الـ app بيقطّع. بتعمل إيه؟ وليه ماينفعش تقيس في الـ debug mode؟</Ask>
+<Answer>
+
+مش بفتح الكود. بشغّل `flutter run --profile` على جهاز حقيقي متوسط، وبعمل الحركة اللي بتقطّع، وبفتح DevTools Performance. أول سؤال: الـ frames الحمرا بسبب الـ UI thread ولا الـ raster؟ لو الـ UI، Track widget builds والـ CPU profiler. لو الـ raster، saveLayer وclipping وصور كبيرة. وبسجّل baseline بأرقام قبل أي تغيير وبقيس تاني بعده. والـ debug ماينفعش لأنه JIT ومعاه asserts وchecks، فهو أبطأ بكتير وفيه pauses مش موجودة في الـ release. الحاجة الوحيدة اللي ينفع تعرفها منه هي العدد: widget اتبنى كام مرة، مش أخد قد إيه.
+
+</Answer>
+</Question>
+
+<Question id="interview-75">
+<Ask>`await Future(() => heavyWork())` بيحل الـ jank؟</Ask>
+<Answer>
+
+لأ. الـ Future بيأجّل الشغل لـ event تاني في نفس الـ event loop، على نفس الـ thread، فالـ frame اللي هيقع فيه هيتأخر بنفس القدر. الـ async بيحل الانتظار مش الحساب. الحساب التقيل يا يتقلل، يا يتعمل في الـ DB، يا يتعمل مرة وقت الكتابة، يا يتقسم على frames، يا يطلع لـ isolate بـ `Isolate.run`.
+
+</Answer>
+</Question>
+
+<Question id="interview-76">
+<Ask>صورة JPEG حجمها 200KB. بتاخد قد إيه في الذاكرة؟</Ask>
+<Answer>
+
+مالهاش علاقة بالـ 200KB. بعد الـ decode بتاخد العرض × الارتفاع × 4 bytes، فصورة 1000 × 1500 بتاخد حوالي 6MB حتى لو بتتعرض في خلية 100 × 150. عشان كده بنفك بالحجم اللي هيتعرض (`cacheWidth` أو `memCacheWidth` مضروب في الـ DPR)، وبنطلب من السيرفر المقاس الصح، وبنتأكد بـ Highlight oversized images في DevTools. والـ disk cache بتاع `cached_network_image` بيوفّر data، بس مابيحلش مشكلة الذاكرة.
+
+</Answer>
+</Question>
+
+<Question id="interview-77">
+<Ask>إزاي تلاقي memory leak في Flutter؟</Ask>
+<Answer>
+
+بحدد سيناريو بيفتح ويقفل الشاشة اللي شاكك فيها. في DevTools Memory بدوس GC وباخد snapshot، وبعمل السيناريو N مرة، وGC تاني وsnapshot، وبعمل Diff. أي class زاد N مرة بيتسرّب مع كل فتحة. بختار instance منه وبشوف الـ retaining path من الـ root، وده بيقولي مين ماسكه: subscription مااتلغتش، أو AnimationController مااتعملهوش dispose، أو closure ماسك BuildContext في singleton، أو cache مالوش حد. وبفرّق بين ده وبين cache زي الـ ImageCache، اللي بيوصل لحد ويقف.
+
+</Answer>
+</Question>
+
+<Question id="interview-78">
+<Ask>الـ Clean Architecture مش بتبطّأ الـ app بكل الـ mapping والطبقات دي؟</Ask>
+<Answer>
+
+لأ، وده رقم مش رأي: الـ mapping لـ 4000 object بياخد أقل من 0.1ms، والـ Dart GC مصمم للـ objects اللي عمرها قصير. الطبقات بتبقى غالية في حالتين: لما الـ mapper نفسه بيعمل شغل تقيل (parsing أو regex)، ولما الـ API بتاع الـ repository متعمل على مقاس item واحد فالشاشة بتعمل N+1 queries. والاتنين بيتصلحوا جوه الطبقات مش بإنك تشيلها. وقبل أي حاجة: قيس في profile mode بـ `Timeline.timeSync`، والـ benchmark بـ AOT وwarm-up.
+
+</Answer>
+</Question>
+
+### الأسبوع 23: الـ Modularization
+
+<Question id="interview-79">
+<Ask>امتى تقسّم Flutter app لـ packages؟ وإيه عيوب التقسيم؟</Ask>
+<Answer>
+
+لما المشكلة اللي بتحلها موجودة فعلًا: app تاني محتاج نفس الكود، أو فريق كبير والحدود بتتكسر رغم الـ guards، أو الـ codegen والتستات بقوا بطيئين على المشروع كله. وبقسّم بالـ features مش بالطبقات. ولمشروع صغير أو منتج لسه بيتغير، modular monolith: فولدر لكل feature فيه barrel و`src/` وتست بيحرس الـ imports، فالتقسيم بعد كده نقل فولدرات. والعيوب: pubspecs أكتر، والـ DI والترجمة والـ assets والـ routes محتاجين قرار هيعيشوا فين، والـ CI لازم يلف على الـ packages، وأغلى حاجة إن الحد الغلط تصليحه نقل ملفات بين packages، فالحدود لازم تتبني على أرقام الـ imports والـ commits.
+
+</Answer>
+</Question>
+
+<Question id="interview-80">
+<Ask>قسّمتوا لـ packages، إيه اللي يمنع حد يكسر الحدود؟</Ask>
+<Answer>
+
+3 حاجات. `depend_on_referenced_packages` كـ error، لأن الـ workspace بيعمل resolution واحدة والـ import لـ package مش في الـ pubspec بيتعمله compile عادي. وتست بيقرا الـ pubspecs نفسها: الـ core مابتعتمدش على حد، والـ features بتعتمد على features معينة بس في ليستة بأسبابها، ومحدش بيعتمد على الـ app، ومفيش دواير. وCODEOWNERS على الـ pubspecs والتست. وفوق ده الـ core والـ domain packages مافيهاش Flutter وبتتختبر بـ `dart test`، فالـ compiler نفسه بيرفض أي import لـ Flutter.
+
+</Answer>
+</Question>
+
+<Question id="interview-81">
+<Ask>feature A معتمدة على B، وB محتاجة معلومة من A. تعمل إيه؟</Ask>
+<Answer>
+
+ماعكسش السهم، لأن ده دايرة. B تعرّف interface صغير في الـ domain بتاعها بالشكل اللي محتاجاه، وA تنفّذه، والـ composition root يسجّل implementation A تحت الـ interface ده. B مابتعرفش A، والسهم الوحيد لسه A → B. ولو app مافيهوش A، يسجّل implementation فاضي.
+
+</Answer>
+</Question>
+
+<Question id="interview-82">
+<Ask>الـ CI بتاع الـ monorepo بياخد 15 دقيقة. تعمل إيه؟</Ask>
+<Answer>
+
+الأول أقيس الوقت رايح فين. بعدين: الـ checks الرخيصة (format وanalyze والـ architecture) job لوحدها بتفشل في دقيقة. والتستات تتشغّل على الـ packages اللي اتغيرت وكل اللي بيعتمد عليها، محسوبة من الـ pubspecs، كـ matrix بالتوازي، ولو اتغير الـ lock أو ملف في الـ root يبقى كله. والـ main بيشغّل كله دايمًا. وcache للـ Flutter SDK والـ pub cache بـ key من الـ `pubspec.lock`. والـ required check واحد بيجمّع النتايج، عشان الـ jobs اللي بتتعدّى ماتفضلش Pending.
+
+</Answer>
+</Question>
+
+### الأسبوع 24–25: الـ Design System والـ Accessibility
+
+<Question id="interview-83">
+<Ask>إزاي تبني design system في Flutter؟ وفين تحط ألوان مش موجودة في الـ ColorScheme؟</Ask>
+<Answer>
+
+3 طبقات: palette فيه القيم الخام ومش ظاهر للشاشات، وأدوار (semantic tokens) هي اللي الشاشات بتستخدمها، وقرارات جوه كل component. الأدوار اللي Material عنده بستخدمها زي ما هي (`ColorScheme.fromSeed` و`TextTheme`) عشان كل الـ widgets تاخدها لوحدها. والناقص (ألوان الحالات والنجاح والتحذير) في `ThemeExtension` فيه light وdark بـ `copyWith` و`lerp` حقيقيين. والمسافات والـ radius `const`. وبحرس ده بتست بيدوّر على `Color(0x` و`Colors.` برا `core_ui`، بـ allowlist للقديم بتصغر بس.
+
+</Answer>
+</Question>
+
+<Question id="interview-84">
+<Ask>إيه اللي بيتكسر في الـ RTL غير الـ padding؟</Ask>
+<Answer>
+
+الـ layout سهل لو استخدمت الـ directional APIs. الصعب 3 حاجات. الأيقونات: Flutter بيقلب أيقونات الاتجاه لوحده، فالـ `isRtl ? left : right` بيقلبها مرتين، والـ SVG بتوعك محتاجين `matchTextDirection` أو flip. النص المختلط: علامات الترقيم بتاخد اتجاه الفقرة، فعنوان إنجليزي جوه جملة عربي بتنط علامته؛ الحل isolate بـ U+2068 وU+2069 حوالين الـ placeholder، ومحتوى المستخدم اتجاهه من حروفه، والإيميل والتليفون LTR صريح. والحاجات اللي مالهاش نسخة directional: الـ CustomPainter والـ Offset في الـ animations واتجاه السحب. وكل ده بيتست بـ golden عربي وتست بيمنع الـ physical APIs.
+
+</Answer>
+</Question>
+
+<Question id="interview-85">
+<Ask>إزاي تخلي app Flutter accessible لمستخدم TalkBack؟</Ask>
+<Answer>
+
+Flutter بيبني semantics tree جنب الـ widget tree، والـ widgets الجاهزة بتملاها لوحدها. شغلي في الباقي: كل حاجة بتتداس ليها label (`tooltip` في `IconButton`، و`semanticLabel` للأيقونات اللي ليها معنى)، والصور الـ decorative `excludeFromSemantics`، والكارت اللي فيه كذا نص `MergeSemantics` عشان يتقري مرة، والعناوين headings، والتغييرات المهمة `liveRegion`. وفوق ده targets 48×48 على Android و44×44 على iOS، وcontrast 4.5:1 للنص، والمعنى مايعتمدش على اللون بس. وبحرس ده بـ `meetsGuideline` في التستات، وبتجربة بإيدي بـ TalkBack قبل كل release.
+
+</Answer>
+</Question>
+
+<Question id="interview-86">
+<Ask>المستخدم مكبّر الخط والـ layout بيبوظ. تعمل إيه؟</Ask>
+<Answer>
+
+مش هقفل التكبير: ده بيشيل ميزة accessibility عن الناس اللي محتاجاها. كل `Text` بيكبر لوحده، والمشكلة دايمًا في اللي حواليه: بشيل الارتفاعات الثابتة (`minHeight` مكان `height`، و`minimumSize` مكان `fixedSize`)، والنص جوه `Row` بياخد `Expanded`، والحاجات الصغيرة جنب بعض `Wrap`، وكل صفحة بتعمل scroll. وبقرر لكل نص يتقص ولا لأ. والـ clamp بس على أجزاء صغيرة زي labels الـ navigation بـ `withClampedTextScaling`. وماحسبش `fontSize * factor` بإيدي لأن Android 14 بيكبّر بشكل مش خطي. وبتست ده بـ goldens بخط 2.0 على موبايل صغير.
+
+</Answer>
+</Question>
+
+### الأسبوع 26–27: الـ Production والأمان
+
+<Question id="interview-23">
+<Ask>بتقرر إزاي Clean ولا MVVM لمشروع جديد؟</Ask>
+<Answer>
+
+بمعايير محددة: كمية الـ business logic، وعمر المشروع، وحجم الفريق، ولو فيه offline أو قواعد معقدة. app عرض بيانات بسيط بيكفيه MVVM مع repositories. لو في قواعد business وتستات ومشروع طويل، بضيف الـ domain layer.
+
+</Answer>
+</Question>
+
+<Question id="interview-24">
+<Ask>بتعرف الـ crashes في الـ production إزاي؟</Ask>
+<Answer>
+
+Sentry أو Crashlytics مربوطين بـ FlutterError.onError وPlatformDispatcher.onError، والـ Failures غير المتوقعة بتتسجل مع context. وبتابع الـ release health بعد كل نسخة.
+
+</Answer>
+</Question>
+
+<Question id="interview-29">
+<Ask>تفرّق إزاي بين error لازم يتبعت لـ Sentry وerror يتعرض للمستخدم بس؟</Ask>
+<Answer>
+
+بسؤال واحد: مين يقدر يصلحه؟ لو المستخدم أو الظروف (النت فاصل، الـ session انتهت، input غلط، أو رد business زي 409 «الإيميل مستخدم»)، تبقى Failure متوقعة: رسالة مترجمة وbreadcrumb بس. لو المطوّر بس (bug، أو 4xx الـ endpoint مابيرجّعهوش، أو cache بايظ)، تتبعت لـ Sentry. والقرار في مكانين: `isReportable` جنب الـ sealed Failure، و`expected` جنب كل endpoint.
+
+</Answer>
+</Question>
+
+<Question id="interview-30">
+<Ask>عندك feature قديمة كلها في widget واحد. هتنقلها لـ Clean إزاي من غير ما توقف الشغل؟</Ask>
+<Answer>
+
+أبدأ بـ characterization tests بتكلّم الشاشة من بره والشبكة بـ fake `HttpClientAdapter`، فتفضل خضرا طول الطريق. بعدين PRs صغيرة، كل واحد بيطلع للمستخدمين لوحده: الـ repository ورا contract، وCubit في شاشة جديدة ورا flag، وuse case بس للعملية اللي فيها قاعدة، والـ entity للـ domain، وفي الآخر أمسح القديم. الـ global المشترك يفضل لحد ما آخر قاري يتنقل، والتقدم بقيسه بـ architecture test وallowlist بتصغر بس. والـ refactor مابيغيّرش سلوك.
+
+</Answer>
+</Question>
+
+<Question id="interview-87">
+<Ask>بتخزّن الـ tokens فين، وده آمن؟</Ask>
+<Answer>
+
+في flutter_secure_storage: Keychain في iOS، ومفتاح في الـ Keystore بيشفّر القيم في Android، بإعدادات صريحة (`first_unlock_this_device` في iOS، ومستثنية من الـ backup في Android). ده بيحمي من الـ apps التانية والـ backups والموبايل المقفول. مابيحميش من موبايل rooted والـ app شغال، ولا من حد ماسك الموبايل مفتوح. التانية بحلها بقفل بصمة اختياري فوق الـ session. والأولى مالهاش حل على الجهاز: access token قصير، وrefresh token بيتلغي من السيرفر، وشاشة أجهزة فيها «اخرج». وأي secret حقيقي مايدخلش الـ app خالص، والـ CI بيعمل scan على الـ repo وعلى الـ binary.
+
+</Answer>
+</Question>
+
+<Question id="interview-88">
+<Ask>بتعمل certificate pinning في الـ apps بتاعتك؟</Ask>
+<Answer>
+
+بقرر من الـ threat model: الـ pinning بيحمي من CA مزيفة على الجهاز أو الشبكة، ومابيحميش الـ API من حد بيفك الـ app. لو قررته، بثبّت الـ CA مش الشهادة، لأن الشهادات بتتجدد كل 90 يوم أو أقل. ومعاه CA احتياطية، وتاريخ بعده النسخة القديمة ترجع لـ HTTPS العادي بدل ما تموت، وcheck في الـ CI على الشهادة الحالية. وفي Dio بعمله بـ `SecurityContext(withTrustedRoots: false)` في الـ handshake، مش `validateCertificate`، لأن ده بيتنادى بعد ما الطلب بالـ token اتبعت. ولـ app زي Readly غالبًا HTTPS عادي كفاية، وApp Check على الـ endpoints الغالية أهم.
+
+</Answer>
+</Question>
+
+<Question id="interview-89">
+<Ask>إزاي بتعمل feature flags في Flutter؟</Ask>
+<Answer>
+
+contract `FeatureFlags` في الـ domain، والـ flags enum كل واحد معاه fallback ونوعه. وRemote Config في الـ data: `setDefaults` من الـ fallbacks، و`activate` للقيم اللي اتجابت في الفتحة اللي قبلها، و`fetch` في الخلفية للجاية، فالـ startup مابيستناش شبكة والـ UI مابيتغيرش في نص الاستخدام. الـ kill switches بس بتتحدث لحظيًا، وبتوقّف الطلبات مش الـ UI بس. الـ release flag الـ fallback بتاعه off، والـ kill switch on. الـ rollout بنسبة، والـ flags tags في Sentry عشان أقارن المجموعتين، والتست بـ fake. وكل release flag ليه تاريخ مسح بيبقى تست بيوقع.
 
 </Answer>
 </Question>

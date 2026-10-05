@@ -2,7 +2,6 @@
 title: "Cubit متقدم: الـ async والـ effects والتواصل"
 description: "الـ Cubit مابيستناش نفسه: كل نداء بيشتغل جنب اللي قبله. هنا هتقرر لكل method تعمل إيه مع النداء التاني (drop أو restart أو queue أو latest)، وتلغي الشغل بجد، وتعمل optimistic update مايرجّعش قيمة غلط، وتطلّع أحداث مرة واحدة، وتخلي الـ Cubits تتكلم من غير ما تمسك بعض."
 minutes: 45
-draft: true
 ---
 
 <Level n="1" title="الفكرة بتشبيه">
@@ -652,7 +651,7 @@ class CatalogSearchCubit extends Cubit<CatalogSearchState> {
 </CodeBlock>
 
 - <b>الـ `onChange` بيتنادى مع كل emit حقيقي:</b> مش مع الـ emit اللي اتجاهل عشان الـ state زي اللي قبلها. ومعاه `currentState` و`nextState`.
-- <b>الـ `onError` بيوصله الـ `addError` بس:</b> زي ما قلنا في [درس الـ Observability في الوحدة 16](/course/production/observability/)، الـ exception اللي بتطلع من method في الـ Cubit مابتعدّيش عليه. لو عايزها توصل، امسكها وابعتها:
+- <b>الـ `onError` بيوصله الـ `addError` بس:</b> زي ما قلنا في [درس الـ Observability في الوحدة 17](/course/production/observability/)، الـ exception اللي بتطلع من method في الـ Cubit مابتعدّيش عليه. لو عايزها توصل، امسكها وابعتها:
 
 <CodeBlock label="الـ exception غير المتوقعة بتوصل الـ observer">
 
