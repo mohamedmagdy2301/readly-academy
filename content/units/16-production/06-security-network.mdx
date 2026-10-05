@@ -1,0 +1,393 @@
+---
+title: "الشبكة والـ threat model"
+description: "threat model صغير لـ Readly بيقول خايفين من مين، والـ certificate pinning وتمنه لما الشهادة تتغير، والـ obfuscation والـ root detection بيحموا من إيه فعلًا، والـ logs اللي ماينفعش يطلع فيها حاجة."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="البوّاب والكشف">
+
+عمارة فيها بوّاب. أول سؤال قبل ما تشتري أي قفل: <b>خايف من مين؟</b> لو من العيال اللي بتلعب على السلم، قفل عادي كفاية. لو من حرامية محترفين، محتاج باب حديد وكاميرا. ولو من حد ساكن جوه العمارة أصلًا، ولا باب هيفيد، والحل حاجة تانية خالص. القايمة دي اسمها <b>threat model</b>: مين، وعايز إيه، وهيدخل منين.
+
+وبعدين البوّاب نفسه. ممكن يفتح لأي حد لابس يونيفورم شركة الكهربا، وممكن يكون عنده ورقة فيها أسماء الموظفين المسموحلهم بالظبط. الورقة أأمن: حرامي لابس يونيفورم مزوّر مش هيعدّي. بس لو الشركة غيّرت الموظف ومحدش حدّث الورقة، البوّاب مش هيفتح لحد، والعمارة كلها من غير كهربا.
+
+</Analogy>
+
+الورقة دي هي الـ <b>certificate pinning</b>: الـ app مايقبلش أي شهادة النظام بيثق فيها، يقبل الشهادات اللي في القايمة بتاعته بس. والعمارة اللي من غير كهربا هي كل نسخة قديمة من الـ app عند المستخدمين لما الشهادة تتغير. علشان كده الدرس بيبدأ بالـ threat model: هو اللي بيقول Readly محتاج الورقة دي أصلًا ولا لأ.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### threat model لـ Readly في صفحة واحدة
+
+الـ threat model مش document من 40 صفحة. هو 4 أسئلة، وإجاباتهم في جدول بيتراجع مع كل feature كبيرة:
+
+1. <b>بنحمي إيه؟</b> الجرد من [الدرس اللي فات](/course/production/security-storage/): الـ tokens، والملاحظات، والمكتبة، والإيميل، وفاتورة خدمة الـ AI.
+2. <b>من مين؟</b> كل مهاجم ليه قدرات مختلفة.
+3. <b>هيدخل منين؟</b> الجهاز، والشبكة، والـ API، والأدوات اللي بنبعتلها بيانات (Sentry، وFCM).
+4. <b>إيه اللي عندنا، وإيه الناقص؟</b>
+
+| المهاجم | عايز إيه | بيدخل منين | اللي عندنا | الناقص |
+| --- | --- | --- | --- | --- |
+| حد على نفس الـ WiFi في كافيه | الـ tokens والملاحظات وهي ماشية | الشبكة | HTTPS، ومفيش cleartext ([درس dio](/course/data-network/network/)) | مفيش، طول ما التحقق من الشهادة شغال |
+| شبكة أو جهاز فيه CA مزيفة (proxy شركة، malware، حكومة) | نفس اللي فوق، بشهادة النظام بيثق فيها | الشبكة | HTTPS بس | الـ pinning، لو قررنا إنه يستاهل |
+| حد فك الـ APK | secrets، وendpoints مخفية | الـ binary | مفيش secrets في الـ app، وobfuscation | التحقق على السيرفر لكل endpoint |
+| script بيكلّم الـ API من غير الـ app | يستهلك التوصيات المدفوعة | الـ API | الـ access token، وحد لكل مستخدم | App Check |
+| حد ماسك الموبايل مفتوح | يقرا الملاحظات | الجهاز | قفل البصمة ([الدرس اللي فات](/course/production/security-storage/)) | مفيش |
+| موبايل rooted والـ app شغال | أي حاجة | الجهاز | مفيش حاجة على الجهاز تكفي | الـ revoke من السيرفر |
+| إحنا نفسنا بالغلط | بيانات المستخدم في Sentry والـ logs | الـ logs | redaction في `LoggingInterceptor` ([درس الـ Logging](/course/production/observability/)) | الـ bodies المتداخلة، والـ `print`، والـ breadcrumbs |
+
+<Diagram name="d-sec-threat-model">
+
+كل سهم طريق بيانات بيعدّي على حد ممكن يكون مهاجم. الأخضر محمي بالإعدادات العادية، والبرتقالي محتاج قرار: الـ pinning على الشبكة، وApp Check على الـ API، والـ redaction قبل ما أي حاجة تطلع لـ Sentry.
+
+</Diagram>
+
+الجدول ده بيعمل حاجتين. أولًا بيرتّب الشغل: الصف الأخير (إحنا نفسنا) أرخص حاجة تتصلح وأكتر حاجة بتحصل فعلًا، والـ pinning غالي ولمهاجم أندر. وثانيًا بيقول «لأ» بصوت عالي: موبايل rooted مفيش حاجة في الـ app تحميه، فمحدش يضيّع sprint على ده.
+
+ولو عايز checklist تقارن بيها، OWASP Mobile Top 10 (نسخة 2024) هي اللغة المشتركة: M1 الـ credentials، وM3 الـ authentication والـ authorization، وM5 الشبكة، وM7 حماية الـ binary، وM8 الـ misconfiguration، وM9 التخزين. كل صف في الجدول بيقابل واحد منهم.
+
+### الأساس قبل أي pinning
+
+HTTPS بالإعدادات العادية بيحمي من أول صف كامل، بشرط إن محدش كسره. الحاجات دي اتشرحت في درس dio، وهنا بتبقى checks في الـ review:
+
+- مفيش `badCertificateCallback = (_, _, _) => true` في أي build بيطلع للمستخدمين. ولو محتاجه لسيرفر dev، يبقى ورا `kDebugMode` و`--dart-define` صريح، مش متساب «مؤقتًا».
+- الـ cleartext مقفول في الـ release، والاستثناء لـ `10.0.2.2` في `src/debug` بس.
+- Dio لكل backend: الـ access token مايروحش لـ Open Library.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### الـ pinning: نثبّت إيه بالظبط؟
+
+لو قررنا pinning، فيه 3 اختيارات، والفرق بينهم هو الفرق بين app شغال وapp واقع عند كل الناس بعد 90 يوم:
+
+| بنثبّت إيه | بيتكسر امتى | مناسب لـ |
+| --- | --- | --- |
+| الشهادة نفسها (fingerprint للـ leaf) | مع كل تجديد للشهادة. Let's Encrypt بيجدد كل 90 يوم أو أقل، والحد الأقصى لكل الشهادات نازل لـ 47 يوم على 2029 | تقريبًا ولا حاجة |
+| المفتاح العام للشهادة (SPKI) | لو السيرفر غيّر المفتاح وهو بيجدد، والـ backend لازم يلتزم إنه يعيد استخدامه | فريق backend متحكم في الشهادة بالكامل |
+| الـ CA اللي بتمضي (الـ root) | لو غيّرنا الـ CA، زي ما نحط الـ API ورا CDN بيستخدم CA تانية | أغلب الـ apps اللي محتاجة pinning |
+
+Readly هيثبّت الـ <b>CA</b>: الشهادة تتجدد براحتها، والـ app بيتكسر بس لو اتغيرت الشركة اللي بتمضي، وده قرار بنعرفه قبلها بشهور.
+
+### `validateCertificate` بيتنادى بعد ما الطلب اتبعت
+
+الطريقة اللي في الـ docs بتاعة dio هي `validateCertificate` في `IOHttpClientAdapter`، وده اللي قلناه في درس dio. بس لو قريت كود الـ adapter نفسه، هتلاقي إنه بينادي `validateCertificate` على `responseStream.certificate`، يعني <b>بعد</b> ما الـ request اتبعت والـ response headers رجعت. الـ request نفسه، بالـ `Authorization` header بتاعه، وصل للـ proxy المزيف خلاص. الـ pinning هنا بيمنعك تثق في الرد، مش بيحمي الـ token.
+
+الحل إن التحقق يحصل في الـ handshake نفسه، قبل ما أي byte من الطلب يطلع: `SecurityContext` مابيثقش غير في الـ CAs بتاعتنا.
+
+<CodeBlock label="core/network/pinning.dart">
+
+```dart
+class PinningPolicy {
+  const PinningPolicy({required this.trustedRootsPem, required this.enforceUntil});
+  final List<String> trustedRootsPem; // our CA + a backup CA we can move to
+  final DateTime enforceUntil;        // after this date: plain HTTPS, never a dead app
+}
+
+HttpClient pinnedHttpClient(PinningPolicy policy, AppLogger logger, Clock clock) {
+  if (clock.now().isAfter(policy.enforceUntil)) return HttpClient(); // system CAs again
+
+  final context = SecurityContext(withTrustedRoots: false) // the system store is out
+    ..setTrustedCertificatesBytes(utf8.encode(policy.trustedRootsPem.join('\n')));
+
+  return HttpClient(context: context)
+    // called during the handshake, when the chain doesn't end in one of our roots
+    ..badCertificateCallback = (cert, host, port) {
+      final now = clock.now();
+      if (now.isBefore(cert.startValidity) || now.isAfter(cert.endValidity)) {
+        logger.warning('TLS: certificate not valid at device time ($host)'); // the clock
+      } else {
+        logger.error('Pinning rejected $host, issued by ${cert.issuer}');
+      }
+      return false; // never accept: nothing of the request has been sent
+    };
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="di/network.dart: الـ API بس، والـ refresh كمان">
+
+```dart
+Dio buildApiDio(AppConfig config, TokenStore tokens, PinningPolicy pins, AppLogger logger) {
+  final options = BaseOptions(/* baseUrl, timeouts as before */);
+  HttpClientAdapter adapter() => IOHttpClientAdapter(
+        createHttpClient: () => pinnedHttpClient(pins, logger, const SystemClock()),
+      );
+
+  final dio = Dio(options)..httpClientAdapter = adapter();
+  final refreshDio = Dio(options)..httpClientAdapter = adapter(); // it carries the refresh token
+  dio.interceptors.addAll([
+    AuthInterceptor(tokens, refreshDio, dio),
+    RetryInterceptor(dio),
+    LoggingInterceptor(logger),
+  ]);
+  return dio;
+}
+
+// buildOpenLibraryDio stays as it is: not our server, not our token
+
+// core/network/pins.dart
+final readlyPins = PinningPolicy(
+  trustedRootsPem: [isrgRootX1Pem, gtsRootR1Pem], // Let's Encrypt today, Google Trust Services as backup
+  enforceUntil: DateTime.utc(2027, 10, 1),        // ~12 months after this release
+);
+```
+
+</CodeBlock>
+
+- <b>الـ `withTrustedRoots: false`:</b> الـ app مابقاش بيثق في أي CA في النظام، حتى لو حد ركّب واحدة على الجهاز. والـ hostname لسه بيتشيك عادي، لأن احنا ماقبلناش أي حاجة في الـ callback.
+- <b>الـ `refreshDio` محتاج نفس الـ adapter:</b> ده اللي بيبعت الـ refresh token، وهو أغلى حاجة في الـ session. نسيانه معناه إن الـ pinning بيحمي الطلبات العادية ويسيب الأهم.
+- <b>الـ error بيوصل إزاي؟</b> الـ handshake بيفشل بـ `HandshakeException`، والـ `_mapDio` بتاع [الوحدة 9](/course/api-errors/failure-pipeline/) بيحوّلها لـ `NetworkFailure(hint: clockOrProxy)`، والمستخدم بيشوف «في proxy أو الساعة غلط»، وده صح فعلًا. والفريق بيعرف من الـ `logger.error` اللي في الـ callback. والـ case بتاع `badCertificate` في `_mapDio` يفضل موجود لو حد رجع لـ `validateCertificate` في endpoint تاني.
+
+### الشهادة اتغيرت والـ app وقف عند الناس
+
+ده التمن، وهو اللي بيخلّي فرق كتير تشيل الـ pinning بعد أول حادثة. الـ backend نقل الـ API ورا CDN جديد، والـ CDN بيستخدم CA تانية. كل نسخة فيها الـ pins القديمة بقت بتفشل في كل طلب. ولو الـ pins مكتوبة في الكود من غير مخرج، المستخدم مالوش حل غير update، وده لو عرف إن فيه update أصلًا، لأن طلب `GET /app/version` نفسه بيفشل.
+
+<Diagram name="d-sec-pin-rotation">
+
+الـ app فيه CA حالية وواحدة احتياطية. النقل للـ CA الاحتياطية مابيكسرش أي نسخة، والـ release اللي بعده بيضيف احتياطية جديدة. والنسخ اللي محدش حدّثها بتبطّل pinning في تاريخ الـ enforceUntil بدل ما تموت.
+
+</Diagram>
+
+الحماية على 4 طبقات:
+
+1. <b>CA احتياطية من أول release:</b> الـ backend يقدر ينقل لها في أي وقت من غير ما أي نسخة تقع. والقايمة دي بقت جزء من العقد مع الـ backend: أي تغيير في الـ CA لازم يعدّي على الـ mobile الأول.
+2. <b>الـ `enforceUntil`:</b> النسخة القديمة بعد التاريخ ده بترجع لـ HTTPS العادي. ده نفس اللي Android بيعمله بالـ `expiration` في `pin-set` بتاع `network_security_config`. التمن إن لازم تنزّل release قبل التاريخ، والـ release الجديد بيحرّكه لقدام.
+3. <b>الـ force update:</b> الـ `minSupportedBuild` بتاع [درس الـ release](/course/production/release/) بيضمن إن النسخ الأقدم من التاريخ ده مابتفضلش موجودة كتير. بس خلي بالك إنه طلب على نفس السيرفر، فمش هيلحق نسخة الـ pins بتاعتها اتكسرت خلاص.
+4. <b>تست في الـ CI:</b> job بيعمل handshake على `api.readly.app` بالـ `PinningPolicy` بتاعة الـ build ده، ويفشل لو الشهادة الحالية مش هتعدّي. كده تعرف قبل الـ release مش بعده.
+
+وفيه حاجة ماتعملهاش: <b>remote flag يقفل الـ pinning</b>. شكله مخرج طوارئ حلو، بس اللي قادر يعمل MITM على الـ app قادر يحاول يقفله، والـ flag ده بيتقري من الشبكة. المخرج الصح هو الـ CA الاحتياطية والتاريخ، والاتنين جوه الـ binary.
+
+وفيه تمن تاني: المستخدمين اللي وراهم proxy بيفتش الـ TLS، زي شبكة شركة أو antivirus على الجهاز، الـ app عندهم مش هيشتغل خالص. ده مش bug، ده الـ pinning شغال. لو `issuer` واحد زي proxy شركة مشهورة ملّى Sentry، ده قرار business: نقبل نخسر المستخدمين دول ولا لأ.
+
+### الـ obfuscation: حد فك الـ APK
+
+بعد ما Readly بقى مشهور، حد نشر على GitHub «كل الـ endpoints بتاعة Readly». الـ build كان معمول بـ `--obfuscate` زي [درس الـ release](/course/production/release/). الـ obfuscation بيغيّر أسامي الـ classes والـ functions بس. اللي مابيتغيرش:
+
+- <b>الـ strings:</b> الـ paths زي `/books/{id}/recommendations` و`/admin/stats`، وأسامي الـ flags والـ Remote Config keys، ورسايل الأخطاء.
+- <b>الـ logic:</b> أدوات بتفك الـ AOT snapshot بتاع Flutter وبتطلّع الـ functions والـ calls، والأسامي المتلخبطة بتبطّأ بس.
+- <b>الشبكة:</b> أدوات بتعدّل الـ Flutter engine نفسه جوه الـ APK عشان تبعت الطلبات لـ proxy وتتخطى الـ pinning. يعني الـ pinning بيحمي <b>مستخدمينا</b> من حد على الشبكة، مش بيحمي <b>الـ API بتاعنا</b> من حد عايز يفهمه.
+
+والنتيجة اللي بتغيّر طريقة التفكير: <b>اعتبر الـ client كتاب مفتوح</b>. الـ endpoint اللي «محدش يعرفه» موجود في الـ strings. فكل endpoint بيتشيك على السيرفر: مين بيطلب، ومسموحله ولا لأ (M3). و`/admin/stats` مايتنداش من الـ app خالص، أو بيتحمي بصلاحية على السيرفر مش بإخفاء زرار.
+
+الـ obfuscation لسه يستاهل، بس لأسباب تانية: الـ app بيصغر مع `--split-debug-info`، والـ reverse engineering بياخد وقت أكتر. وتمنه إن الـ symbols لازم تترفع لـ Sentry، وده اتحل في درس الـ release.
+
+### «امنع الموبايلات الـ rooted»
+
+المنتج طلب إن Readly مايشتغلش على موبايل rooted أو jailbroken، بعد ما قرا إن apps البنوك بتعمل كده. قبل ما تضيف package، ارجع للجدول: موبايل rooted مهاجم مفيش حاجة على الجهاز بتوقفه. والـ detection نفسه بيشتغل على الجهاز ده، فنفس الأداة اللي بتقرا الـ token بتخلّي `isRooted` يرجّع `false`.
+
+| الحالة | الـ root detection يستاهل؟ |
+| --- | --- |
+| app بنك أو محفظة | أيوه، كطبقة من طبقات، ومع attestation على السيرفر |
+| محتوى مدفوع عليه DRM | أيوه |
+| ألعاب فيها فلوس أو ترتيب | غالبًا، عشان الغش |
+| Readly | لأ: بيمنع مستخدمين حقيقيين (developers، وناس عاملين custom ROM) ومابيوقفش اللي عايز يأذي |
+
+ولو احتجته، packages زي `freerasp` بتكشف root وjailbreak وhooking (Frida) وإن الـ app اتعدّل واتمضى تاني، وبتديك callback لكل حالة. القرار بعد الـ callback هو المهم: تقفل الـ app؟ تخفي الحاجات الحساسة بس؟ تبلّغ السيرفر بس؟ والأحسن تبلّغ وتقرر على السيرفر، لأن السيرفر مش على جهاز المهاجم.
+
+### الـ script بيستهلك التوصيات: App Check
+
+اللي Readly محتاجه فعلًا هو الصف التالت في الجدول: حد سجّل حساب، وأخد الـ access token، وبقى بيكلّم `/recommendations` من script آلاف المرات في اليوم. الحد لكل مستخدم بيحدد الضرر، بس مابيفرّقش بين الـ app الحقيقي والـ script.
+
+الـ <b>App Check</b> بتاع Firebase بيخلّي الـ app يثبت إنه الـ app الحقيقي على جهاز حقيقي: Play Integrity في Android، وApp Attest أو DeviceCheck في iOS. الـ app بياخد token من Firebase، ويبعته مع الطلب، والـ backend بيتأكد منه.
+
+<CodeBlock label="bootstrap وinterceptor للـ header">
+
+```dart
+// bootstrap, after Firebase.initializeApp
+await FirebaseAppCheck.instance.activate(
+  providerAndroid: config.name == 'prod'
+      ? const AndroidPlayIntegrityProvider()
+      : const AndroidDebugProvider(), // dev/staging: a debug token registered in the console
+  providerApple: config.name == 'prod'
+      ? const AppleAppAttestWithDeviceCheckFallbackProvider()
+      : const AppleDebugProvider(),
+);
+
+// data/network/app_check_interceptor.dart
+class AppCheckInterceptor extends Interceptor {
+  AppCheckInterceptor(this._appCheck);
+  final FirebaseAppCheck _appCheck;
+
+  @override
+  Future<void> onRequest(RequestOptions options, RequestInterceptorHandler handler) async {
+    try {
+      final token = await _appCheck.getToken(); // cached and refreshed by the SDK
+      if (token != null) options.headers['X-Firebase-AppCheck'] = token;
+    } on Object {
+      // no token: send anyway, the server decides (monitor first, enforce later)
+    }
+    handler.next(options);
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ server هو اللي بيقرر:</b> الـ app بيبعت الـ token لو موجود وخلاص. لو الـ app قفل الطلب لما الـ token يفشل، المستخدم اللي Play Services عنده قديمة مش هيعرف يستخدم Readly.
+- <b>monitor الأول:</b> الـ backend بيسجّل نسبة الطلبات اللي من غير token صالح أسبوعين قبل ما يرفض. لو النسبة عالية من نسخ حقيقية، فيه مشكلة في الإعداد مش هجوم.
+- <b>على الـ endpoints الغالية بس في الأول:</b> `/recommendations` لأنه بيدفع فلوس. باقي الـ API عليه الـ access token والـ rate limit.
+- <b>الـ debug provider:</b> كل جهاز dev بيطلّع debug token في الـ logs أول مرة، وبيتسجل في الـ console. ماتحطش الـ debug provider في prod، لأنه بيقبل أي حد معاه الـ token ده.
+
+### الـ logs اللي لسه بتسرّب
+
+في درس الـ Logging عملنا `LoggingInterceptor` بيخفي الـ headers والـ keys الحساسة، وBlocObserver بيسجّل الـ runtimeType بس. مراجعة على Sentry بعد شهر لقت 4 حاجات لسه بتطلع:
+
+| اللي اتسرّب | منين | الحل |
+| --- | --- | --- |
+| باسورد في body طلب تغيير الباسورد | `{"current": {"password": "..."}}`: الـ redact بيشوف أول مستوى بس | redact recursive على الـ maps والـ lists |
+| إيميل المستخدم | رسالة الـ 409 من السيرفر بتقول «x@y مستخدم»، والـ guard بيسجّل `failure.message` | سجّل الـ status والـ code بس، مش الرسالة اللي جاية من السيرفر |
+| اللي المستخدم بيدوّر عليه | breadcrumb فيه URL كامل بالـ query | `beforeBreadcrumb` بيشيل الـ query |
+| `FCM token: ...` | `print` من أيام التجربة | الـ `print` بيوصل الـ logcat حتى في الـ release، فـ lint `avoid_print` |
+
+<CodeBlock label="redact بيدخل جوه الـ body">
+
+```dart
+// LoggingInterceptor: replaces _redact / _redactBody
+Object? _redactDeep(Object? value) => switch (value) {
+      Map<String, dynamic>() => {
+          for (final MapEntry(:key, :value) in value.entries)
+            key: _secretKeys.contains(key.toLowerCase()) ? '***' : _redactDeep(value),
+        },
+      List<dynamic>() => [for (final item in value) _redactDeep(item)],
+      FormData() => '<form-data>', // file uploads: never log the content
+      _ => value,
+    };
+```
+
+</CodeBlock>
+
+<CodeBlock label="آخر شبكة قبل ما أي حاجة تطلع من الجهاز">
+
+```dart
+final _email = RegExp(r'[\w.+-]+@[\w-]+\.[\w.]+');
+
+(options) {
+  // ... dsn, environment, release as before
+  options.sendDefaultPii = false;
+  // sentry 9.x: SDK classes are mutable, copyWith is deprecated
+  options.beforeBreadcrumb = (breadcrumb, hint) {
+    final url = breadcrumb?.data?['url'];
+    if (url is String) breadcrumb!.data!['url'] = url.split('?').first; // no search terms
+    return breadcrumb;
+  };
+  options.beforeSend = (event, hint) {
+    final message = event.message?.formatted;
+    if (message != null) {
+      event.message = SentryMessage(message.replaceAll(_email, '<email>'));
+    }
+    return event;
+  };
+},
+```
+
+</CodeBlock>
+
+<CodeBlock label="analysis_options.yaml">
+
+```yaml
+linter:
+  rules:
+    - avoid_print # print reaches logcat in release builds; use AppLogger
+```
+
+</CodeBlock>
+
+والأهم من كل ده تست بيمسك أي تسريب جديد قبل ما يوصل:
+
+<CodeBlock label="test/core/logging/no_secrets_in_logs_test.dart">
+
+```dart
+class RecordingLogger implements AppLogger {
+  final lines = <String>[];
+  @override
+  void debug(String m) => lines.add(m);
+  @override
+  void info(String m) => lines.add(m);
+  @override
+  void warning(String m, {Object? error}) => lines.add('$m $error');
+  @override
+  void error(String m, {Object? error, StackTrace? stackTrace}) => lines.add('$m $error');
+  @override
+  void setUser(String? id) {}
+}
+
+test('a login and a password change never log credentials', () async {
+  final logger = RecordingLogger();
+  final dio = buildTestDio(logger, adapter: FakeAdapter.ok()); // fake HttpClientAdapter
+  await dio.post('/auth/login', data: {'email': 'sara@readly.app', 'password': 'p4ss'});
+  await dio.post('/me/password', data: {'current': {'password': 'p4ss'}, 'next': 'n3w'});
+
+  final all = logger.lines.join('\n');
+  expect(all, isNot(contains('p4ss')));
+  expect(all, isNot(contains('sara@readly.app')));
+  expect(all, isNot(contains('Bearer')));
+});
+```
+
+</CodeBlock>
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>الترتيب من الـ threat model مش من المقالات:</b> لـ Readly الترتيب كان: الـ authorization على السيرفر لكل endpoint، وبعدين مفيش secrets في الـ app، وبعدين الـ logs، وبعدين App Check على الـ endpoint الغالي، وبعدين قفل البصمة. الـ pinning والـ root detection آخر القايمة أو برّاها. app بنك هيرتّبهم بشكل تاني، وده المقصود.
+- <b>الـ pinning قرار ليه صاحب:</b> لو اتعمل، الـ backend والـ DevOps لازم يعرفوا إن أي تغيير في الـ CA أو الـ CDN بيعدّي على الـ mobile الأول. ده سطر في الـ runbook بتاعهم، مش في الكود بتاعك بس. من غيره، أول migration للـ infrastructure هتوقّع الـ app.
+- <b>Readly قرر من غير pinning دلوقتي:</b> الـ HTTPS العادي بيحمي من الصف الأول، والصف التاني (CA مزيفة على الجهاز) نادر لـ app قراية، والتمن (proxies الشركات، وrotation، وتاريخ الـ enforceUntil) حقيقي. الكود فوق جاهز لو المنتج ضاف حاجة فيها فلوس. والقرار ده نفسه ADR بيتراجع لما الـ threat model يتغير.
+- <b>الـ client مش حدود الثقة:</b> أي قرار مهم بيتاخد على السيرفر: الصلاحيات، والحدود، وإن العملية مسموحة. الـ app بيعرض ويطلب، والسيرفر بيقرر. ده اللي بيخلّي كل حاجة تانية في الدرس (obfuscation، root detection، pinning) طبقات بتصعّب، مش أساس بيحمي.
+- <b>OWASP MASVS لو حد طلب «audit»:</b> الـ Top 10 بيقول المخاطر، والـ MASVS بيقول المطلوب لكل مجال (STORAGE، CRYPTO، AUTH، NETWORK، PLATFORM، CODE، RESILIENCE، PRIVACY). Readly محتاج الأساسي في كله، والـ RESILIENCE (root detection، anti-tampering) لأ.
+- <b>الـ threat model بيتراجع مع الـ features:</b> feature رفع صور للملاحظات؟ مهاجم جديد (ملف خبيث)، ومكان تخزين جديد (الـ temp files)، وbreadcrumb جديد. 10 دقايق في الـ design review أرخص من incident.
+
+<Note kind="interview" title="سؤال interview">
+
+«بتعمل certificate pinning في الـ apps بتاعتك؟» بقرر من الـ threat model: الـ pinning بيحمي من CA مزيفة على الجهاز أو الشبكة، ومابيحميش الـ API من حد بيفك الـ app (الأدوات بتعدّل الـ engine وتتخطاه). لو قررته، بثبّت الـ CA مش الشهادة، لأن الشهادات بتتجدد كل 90 يوم أو أقل. ومعاه CA احتياطية، وتاريخ بعده النسخة القديمة ترجع لـ HTTPS العادي بدل ما تموت، وcheck في الـ CI على الشهادة الحالية، والـ backend عارف إن تغيير الـ CA بيعدّي علينا. وفي Dio بعمله بـ `SecurityContext(withTrustedRoots: false)` في الـ handshake، مش `validateCertificate`، لأن ده بيتنادى بعد ما الطلب بالـ token اتبعت. ولـ app زي Readly غالبًا HTTPS عادي كفاية، وApp Check على الـ endpoints الغالية أهم.
+
+</Note>
+
+</Level>
+
+<Quiz>
+
+<Question id="sec-network-1">
+<Ask>عملت pinning بـ `validateCertificate` في Dio. ليه ده مش كفاية لحماية الـ access token من proxy بشهادة مزيفة؟</Ask>
+<Answer>
+
+لأن الـ adapter بينادي `validateCertificate` بعد ما الـ response يرجع، يعني الـ request بالـ `Authorization` header اتبعت للـ proxy خلاص. التحقق لازم يحصل في الـ handshake: `HttpClient` بـ `SecurityContext(withTrustedRoots: false)` فيه الـ CAs بتاعتنا بس، و`badCertificateCallback` بيرجّع `false` ويبلّغ.
+
+</Answer>
+</Question>
+
+<Question id="sec-network-2">
+<Ask>الـ backend هيحط الـ API ورا CDN جديد الشهر الجاي. الـ app فيه pinning. إيه اللي لازم يحصل قبلها؟</Ask>
+<Answer>
+
+تتأكد إن الـ CA بتاعة الـ CDN في قايمة الـ pins (الاحتياطية) في نسخ موجودة عند أغلب المستخدمين. لو مش موجودة، تنزّل release يضيفها، وتستنى لحد ما النسخ القديمة تقل، وتستخدم الـ `minSupportedBuild` لو لازم. وده لازم يكون مكتوب في الـ runbook بتاع الـ backend عشان مايتفاجئوش. والنسخ اللي محدش حدّثها بترجع لـ HTTPS العادي بعد الـ `enforceUntil`.
+
+</Answer>
+</Question>
+
+<Question id="sec-network-3">
+<Ask>المنتج عايز Readly يقفل على الموبايلات الـ rooted. توافق؟</Ask>
+<Answer>
+
+لأ لـ Readly. الـ detection بيشتغل على نفس الجهاز اللي المهاجم متحكم فيه، فبيتخطاه بنفس الأدوات، وفي نفس الوقت بيمنع مستخدمين حقيقيين. ده يستاهل لبنك أو DRM أو لعبة فيها فلوس، وحتى هناك مع attestation على السيرفر. اللي Readly محتاجه App Check على الـ endpoints الغالية، والـ authorization على السيرفر.
+
+</Answer>
+</Question>
+
+<Question id="sec-network-4">
+<Ask>الـ `LoggingInterceptor` بيخفي `password`، بس باسورد ظهر في Sentry من طلب تغيير الباسورد. ليه، وتمنع ده يتكرر إزاي؟</Ask>
+<Answer>
+
+الـ body كان `{"current": {"password": "..."}}`، والـ redact كان بيشوف أول مستوى بس. الحل redact recursive على الـ maps والـ lists، و`beforeSend` كآخر شبكة، وتست بيعدّي طلبات حقيقية على `RecordingLogger` ويتأكد إن مفيش باسورد ولا إيميل ولا `Bearer` في أي سطر.
+
+</Answer>
+</Question>
+
+</Quiz>

@@ -1,0 +1,41 @@
+<svg viewBox="0 0 760 330" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="threat model لـ Readly: الجهاز والشبكة والـ API والأدوات اللي بنبعتلها بيانات، والمهاجمين على كل طريق">
+<rect x="20" y="50" width="200" height="200" rx="12" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="120" y="74" text-anchor="middle" font-size="13" fill="var(--ink)" font-weight="600">Readly app</text>
+<rect x="36" y="88" width="168" height="34" rx="7" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.2"/>
+<text x="120" y="110" text-anchor="middle" font-size="11" fill="var(--ink)">secure storage: tokens</text>
+<rect x="36" y="132" width="168" height="34" rx="7" fill="var(--surface)" stroke="var(--line)" stroke-width="1.2"/>
+<text x="120" y="154" text-anchor="middle" font-size="11" fill="var(--ink)">drift: notes, library</text>
+<rect x="36" y="176" width="168" height="34" rx="7" fill="var(--surface)" stroke="var(--line)" stroke-width="1.2"/>
+<text x="120" y="198" text-anchor="middle" font-size="11" fill="var(--ink)">no secrets in the binary</text>
+<text x="120" y="234" text-anchor="middle" font-size="10.5" fill="var(--muted)" class="ar" direction="rtl" unicode-bidi="embed">القفل بالبصمة فوق الـ session</text>
+<rect x="540" y="50" width="200" height="56" rx="10" fill="var(--accent)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="640" y="74" text-anchor="middle" font-size="13" fill="#fff" font-weight="600">api.readly.app</text>
+<text x="640" y="93" text-anchor="middle" font-size="10.5" fill="#e8f2fb">authorization on every endpoint</text>
+<rect x="540" y="140" width="200" height="44" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="640" y="167" text-anchor="middle" font-size="12" fill="var(--ink)">openlibrary.org</text>
+<rect x="540" y="210" width="200" height="44" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="640" y="237" text-anchor="middle" font-size="12" fill="var(--ink)">Sentry</text>
+<line x1="222" y1="80" x2="536" y2="80" stroke="var(--good)" stroke-width="1.6" marker-end="url(#mk-good)"/>
+<text x="300" y="72" text-anchor="middle" font-size="11" fill="var(--good)">HTTPS + access token</text>
+<rect x="400" y="88" width="120" height="22" rx="6" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="1.2"/>
+<text x="460" y="103" text-anchor="middle" font-size="10.5" fill="var(--ink)">pinning? (decision)</text>
+<rect x="310" y="6" width="170" height="30" rx="8" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="1.3" stroke-dasharray="5 4"/>
+<text x="395" y="25" text-anchor="middle" font-size="11" fill="var(--ink)">Wi-Fi / proxy / fake CA</text>
+<line x1="395" y1="38" x2="395" y2="76" stroke="var(--warn)" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#mk-warn)"/>
+<rect x="590" y="6" width="150" height="30" rx="8" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="1.3" stroke-dasharray="5 4"/>
+<text x="665" y="25" text-anchor="middle" font-size="11" fill="var(--ink)">script + a stolen token</text>
+<line x1="575" y1="21" x2="575" y2="46" stroke="var(--warn)" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#mk-warn)"/>
+<line x1="588" y1="21" x2="577" y2="21" stroke="var(--warn)" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="520" y="40" text-anchor="middle" font-size="10.5" fill="var(--warn)">App Check</text>
+<line x1="222" y1="162" x2="536" y2="162" stroke="var(--good)" stroke-width="1.6" marker-end="url(#mk-good)"/>
+<text x="380" y="154" text-anchor="middle" font-size="11" fill="var(--good)">HTTPS, never our token</text>
+<line x1="222" y1="232" x2="536" y2="232" stroke="var(--warn)" stroke-width="1.6" marker-end="url(#mk-warn)"/>
+<text x="380" y="224" text-anchor="middle" font-size="11" fill="var(--warn)">redaction + beforeSend</text>
+<text x="380" y="248" text-anchor="middle" font-size="10.5" fill="var(--muted)" class="ar" direction="rtl" unicode-bidi="embed">إحنا نفسنا بالغلط: أكتر حاجة بتحصل</text>
+<rect x="20" y="276" width="200" height="46" rx="10" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="1.3" stroke-dasharray="5 4"/>
+<text x="120" y="295" text-anchor="middle" font-size="11" fill="var(--ink)">decompiled APK, rooted phone,</text>
+<text x="120" y="311" text-anchor="middle" font-size="11" fill="var(--ink)">someone holding it unlocked</text>
+<line x1="120" y1="274" x2="120" y2="254" stroke="var(--warn)" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#mk-warn)"/>
+<text x="490" y="296" text-anchor="middle" font-size="11" fill="var(--good)" class="ar" direction="rtl" unicode-bidi="embed">أخضر: محمي بالإعدادات العادية</text>
+<text x="490" y="314" text-anchor="middle" font-size="11" fill="var(--warn)" class="ar" direction="rtl" unicode-bidi="embed">برتقالي: محتاج قرار من الـ threat model</text>
+</svg>

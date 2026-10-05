@@ -1,0 +1,488 @@
+---
+title: "الـ Feature Flags"
+description: "الـ flag كـ contract في الـ domain وRemote Config وراه في الـ data، والقيم الافتراضية والـ offline وامتى الـ flag يتقري، والـ kill switch والـ rollout والـ A/B، والتست بالقيمتين، والـ flags الميتة اللي لازم تتمسح."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="لوحة الكهربا">
+
+في كل شقة لوحة كهربا، وكل أوضة ليها مفتاح لوحدها. لو التكييف في أوضة النوم عمل ماس، بتفصل الأوضة دي بس، والتلاجة والنور في باقي الشقة شغالين. ولما تركّب نجفة جديدة، بتفصل مفتاحها وانت بتركّب، وبعدين تشغّله وتشوف هل في حاجة غريبة.
+
+بس اللوحة دي ليها قواعد: كل مفتاح عليه ورقة مكتوب عليها بيشغّل إيه. ولو المفتاح وقع لوحده (الكهربا قطعت ورجعت)، الأوضة ترجع لحالة آمنة. ولو أوضة اتهدت وبقت جزء من الصالة، مفتاحها يتشال من اللوحة، وإلا بعد سنتين هتلاقي 30 مفتاح محدش فاكر بيعملوا إيه، ومحدش بيجرؤ يلمسهم.
+
+</Analogy>
+
+الـ <b>feature flag</b> هو المفتاح ده: قيمة بتتحدد من برّه الكود، وبتقرر جزء من الـ app يشتغل ولا لأ. المفتاح اللي بتفصله وقت الحريقة هو الـ <b>kill switch</b>. والنجفة اللي بتجرّبها هي الـ <b>rollout</b> التدريجي. والورقة اللي على المفتاح، والحالة الآمنة لما الكهربا تقطع، والمفتاح اللي بيتشال بعد ما الأوضة تتهد، هم أغلب الدرس ده.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### الـ flag اللي عندنا محتاج release عشان يتقفل
+
+في [درس الـ Refactor](/course/production/refactor/)، الشاشة الجديدة للملاحظات كانت ورا `newNotes`، وده field في الـ `AppConfig` بييجي من `config/prod.json` في [درس الـ release](/course/production/release/). يعني القيمة بتتحط في الـ binary وقت الـ build. لو الشاشة الجديدة طلع فيها bug، الرجوع محتاج release جديد، وreview من الـ store، وأيام لحد ما المستخدمين يعملوا update.
+
+ودرس الـ release قالها في Level 4: لو عايز تقفل حاجة في دقيقة، يبقى flag بيتقري وقت التشغيل من Remote Config، ورا contract `FeatureFlags`. الدرس ده بيبني الـ contract ده. والـ feature اللي هنجرّب عليها هي «هدف القراية السنوي» من [درس «Clean ولا MVVM؟»](/course/production/choose/)، ومعاها التوصيات بالـ AI من [درس الأسرار](/course/production/security-storage/).
+
+### الـ contract في الـ domain
+
+<CodeBlock label="domain/flags/feature_flags.dart">
+
+```dart
+/// Every flag the app reads. Adding one forces a decision everywhere a switch covers them.
+enum Flag {
+  /// Release flag: the yearly reading goal. Off until it's proven.
+  readingGoal(fallback: false, removeBy: '2027-03-01'),
+
+  /// Kill switch: AI recommendations on the book page. On unless we turn it off.
+  recommendations(fallback: true, live: true);
+
+  const Flag({required this.fallback, this.live = false, this.removeBy});
+
+  /// Used before the first fetch, offline, and if the key is missing remotely.
+  final bool fallback;
+
+  /// Live flags may change while the app is open. The rest are fixed per launch.
+  final bool live;
+
+  /// Release flags have an end date. Kill switches don't.
+  final String? removeBy;
+}
+
+abstract interface class FeatureFlags {
+  bool isOn(Flag flag);
+  Stream<bool> watch(Flag flag); // emits for live flags only
+}
+```
+
+</CodeBlock>
+
+- <b>enum مش strings:</b> لو كل شاشة كتبت `isOn('reading_goal')`، غلطة إملائية بترجّع الـ default من غير ما حد ياخد باله، ومسح الـ flag بيبقى بحث بالـ grep. بالـ enum، الـ compiler بيلاقي كل مكان، والمسح بيبقى compile errors.
+- <b>الـ fallback قرار product:</b> مكتوب جنب الـ flag في الـ domain، مش مخبّي في الـ data. وليه قاعدة: release flag الـ fallback بتاعه `false` (الـ feature الجديدة ماتظهرش بالغلط)، وkill switch الـ fallback بتاعه `true` (الـ feature الشغالة ماتختفيش عشان الـ fetch فشل).
+- <b>الـ domain مايعرفش Firebase:</b> مفيش اسم key ولا Remote Config هنا. ده شغل الـ data.
+
+### Remote Config مجرد implementation
+
+<CodeBlock label="data/flags/remote_config_feature_flags.dart">
+
+```dart
+// firebase_remote_config 6.x
+class RemoteConfigFeatureFlags implements FeatureFlags {
+  RemoteConfigFeatureFlags(this._rc, this._logger);
+  final FirebaseRemoteConfig _rc;
+  final AppLogger _logger;
+
+  final _snapshot = <Flag, bool>{};
+  final _changes = StreamController<Set<Flag>>.broadcast();
+  StreamSubscription<RemoteConfigUpdate>? _realtime;
+
+  /// The Remote Config parameter names. Permanent once shipped: old builds read them.
+  static String keyOf(Flag flag) => switch (flag) {
+        Flag.readingGoal => 'reading_goal',
+        Flag.recommendations => 'recommendations_enabled',
+      };
+
+  Future<void> init({required Duration minimumFetchInterval}) async {
+    await _rc.setConfigSettings(RemoteConfigSettings(
+      fetchTimeout: const Duration(seconds: 10),
+      minimumFetchInterval: minimumFetchInterval,
+    ));
+    await _rc.setDefaults({for (final f in Flag.values) keyOf(f): f.fallback});
+    await _rc.activate(); // what the previous launch fetched: no network on the startup path
+    for (final f in Flag.values) {
+      _snapshot[f] = _rc.getBool(keyOf(f));
+    }
+
+    // for the next launch: not awaited, not activated now
+    _rc.fetch().catchError((Object e) => _logger.warning('flags: fetch failed', error: e));
+    _realtime = _rc.onConfigUpdated.listen(
+      _onUpdate,
+      onError: (Object e) => _logger.warning('flags: realtime failed', error: e),
+    );
+  }
+
+  Future<void> _onUpdate(RemoteConfigUpdate update) async {
+    await _rc.activate();
+    final changed = {
+      for (final f in Flag.values)
+        if (f.live && update.updatedKeys.contains(keyOf(f))) f,
+    };
+    for (final f in changed) {
+      _snapshot[f] = _rc.getBool(keyOf(f));
+    }
+    if (changed.isNotEmpty) _changes.add(changed);
+  }
+
+  @override
+  bool isOn(Flag flag) => _snapshot[flag] ?? flag.fallback;
+
+  @override
+  Stream<bool> watch(Flag flag) =>
+      _changes.stream.where((c) => c.contains(flag)).map((_) => isOn(flag));
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="bootstrap: قبل ما أي حد يقرا flag">
+
+```dart
+final flags = RemoteConfigFeatureFlags(FirebaseRemoteConfig.instance, getIt<AppLogger>());
+await flags.init(
+  minimumFetchInterval:
+      config.name == 'prod' ? const Duration(hours: 1) : const Duration(minutes: 5),
+);
+getIt.registerSingleton<FeatureFlags>(flags);
+```
+
+</CodeBlock>
+
+- <b>الـ `init` مابيستناش الشبكة:</b> `setConfigSettings` و`setDefaults` و`activate` كلهم محليين. الـ `fetch` بيشتغل في الخلفية، والقيم الجديدة بتتفعّل في الفتحة الجاية. ده اسمه في docs بتاعة Firebase «load new values for next startup».
+- <b>الـ `minimumFetchInterval`:</b> الافتراضي 12 ساعة. ساعة في prod كفاية مع الـ realtime، و5 دقايق في dev عشان تجرّب. لو نزّلته لـ 0 في prod، Firebase بيعمل throttle للـ app لما يكتر الـ fetch.
+- <b>الـ realtime مش متاح على الويب:</b> Readly موبايل بس، بس لو ضفت web يوم، الـ live flags هتتحدث مع الفتحة الجاية بس.
+
+<Diagram name="d-flags-startup">
+
+الفتحة دي بتستخدم اللي اتجاب في الفتحة اللي قبلها (أو الـ fallback لو أول مرة)، والـ fetch في الخلفية للفتحة الجاية. الـ live flags بس هي اللي بتتغير والـ app مفتوح، عن طريق الـ realtime.
+
+</Diagram>
+
+### الفرق بين الـ flag والـ config
+
+عندنا دلوقتي مكانين بيقرروا سلوك الـ app من برّه الكود، والسؤال «أحط القيمة دي فين؟» هيتسأل في كل PR:
+
+| | `AppConfig` (درس الـ release) | `FeatureFlags` |
+| --- | --- | --- |
+| بيتحدد امتى | وقت الـ build، من `config/<env>.json` | وقت التشغيل، من Remote Config |
+| بيقرر إيه | الـ app بيكلّم مين: `BASE_URL`، والـ DSN، والـ logs | أنهي كود يشتغل: feature تظهر ولا لأ |
+| بيختلف حسب | الـ environment (dev، staging، prod) | المستخدم، والنسبة، والنسخة، والوقت |
+| تغييره | release جديد | دقيقة من الـ console |
+| مثال | `BASE_URL`، `ENABLE_LOGS` | `readingGoal`، `recommendations` |
+
+والاتنين بيتقابلوا في حتة: كل environment ليه Firebase project لوحده (الـ `google-services.json` بيتغير مع الـ `--flavor`)، فـ Remote Config بتاع staging مستقل. الـ QA بيشغّل `reading_goal` لـ 100% في staging، وprod لسه 0%.
+
+القاعدة: لو القيمة بتختلف بين dev وprod وبس، تبقى config. لو عايز تغيّرها من غير release، أو لمستخدمين من غير التانيين، تبقى flag. والـ `NEW_NOTES` اللي في الـ JSON كان flag لابس لبس config، وده سبب إن الرجوع فيه كان محتاج release.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### الشاشة اتغيرت في وش المستخدم
+
+أول نسخة كانت بتعمل `fetchAndActivate()` وهي بتفتح ومن غير ما تستنى، و`isOn` بيقرا `getBool` على طول. المستخدم فتح المكتبة، وبعد ثانيتين الـ fetch خلص، وbanner الهدف السنوي ظهر فوق الكتب وزقّها لتحت وهو بيدوس على كتاب. وفي حالة تانية: فتح صفحة الهدف، والـ flag اتقفل من الـ console، فالصفحة بقت مفتوحة على feature «مش موجودة».
+
+الحل اللي في Level 2: <b>snapshot لكل فتحة</b>. الـ release flags بتتقري مرة في الـ `init` وتفضل ثابتة لحد ما الـ app يتقفل. والـ live flags بس هي اللي بتتغير، وده لأن الـ kill switch معمول عشان يتغير وانت فاتح.
+
+| الـ flag | يتقري امتى | ليه |
+| --- | --- | --- |
+| release flag (`readingGoal`) | مرة عند الـ startup | الـ UI مايتغيرش في نص الاستخدام، والـ routes والـ DI يتقرروا مرة |
+| kill switch (`recommendations`) | لحظيًا، بـ `watch` | لو الـ feature بتوقّع الـ app أو بتصرف فلوس، الاستنى للفتحة الجاية كتير |
+
+ولأن الـ release flags ثابتة طول الفتحة، تقدر تقرر بيها في الـ composition root مرة واحدة، بدل `if` في كل مكان:
+
+<CodeBlock label="di/setup.dart: الـ flag بيختار الـ implementation">
+
+```dart
+getIt.registerLazySingleton<ReadingGoalRepository>(
+  () => getIt<FeatureFlags>().isOn(Flag.readingGoal)
+      ? ReadingGoalRepositoryImpl(getIt(), getIt())
+      : const DisabledReadingGoals(), // increment does nothing, progress is empty
+);
+
+// the router: the route only exists when the flag is on
+if (flags.isOn(Flag.readingGoal))
+  GoRoute(path: '/goals', builder: (_, _) => const GoalsPage()),
+```
+
+</CodeBlock>
+
+كده `MarkBookAsFinished` من درس «Clean ولا MVVM؟» ماتغيرش ولا سطر: بينادي `_goals.increment` زي ما هو، والـ DI هو اللي قرر إن الـ increment ده مابيعملش حاجة. الـ use case يقرا `FeatureFlags` بنفسه بس لو الـ flag بيغيّر قاعدة business جوه العملية نفسها.
+
+### أول فتحة بعد التسطيب، ومن غير نت
+
+مستخدم نزّل Readly في الطيارة. مفيش fetch حصل قبل كده، فالقيم كلها هي الـ `setDefaults`، يعني الـ `fallback` بتاع كل flag. وده بالظبط سبب قاعدة الـ fallback:
+
+- <b>`readingGoal`</b> بـ `false`: المستخدم مش هيشوف feature لسه في الـ rollout، حتى لو كان في الـ 5%.
+- <b>`recommendations`</b> بـ `true`: التوصيات ظاهرة، ولما النت يرجع الطلب نفسه بيروح للـ API. لو كان الـ fallback `false`، كل مستخدم من غير نت في أول فتحة كان هيخسر feature شغالة.
+
+وبعد أول fetch ناجح، Remote Config بيحفظ القيم على الجهاز، فالفتحات الجاية من غير نت بتستخدم آخر قيم وصلت مش الـ fallback. والـ `lastFetchStatus` و`lastFetchTime` بيقولولك ده حصل امتى، لو عايز تعرضه في شاشة debug.
+
+### الـ kill switch: التوصيات بتوقّع الـ app
+
+بعد release، Sentry بيقول إن `RecommendationsSection` بيرمي exception مع نوع معين من الكتب، وده 4% من الـ crashes. الـ fix محتاج يومين وreview من الـ store. في الوقت ده، `recommendations_enabled` بيتقلب `false` من الـ console، والـ realtime بيوصل للـ apps المفتوحة في ثواني:
+
+<CodeBlock label="RecommendationsCubit: الـ kill switch بيوقّف الطلبات مش بس الـ UI">
+
+```dart
+sealed class RecommendationsState {
+  const RecommendationsState();
+}
+final class RecommendationsHidden extends RecommendationsState {
+  const RecommendationsHidden();
+}
+final class RecommendationsLoading extends RecommendationsState {
+  const RecommendationsLoading();
+}
+final class RecommendationsLoaded extends RecommendationsState {
+  const RecommendationsLoaded(this.books);
+  final List<Book> books;
+}
+
+class RecommendationsCubit extends Cubit<RecommendationsState> {
+  RecommendationsCubit(this._repository, this._flags, this._bookId)
+      : super(const RecommendationsHidden()) {
+    _sub = _flags.watch(Flag.recommendations).listen((on) => on ? load() : _hide());
+  }
+
+  final RecommendationsRepository _repository;
+  final FeatureFlags _flags;
+  final BookId _bookId;
+  late final StreamSubscription<bool> _sub;
+
+  Future<void> load() async {
+    if (!_flags.isOn(Flag.recommendations)) return; // turned off: no request at all
+    emit(const RecommendationsLoading());
+    final result = await _repository.forBook(_bookId);
+    if (isClosed || !_flags.isOn(Flag.recommendations)) return; // turned off meanwhile
+    emit(switch (result) {
+      Success(:final value) when value.isNotEmpty => RecommendationsLoaded(value),
+      _ => const RecommendationsHidden(), // a failure hides the section, the page stays
+    });
+  }
+
+  void _hide() => emit(const RecommendationsHidden());
+
+  @override
+  Future<void> close() async {
+    await _sub.cancel();
+    return super.close();
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الطلب مابيتبعتش:</b> لو الـ endpoint نفسه هو المشكلة (بطيء، أو الخدمة بتاعة الـ AI بتصرف أكتر من المتوقع)، إخفاء الـ widget بس مش كفاية.
+- <b>الـ kill switch على الـ client مش لوحده:</b> النسخ القديمة اللي مافيهاش الـ flag ده لسه بتطلب `/recommendations`. فالـ backend لازم يقدر يقفل نفس الـ endpoint عنده ويرجّع رد فاضي. الـ flag بيحمي الـ app، والـ backend بيحمي الـ backend.
+- <b>الـ kill switch بيتجرّب قبل ما تحتاجه:</b> مرة في staging، اقلبه والـ app مفتوح، واتأكد إن السكشن اختفى ومفيش طلبات. الـ kill switch اللي ماتجرّبش زي طفاية حريق محدش فتحها.
+
+### الـ rollout التدريجي
+
+`readingGoal` خلص والـ QA وافق. بدل ما يتشغّل لكل الناس مرة واحدة، Remote Config فيه conditions، منها «User in random percentile». الـ rollout بيمشي بالخطوات دي:
+
+1. <b>staging 100%</b>: الـ QA والفريق.
+2. <b>prod 5%</b>: condition بـ random percentile من 0 لـ 5. الـ percentile ثابت لكل installation، فنفس المستخدم يفضل في نفس المجموعة.
+3. <b>20%، وبعدين 50%، وبعدين 100%</b>: كل خطوة بعد يومين من غير مشاكل.
+
+بس «من غير مشاكل» محتاجة تتقاس. Sentry لازم يعرف كل crash كان والـ flag شغال ولا لأ، وإلا الـ 5% هيتوهوا وسط الـ 95%:
+
+<CodeBlock label="bootstrap: الـ flags كـ tags على كل event">
+
+```dart
+await Sentry.configureScope((scope) async {
+  for (final f in Flag.values) {
+    await scope.setTag('flag.${f.name}', flags.isOn(f) ? 'on' : 'off');
+  }
+});
+```
+
+</CodeBlock>
+
+كده في Sentry تفلتر `flag.readingGoal:on` وتقارن الـ crash-free sessions بين المجموعتين. ولو المجموعة اللي الـ flag عندها شغال أسوأ، ترجع الـ percentile لـ 0 وانت لسه عند 5% من المستخدمين مش كلهم.
+
+والـ rollout بالـ flag غير الـ staged rollout بتاع Play في درس الـ release: Play بيوزّع <b>النسخة</b> كلها على نسبة، والـ flag بيوزّع <b>feature</b> جوه نسخة عند الكل. الاتنين مع بعض: النسخة اللي فيها الـ feature بتنزل staged، والـ feature نفسها بتتشغّل بعد ما النسخة توصل لأغلب الناس.
+
+### A/B testing مش rollout
+
+المنتج سأل: «نعرض الهدف السنوي بعد أول كتاب يخلص ولا في الإعدادات؟». ده مش سؤال «الـ feature بايظة ولا لأ». ده سؤال «أنهي واحدة أحسن»، ومحتاج حاجات الـ rollout مش محتاجها:
+
+| | rollout | A/B test |
+| --- | --- | --- |
+| السؤال | الـ feature آمنة؟ | أنهي نسخة أحسن؟ |
+| بنقيس إيه | crashes وأخطاء | metric متحدد قبل ما تبدأ (مثلًا: نسبة اللي حطوا هدف) |
+| النسب | 5% ← 100% | 50/50 عادةً، وثابتة لحد ما التجربة تخلص |
+| الآخر | الكل على النسخة الجديدة | النسخة اللي كسبت، والتانية تتمسح |
+
+Firebase A/B Testing مبني على Remote Config وAnalytics: بيوزّع المستخدمين على variants، وبيقيس event زي `reading_goal_set`. من ناحية الكود، الـ variant قيمة تانية ورا contract، بنوع واضح مش string:
+
+<CodeBlock label="التجربة ليها نوع، والـ control هو الـ fallback">
+
+```dart
+// domain/flags/experiments.dart
+enum GoalPrompt { inSettings, afterFirstFinishedBook } // inSettings is the control
+
+abstract interface class Experiments {
+  GoalPrompt get goalPrompt;
+}
+
+// data: an unknown value from the console falls back to the control
+@override
+GoalPrompt get goalPrompt =>
+    GoalPrompt.values.asNameMap()[_rc.getString('exp_goal_prompt')] ?? GoalPrompt.inSettings;
+```
+
+</CodeBlock>
+
+والسؤال المهم قبل أي تجربة: عندك مستخدمين كفاية؟ لو Readly فيه 2000 مستخدم نشط، والفرق المتوقع 2%، التجربة هتاخد شهور عشان النتيجة تبقى حقيقية مش صدفة. ساعات القرار الصح إنك تختار بالمنطق وتقيس بعدها.
+
+### إزاي تختبر الشاشة بالقيمتين
+
+<CodeBlock label="test/fakes/fake_feature_flags.dart">
+
+```dart
+class FakeFeatureFlags implements FeatureFlags {
+  FakeFeatureFlags([Map<Flag, bool> values = const {}]) : _values = {...values};
+  final Map<Flag, bool> _values;
+  final _changes = StreamController<Flag>.broadcast();
+
+  @override
+  bool isOn(Flag flag) => _values[flag] ?? flag.fallback; // unset: the real fallback
+
+  @override
+  Stream<bool> watch(Flag flag) =>
+      _changes.stream.where((f) => f == flag).map((_) => isOn(flag));
+
+  void set(Flag flag, bool on) {
+    _values[flag] = on;
+    _changes.add(flag);
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="widget test بالقيمتين، وblocTest للـ kill switch">
+
+```dart
+final goal = ValueVariant<bool>({false, true});
+
+testWidgets('library shows the goal banner only when the flag is on', (tester) async {
+  getIt.registerSingleton<FeatureFlags>(FakeFeatureFlags({Flag.readingGoal: goal.currentValue!}));
+  await tester.pumpWidget(testApp(const LibraryPage()));
+  expect(find.byType(GoalBanner), goal.currentValue! ? findsOneWidget : findsNothing);
+  expect(find.byType(BookTile), findsWidgets); // the library itself works either way
+}, variant: goal);
+
+blocTest<RecommendationsCubit, RecommendationsState>(
+  'turning the kill switch off hides the section while open',
+  setUp: () => flags = FakeFeatureFlags({Flag.recommendations: true}),
+  build: () => RecommendationsCubit(FakeRecommendationsRepository.withBooks(), flags, bookId),
+  act: (cubit) async {
+    await cubit.load();
+    flags.set(Flag.recommendations, false);
+  },
+  expect: () => [isA<RecommendationsLoading>(), isA<RecommendationsLoaded>(), isA<RecommendationsHidden>()],
+);
+```
+
+</CodeBlock>
+
+- <b>الـ `ValueVariant`:</b> نفس اللي استخدمناه في درس الـ Refactor للشاشة القديمة والجديدة: تست واحد بيشتغل مرتين، والجزء اللي مش المفروض يتغير (المكتبة نفسها) بيتأكد في الحالتين.
+- <b>مش كل التوافيق:</b> 5 flags يعني 32 توافيق. كل flag يتختبر بقيمتيه، والباقي على الـ fallback. لو اتنين flags بيأثروا على بعض، ده علامة إنهم لازم يبقوا flag واحد، أو إن واحد فيهم لازم يتمسح.
+- <b>تست للـ fallbacks نفسها:</b> لو حد غيّر `recommendations` لـ `fallback: false` بالغلط، التست اللي بيعمل `FakeFeatureFlags()` فاضي هيوري إن السكشن اختفى.
+
+### 14 flag، ونص محدش فاكره
+
+بعد سنة، الـ enum فيه 14 flag. 6 منهم 100% في الـ console من شهور، والكود القديم ورا كل واحد لسه موجود ومحدش بيختبره. ونفس قصة `kNewsCommentsEnabled` اللي هتلاقيها في [درس Escore](/course/production/escore/): الكومنت بيقول حاجة، والقيمة حاجة تانية.
+
+<Diagram name="d-flags-lifecycle">
+
+حياة الـ release flag: بيتولد بتاريخ نهاية، ويتشغّل في staging، وبعدين rollout، وبعد ما يوصل 100% ويثبت، الكود يتمسح الأول. الـ parameter في الـ console بيتمسح في الآخر خالص، بعد ما الـ minSupportedBuild يعدّي النسخة اللي شالت الـ flag.
+
+</Diagram>
+
+<b>التاريخ في الـ enum بيبقى تست:</b>
+
+<CodeBlock label="test/flags/no_overdue_flags_test.dart">
+
+```dart
+test('no release flag outlives its removeBy date', () {
+  final today = DateTime.now();
+  final overdue = Flag.values.where(
+    (f) => f.removeBy != null && today.isAfter(DateTime.parse(f.removeBy!)),
+  );
+  expect(overdue, isEmpty,
+      reason: 'Remove these flags, or move the date in a PR that says why: $overdue');
+});
+```
+
+</CodeBlock>
+
+التست ده بيوقع في يوم معين من غير ما حد يغيّر كود، وده المقصود: حد لازم ياخد قرار. يا يمسح الـ flag، يا يأجّل التاريخ في PR فيه السبب.
+
+<b>المسح بالترتيب ده:</b>
+
+1. <b>الـ flag 100% بقاله أسبوعين</b>، وSentry مافيهوش فرق بين `on` و`off`.
+2. <b>PR بيمسح الـ enum value:</b> الـ compiler بيطلّع كل مكان بيستخدمه: الـ DI، والـ router، والـ `keyOf`، والتستات. الفرع القديم يتمسح (`DisabledReadingGoals` مثلًا)، والـ `ValueVariant` يتشال من التستات.
+3. <b>الـ parameter في الـ console يفضل على `true`:</b> النسخ القديمة عند المستخدمين لسه بتقرا `reading_goal`. لو مسحته، هيرجعوا للـ fallback (`false`)، والـ feature هتختفي عندهم فجأة.
+4. <b>بعد ما الـ `minSupportedBuild`</b> بتاع درس الـ release يعدّي النسخة اللي فيها الـ PR ده، امسح الـ parameter من الـ console.
+
+والـ kill switches مالهاش تاريخ لأنها دايمة. بس بتتراجع مرة في السنة: الـ feature لسه موجودة؟ الـ kill switch لسه بيقفل حاجة حقيقية؟
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>أنواع الـ flags مختلفة في عمرها:</b> release flag (أسابيع، وبيتمسح)، وkill switch (دايم)، وexperiment (لحد ما التجربة تخلص)، وpermission flag (feature للـ premium مثلًا). كل نوع ليه fallback مختلف وقاعدة مسح مختلفة، فاكتب النوع في الـ doc comment بتاع كل flag.
+- <b>الـ flag مش صلاحية:</b> قيم Remote Config بتوصل للـ app، يعني أي حد يقدر يقراها، وapp متعدّل يقدر يقلبها. feature مدفوعة ورا flag بس هتشتغل لأي حد فك الـ app ([درس الشبكة](/course/production/security-network/)). الصلاحية على السيرفر، والـ flag بيقرر الـ UI يظهر ولا لأ. ونفس السبب: مفيش secrets في Remote Config.
+- <b>Remote Config ولا حاجة تانية؟</b> Remote Config مجاني ومعاه A/B وconditions، وReadly أصلًا على Firebase للـ push. LaunchDarkly وأمثاله فيهم targeting أدق وaudit log وflags على السيرفر والـ app مع بعض، بفلوس. وendpoint بتاعك (`GET /flags`) بيدّيك تحكم كامل وقيم مربوطة بالمستخدم، وتمنه إنك بتبني الـ caching والـ targeting بنفسك. ولأن الكل بيكلّم `FeatureFlags`، التبديل class واحدة في الـ data.
+- <b>override محلي في dev:</b> شاشة debug بتقلب أي flag على الجهاز، بـ decorator حوالين الـ implementation الحقيقية: `OverridableFeatureFlags(RemoteConfigFeatureFlags(...), prefs)`، ومتسجّل في dev وstaging بس. الـ QA بيجرّب الحالتين من غير ما يلمس الـ console اللي كل الفريق شغال عليه.
+- <b>flag جديد ليه تمن:</b> فرع زيادة في الكود، وتست بالقيمتين، وتنضيف بعدين. «نحط flag احتياطي» على كل حاجة بيعمل الكود اللي محدش فاهمه. الـ flag بيستاهل لما الـ feature خطيرة، أو كبيرة ومحتاجة rollout، أو بتصرف فلوس.
+- <b>الـ flags في الـ Domain بحساب:</b> الـ contract في الـ domain عشان أي طبقة تقدر تسأل. بس أغلب القرارات مكانها الحافة: الـ DI والـ router والـ widget. لو use cases كتير بقت بتقرا flags، الـ business logic بقت متوزعة على حالتين في كل مكان.
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي بتعمل feature flags في Flutter؟» contract `FeatureFlags` في الـ domain، والـ flags enum كل واحد معاه fallback ونوعه (release، kill switch). وRemote Config implementation في الـ data: `setDefaults` من الـ fallbacks، و`activate` للقيم اللي اتجابت في الفتحة اللي قبلها، و`fetch` في الخلفية للفتحة الجاية، فالـ startup مابيستناش شبكة والـ UI مابيتغيرش في نص الاستخدام. الـ kill switches بس بتتحدث لحظيًا بـ `onConfigUpdated`، وبتوقّف الطلبات مش الـ UI بس. الـ release flag الـ fallback بتاعه off، والـ kill switch on، عشان أول فتحة من غير نت ماتكسرش حاجة. الـ rollout بـ percentile، والـ flags tags في Sentry عشان أقارن المجموعتين. التست بـ fake والقيمتين بـ `ValueVariant`. وكل release flag ليه تاريخ مسح بيبقى تست بيوقع، والـ parameter في الـ console مابيتمسحش غير بعد ما النسخ القديمة تبطّل تقراه.
+
+</Note>
+
+</Level>
+
+<Note kind="info" title="الخطوة الجاية">
+
+كده خلصت دروس الوحدة. اعمل مهامها في درس «التطبيق والمهام»، وبعدها راجع كل حاجة من صفحة المراجعة: الكروت اللي علّمتها «راجعها تاني» وأسئلة الـ interviews.
+
+</Note>
+
+<Quiz>
+
+<Question id="flags-1">
+<Ask>`recommendations` kill switch. الـ fallback بتاعه يبقى `true` ولا `false`، وليه؟</Ask>
+<Answer>
+
+`true`. الـ fallback بيتستخدم قبل أول fetch ومن غير نت ولو الـ key مش موجود. لو كان `false`، أي مستخدم في أول فتحة من غير نت هيخسر feature شغالة عشان الـ fetch ماحصلش. الـ kill switch بيتقفل بقرار صريح من الـ console، مش بفشل شبكة. وللـ release flags العكس: `false`، عشان feature لسه في الـ rollout ماتظهرش بالغلط.
+
+</Answer>
+</Question>
+
+<Question id="flags-2">
+<Ask>ليه `init` بيعمل `activate` للقيم القديمة و`fetch` من غير `activate`، بدل `fetchAndActivate` واستنى؟</Ask>
+<Answer>
+
+عشان الـ startup مايستناش شبكة، وعشان الـ UI مايتغيرش قدام المستخدم لما الـ fetch يخلص بعد ثانيتين. القيم اللي اتجابت بتتفعّل في الفتحة الجاية. الاستثناء الـ live flags (الـ kill switches)، ودي بتتحدث بـ `onConfigUpdated` لأنها معمولة عشان تتغير والـ app مفتوح.
+
+</Answer>
+</Question>
+
+<Question id="flags-3">
+<Ask>`readingGoal` بقاله شهر 100%، ومسحته من الكود في نسخة 1.9. ينفع تمسح الـ parameter من Remote Config دلوقتي؟</Ask>
+<Answer>
+
+لأ. النسخ الأقدم من 1.9 لسه بتقرا `reading_goal`، ولو اتمسح هترجع للـ fallback (`false`) والـ feature هتختفي عندهم. سيبه على `true` لحد ما الـ `minSupportedBuild` يعدّي 1.9، وبعدين امسحه.
+
+</Answer>
+</Question>
+
+<Question id="flags-4">
+<Ask>`BASE_URL` و`readingGoal` و`ENABLE_LOGS` و`recommendations`: أنهي config وأنهي flag؟</Ask>
+<Answer>
+
+`BASE_URL` و`ENABLE_LOGS` config: بيختلفوا بين الـ environments وبيتحددوا وقت الـ build في `config/<env>.json`. `readingGoal` و`recommendations` flags: عايز تغيّرهم من غير release، ولنسبة من المستخدمين، فبييجوا من Remote Config ورا `FeatureFlags`.
+
+</Answer>
+</Question>
+
+</Quiz>

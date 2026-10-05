@@ -1,0 +1,496 @@
+---
+title: "الأسرار والتخزين الحساس"
+description: "إيه اللي ماينفعش يدخل الـ app أصلًا، والـ flutter_secure_storage بيحمي من مين ومش بيحمي من مين، والبصمة كطبقة فوق الـ session، والـ logout اللي مابيسيبش أثر في أي حتة."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="خزنة أوضة الفندق">
+
+في أوضة الفندق خزنة صغيرة بتحط فيها الباسبور والفلوس. الخزنة دي بتحميك من عامل النظافة ومن اللي يدخل الأوضة بالغلط. بس هي مش بتحميك من الفندق نفسه: الإدارة معاها كود يفتح أي خزنة. وفيه حاجات ماينفعش تبقى في الأوضة أصلًا، زي المفتاح الماستر بتاع الفندق كله: لو اتنسى في أوضة، أي نزيل يفتح أي باب، ومش هتنفع خزنة.
+
+ولما تسيب الأوضة، مش كفاية تاخد الباسبور من الخزنة. بتبص تحت السرير وفي الحمام وفي الدرج، لأن الحاجة اللي بتنساها هي اللي بتلاقيها مع النزيل اللي بعدك.
+
+</Analogy>
+
+في Readly، الخزنة هي الـ <b>flutter_secure_storage</b>: بتحمي الـ tokens من باقي الـ apps ومن الـ backups. بس اللي ماسك موبايل rooted، أو حد في إيده موبايلك وهو مفتوح، ده «الإدارة». والمفتاح الماستر هو أي <b>secret</b> حقيقي (مفتاح API مدفوع، باسورد قاعدة بيانات): ده مايدخلش الـ app خالص، مهما كانت الخزنة كويسة. والأوضة اللي بتفضّيها هي الـ logout: الـ tokens والـ DB في درس الـ Session، وبعدهم كل الأماكن اللي اتنست.
+
+الدرس ده بيجاوب على 3 أسئلة:
+
+- إيه اللي مايتحطش في الـ app أصلًا، وإزاي تمسكه قبل ما يتشحن؟
+- الـ secure storage بيحمي من مين بالظبط، وإيه حدوده؟
+- البصمة بتضيف إيه فوق الـ session، ومش بتضيف إيه؟
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### الجرد: كل حاجة في Readly عايشة فين
+
+قبل أي كود، اكتب جدول بكل حاجة الـ app بيعرفها، وصنّفها. ده أول سطر في أي قرار security: ماتقدرش تحمي حاجة مش عارف إنها موجودة.
+
+| الحاجة | التصنيف | مكانها | لو اتسرّبت |
+| --- | --- | --- | --- |
+| مفتاح خدمة التوصيات بالـ AI | secret | السيرفر بس | فاتورة على حسابنا، وأي حد يستخدم الخدمة باسمنا |
+| الـ refresh token | credential | flutter_secure_storage | اللي ياخده يبقى هو المستخدم لحد ما يتلغي |
+| الـ access token | credential | secure storage، ونسخة في الذاكرة | نفس الكلام لحد ما يخلص (دقايق) |
+| الملاحظات | بيانات شخصية | drift (`AppDatabase`) | كلام المستخدم نفسه |
+| المكتبة وصور الأغلفة | بيانات شخصية خفيفة | drift، والـ disk cache بتاع `cached_network_image` | بتقول المستخدم بيقرا إيه |
+| الإيميل والـ userId | تعريف | drift (`ownerId`) | بيربط البيانات بشخص |
+| `BASE_URL` و`SENTRY_DSN` ومفتاح Firebase | config عام | `config/*.json` و`firebase_options.dart` | مش مشكلة لوحدها، والحماية بالقيود مش بالإخفاء |
+| الثيم واللغة وقفل البصمة | تفضيلات | shared_preferences | مفيش |
+
+العمود الأخير هو اللي بيحدد كل حاجة تانية. الـ secret مالوش مكان في الجدول ده غير «السيرفر»، والسبب كله في [درس الـ Flavors والـ release](/course/production/release/): أي string في الـ binary بيطلع بـ `strings` على `libapp.so`، و`--obfuscate` و`--dart-define` مش استثناء. مش هنعيد الشرح هنا، هنكمّل من بعده.
+
+### مفتاح Firebase مش secret، ومفتاح الـ AI secret
+
+الفرق مش في شكل المفتاح، الفرق في <b>المفتاح ده بيقدر يعمل إيه لوحده</b>:
+
+- <b>مفتاح Firebase</b> في `firebase_options.dart` و`google-services.json` بيقول للـ SDK «أنا app كذا». مابيفتحش بيانات: اللي بيحمي Firestore وStorage هو الـ Security Rules، واللي بيحمي الـ backend من scripts هو App Check (في الدرس الجاي). فالملف ده يتعمله commit عادي، وتقفل المفتاح من الـ console على الـ package name وبصمة التوقيع.
+- <b>مفتاح الـ AI</b> بيدفع فلوس وبيرجّع نتايج لأي حد معاه. ده لو اتشحن، اتسرق. فالـ app بيكلّم الـ backend بتاعنا، والـ backend بيكلّم الخدمة:
+
+<CodeBlock label="data/recommendations/recommendations_remote_source.dart">
+
+```dart
+// the app talks to our API; the AI key lives on the server only
+class RecommendationsRemoteSource {
+  RecommendationsRemoteSource(this._dio); // the 'api' Dio: AuthInterceptor attached
+  final Dio _dio;
+
+  Future<List<BookDto>> forBook(String bookId) async {
+    final res = await _dio.get<List<dynamic>>('/books/$bookId/recommendations');
+    return res.data!.map((e) => BookDto.fromJson(e as Map<String, dynamic>)).toList();
+  }
+}
+```
+
+</CodeBlock>
+
+كده الـ backend بيعرف مين بيطلب (الـ access token)، فيقدر يحط حد لكل مستخدم في اليوم. ولو حد سرق token، الضرر محدود بالحد ده، مش بفاتورة مفتوحة.
+
+### الـ CI بيمسك الـ secret قبل ما يتشحن
+
+القاعدة لوحدها مش كفاية، لأن حد هيحط مفتاح «مؤقتًا» في يوم. خطوتين في الـ CI بيمسكوه في مكانين مختلفين:
+
+<CodeBlock label=".github/workflows/ci.yml: قبل الـ build وبعده">
+
+```yaml
+- uses: actions/checkout@v4
+  with:
+    fetch-depth: 0 # the whole history: a key deleted last month is still leaked
+
+- name: Secret scan (repo)
+  run: |
+    docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest \
+      git /repo --redact --exit-code 1
+
+# ... flutter build appbundle as in the release workflow ...
+
+- name: Secret scan (binary)
+  run: |
+    unzip -p build/app/outputs/bundle/prodRelease/app-prod-release.aab \
+      base/lib/arm64-v8a/libapp.so | strings > libapp.txt
+    if grep -E -f tool/forbidden_patterns.txt libapp.txt; then
+      echo "A secret is inside the app binary"; exit 1
+    fi
+```
+
+</CodeBlock>
+
+<CodeBlock label="tool/forbidden_patterns.txt">
+
+```text
+sk-[A-Za-z0-9]{20,}
+-----BEGIN (RSA |EC )?PRIVATE KEY-----
+AKIA[0-9A-Z]{16}
+```
+
+</CodeBlock>
+
+- <b>الـ gitleaks على الـ repo كله:</b> بيدوّر في كل الـ commits مش آخر واحد بس. مفتاح اتمسح من شهر لسه في الـ history، ولازم يتغير (rotate) مش يتمسح بس.
+- <b>الـ `strings` على الـ binary:</b> بيمسك اللي الـ gitleaks مايشوفوش: secret داخل من `--dart-define` في الـ CI نفسه، أو من ملف بيتولّد وقت الـ build. الـ patterns دي على حسب الخدمات اللي بتستخدمها.
+- <b>الـ `--redact`:</b> الـ CI log نفسه مايطبعش المفتاح اللي لقاه.
+
+### الـ secure storage: نفس الـ SecureTokenStore بإعدادات صريحة
+
+الـ `SecureTokenStore` بتاع [درس الـ Session](/course/di-scale/session/) كان بيستخدم `const FlutterSecureStorage()` بالإعدادات الافتراضية. الإعدادات دي اتغيرت كتير في آخر نسختين من الـ package، فالأحسن تكتب اللي انت عايزه صريح:
+
+<CodeBlock label="di/setup.dart: الـ storage بإعدادات مكتوبة">
+
+```dart
+// flutter_secure_storage 11.x
+const secureStorage = FlutterSecureStorage(
+  aOptions: AndroidOptions(), // RSA OAEP + AES-GCM, Keystore-backed: the 11.x defaults
+  iOptions: IOSOptions(
+    // readable after the first unlock (background sync), and never restored
+    // to another device from an encrypted backup
+    accessibility: KeychainAccessibility.first_unlock_this_device,
+  ),
+);
+
+final tokens = SecureTokenStore(secureStorage, prefs);
+await tokens.clearIfReinstalled(); // the Session lesson: iOS keeps Keychain items
+```
+
+</CodeBlock>
+
+- <b>Android:</b> من النسخة 10، `encryptedSharedPreferences` بقى deprecated (مكتبة Jetpack Security نفسها اتوقفت)، وفي 11 اتشال خالص. الـ package بقى بيشفّر بنفسه: مفتاح RSA في الـ Keystore بيحمي مفتاح AES-GCM اللي بيشفّر القيم. والنسخة 11 محتاجة `minSdk 24`.
+- <b>iOS:</b> الـ `first_unlock` هو اللي قلناه في درس الـ Session عشان الـ sync في الخلفية. الـ `_this_device` بيزوّد إن الـ token مايتنقلش لموبايل تاني مع الـ backup المتشفّر بتاع iCloud. وده نفس اللي عملناه في Android بالـ `data_extraction_rules` في [درس التخزين المحلي](/course/data-network/local-storage/): المكتبة تتنقل، والـ tokens لأ، والمستخدم يعمل login مرة على الموبايل الجديد.
+- <b>الترقية من نسخة قديمة:</b> النسخة 10 فيها `migrateOnAlgorithmChange` بينقل القيم المحفوظة للتشفير الجديد، والنسخة 11 شالت الـ algorithms القديمة خالص (حسب الـ changelog). فلو الـ app عندك على 9 أو أقدم، الطريق الآمن release على 10 الأول، وبعد ما أغلب المستخدمين يفتحوه، 11. لو قفزت على طول، اعتبر إن الكل هيعمل login تاني، واعرف ده قبل الـ release مش بعده.
+- <b>الـ `resetOnError`:</b> بقى `true` افتراضيًا من النسخة 10. لو مفتاح الـ Keystore ضاع، الـ package بيمسح القيم بدل ما يرمي exception. يعني الـ «logout الغامض» اللي اتكلمنا عنه في درس التخزين المحلي حالة متوقعة، والـ AuthCubit بيعاملها زي أي session مافيهاش token.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### الـ secure storage بيحمي من مين بالظبط؟
+
+مراجعة security سألت: «الـ tokens متشفرة، يبقى إحنا في الأمان؟». الإجابة الصح جدول، مش أيوه أو لأ:
+
+| المهاجم | الـ secure storage بيحمي؟ | ليه |
+| --- | --- | --- |
+| app تاني على نفس الموبايل | أيوه، والـ sandbox كمان | كل app ليه فولدر مايقدرش غيره يقراه |
+| حد سحب backup للموبايل | أيوه | القيم متشفرة، والمفتاح في الـ Keystore مابيطلعش، وكمان مستثنيين من الـ backup |
+| حد لقى الموبايل مقفول | أيوه | الـ Keychain والـ Keystore محتاجين الجهاز يتفتح |
+| حد ماسك الموبايل وهو مفتوح | لأ | الـ app بيفتح على الحساب لوحده، وده بالظبط شغل الـ auto-login |
+| موبايل rooted والـ app شغال | لأ | أداة زي Frida بتقرا القيمة من الذاكرة بعد ما الـ app فكّها، أو بتنادي نفس الـ API |
+| malware بصلاحيات accessibility | لأ | بيقرا الشاشة نفسها |
+
+السطرين اللي فيهم «لأ» مش bug في الـ package، دول حدود أي حاجة بتشتغل على جهاز المستخدم. الحماية الحقيقية منهم على السيرفر: access token عمره دقايق، وrefresh token يتلغي، وشاشة «الأجهزة المتسجلة» فيها «اخرج من كل الأجهزة». والسطر الرابع هو اللي البصمة بتحله، وده الجزء الجاي.
+
+### «عايزين قفل للـ app»: البصمة فوق الـ session
+
+المستخدمين طلبوا قفل: الملاحظات فيها كلام شخصي، والموبايل ساعات في إيد حد تاني. الحل <b>طبقة فوق الـ session</b>، مش بديل عنها:
+
+- الـ session لسه زي ما هي: الـ tokens في الـ secure storage، والـ AuthCubit بيقول Authenticated.
+- القفل بيسأل سؤال تاني: «اللي ماسك الموبايل دلوقتي هو صاحبه؟». ده قرار محلي على الجهاز، والسيرفر مالوش دعوة بيه.
+
+<Diagram name="d-sec-app-lock">
+
+البصمة بتشتغل جوه حالة Authenticated بس. لو اتقفلت أو فشلت، المستخدم بيرجع لنفس الـ session، أو بيعمل logout ويدخل بالباسورد. مفيش حالة الـ app فيها مقفول والمستخدم مالوش طريق يخرج.
+
+</Diagram>
+
+الـ `local_auth` كله native وstatic تقريبًا، فبيستخبى ورا interface صغير زي ما عملنا مع `PushMessaging`:
+
+<CodeBlock label="core/security/biometric_gate.dart">
+
+```dart
+enum UnlockResult { unlocked, cancelled, lockedOut, unavailable }
+
+abstract interface class BiometricGate {
+  Future<bool> get isAvailable; // biometrics or a device PIN/pattern
+  Future<UnlockResult> unlock(String reason);
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="data/security/local_auth_biometric_gate.dart">
+
+```dart
+// local_auth 3.x
+class LocalAuthBiometricGate implements BiometricGate {
+  LocalAuthBiometricGate(this._auth);
+  final LocalAuthentication _auth;
+
+  @override
+  Future<bool> get isAvailable => _auth.isDeviceSupported();
+
+  @override
+  Future<UnlockResult> unlock(String reason) async {
+    try {
+      final ok = await _auth.authenticate(
+        localizedReason: reason,
+        biometricOnly: false,             // the device PIN is the fallback
+        persistAcrossBackgrounding: true, // a call or a notification doesn't cancel it
+      );
+      return ok ? UnlockResult.unlocked : UnlockResult.cancelled;
+    } on LocalAuthException catch (e) {
+      return switch (e.code) {
+        LocalAuthExceptionCode.userCanceled ||
+        LocalAuthExceptionCode.systemCanceled ||
+        LocalAuthExceptionCode.timeout ||
+        LocalAuthExceptionCode.authInProgress => UnlockResult.cancelled,
+        LocalAuthExceptionCode.temporaryLockout ||
+        LocalAuthExceptionCode.biometricLockout => UnlockResult.lockedOut,
+        _ => UnlockResult.unavailable, // no PIN set, no hardware, device error
+      };
+    }
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>`biometricOnly: false`:</b> لو البصمة فشلت 5 مرات، أو صباع المستخدم متعوّر، الـ PIN بتاع الجهاز بيفتح. لو `true`، المستخدم ممكن يتقفل برّه بياناته.
+- <b>`authenticate` بيرجّع `false` أو بيرمي:</b> `false` لما المحاولة فشلت من غير أي حاجة تانية، و`LocalAuthException` بـ `code` لأي حالة تانية. الـ switch بيحوّل الاتنين لـ 4 حالات Readly محتاجها بس.
+- <b>الـ setup:</b> في Android، الـ `MainActivity` لازم يبقى `FlutterFragmentActivity` مش `FlutterActivity`. وفي iOS، `NSFaceIDUsageDescription` في الـ `Info.plist`، وإلا الـ app بيقع أول ما يطلب Face ID.
+
+التفضيل نفسه (القفل شغال ولا لأ) مش secret، فمكانه shared_preferences، بس في store لوحده لأنه تبع الحساب مش الجهاز، زي ما قسّمنا الـ keys في [درس الـ Settings](/course/di-scale/settings/):
+
+<CodeBlock label="AppLockStore وAppLockCubit">
+
+```dart
+abstract interface class AppLockStore {
+  bool get enabled;
+  Future<void> setEnabled(bool on);
+  Future<void> clear(); // logout: the next account starts without a lock
+}
+
+sealed class LockState {
+  const LockState();
+}
+final class Unlocked extends LockState {
+  const Unlocked();
+}
+final class Locked extends LockState {
+  const Locked({this.lockedOut = false});
+  final bool lockedOut; // the page offers "sign in with your password" right away
+}
+
+class AppLockCubit extends Cubit<LockState> {
+  AppLockCubit(this._gate, this._store, this._clock)
+      : super(_store.enabled ? const Locked() : const Unlocked());
+
+  final BiometricGate _gate;
+  final AppLockStore _store;
+  final Clock _clock;
+  DateTime? _hiddenAt;
+
+  static const _grace = Duration(minutes: 2); // switching apps briefly doesn't lock
+
+  void appHidden() => _hiddenAt = _clock.now();
+
+  void appShown() {
+    final hiddenAt = _hiddenAt;
+    _hiddenAt = null;
+    if (_store.enabled && hiddenAt != null && _clock.now().difference(hiddenAt) > _grace) {
+      emit(const Locked());
+    }
+  }
+
+  Future<void> unlock(String reason) async {
+    final result = await _gate.unlock(reason);
+    if (isClosed) return;
+    emit(switch (result) {
+      UnlockResult.unlocked => const Unlocked(),
+      UnlockResult.lockedOut || UnlockResult.unavailable => const Locked(lockedOut: true),
+      UnlockResult.cancelled => const Locked(),
+    });
+  }
+
+  /// From resetOnLogout: the next account starts unlocked.
+  void reset() {
+    _hiddenAt = null;
+    emit(const Unlocked());
+  }
+
+  /// From the settings page: only a successful unlock turns it on.
+  Future<bool> enable(String reason) async {
+    if (!await _gate.isAvailable) return false;
+    if (await _gate.unlock(reason) != UnlockResult.unlocked) return false;
+    await _store.setEnabled(true);
+    return true;
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="الـ lifecycle والـ redirect">
+
+```dart
+// ReadlyApp's State: one listener for the whole app
+late final _lifecycle = AppLifecycleListener(
+  onHide: getIt<AppLockCubit>().appHidden,
+  onShow: getIt<AppLockCubit>().appShown,
+);
+
+// the router: the lock is checked inside Authenticated only
+redirect: (context, state) {
+  final at = state.matchedLocation;
+  return switch (auth.state) {
+    AuthUnknown() => at == '/splash' ? null : '/splash',
+    Unauthenticated() => at == '/login' ? null : '/login',
+    Authenticated() when lock.state is Locked =>
+      at == '/unlock' ? null : '/unlock?from=${Uri.encodeComponent(state.uri.toString())}',
+    Authenticated() => at == '/splash' || at == '/login' || at == '/unlock' ? '/library' : null,
+  };
+},
+```
+
+</CodeBlock>
+
+- <b>الـ `AppLockCubit` lazySingleton:</b> نفس سبب الـ AuthCubit في درس الـ Session: الـ router والـ lifecycle وصفحة الإعدادات لازم يسمعوا على نفس النسخة. والـ `refreshListenable` بتاع الـ router بيسمع على الاتنين.
+- <b>الـ `from`:</b> نفس اللي عملناه للـ login والـ push: المستخدم يرجع للشاشة اللي كان فيها، والـ `from` بيعدّي على نفس الـ allowlist.
+- <b>صفحة `/unlock` فيها زرارين:</b> «افتح» بينادي `unlock`، و«ادخل بالباسورد بدل كده» بينادي `AuthCubit.logout()`. الزرار التاني هو اللي بيضمن إن مفيش حد يتحبس برّه: البصمة اتلخبطت أو اتمسحت، يرجع للـ login العادي، والـ session الجديدة بتبدأ من غير قفل لأن الـ logout بيعمل `AppLockStore.clear()`.
+
+### الـ app switcher بيعرض الملاحظات
+
+القفل شغال، بس لما المستخدم يدوس على زرار الـ apps، الموبايل بيعرض صورة لآخر شاشة: ملاحظة كاملة، من غير بصمة. iOS بياخد الصورة دي لما الـ app يروح الخلفية، وAndroid بيعرضها في الـ recents.
+
+<CodeBlock label="غطا وقت ما الـ app مش في الواجهة">
+
+```dart
+// ReadlyApp's State
+bool _covered = false;
+
+late final _privacy = AppLifecycleListener(
+  onInactive: () => setState(() => _covered = getIt<AppLockStore>().enabled),
+  onResume: () => setState(() => _covered = false),
+);
+
+// MaterialApp.router(builder: ...)
+builder: (context, child) => Stack(children: [
+  child!,
+  if (_covered) const Positioned.fill(child: ReadlyCover()), // the logo on the surface color
+]),
+```
+
+</CodeBlock>
+
+- <b>الغطا بس لما القفل شغال:</b> اللي ماطلبش خصوصية مش محتاج يشوف شاشة فاضية كل ما يبدّل apps.
+- <b>`FLAG_SECURE` في Android حل أقوى:</b> بيمنع الـ screenshots وتسجيل الشاشة كمان. بس ده بيكسر حاجات المستخدم عايزها (يصوّر اقتباس من كتاب). لـ app بنك يستاهل، لـ Readly الغطا كفاية.
+
+### بعد الـ logout: لسه في أثر
+
+الـ `logout()` بتاع [درس الـ Push](/course/realtime/push-notifications/) بيوقّف الـ realtime، ويشيل الجهاز من السيرفر، ويلغي الـ refresh token، ويمسح الـ tokens والـ DB. والـ `resetOnLogout()` بتاع درس الـ Session بيمسح الـ ImageCache والـ singletons. عملنا تست: مستخدم A يدخل، يكتب ملاحظة، يفتح غلاف، يعمل logout، وB يدخل. ولقينا:
+
+| الأثر | فين | ليه فضل |
+| --- | --- | --- |
+| أغلفة كتب A | الـ disk cache بتاع `cached_network_image` | الـ `imageCache.clear()` بيمسح الذاكرة بس |
+| قفل البصمة بتاع A | `AppLockStore` | محدش مسحه |
+| آخر crash فيه `userId` بتاع A | الـ scope بتاع Sentry | الـ user اتحط في الـ login ومحدش شاله |
+| إشعار «كمّل Fantastic Mr Fox» | الـ notification tray | اتعرض قبل الـ logout |
+| الـ access token | المتغير في الذاكرة (لو عملت الـ cache بتاع Level 4 في درس الـ Session) | الـ `clear()` نسيه |
+
+الحل نفس قاعدة درس الـ Session: كل حاجة بتتمسح من مكانها، والقايمة في مكان واحد.
+
+<CodeBlock label="الـ AppLogger بيكبر بـ method">
+
+```dart
+abstract interface class AppLogger {
+  // ... debug, info, warning, error
+  void setUser(String? id); // id only, never the email
+}
+
+class SentryLogger implements AppLogger {
+  // ...
+  @override
+  void setUser(String? id) =>
+      Sentry.configureScope((scope) => scope.setUser(id == null ? null : SentryUser(id: id)));
+}
+
+// ConsoleLogger: setUser does nothing
+```
+
+</CodeBlock>
+
+<CodeBlock label="di/setup.dart: resetOnLogout بيكبر">
+
+```dart
+void resetOnLogout() {
+  getIt<AuthCubit>().stream.where((s) => s is Unauthenticated).listen((_) async {
+    PaintingBinding.instance.imageCache.clear();          // covers in memory
+    await DefaultCacheManager().emptyCache();             // covers on disk (cached_network_image)
+    await getIt.resetLazySingleton<CatalogRepository>();  // in-memory search cache
+    await getIt<AppLockStore>().clear();                  // the lock belonged to that account
+    getIt<AppLockCubit>().reset();                        // or the next login lands on /unlock
+    await FlutterLocalNotificationsPlugin().cancelAll();  // what's still in the tray
+    getIt<AppLogger>().setUser(null);                     // the next crash isn't theirs
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>الـ Sentry user بيتحط في نفس المكان:</b> الـ listener اللي بيسمع على `Authenticated` وبينادي `DeviceRegistrar.register` في درس الـ Push، بينادي `setUser(userId)` جنبه.
+- <b>الـ `AppLockCubit` بيرجع Unlocked:</b> هو lazySingleton، فلو المستخدم خرج من صفحة `/unlock` بـ «ادخل بالباسورد»، الـ state هتفضل Locked، وأول login جاي هيتحوّل لـ `/unlock` على قفل اتمسح.
+- <b>الـ disk cache بيتمسح كله:</b> مفيش طريقة سهلة تفرّق غلاف A عن غلاف B، والأغلفة هترجع من النت. ولو المكتبة كبيرة، ده تمن مقبول مرة مع كل logout.
+- <b>الـ DB والـ tokens مش هنا:</b> فاضلين في `AuthRepositoryImpl.logout()` في الـ data layer زي ما هم. الـ `resetOnLogout` للحاجات اللي تبع الـ app كله.
+
+والتست اللي لقى الأثر ده يفضل في الـ CI، ويكبر مع كل مكان جديد البيانات بتتحفظ فيه:
+
+<CodeBlock label="integration_test/logout_leaves_nothing_test.dart">
+
+```dart
+testWidgets('the next user sees nothing of the previous one', (tester) async {
+  await signIn(tester, as: userA);
+  await addNote(tester, book: 'OL1', text: 'private thought');
+  await openCover(tester, book: 'OL1');
+  await enableAppLock(tester);
+
+  await logout(tester);
+  await signIn(tester, as: userB);
+
+  final db = getIt<AppDatabase>();
+  expect(await db.select(db.notes).get(), isEmpty);
+  expect(await DefaultCacheManager().getFileFromCache(coverUrl('OL1')), isNull);
+  expect(getIt<AppLockStore>().enabled, isFalse);
+  expect(find.text('private thought'), findsNothing);
+});
+```
+
+</CodeBlock>
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>ابدأ بالجرد مش بالأدوات:</b> الجدول اللي في Level 2 هو اللي بيقول محتاج إيه. app فيه بيانات صحية أو فلوس محتاج تشفير الـ DB (SQLCipher، زي ما قلنا في درس التخزين المحلي) وقفل إجباري. Readly محتاج secure storage للـ tokens، وقفل اختياري، وlogout نضيف. كل طبقة زيادة ليها تمن في الأداء والـ UX والـ debugging.
+- <b>البصمة على الجهاز مش authentication:</b> الـ `authenticate` بيرجّع `bool` للـ Dart. على موبايل rooted، Frida بتخلّيه يرجّع `true`. يعني القفل بيحمي من «حد ماسك الموبايل»، مش من «حد مسيطر على الموبايل». لو محتاج أقوى من كده، المفتاح نفسه بيتربط بالبصمة: Android Keystore وiOS Keychain بيسمحوا بمفتاح مايتفكّش غير بعد بصمة ناجحة (في flutter_secure_storage ده `AndroidOptions.biometric`). التمن إن كل قراية للـ token محتاجة بصمة، فالـ AuthInterceptor لازم يمسك الـ access في الذاكرة، والـ sync في الخلفية مايقدرش يعمل refresh. لـ Readly مش مستاهل.
+- <b>العمليات الحساسة تتأكد على السيرفر:</b> مسح الحساب، وتغيير الإيميل، وتغيير الباسورد: الـ backend بيطلب الباسورد تاني (أو token جديد من login حديث)، مش البصمة المحلية. السيرفر مايقدرش يتأكد من حاجة حصلت جوه موبايل مايعرفهوش.
+- <b>ماتعملش crypto بنفسك:</b> OWASP بتحطها M10 (Insufficient Cryptography). «هشفّر الـ token بـ XOR ومفتاح في الكود» أسوأ من مفيش، لأنه بيدّي إحساس أمان كداب. استخدم الـ Keystore والـ Keychain عن طريق package معروف، وسيب التفاصيل ليه.
+- <b>الـ revoke من السيرفر هو خط الدفاع الأخير:</b> الموبايل اتسرق مفتوح؟ مفيش حاجة في الـ app تنفع. اللي ينفع شاشة «الأجهزة المتسجلة» على الويب أو من موبايل تاني، فيها «اخرج من الجهاز ده». ده شغل backend، بس انت اللي لازم تطلبه في العقد، زي ربط صف الجهاز بالـ session في درس الـ Push.
+- <b>OWASP Mobile Top 10 كـ checklist:</b> الدرس ده بيغطي M1 (Improper Credential Usage: الـ secrets في الـ app)، وM9 (Insecure Data Storage)، وجزء من M3 (البصمة مش authorization)، وM6 (Inadequate Privacy Controls: الأثر بعد الـ logout، والـ app switcher). الدرس الجاي بيكمّل الباقي.
+
+<Note kind="interview" title="سؤال interview">
+
+«بتخزّن الـ tokens فين، وده آمن؟» في flutter_secure_storage: Keychain في iOS، ومفتاح في الـ Keystore بيشفّر القيم في Android، بإعدادات صريحة (`first_unlock_this_device` في iOS، ومستثنية من الـ backup في Android). ده بيحمي من الـ apps التانية والـ backups والموبايل المقفول. مابيحميش من موبايل rooted والـ app شغال، ولا من حد ماسك الموبايل مفتوح. التانية بحلها بقفل بصمة اختياري فوق الـ session، بـ PIN الجهاز كـ fallback، وطريق للـ login العادي دايمًا. والأولى مالهاش حل على الجهاز: access token قصير، وrefresh token بيتلغي من السيرفر، وشاشة أجهزة فيها «اخرج». وأي secret حقيقي مايدخلش الـ app خالص: الـ backend بيكلّم الخدمة، والـ CI بيعمل scan على الـ repo وعلى الـ binary بعد الـ build.
+
+</Note>
+
+</Level>
+
+<Quiz>
+
+<Question id="sec-storage-1">
+<Ask>زميلك قال «مفتاح Firebase اللي في `firebase_options.dart` لازم يتشال من الـ repo زي مفتاح الـ AI». صح؟</Ask>
+<Answer>
+
+لأ. مفتاح Firebase بيعرّف الـ app للـ SDK ومابيفتحش بيانات لوحده: البيانات محمية بالـ Security Rules، والـ backend بـ App Check. فبيتعمله commit، وبيتقفل من الـ console على الـ package name وبصمة التوقيع. مفتاح الـ AI مختلف: بيدفع فلوس وبيرجّع نتايج لأي حد معاه، فمكانه السيرفر بس، والـ app بيكلّم الـ backend.
+
+</Answer>
+</Question>
+
+<Question id="sec-storage-2">
+<Ask>الـ tokens في flutter_secure_storage. هل ده بيحمي من حد عنده موبايل rooted والـ app شغال عليه؟</Ask>
+<Answer>
+
+لأ. الـ app لازم يفك الـ token عشان يستخدمه، وأداة زي Frida تقدر تقراه من الذاكرة أو تنادي نفس الـ API. الحماية هنا على السيرفر: access token عمره دقايق، وrefresh token يتلغي، وطريقة للمستخدم يخرج من الجهاز ده من مكان تاني.
+
+</Answer>
+</Question>
+
+<Question id="sec-storage-3">
+<Ask>مستخدم فعّل قفل البصمة، وبعدين صباعه اتعوّر والـ Face ID مش شغال. إزاي تضمن إنه مايتحبسش برّه بياناته؟</Ask>
+<Answer>
+
+`biometricOnly: false` عشان الـ PIN بتاع الجهاز يفتح. ولو حتى ده مش متاح (lockout أو مفيش PIN)، صفحة الـ unlock فيها «ادخل بالباسورد بدل كده»، وده logout عادي ورجوع للـ login. القفل طبقة فوق الـ session، فالرجوع للـ authentication الحقيقية (السيرفر) دايمًا موجود.
+
+</Answer>
+</Question>
+
+<Question id="sec-storage-4">
+<Ask>بعد الـ logout، الـ DB والـ tokens اتمسحوا، بس المستخدم التاني لقى أغلفة كتب الأول بتظهر من غير نت. ليه؟</Ask>
+<Answer>
+
+`cached_network_image` بيخزّن الصور على الـ disk، و`imageCache.clear()` بيمسح نسخة الذاكرة بس. لازم `DefaultCacheManager().emptyCache()` في `resetOnLogout`. والقاعدة الأعم: اعمل جرد بكل مكان البيانات بتتحفظ فيه، وintegration test بيدخل بمستخدم ويخرج ويدخل بالتاني ويتأكد إن مفيش أثر.
+
+</Answer>
+</Question>
+
+</Quiz>

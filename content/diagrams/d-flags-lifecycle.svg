@@ -1,0 +1,37 @@
+<svg viewBox="0 0 760 290" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="حياة الـ release flag: بيتولد بتاريخ مسح، staging، rollout، 100%، مسح الكود، وفي الآخر مسح الـ parameter من الـ console بعد الـ minSupportedBuild">
+<rect x="20" y="30" width="200" height="62" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="120" y="52" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">1. added to the enum</text>
+<text x="120" y="70" text-anchor="middle" font-size="10.5" fill="var(--muted)">fallback: false</text>
+<text x="120" y="85" text-anchor="middle" font-size="10.5" fill="var(--muted)">removeBy: '2027-03-01'</text>
+<rect x="280" y="30" width="200" height="62" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="380" y="52" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">2. staging 100%</text>
+<text x="380" y="70" text-anchor="middle" font-size="10.5" fill="var(--muted)">QA, ValueVariant tests</text>
+<text x="380" y="85" text-anchor="middle" font-size="10.5" fill="var(--muted)">prod still 0%</text>
+<rect x="540" y="30" width="200" height="62" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="640" y="52" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">3. prod rollout</text>
+<text x="640" y="70" text-anchor="middle" font-size="10.5" fill="var(--muted)">5% → 20% → 50% → 100%</text>
+<text x="640" y="85" text-anchor="middle" font-size="10.5" fill="var(--muted)">flag.* tags in Sentry</text>
+<line x1="222" y1="61" x2="276" y2="61" stroke="var(--ink)" stroke-width="1.6" marker-end="url(#mk-ink)"/>
+<line x1="482" y1="61" x2="536" y2="61" stroke="var(--ink)" stroke-width="1.6" marker-end="url(#mk-ink)"/>
+<path d="M600 28 C600 4 680 4 680 26" fill="none" stroke="var(--warn)" stroke-width="1.4" marker-end="url(#mk-warn)"/>
+<text x="696" y="14" text-anchor="middle" font-size="10" fill="var(--warn)">worse? back to 0%</text>
+<line x1="640" y1="94" x2="640" y2="138" stroke="var(--ink)" stroke-width="1.6" marker-end="url(#mk-ink)"/>
+<rect x="540" y="142" width="200" height="62" rx="10" fill="var(--good-soft)" stroke="var(--good)" stroke-width="1.5"/>
+<text x="640" y="164" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">4. stable at 100%</text>
+<text x="640" y="182" text-anchor="middle" font-size="10.5" fill="var(--muted)">two weeks, on = off in Sentry</text>
+<rect x="280" y="142" width="200" height="62" rx="10" fill="var(--accent)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="380" y="164" text-anchor="middle" font-size="12" fill="#fff" font-weight="600">5. PR: delete the enum value</text>
+<text x="380" y="182" text-anchor="middle" font-size="10.5" fill="#e8f2fb">compiler finds every use,</text>
+<text x="380" y="197" text-anchor="middle" font-size="10.5" fill="#e8f2fb">the old branch goes</text>
+<rect x="20" y="142" width="200" height="62" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="120" y="164" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">6. delete the parameter</text>
+<text x="120" y="182" text-anchor="middle" font-size="10.5" fill="var(--muted)">only after minSupportedBuild</text>
+<text x="120" y="197" text-anchor="middle" font-size="10.5" fill="var(--muted)">passes the build of step 5</text>
+<line x1="538" y1="173" x2="484" y2="173" stroke="var(--ink)" stroke-width="1.6" marker-end="url(#mk-ink)"/>
+<line x1="278" y1="173" x2="224" y2="173" stroke="var(--ink)" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#mk-ink)"/>
+<rect x="20" y="226" width="460" height="48" rx="10" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="1.3" stroke-dasharray="5 4"/>
+<text x="250" y="246" text-anchor="middle" font-size="11" fill="var(--ink)" class="ar" direction="rtl" unicode-bidi="embed">لو الـ parameter اتمسح قبل خطوة 6، النسخ القديمة بترجع للـ fallback</text>
+<text x="250" y="263" text-anchor="middle" font-size="11" fill="var(--warn)" class="ar" direction="rtl" unicode-bidi="embed">والـ feature بتختفي عندهم فجأة</text>
+<text x="640" y="246" text-anchor="middle" font-size="11" fill="var(--muted)" class="ar" direction="rtl" unicode-bidi="embed">الـ removeBy بيبقى تست بيوقع</text>
+<text x="640" y="263" text-anchor="middle" font-size="11" fill="var(--muted)" class="ar" direction="rtl" unicode-bidi="embed">لو التاريخ عدّى والـ flag لسه موجود</text>
+</svg>

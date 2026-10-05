@@ -1,6 +1,6 @@
 ---
 title: "في Escore: الـ Production والقرار"
-description: "Escore بقى hybrid بين Clean وMVVM من غير ما حد يقرر، وCrashlytics بيفرّق بين الـ crash والخطأ اللي الـ app بيعدّيه، وrelease من جهاز المطوّر بـ Shorebird. وإيه اللي هتعمله من أول يوم في مشروعك."
+description: "Escore بقى hybrid بين Clean وMVVM من غير ما حد يقرر، وCrashlytics بيفرّق بين الـ crash والخطأ اللي الـ app بيعدّيه، وrelease من جهاز المطوّر بـ Shorebird، وtoken في الـ secure storage ونسخة منه plaintext، وflags بتتقفل بـ build بس. وإيه اللي هتعمله من أول يوم في مشروعك."
 minutes: 20
 draft: true
 ---
@@ -133,6 +133,164 @@ signingConfig = if (hasReleaseSigning) {
 
 القاعدة: الـ release build لازم يفشل بصوت عالي لو ناقصه حاجة، مش يكمّل ببديل ساكت.
 
+### الأمان: التخزين والأسرار والشبكة
+
+درس «الأسرار والتخزين الحساس» ودرس «الشبكة والـ threat model» قالوا: اعمل جرد بكل مكان البيانات عايشة فيه، ومفيش secret في الـ app، والـ logs ماتطلّعش حاجة. Escore عامل أغلب الإعدادات صح، والمشاكل كلها في الحتت اللي «مؤقتًا» أو «للتوافق مع القديم».
+
+#### الـ secure storage بإعداد الدرس بالظبط، ونسخة plaintext جنبه
+
+<CodeBlock label="lib/core/storage/secure_storage.dart">
+
+```dart
+factory FlutterSecureStorageImpl.withDefaults() {
+  return FlutterSecureStorageImpl(
+    androidOptions: const AndroidOptions(),
+    iosOptions: const IOSOptions(
+      accessibility: KeychainAccessibility.first_unlock_this_device,
+    ),
+  );
+}
+```
+
+</CodeBlock>
+
+ده نفس الإعداد اللي في الدرس: Keystore في Android، و`first_unlock_this_device` في iOS. والـ refresh token بيتحفظ هناك بس، والسبب مكتوب في الكود نفسه:
+
+<CodeBlock label="lib/core/api/dio_consumer/auth_interceptor.dart">
+
+```dart
+// Save to SecureStorage (primary, secure)
+await secureStorage.write(StorageKeys.accessToken, accessToken);
+
+// Save to legacy storage (for backward compatibility with DioConfigurator)
+await _cacheManager.setData(
+  key: StorageKeys.keyTokenUser,
+  value: accessToken,
+);
+
+// Save refresh token if provided.
+//
+// SecureStorage only — never mirror this into SharedPreferences. Unlike
+// the access token below, nothing needs the refresh token synchronously,
+// and a plaintext copy survives logout and can revive the session.
+```
+
+</CodeBlock>
+
+يعني الفريق عارف إن النسخة الـ plaintext خطر، وطبّق ده على الـ refresh token، وساب الـ access token يتكتب في SharedPreferences (`jwt_token`) في الـ login والـ refresh، عشان الـ router guards بتقراه sync. والـ `DioConfigurator` بيرجع للنسخة دي لو الـ secure storage فاضي. ومفيش `dataExtractionRules` ولا `allowBackup` في الـ manifest، فالـ default (`true`) شغال، والـ prefs دي بتدخل في الـ Auto Backup.
+
+الـ access token عمره قصير، فالضرر أقل من الـ refresh. بس الجدول بتاع الدرس بيقول إن الـ secure storage بيحمي من الـ backups والموبايل المقفول، والنسخة الـ plaintext بتلغي الحماية دي للـ token اللي بيتبعت مع كل طلب. الحل نفس اللي في درس الـ Session: الـ guards تقرا حالة الـ session من الذاكرة (الـ AuthCubit)، مش من ملف، والنسخة القديمة تتمسح في أول فتحة بعد الـ update.
+
+#### الـ logout: منظم، وفيه أماكن اتنست
+
+الـ `AuthRepositoryImpl.logout()` بيعمل الحاجات الصعبة صح: الطلبات للسيرفر (unregister للجهاز، وlogout، وGoogle signOut) بالتوازي وبحد 4 ثواني، وبعدين المسح المحلي من غير ما يستنى. و`clearAll()` بيمسح مفاتيح المستخدم كلها، والكومنت بيقول ليه: «the previous user's avatar and name persist and leak into the next session». و`HttpCache.clear()` بيمسح الـ responses المتخزنة.
+
+اللي فاضل بعد الـ logout، بالجرد اللي في الدرس:
+
+| الأثر | فين |
+| --- | --- |
+| الـ Hive boxes بتاعة الـ offline cache | `OfflineCacheService.clear()` موجودة ومحدش بيناديها |
+| الصور على الـ disk | مفيش `DefaultCacheManager().emptyCache()` في أي حتة |
+| الـ FCM token عند Firebase | `FirebaseMessaging.deleteToken()` مش متنادية خالص |
+| الـ Keychain بعد إعادة التسطيب في iOS | مفيش علامة first-run بتمسحه |
+
+السطر الأخير ليه أثر حقيقي من قراية الكود: بعد ما المستخدم يمسح الـ app وينزّله تاني، الـ prefs راحت فالـ router شايفه مش داخل، بس الـ `DioConfigurator` بيقرا `access_token` من الـ secure storage الأول. فالطلبات اللي بتحصل قبل ما يختار login أو guest (زي الـ startup check) ممكن تطلع بـ token الحساب القديم. ده بالظبط سبب الـ `clearIfReinstalled` في درس الـ Session.
+
+#### الـ `.env` جوه الـ APK، بالكومنتات
+
+```yaml
+# pubspec.yaml
+flutter:
+  assets:
+    - .env
+```
+
+الـ `.env` في الـ `.gitignore` ومااتعملوش commit قبل كده، وده كويس. بس هو asset، يعني ملف نص مقروء جوه كل APK وIPA، زي ما درس الـ release قال على flutter_dotenv. المفاتيح نفسها مش secrets (`BASE_API_URL` و`GOOGLE_CLIENT_ID` و`IOS_APP_STORE_ID`، والـ client id بتاع Google معمول عشان يبقى في الـ client). المشكلة إن الملف كله بيتشحن، <b>بالكومنتات</b>: سطر قديم متعلّق فيه إيميل وباسورد حساب الـ reviewer بتاع الـ store، وده موجود في الـ release build. أي حد يفك الـ APK يقراه في دقيقة.
+
+ده الصف «إحنا نفسنا بالغلط» في الـ threat model، والأرخص في التصليح: الباسورد ده يتغير، والـ config يتنقل لـ `--dart-define-from-file` (بيقرا القيم بس، مش الكومنتات)، والـ `strings` check بتاع الدرس في الـ CI يدوّر على الإيميلات كمان.
+
+وملفات Firebase (`firebase_options.dart`، و`google-services.json`، و`GoogleService-Info.plist`) في الـ repo، وده الطبيعي زي ما الدرس قال، بشرط إن المفاتيح متقفلة من الـ console.
+
+#### الشبكة: الأساس صح، والـ logs فيها ثغرات صغيرة
+
+الـ SSL bypass بتاع سيرفر الـ dev معمول زي ما الدرس قال بالظبط: شرطين، وassert:
+
+<CodeBlock label="lib/core/api/dio_consumer/dio_configurator.dart">
+
+```dart
+/// Opt-in compile-time flag for SSL certificate bypass.
+/// Build with `--dart-define=ALLOW_SSL_BYPASS=true` to enable in debug mode.
+static const bool _allowSslBypass = bool.fromEnvironment(
+  'ALLOW_SSL_BYPASS',
+);
+
+static void configure(Dio dio) {
+  // SSL bypass requires BOTH kDebugMode AND the explicit --dart-define flag.
+  // This ensures it NEVER runs in release builds and is off by default in debug.
+  if (kDebugMode && _allowSslBypass) {
+    // ...
+    _setUpCertificateBypass(dio);
+  }
+```
+
+</CodeBlock>
+
+ومفيش pinning، وده قرار معقول لـ app نتايج رياضية بالـ threat model بتاع الدرس. والـ cleartext مفتوح في `src/debug/AndroidManifest.xml` بس. والـ logs بتخفي الـ `Authorization` والـ query keys الحساسة (`token`، `password`، `otp`)، وكلها ورا `kDebugMode`. اللي فاتهم:
+
+- <b>الـ request body مش متفلتر:</b> `'\n📦 Body: ${_formatData(options.data)}'` بيطبع باسورد الـ login والتسجيل في الـ debug console. ده debug بس، بس الـ screenshots والـ logs اللي بتتلزق في issues بتطلع برّه الجهاز.
+- <b>`print` من غير `kDebugMode`:</b> في `deep_link_handler.dart` و`widget_interaction_service.dart`، بـ `// ignore: avoid_print`. بيطبعوا URIs مش tokens، بس الـ `print` بيوصل الـ logcat في الـ release.
+- <b>الـ document بيقول عكس الكود:</b> `PLAY_STORE_RELEASE.md` فيه «No debug logging in release (all gated on `kDebugMode`)» متعلّم عليه، والـ `print` دي بتقول غير كده. نفس حكاية `kNewsCommentsEnabled`: الكلام اللي جنب الكود لازم يتحدث معاه.
+- <b>الـ JWT في الـ query بتاع الـ WebSocket:</b> `'$baseUrl?matchId=$matchId'` وبعدها `'&token=$token'`. Escore بيخفيه من الـ logs بتاعته، بس الـ query بيتسجل في access logs بتاعة أي proxy أو load balancer في النص. لو الـ backend قبل الـ token في أول رسالة بعد الاتصال، الـ URL مايبقاش فيه حاجة.
+
+### الـ Feature flags: compile-time، والـ runtime config موجود ومش مستخدم ليها
+
+درس الـ Feature Flags فرّق بين flag بيتقفل بـ release وflag بيتقفل من الـ console. Escore عنده النوع الأول بس:
+
+| الـ flag | القيمة | الحالة |
+| --- | --- | --- |
+| `kUseTournamentFeed` | `true` | الكومنت بيقول «Flip to `false` to fall back ... if the new endpoint misbehaves in production»، يعني kill switch محتاج build جديد |
+| `kNewsCommentsEnabled` | `true` | الكومنت والـ TODOs بيقولوا غير القيمة (فوق في جزء الـ Refactor) |
+| `kLiveActivityEnabled` | `false` | كل كود الـ Live Activities ميت ورا الـ flag ده |
+
+ومفيش `firebase_remote_config`. Shorebird بيقرّب المسافة: قلب `kUseTournamentFeed` بقى patch مش release من الـ store. بس الـ patch build، وبيوصل في الفتحة الجاية أو اللي بعدها، مش في ثواني والـ app مفتوح.
+
+المثير إن Escore عنده بالفعل الأساس اللي الدرس بيبنيه، بس لحاجة تانية: الـ `app_config` feature.
+
+<CodeBlock label="lib/features/app_config/data/repositories/app_config_repository_impl.dart">
+
+```dart
+// Fail-open: the startup gate must never block boot. Any failure (offline
+// with no cache, parse error, server error) degrades to a safe
+// "up to date / no maintenance" verdict.
+return result.fold(
+  (_) => const Right<Failure, StartupConfigEntity>(
+    StartupConfigEntity.safeDefault(),
+  ),
+  Right<Failure, StartupConfigEntity>.new,
+);
+```
+
+</CodeBlock>
+
+- <b>contract في الـ domain</b> (`AppConfigRepository`) وimplementation في الـ data، زي `FeatureFlags`.
+- <b>قيمة افتراضية آمنة</b> (`safeDefault`) لو مفيش نت أو السيرفر واقع، زي الـ `fallback`.
+- <b>cache</b> في Hive لمدة 5 دقايق، و<b>timeout</b> 4 ثواني في `StartupCheckCubit`، وأي exception بيرجع للـ default.
+- <b>بيبعت الـ platform والـ build والـ version والـ locale</b>، يعني السيرفر يقدر يرد بقيم مختلفة لكل نسخة.
+
+الفرق عن الدرس إن الـ startup بيستنى الطلب ده (لحد 4 ثواني)، ومش بيستخدم قيم الفتحة اللي قبلها. ده مبرر هنا: الـ force update والـ maintenance لازم يبقوا حاليين. والمكان الطبيعي للـ kill switches في Escore هو نفس الرد ده: `features` فيها `tournament_feed` و`news_comments`، ورا interface `FeatureFlags`، والـ `safeDefault` فيه الـ fallbacks. ده الاختيار اللي الدرس سمّاه «endpoint بتاعك» في Level 4، والـ endpoint موجود خلاص.
+
+<CodeBlock label="lib/core/config/feature_flags.dart">
+
+```dart
+/// Flip to `false` to fall back to the legacy path verbatim if the new
+/// endpoint misbehaves in production — the old code path is kept intact.
+const bool kUseTournamentFeed = true;
+```
+
+</CodeBlock>
+
+والـ flags التلاتة مالهمش تاريخ نهاية: `kUseTournamentFeed` فرعه القديم ميت عمليًا من ساعة ما بقى `true`، و`kLiveActivityEnabled` شايل feature كاملة مش شغالة. الـ `removeBy` والتست اللي بيوقع في الدرس معمولين للحالة دي بالظبط: الـ flag يا يتمسح يا حد يكتب ليه لأ.
+
 ### لو هنبدأ Escore من جديد
 
 ده ملخص كل دروس «في Escore» في قايمة واحدة، بالترتيب اللي هتعمله بيه في مشروعك:
@@ -143,7 +301,9 @@ signingConfig = if (hasReleaseSigning) {
 4. **constructor injection بس**، و`sl` جوه ملفات الـ DI والـ routes بس.
 5. **flavors** من أول يوم، والـ `.env` فيه config عام بس.
 6. **Crashlytics** بالـ classifier بتاع Escore بالظبط، ومعاه user id وbreadcrumbs، والـ BlocObserver بيبعتله.
-7. **خليك على اللي Escore عمله صح**: الهيكل، والـ interceptors، وsingle-flight refresh، و`RefreshZone`، والـ startup gate الـ fail-open، والـ logout اللي مايخليش المستخدم يستنى، والـ risk register.
+7. **التخزين والأسرار**: config بـ `--dart-define-from-file` مش `.env` asset، والـ tokens في الـ secure storage بس، وجرد بكل مكان بيتمسح في الـ logout، وعلامة first-run للـ Keychain.
+8. **الـ kill switches في رد الـ startup check** ورا `FeatureFlags`، وكل flag ليه تاريخ مسح.
+9. **خليك على اللي Escore عمله صح**: الهيكل، والـ interceptors، وsingle-flight refresh، و`RefreshZone`، والـ startup gate الـ fail-open، والـ logout اللي مايخليش المستخدم يستنى، والـ risk register.
 
 <Quiz>
 
@@ -161,6 +321,33 @@ signingConfig = if (hasReleaseSigning) {
 <Answer>
 
 Shorebird بيقصّر الوقت من «لقينا الـ bug» لـ «اتصلّح عند المستخدمين»، بس الـ bug لسه وصل لمستخدمين وعمل ضرر. الـ CI بيمنع الـ bug قبل ما يوصل: تست واقع، أو analyze فيه error، أو build بنسخة Flutter مختلفة. والاتنين بيكمّلوا بعض: الـ CI بيقلّل عدد الـ bugs، وShorebird بيقلّل تمن اللي بيعدّي.
+
+</Answer>
+</Question>
+
+<Question id="escore-sec-1">
+<Ask>Escore بيحفظ الـ access token في flutter_secure_storage بإعداد صح، وبيكتب نسخة منه في SharedPreferences عشان الـ router guards. إيه المشكلة، وإيه الحل من غير ما الـ guards تبقى async؟</Ask>
+<Answer>
+
+النسخة الـ plaintext بتلغي اللي الـ secure storage بيحمي منه: ملف prefs عادي، والـ backup مفتوح في الـ manifest فبيدخل في الـ Auto Backup، وبيتقري على موبايل rooted. الـ guards مش محتاجة ملف: تقرا حالة الـ session من الذاكرة (AuthCubit بيعمل checkSession مرة عند الـ startup)، والنسخة القديمة تتمسح في أول فتحة بعد الـ update. والفريق نفسه طبّق ده على الـ refresh token وكتب السبب.
+
+</Answer>
+</Question>
+
+<Question id="escore-sec-2">
+<Ask>الـ `.env` في Escore مش في الـ repo، والمفاتيح اللي فيه مش secrets. ليه لسه مشكلة؟</Ask>
+<Answer>
+
+لأنه asset، فالملف كله بيتشحن جوه الـ APK والـ IPA كنص مقروء، بالكومنتات. وفيه سطر كومنت قديم فيه إيميل وباسورد حساب الـ reviewer. الحل: الباسورد يتغير، والـ config يتنقل لـ `--dart-define-from-file` اللي بيدخّل القيم بس، وscan على الـ binary في الـ CI.
+
+</Answer>
+</Question>
+
+<Question id="escore-flags-1">
+<Ask>`kUseTournamentFeed` معمول عشان «يتقلب false لو الـ endpoint الجديد بايظ». إيه اللي ناقص عشان يبقى kill switch حقيقي، من غير ما تضيف Remote Config؟</Ask>
+<Answer>
+
+إنه يتقري وقت التشغيل مش وقت الـ build. Escore عنده endpoint الـ startup check: contract في الـ domain، وfail-open بـ `safeDefault`، وcache، وبيبعت الـ build والـ platform. يضيف للرد `features` ورا interface `FeatureFlags`، والـ fallback في الـ `safeDefault`. كده الرجوع للـ endpoint القديم من السيرفر في دقيقة، مش build ولا Shorebird patch.
 
 </Answer>
 </Question>

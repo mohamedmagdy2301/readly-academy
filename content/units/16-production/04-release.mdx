@@ -465,7 +465,7 @@ getIt.registerLazySingleton(() => CheckForUpdate(getIt(), int.parse(info.buildNu
 الاتنين محتاجين `--flavor` للـ native، والاتنين محتاجين check الـ `appFlavor`. لو الفرق بين الـ environments قيم بس، main واحد أبسط. ولو dev فيه fakes أو أدوات debug (شاشة تغيّر الـ base URL، أو `FakeLibraryRepository`)، خلّي `main_dev.dart` يعمل override للتسجيلات دي بس، والقيم برضه من الـ JSON.
 
 - <b>تلات environments كفاية:</b> كل environment زيادة يعني backend وdatabase وSentry environment وapp في الـ store لازم حد يصونهم. staging قيمته إنه شبه prod بالظبط (`ENABLE_LOGS: false`، وSentryLogger، وobfuscation)، فلو بقى «dev تاني» مالوش لازمة.
-- <b>الـ flavor مش feature flag:</b> الـ flavor بيتحدد وقت الـ build: أنهي backend وأنهي app. الـ flag بيختار أنهي كود يشتغل. `newNotes` في الـ JSON flag وقت الـ build، فعشان تقفله في prod محتاج release. لو عايز تقفله في دقيقة من غير release، يبقى Remote Config (زي firebase_remote_config) ورا contract `FeatureFlags` في الـ DI، وقيمة افتراضية آمنة لو ماوصلش. ماتعملش flavor لكل تجربة.
+- <b>الـ flavor مش feature flag:</b> الـ flavor بيتحدد وقت الـ build: أنهي backend وأنهي app. الـ flag بيختار أنهي كود يشتغل. `newNotes` في الـ JSON flag وقت الـ build، فعشان تقفله في prod محتاج release. لو عايز تقفله في دقيقة من غير release، يبقى Remote Config (زي firebase_remote_config) ورا contract `FeatureFlags` في الـ DI، وقيمة افتراضية آمنة لو ماوصلش، وده [درس الـ Feature Flags](/course/production/feature-flags/). ماتعملش flavor لكل تجربة.
 - <b>نزول تدريجي:</b> Play بيسمح بـ staged rollout (5% وبعدين 20% وبعدين 100%)، والـ App Store بيسمح بـ phased release. راقب الـ crash-free sessions للـ release الجديد في Sentry، ولو نزل، وقّف الـ rollout. ده اللي بيخلّي الـ release name الصح مهم: من غيره مش هتعرف الـ crashes جاية من النسخة الجديدة ولا القديمة.
 - <b>ثبّت الأدوات:</b> `flutter-version` محدد في الـ workflow، و`pubspec.lock` في الـ repo. الـ release اللي اتبنى النهارده لازم يتبني نفسه بكرة.
 - <b>الـ JSON في الـ repo:</b> لأن مافيهوش أسرار، يتراجع في الـ PR زي أي كود. لو احتجت قيمة تختلف في الـ CI، زوّدها بـ `--dart-define` فوق الملف، مش ملف بيتولّد ومحدش بيشوفه.
@@ -606,7 +606,7 @@ jobs:
 
 <Note kind="info" title="الخطوة الجاية">
 
-كده خلصت دروس الكورس. اعمل مهام الوحدة دي في درس «التطبيق والمهام»، وبعدها راجع كل حاجة من صفحة المراجعة: الكروت اللي علّمتها «راجعها تاني» وأسئلة الـ interviews.
+الـ app بقى بيتبني ويتنشر من الـ CI. فاضل سؤالين قبل ما يبقى production بجد: إيه اللي ممكن يتسرّب منه، وإزاي تقفل feature بايظة من غير release. ده [درس الأسرار والتخزين الحساس](/course/production/security-storage/) والدرسين اللي بعده.
 
 </Note>
 
