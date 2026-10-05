@@ -229,6 +229,10 @@ Future<Book> bookDetails(Ref ref, BookId id) async {
 - <b>بعد النجاح بس:</b> لو `orThrow()` رمى، السطر بتاع `cacheFor` مابيتنفّذش، فالفشل بيتمسح عادي ومش هيتعرض تاني من الـ cache.
 - <b>ده مش بديل للـ cache في الـ repository:</b> ده «ماترميش الشاشة لو المستخدم راجع حالًا». قواعد الـ cache الحقيقية (مدة، invalidation، offline) مكانها الـ data layer اللي مش بتتغير.
 
+شوف السلسلة دي بتعيش وتموت قدامك: افتح المكتبة، وافتح صفحة كتاب فوقها، وغيّر حاجة في drift وهي مستخبية، وارجع، واقفل. وبعدين بدّل الشاشة لـ `ref.read` أو `ref.listen`، أو اقفل الـ `cacheFor`، وجرّب نفس الخطوات.
+
+<Lab name="provider-lifecycle" />
+
 ### الـ family: كل parameter ليه state
 
 `bookDetailsProvider(id)` مش provider واحد، ده provider لكل `BookId`. وفي الـ codegen، أي parameter بعد الـ `Ref` (أو في `build` بتاع Notifier) بيعمل family. ومن غير الـ codegen، الـ Notifier بياخد الـ parameter في الـ <b>constructor</b> من 3.0:
@@ -308,7 +312,7 @@ Riverpod بيرمي `CircularDependencyError` أول ما اللفة تحصل. �
 
 ### codegen ولا لأ
 
-الـ docs الرسمية بتقول الاتنين: Riverpod «بيحب» الـ codegen، و«استخدمه بس لو بتستخدم codegen أصلًا لحاجات تانية زي freezed وjson_serializable». Readly عندها freezed وinjectable وdrift، و`build_runner` شغال من الوحدة 2، فالـ codegen هنا مفيش تمن زيادة. والوحدة كلها ماشية بيه، بالإصدارات دي:
+الـ docs الرسمية بتقول الاتنين: Riverpod «بيحب» الـ codegen، و«استخدمه بس لو بتستخدم codegen أصلًا لحاجات تانية زي freezed وjson_serializable». Readly عندها freezed للـ DTOs وdrift، و`build_runner` شغال من [درس الـ Data في الوحدة 3](/course/data-network/data/)، فالـ codegen هنا مفيش تمن زيادة. والوحدة كلها ماشية بيه، زي درس [«Riverpod من الصفر»](/course/state-management/riverpod/) بالظبط، بالإصدارات دي:
 
 <CodeBlock label="pubspec.yaml (Readly، الـ branch التجريبي)">
 

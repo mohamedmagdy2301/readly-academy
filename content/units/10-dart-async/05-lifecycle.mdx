@@ -160,7 +160,7 @@ _sub = _repository.watchLibrary().listen((books) async {
 
 </CodeBlock>
 
-الـ cancel موجود في الـ close، ومع ذلك الـ StateError بيظهر. الـ cancel بيمنع events <b>جديدة</b> توصل للـ callback. بس لو الـ callback كان اشتغل قبل الـ close ووقف عند `await`، الـ cancel مالوش علاقة بيه. الـ await بيخلص بعد ما الـ Cubit اتقفل، والـ emit بيرمي.
+الـ cancel موجود في الـ close، وبرضه الـ StateError بيظهر. الـ cancel بيمنع events <b>جديدة</b> توصل للـ callback. بس لو الـ callback كان اشتغل قبل الـ close ووقف عند `await`، الـ cancel مالوش علاقة بيه. الـ await بيخلص بعد ما الـ Cubit اتقفل، والـ emit بيرمي.
 
 وفي مشكلة تانية: الـ `listen` مابيستناش الـ callback يخلص. لو drift طلّع ليستتين ورا بعض، الـ callbackين شغالين مع بعض، واللي يخلص الأول يعمل emit الأول، حتى لو كان بتاع الليست القديمة.
 
@@ -184,7 +184,7 @@ _sub = _repository
 
 ### كل مرة تفتح شاشة الكتاب، الـ memory بتزيد
 
-في DevTools، تاب Memory: افتح صفحة كتاب واقفلها 10 مرات، واعمل snapshot، ودوّر على `BookDetailsCubit`. المفروض 0 أو 1. لقيت 10.
+في DevTools، تاب Memory: افتح صفحة كتاب واقفلها 10 مرات، ودوس GC، واعمل snapshot، ودوّر على `BookDetailsCubit`. المفروض 0 أو 1. لقيت 10. (الأداة نفسها بالتفصيل، والتسريبات اللي مش subscriptions، في [درس الـ Memory](/course/performance/memory/) في وحدة الأداء.)
 
 <CodeBlock label="الـ subscription اللي ماسكة الـ Cubit">
 
@@ -286,7 +286,7 @@ Widget build(BuildContext context) {
 - <b>المالك واضح من الكود:</b> الـ subscription تتخزن في field في نفس الـ class اللي عملت listen، وتتلغي في الـ method اللي بتنهي عمرها. لو مش عارف تقول مين هيلغيها في جملة، يبقى محدش.
 - <b>سيب الأدوات تملك عنك:</b> `BlocBuilder` و`BlocListener` و`StreamBuilder` بيعملوا الـ subscribe والـ cancel صح. وفي الـ Bloc، `emit.forEach(stream, onData: ...)` بيلغي الـ subscription لوحده لما الـ handler يتلغي أو الـ Bloc يتقفل. كل listen بتكتبه بإيدك مسؤولية زيادة.
 - <b>الـ pause مش بديل للـ cancel:</b> على broadcast stream، الـ pause بيخلي الـ events تتخزن عندك لحد الـ resume، فالـ memory بتزيد. لو الشاشة مش ظاهرة ومش محتاج اللي فاتها، cancel ودلوقتي، واعمل listen تاني لما ترجع. الـ drift بيطلّع النتيجة الحالية أول ما تسمع، فمش هتخسر حاجة.
-- <b>الـ leaks بتتقاس، مش بتتخمن:</b> DevTools Memory بـ snapshot قبل وبعد فتح وقفل الشاشة كذا مرة، والـ diff بيوريك مين فضل. وفي الـ review: كل `listen(` جنبه field، وكل field جنبه cancel. والـ lints `cancel_subscriptions` و`close_sinks` بيمسكوا الحالات البسيطة.
+- <b>الـ leaks بتتقاس، مش بتتخمن:</b> DevTools Memory بـ snapshot قبل وبعد فتح وقفل الشاشة كذا مرة، والـ diff بيوريك مين فضل. والأداة نفسها (Diff Snapshots والـ retaining path) بالتفصيل في [درس الـ Memory](/course/performance/memory/). وفي الـ review: كل `listen(` جنبه field، وكل field جنبه cancel. والـ lints `cancel_subscriptions` و`close_sinks` بيمسكوا الحالات البسيطة.
 - <b>الـ singletons اللي بتسمع محتاجة dispose:</b> get_it مابيعرفش إن الـ object ماسك subscriptions. الـ `dispose:` في التسجيل، أو الـ scopes، هما اللي بيضمنوا إن الـ reset بيقفل بجد.
 
 <Note kind="interview" title="سؤال interview">

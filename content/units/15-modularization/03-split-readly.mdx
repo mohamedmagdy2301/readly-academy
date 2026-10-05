@@ -12,7 +12,7 @@ minutes: 35
 
 </Analogy>
 
-التقسيم الصح بيمشي بنفس الطريقة: <b>خريطة الأول</b> (مين بيعمل import لمين)، وبعدين <b>package package من تحت لفوق</b>: الحاجات اللي مابتعتمدش على حاجة الأول، وبعدين اللي بيعتمد عليها. وكل خطوة PR لوحده، والـ app شغال والتستات خضرا بعد كل واحد. درس «التوسّع» في الوحدة 6 وراك الشكل النهائي، والدرس ده الطريق ليه.
+التقسيم الصح بيمشي بنفس الطريقة: <b>خريطة الأول</b> (مين بيعمل import لمين)، وبعدين <b>package package من تحت لفوق</b>: الحاجات اللي مابتعتمدش على حاجة الأول، وبعدين اللي بيعتمد عليها. وكل خطوة PR لوحده، والـ app شغال والتستات خضرا بعد كل واحد. درس [«التوسّع»](/course/di-scale/scale/) في الوحدة 6 وراك الشكل النهائي، والدرس ده الطريق ليه.
 
 </Level>
 
@@ -113,8 +113,9 @@ class BookDetailsPage extends StatelessWidget {
 }
 
 // router/app_router.dart: the app knows both features
+// nested under '/library', so the full path is /library/books/:id
 GoRoute(
-  path: '/library/:id',
+  path: 'books/:id',
   builder: (context, state) {
     final id = state.pathParameters['id']!;
     return BookDetailsPage(id: id, below: [NotesSection(bookId: id)]);
@@ -271,7 +272,7 @@ export 'src/presentation/book_details_page.dart' show BookDetailsPage;
 | `library_domain` و`library_data` و`library_presentation` | 3 pubspecs لكل feature، وكل تغيير بيلمس التلاتة |
 | `src/domain/` جوه `feature_library` | الحد بين الـ features في الـ pubspec، واتجاه الطبقات في الـ architecture test |
 
-الـ domain بيطلع package لوحده لما يبقى فيه حد عايزه <b>من غير</b> باقي الـ feature، زي app للأدمن مش محتاج drift ولا الشاشات. ودي حالة درس «domain واحد لأكتر من app». ولحد ما ده يحصل، الـ domain جوه الـ feature.
+الـ domain بيطلع package لوحده لما يبقى فيه حد عايزه <b>من غير</b> باقي الـ feature، زي app للأدمن مش محتاج drift ولا الشاشات. ودي حالة درس [«domain واحد لأكتر من app»](/course/modularization/shared-domain/). ولحد ما ده يحصل، الـ domain جوه الـ feature.
 
 والـ `BookId` في `core` مش في الـ library، لأن الكتالوج والمكتبة والملاحظات التلاتة بيتكلموا بيه، وكلهم معتمدين على `core` أصلًا. الـ type اللي كل الـ features بتستخدمه مكانه الـ package اللي كلهم تحتها.
 
@@ -294,8 +295,9 @@ apps/readly/lib/
 <CodeBlock label="apps/readly/lib/di/setup.dart">
 
 ```dart
-void setupDependencies(AppConfig config) {
-  registerCore(getIt, config);  // Clock, TokenStore impl, the two Dio clients
+Future<void> setupDependencies(AppConfig config) async {
+  // Clock, TokenStore impl, the two Dio clients (the realtime unit's registerCore)
+  await registerCore(getIt, config, background: false);
   registerLibrary(getIt);
   registerNotes(getIt);
   registerCatalog(getIt);
@@ -322,7 +324,7 @@ Readly بعد التقسيم والأرقام ترتيب النقل: الـ core
 
 ### الـ guard جاب dio لـ core
 
-أول محاولة نقل `core/errors/guard.dart` لـ `packages/core` مع `Result` و`Failure`، لأنهم «مع بعض». الـ `guard` بيمسك `DioException`، فـ `core` بقت محتاجة dio في الـ pubspec. ومن غير ما حد يكتب import، كل domain في كل feature بقى بيعتمد على dio، لأن الـ domain بيعتمد على `core`.
+أول محاولة نقل `core/errors/guard.dart` لـ `packages/core` مع `Result` و`Failure`، لأنهم «مع بعض»، وده كمان اللي الرسمة السريعة في درس التوسّع كانت عاملاه. الـ `guard` بيمسك `DioException`، فـ `core` بقت محتاجة dio في الـ pubspec. ومن غير ما حد يكتب import، كل domain في كل feature بقى بيعتمد على dio، لأن الـ domain بيعتمد على `core`.
 
 السؤال الصح: مين بيستخدم `guard`؟ الـ repositories بس، يعني طبقة الـ data. فمكانه `core_network`:
 
@@ -358,7 +360,7 @@ Future<Result<T>> guard<T>(Future<T> Function() run) async {
 
 الـ `book_dto.dart` فيه `part 'book_dto.freezed.dart';` و`part 'book_dto.g.dart';`. اتنقل للـ package الجديدة والـ generated files لسه في `apps/readly`. النتيجة compile errors في كل DTO.
 
-الـ generated files بتتنقل مع الملف اللي ولّدها أو بتتولّد من جديد جوه الـ package الجديدة، والـ package لازم يبقى فيها `build_runner` والـ generators في `dev_dependencies` بتاعتها. ودي بداية درس «الـ codegen والـ CI»: كل package ليها codegen بتاعها، والـ CI لازم يعرف ده.
+الـ generated files بتتنقل مع الملف اللي ولّدها أو بتتولّد من جديد جوه الـ package الجديدة، والـ package لازم يبقى فيها `build_runner` والـ generators في `dev_dependencies` بتاعتها. ودي بداية درس [«الـ codegen والـ CI»](/course/modularization/codegen-ci/): كل package ليها codegen بتاعها، والـ CI لازم يعرف ده.
 
 ### الترجمة: الـ feature مش قادرة توصل لـ AppLocalizations
 
@@ -403,7 +405,7 @@ MaterialApp.router(
 
 ### الـ routes: الكتالوج عايز يفتح صفحة في المكتبة
 
-كل feature بتصدّر الـ routes بتاعتها، والـ app بيجمّعهم في الـ shell. بس الكتالوج عايز يودّي على `/library/:id` بعد «ضيف لمكتبتي». لو عمل import لـ `LibraryPage` عشان يعمل `Navigator.push`، رجعنا نربط الـ presentation ببعض.
+كل feature بتصدّر الـ routes بتاعتها، والـ app بيجمّعهم في الـ shell. بس الكتالوج عايز يودّي على `/library/books/:id` بعد «ضيف لمكتبتي». لو عمل import لـ `BookDetailsPage` عشان يعمل `Navigator.push`، رجعنا نربط الـ presentation ببعض.
 
 التنقل بين الـ features بيبقى <b>بالـ path</b>، مش بالـ widget:
 
@@ -413,7 +415,7 @@ MaterialApp.router(
 // packages/feature_library/lib/src/library_routes.dart
 abstract final class LibraryPaths {
   static const library = '/library';
-  static String book(BookId id) => '/library/${id.value}';
+  static String book(BookId id) => '/library/books/${id.value}';
 }
 
 // packages/feature_catalog/lib/src/presentation/catalog_details_page.dart
@@ -475,7 +477,8 @@ import '../features/notes/presentation/notes_section.dart';
 StatefulShellRoute.indexedStack(branches: [
   StatefulShellBranch(routes: [
     GoRoute(path: '/library', builder: (_, __) => const LibraryPage(), routes: [
-      // every nested route of every feature, written here
+      // 'books/:id' (BookDetailsPage + NotesSection) and every nested route
+      // of every feature, written here
     ]),
   ]),
   // ...

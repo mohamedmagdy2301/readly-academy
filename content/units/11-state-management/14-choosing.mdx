@@ -122,7 +122,7 @@ Cubit وBloc وRedux وRiverpod مبنيين على state جديدة في كل �
 
 | الحل | الـ DI |
 | --- | --- |
-| Cubit / Bloc | مالوش DI. Readly بتستخدم get_it وinjectable، والـ `BlocProvider` بيحدد العمر في الشجرة (درس الـ DI في الوحدة 6) |
+| Cubit / Bloc | مالوش DI. Readly بتستخدم get_it بتسجيل يدوي لكل feature (`registerLibrary`)، والـ `BlocProvider` بيحدد العمر في الشجرة ([درس الـ DI](/course/di-scale/di/) في الوحدة 6) |
 | provider | الشجرة نفسها هي الـ DI |
 | Riverpod | هو نفسه DI: الـ providers بتعتمد على بعض، والتست بيعمل override |
 | GetX | `Get.put` و`Get.find`: service locator عام، مع `Bindings` لكل route |
@@ -441,10 +441,10 @@ class LegacyReadingNowSource implements ReadingNowSource {
 
 | في GetX | في Readly |
 | --- | --- |
-| `Get.put` و`Get.find` و`Bindings` | get_it وinjectable، و`BlocProvider` في الـ route |
+| `Get.put` و`Get.find` و`Bindings` | get_it (`registerFactory` و`registerLazySingleton` في `registerLibrary`)، و`BlocProvider` في الـ route |
 | `Get.to` و`Get.arguments` | go_router والـ path parameters ([درس «go_router والتنقل»](/course/presentation/router/)) |
 | `Get.snackbar` و`Get.dialog` | `BlocListener` بيعرض من الـ UI |
-| `.tr` والـ translations | الـ l10n بتاع Flutter (درس الـ l10n في الوحدة 5) |
+| `.tr` والـ translations | الـ l10n بتاع Flutter ([درس الترجمة](/course/presentation/l10n/) في الوحدة 5) |
 | `GetConnect` | dio وطبقة الـ data (الوحدة 9) |
 
 <b>الترتيب:</b>
@@ -569,6 +569,8 @@ LibraryRepository libraryRepository(Ref ref) => getIt<LibraryRepository>();
 3. <b>شاشة شاشة:</b> الـ Cubit يبقى Notifier واحد، و<b>الـ state class نفسها تفضل</b> (`LibraryState` بالـ `isRefreshing` والـ `refreshFailure`): `build()` بيرجّع `LibraryLoading()` وبيشترك في `watchLibrary()` مع `ref.onDispose(sub.cancel)`، و`refresh()` هي هي بـ `ref.mounted` مكان `isClosed`. كده الـ View بيتغير فيها طريقة القراية بس، والـ goldens بتفضل زي ما هي. الشكل الـ idiomatic اللي في درس Riverpod (`libraryBooksProvider` بـ `AsyncValue` و`LibraryRefresh` لوحده) خطوة تانية بعدين، مش جزء من النقل.
 4. <b>get_it في الآخر:</b> لما كل الشاشات تتنقل، الـ providers تبني الـ repositories بنفسها بدل ما تقرا من get_it، وget_it يتشال.
 
+والنقل ده متعمل فعلًا على Readly كلها في [الوحدة 12](/course/riverpod/why/): النقلين (الحرفي والـ idiomatic) شاشة شاشة في [«Notifier وAsyncNotifier قصاد Cubit»](/course/riverpod/notifier/)، والكوبري والخلط وتمن التحويل بالأرقام في [«تختار إيه، وتمن التحويل»](/course/riverpod/decision/).
+
 ### التستات خضرا طول الطريق
 
 الـ migration من غير تستات اسمه rewrite بعيون مقفولة. كل شاشة بتعدّي على 3 مراحل:
@@ -673,7 +675,7 @@ Status: Accepted (2026-10)
 ## Context
 - Offline-first app: drift is the source of truth and exposes streams.
 - Presentation logic must be testable with plain `dart test` (no Flutter).
-- DI is get_it + injectable; navigation is go_router.
+- DI is get_it (hand-written register* per feature); navigation is go_router.
 - Team: 1 senior, 2 mid-level. Two of three have shipped Bloc before.
 
 ## Criteria (in order)

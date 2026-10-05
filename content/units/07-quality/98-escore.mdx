@@ -215,4 +215,13 @@ class _FakeNewsRepository implements NewsRepository {
 </Answer>
 </Question>
 
+<Question id="escore-quality-3">
+<Ask>`OfflineAwareRepository.fetchWithCache` بيحل مشكلة الـ online/offline، بس اتنادى 15 مرة بس، وفي news وevents نفس الـ `if (isOnline) ... else cached ?? OfflineFailure()` مكتوب بالإيد 7 مرات في كل واحد. ليه الـ abstraction الموجود ماتستخدمش، وتصلّحها إزاي؟</Ask>
+<Answer>
+
+وجود الـ abstraction مش كفاية: لو مفيش حاجة بتجبرك تستخدمه، الأسرع هو اللي بيتكتب. وغالبًا شكله ماكانش مناسب للحالات اللي جت بعدين، فالناس نسخوا الـ `if` بدل ما يعدّلوه. الحل إنك تعدّل الـ helper لحد ما يغطي الحالات الحقيقية، وتنقل الـ 14 نسخة ليه واحدة واحدة، وتحط lint أو تست يمسك الـ `isOnline` المكتوب بالإيد في الـ repositories عشان مايرجعش، زي البند 5 في «لو هنعيدها».
+
+</Answer>
+</Question>
+
 </Quiz>

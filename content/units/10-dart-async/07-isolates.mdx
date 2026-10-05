@@ -97,7 +97,7 @@ _logger.debug('parse: ${sw.elapsedMilliseconds}ms for ${rows.length} rows');
 
 - <b>في profile mode مش debug:</b> الـ debug أبطأ بكتير، وهيخليك تشوف مشاكل مش موجودة. `flutter run --profile` على موبايل حقيقي، ويفضل يكون موبايل متوسط مش أحدث حاجة.
 - <b>الـ frame budget:</b> 16ms على شاشة 60Hz، و8ms على 120Hz. الـ Flutter cookbook بيقول إن أي شغل أكتر من 16ms هيبان للمستخدم كـ jank.
-- <b>DevTools Performance:</b> الـ frames الحمرا في الـ UI thread، وتحتها الـ CPU profiler بيقولك أنهي function واخدة الوقت.
+- <b>DevTools Performance:</b> الـ frames الحمرا في الـ UI thread، وتحتها الـ CPU profiler بيقولك أنهي function واخدة الوقت. الطريقة دي خطوة خطوة، والحلول الأرخص اللي تجرّبها قبل الـ isolate، في [درس الشغل التقيل على الـ main isolate](/course/performance/main-isolate/) في وحدة الأداء.
 
 </Level>
 

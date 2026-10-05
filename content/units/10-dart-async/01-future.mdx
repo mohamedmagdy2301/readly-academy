@@ -346,7 +346,7 @@ final covers = await inBatches(books, (b) => _coverCache.download(b.id));
 ```dart
 Future<void> addAndOpen(Book book) async {
   _addBook(book).then((result) {
-    if (result is Success) _router.push('/library/${book.id.value}');
+    if (result is Success) _router.push('/library/books/${book.id.value}');
   });
   emit(state.copyWith(lastAdded: book)); // runs before the book is saved
 }

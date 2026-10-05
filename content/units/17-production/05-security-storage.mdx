@@ -172,7 +172,7 @@ await tokens.clearIfReinstalled(); // the Session lesson: iOS keeps Keychain ite
 
 </Diagram>
 
-الـ `local_auth` كله native وstatic تقريبًا، فبيستخبى ورا interface صغير زي ما عملنا مع `PushMessaging`:
+الـ `local_auth` كله native وstatic تقريبًا، فبيستخبى ورا interface صغير زي ما عملنا مع `PushMessaging` في [درس الـ Push](/course/realtime/push-notifications/):
 
 <CodeBlock label="core/security/biometric_gate.dart">
 
@@ -308,24 +308,25 @@ late final _lifecycle = AppLifecycleListener(
   onShow: getIt<AppLockCubit>().appShown,
 );
 
-// the router: the lock is checked inside Authenticated only
+// the router: the push lesson's redirect (to / back), the lock is checked inside Authenticated only
+refreshListenable: StreamListenable(StreamGroup.merge([auth.stream, lock.stream])), // package:async
 redirect: (context, state) {
   final at = state.matchedLocation;
+  // here, to() and back(): unchanged from the push lesson
   return switch (auth.state) {
-    AuthUnknown() => at == '/splash' ? null : '/splash',
-    Unauthenticated() => at == '/login' ? null : '/login',
-    Authenticated() when lock.state is Locked =>
-      at == '/unlock' ? null : '/unlock?from=${Uri.encodeComponent(state.uri.toString())}',
-    Authenticated() => at == '/splash' || at == '/login' || at == '/unlock' ? '/library' : null,
+    AuthUnknown() => at == '/splash' ? null : to('/splash'),
+    Unauthenticated() => at == '/login' ? null : to('/login'),
+    Authenticated() when lock.state is Locked => at == '/unlock' ? null : to('/unlock'),
+    Authenticated() => at == '/splash' || at == '/login' || at == '/unlock' ? back() : null,
   };
 },
 ```
 
 </CodeBlock>
 
-- <b>الـ `AppLockCubit` lazySingleton:</b> نفس سبب الـ AuthCubit في درس الـ Session: الـ router والـ lifecycle وصفحة الإعدادات لازم يسمعوا على نفس النسخة. والـ `refreshListenable` بتاع الـ router بيسمع على الاتنين.
-- <b>الـ `from`:</b> نفس اللي عملناه للـ login والـ push: المستخدم يرجع للشاشة اللي كان فيها، والـ `from` بيعدّي على نفس الـ allowlist.
-- <b>صفحة `/unlock` فيها زرارين:</b> «افتح» بينادي `unlock`، و«ادخل بالباسورد بدل كده» بينادي `AuthCubit.logout()`. الزرار التاني هو اللي بيضمن إن مفيش حد يتحبس برّه: البصمة اتلخبطت أو اتمسحت، يرجع للـ login العادي، والـ session الجديدة بتبدأ من غير قفل لأن الـ logout بيعمل `AppLockStore.clear()`.
+- <b>الـ `AppLockCubit` lazySingleton:</b> نفس سبب الـ AuthCubit في درس الـ Session: الـ router والـ lifecycle وصفحة الإعدادات لازم يسمعوا على نفس النسخة. والـ `refreshListenable` بتاع الـ router بيسمع على الاتنين: نفس الـ `StreamListenable` بتاع [درس go_router](/course/presentation/router/)، على الـ stream المدموج.
+- <b>الـ `from`:</b> نفس `to()` و`back()` اللي عملناهم للـ splash والـ login في [درس الـ Push](/course/realtime/push-notifications/): المستخدم يرجع للشاشة اللي كان فيها بعد ما يفتح، والـ `from` بيعدّي على نفس الـ allowlist بتاعة `PushRouter`.
+- <b>صفحة `/unlock` فيها زرارين:</b> «افتح» بينادي `unlock`، و«ادخل بالباسورد بدل كده» بينادي `AuthCubit.logout()`. الزرار التاني هو اللي بيضمن إن مفيش حد يتحبس برّه: البصمة اتلخبطت أو اتمسحت، يرجع للـ login العادي، والـ session الجديدة بتبدأ من غير قفل لأن الـ `resetOnLogout` (تحت) بيعمل `AppLockStore.clear()` و`AppLockCubit.reset()`.
 
 ### الـ app switcher بيعرض الملاحظات
 

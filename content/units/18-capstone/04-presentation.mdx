@@ -75,14 +75,14 @@ final class JoinFailed extends JoinShelfState { /* Failure: offline, server, wit
 ### المهمة 3: الـ routes والدعوة
 
 <Tasks>
-<Task id="cap-presentation-3">زوّد routes الرفوف في الـ package نفسها، وصدّرها من الـ barrel: القايمة، والرف، و`/join/:token` للـ deep link (https والـ scheme الاتنين). المستخدم اللي مش داخل يروح للـ login ويرجع للدعوة بعدها. وقرر مكان الرفوف في التابات، وإيه اللي يحصل لو حد فتح لينك دعوة والـ flag مقفول.</Task>
+<Task id="cap-presentation-3">زوّد routes الرفوف في الـ package نفسها، وصدّرها من الـ barrel: القايمة `/shelves`، والرف `/shelves/:id` (زي `/library/books/:id`)، و`/join/:token` للـ deep link (https والـ scheme الاتنين). المستخدم اللي مش داخل يروح للـ login ويرجع للدعوة بعدها. وقرر مكان الرفوف في التابات، وإيه اللي يحصل لو حد فتح لينك دعوة والـ flag مقفول.</Task>
 <Task id="cap-presentation-4">اعمل «ضيف للرف» في صفحة الكتاب من غير ما `feature_catalog` أو `feature_library` تعتمد على `feature_shelves`: الـ app هو اللي بيركّب الزرار في الصفحة.</Task>
 </Tasks>
 
 <details className="qa">
 <summary>تلميح 1: اللينك والـ login</summary>
 
-ده بالظبط الـ `from` اللي اتعمل في الـ redirect في وحدة الـ Real-time عشان الإشعار. ولازم يعدّي على نفس الـ allowlist، عشان لينك متفبرك مايفتحش أي route.
+ده بالظبط الـ `from` اللي اتعمل في الـ redirect في [درس الـ Push notifications](/course/realtime/push-notifications/) عشان الإشعار. ولازم يعدّي على نفس الـ allowlist، عشان لينك متفبرك مايفتحش أي route.
 
 </details>
 
@@ -161,7 +161,7 @@ final class JoinFailed extends JoinShelfState { /* Failure: offline, server, wit
 <Ask>المستخدم فاتح الرف، وصاحبه شاله منه. مين بيقرر إن الشاشة تتقفل، وإزاي؟</Ask>
 <Answer>
 
-محدش بيقرر في الشاشة. الـ `shelf.removed` (أو رد 403 على عملية) بيمسح الرف من drift، فالـ `watchShelf` بيطلّع `null`. الـ Cubit بيحوّل ده لـ state زي `ShelfGone`، والـ `BlocListener` بيعمل pop ويعرض الرسالة مرة واحدة. الـ Cubit مايعرفش إن فيه socket ولا outbox، وده اللي بيخلي نفس الكود يشتغل لو الرف اتمسح من جهاز تاني لنفس المستخدم.
+محدش بيقرر في الشاشة. الـ `shelf.removed` (أو رد 403 على عملية) بيمسح الرف من drift، فالـ `watchShelf` بيطلّع `null`. الـ Cubit بيحوّل ده لـ state زي `ShelfGone`، والـ `BlocListener` بيعمل pop ويعرض الرسالة مرة واحدة. الـ Cubit مايعرفش إن فيه socket ولا sync queue، وده اللي بيخلي نفس الكود يشتغل لو الرف اتمسح من جهاز تاني لنفس المستخدم.
 
 </Answer>
 </Question>
@@ -171,6 +171,15 @@ final class JoinFailed extends JoinShelfState { /* Failure: offline, server, wit
 <Answer>
 
 لأن الدعوة أونلاين بس بقرار في الـ ADR، والـ app عارف ده قبل الضغطة. الزرار المقفول ومعاه سبب («محتاج نت عشان تعمل لينك») بيقول للمستخدم الحقيقة من غير ما يعمل حاجة ويستنى ويتفاجئ. والفرق مهم عن الإضافة، اللي شغالة أوفلاين: المستخدم لازم يفهم من الشاشة إيه اللي بيستنى النت وإيه اللي لأ.
+
+</Answer>
+</Question>
+
+<Question id="cap-presentation-q3">
+<Ask>باقي Readly على Cubit، وانت عايز تكتب الرفوف بـ Riverpod. إيه اللي هيتغير في الـ domain والـ data، وإيه التمن الحقيقي؟</Ask>
+<Answer>
+
+الـ domain والـ data مش هيتغير فيهم سطر: نفس الـ repositories والـ use cases، والـ providers بتجيبها من get_it (`getIt<ShelvesRepository>()`) أو بتنقل تسجيلها. التمن كله في الـ presentation والفريق: نظامين للـ state في app واحد، وتستات بـ `ProviderContainer` جنب `blocTest`، وأي حد جديد لازم يعرف الاتنين، وقواعد review وlint لكل واحد. فالسؤال مش «مين أحسن»، السؤال: المكسب في الـ feature دي يستاهل التمن ده؟ لو هدفك تشحنها وتتصان مع الباقي، Cubit. ولو هدفك تجرّب Riverpod في مشروع حقيقي، ينفع، بس الـ ADR يقول ده صريح، ويقول هيتقيّم امتى، زي [درس الاختيار](/course/state-management/choosing/) و[درس القرار في وحدة Riverpod](/course/riverpod/decision/).
 
 </Answer>
 </Question>

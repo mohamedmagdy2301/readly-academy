@@ -22,6 +22,12 @@ minutes: 50
 
 الدرس ده جاي بعد ما خلصت الـ Cubit والـ Bloc، فهنبني Riverpod على اللي انت عارفه: كل مفهوم هنقول هو إيه في Riverpod، وبيقابل إيه في الـ Cubit، وفين بيختلف بجد. ونبني نفس الـ features اللي بنيناها بالـ Cubit: <b>هدف القراية</b> من [درس "أول Cubit سطر بسطر"](/course/state-management/first-cubit/)، و<b>شاشة المكتبة</b> من [درس "Cubit ولا Bloc"](/course/state-management/cubit-vs-bloc/)، وفي الآخر نحطهم جنب بعض.
 
+<Note kind="info" title="الدرس ده الخريطة، والوحدة 12 الرحلة">
+
+هنا بتتعرف على الأداة على شاشتين، وبتشوفها كاختيار state management جنب الـ Cubit. أما Readly كلها بـ Riverpod (مكان get_it، والـ session، والـ pagination، والتستات، وتمن التحويل بالأرقام) فده في [وحدة «Riverpod في الـ Clean Architecture»](/course/riverpod/why/)، وبتبدأ من النقطة اللي الدرس ده بيخلص عندها.
+
+</Note>
+
 ### ليه Riverpod اتعمل أصلًا
 
 Riverpod عامله Remi Rousselet، نفس الشخص اللي عامل `provider` (والاسم نفسه حروف «provider» متلخبطة). يعني هو مش منافس جاي من برا، هو صاحب provider بيصلّح اللي مش عاجبه فيه. والـ flutter_bloc نفسه مبني على provider، فالمشاكل دي انت شفتها بعينك في [درس "flutter_bloc بالتفصيل"](/course/state-management/flutter-bloc-widgets/):
@@ -86,7 +92,7 @@ Riverpod 3.0 نزل في سبتمبر 2025، والإصدارات الحالية
 ```yaml
 dependencies:
   flutter_riverpod: ^3.4.3
-  riverpod_annotation: ^4.0.0
+  riverpod_annotation: ^4.0.7
 
 dev_dependencies:
   build_runner:
@@ -95,7 +101,7 @@ dev_dependencies:
 
 </CodeBlock>
 
-وبعدين `dart run build_runner watch` شغال وانت بتكتب، زي ما بتعمل مع freezed وinjectable وdrift في Readly. كل ملف فيه `@riverpod` لازم يبقى فيه `part 'اسم_الملف.g.dart';`.
+وبعدين `dart run build_runner watch` شغال وانت بتكتب، زي ما بتعمل مع freezed للـ DTOs وdrift في Readly. كل ملف فيه `@riverpod` لازم يبقى فيه `part 'اسم_الملف.g.dart';`.
 
 ### ProviderScope: المطبخ
 
@@ -290,7 +296,7 @@ class ReadingGoal extends Notifier<int> {
 
 قبل المكتبة، محتاجين اللي بنحطه في get_it في Readly. في Riverpod، كل dependency provider:
 
-<CodeBlock label="lib/features/library/di/library_providers.dart">
+<CodeBlock label="feature_library/lib/src/library_providers.dart">
 
 ```dart
 import 'package:riverpod_annotation/riverpod_annotation.dart';
@@ -316,10 +322,7 @@ RefreshLibrary refreshLibrary(Ref ref) => RefreshLibrary(ref.watch(libraryReposi
 
 </CodeBlock>
 
-- <b>نوع الرجوع هو الـ contract:</b> `libraryRepository` بترجّع `LibraryRepository` (الـ interface في الـ domain)، مش الـ Impl. ده نفس `@LazySingleton(as: LibraryRepository)` في injectable.
-- <b>`keepAlive: true`:</b> مع الـ codegen كل provider بيتمسح لما محدش يسمع عليه. الـ database والـ repository لازم يعيشوا طول الـ app، فبنقول keepAlive. ده المقابل لـ `lazySingleton`. والـ use case رخيص، فسيبناه بالـ default.
-- <b>`ref.onDispose`:</b> بيتنادى لما الـ provider يتمسح. هنا بيقفل الـ database. ده `close()` بتاع الـ Cubit، بس لأي حاجة، مش للـ state بس.
-- <b>الـ classes نفسها مالمستهاش:</b> `LibraryRepositoryImpl` و`RefreshLibrary` لسه classes عادية بتاخد dependencies في الـ constructor، ومابتعرفش حاجة اسمها `ref`. Riverpod هنا بس بيوصّل الأسلاك، زي get_it بالظبط.
+الـ database والـ repositories بـ `keepAlive: true` (المقابل لـ `registerLazySingleton`، لأن الـ codegen بيمسح أي provider محدش بيسمع عليه) وبترجّع الـ contract مش الـ Impl، والـ use case رخيص فسيبناه بالـ default. والـ `ref.onDispose` بيقفل الـ database لما الـ provider يتمسح. والـ classes نفسها مابتعرفش `ref`: Riverpod بيوصّل الأسلاك بس، زي get_it بالظبط. الـ composition root كامل (الـ Dio الاتنين، والـ overrides قبل `runApp`، والـ flavors، والـ session) في [درس «Riverpod مكان get_it»](/course/riverpod/di/).
 
 <Diagram name="d-sm-riverpod-container">
 
@@ -564,6 +567,8 @@ onPressed: () => ref.read(libraryRefreshProvider.notifier).refresh(),
 
 الـ `ref.read` مابيمسكش الـ provider عايش. لو الشاشة اللي بتنادي الـ action مش بتسمع على الـ provider، الـ state بتاعته ممكن تتمسح قبل ما الـ method تخلص، والنتيجة تروح. الحل: الشاشة اللي بتعمل الـ action تعمل `ref.watch` أو `ref.listen` عليه (زي `LibraryPage`)، أو الـ provider يبقى keepAlive لو الـ state بتاعته لازم تعيش بره الشاشة. في الـ Cubit المشكلة دي مش موجودة، لأن الـ `BlocProvider` ماسك الـ Cubit لحد ما الصفحة تتقفل، سواء حد بيسمع ولا لأ.
 
+الـ graph كامل، ومين بيمسك الـ provider عايش، والـ `cacheFor`، في [درس «الـ providers والـ ref»](/course/riverpod/basics/).
+
 ### ref.mounted والـ isClosed
 
 | | Cubit | Riverpod 3 |
@@ -675,7 +680,7 @@ void main() {
 - <b>`container.listen`:</b> بيمسك الـ provider عايش، وبيدّيك `read()` للقيمة الحالية. من غيره، provider بالـ autoDispose ممكن يتمسح بين سطرين.
 - <b>الـ widget tests:</b> نفس الفكرة: `ProviderScope(overrides: [...], child: const MaterialApp(home: LibraryPage()))`. مفيش `MockCubit` ولا `whenListen`: بتدّي repository وهمي، والـ providers الحقيقية بتشتغل فوقه.
 
-قارن بالـ `blocTest` في [درس "تست الـ Cubit" في الوحدة 8](/course/testing/cubit-tests/): هناك بتشوف ليستة states بالترتيب (`expect: [...]`)، وده واضح جدًا لسلوك فيه خطوات. هنا بتقرا القيمة في آخر التست، ولو عايز الترتيب تجمّعه بنفسك من الـ listener. الاتنين بيختبروا نفس الحاجة، بس أسلوب التفكير مختلف.
+قارن بالـ `blocTest` في [درس "تست الـ Cubit" في الوحدة 8](/course/testing/cubit-tests/): هناك بتشوف ليستة states بالترتيب (`expect: [...]`)، وده واضح جدًا لسلوك فيه خطوات. هنا بتقرا القيمة في آخر التست، ولو عايز الترتيب تجمّعه بنفسك من الـ listener. الاتنين بيختبروا نفس الحاجة، بس أسلوب التفكير مختلف. الـ helper اللي بيسجّل الـ states بالترتيب، والـ `overrideWithBuild`، والـ debounce بـ fake_async، وجدول blocTest ↔ container في [درس «اختبار الـ providers»](/course/riverpod/testing/).
 
 ### الكود القديم: legacy.dart
 
@@ -745,14 +750,14 @@ List<Book> readingNow(Ref ref) {
 </CodeBlock>
 
   في الـ Cubit، دي كانت مشكلة «التواصل بين الـ Cubits» في [درس "Cubit متقدم"](/course/state-management/cubit-advanced/): Cubit تاني بيسمع على نفس الـ repository stream. هنا provider بيعمل watch لـ provider. ونفس الحاجة للـ family: تفاصيل الكتاب لنفس الـ `id` متخزنة ومتشاركة.
-- <b>أسلاك أقل:</b> مفيش `@injectable` وتسجيل في get_it و`BlocProvider` لكل شاشة و`MultiBlocProvider` فوق الـ app. الـ DI والـ state والـ lifecycle في أداة واحدة.
+- <b>أسلاك أقل:</b> مفيش تسجيل في get_it و`BlocProvider` لكل شاشة و`MultiBlocProvider` فوق الـ app. الـ DI والـ state والـ lifecycle في أداة واحدة.
 - <b>الـ async جاهز:</b> `AsyncValue` بالـ loading والـ error والقيمة القديمة، والـ refresh بـ `ref.refresh(p.future)`، والـ retry، والـ stream بيتلغي لوحده. كل ده كنت بتكتبه في الـ Cubit أو في الـ state.
 - <b>مابيعملش rebuild لشاشات مستخبية:</b> الـ listeners الموقوفة في 3.0.
 
 ### وبيكلّف إيه
 
 - <b>الإعلانات global:</b> أي ملف يقدر يعمل `ref.read(أي provider)`. مفيش حاجة في الأداة بتمنع الـ UI إنها تقرا الـ repository مباشرة، أو provider في feature يقرا state جوه feature تانية. في flutter_bloc، الشجرة بتفرض حدود (الصفحة مش شايفة Cubit صفحة تانية). في Riverpod الحدود دي لازم تيجي من conventions وreview.
-- <b>الـ codegen:</b> `build_runner` في الـ loop، وملفات `.g.dart`، ورسايل error أحيانًا من الـ generated code. Readly عندها codegen أصلًا (freezed وinjectable وdrift)، فالتمن هنا أقل، بس في مشروع مافيهوش، ده تمن حقيقي.
+- <b>الـ codegen:</b> `build_runner` في الـ loop، وملفات `.g.dart`، ورسايل error أحيانًا من الـ generated code. Readly عندها codegen أصلًا (freezed للـ DTOs وdrift)، فالتمن هنا أقل، بس في مشروع مافيهوش، ده تمن حقيقي.
 - <b>«سحر» الـ lifecycle:</b> الـ state بتتمسح لما محدش بيسمع، و`build` بيتعاد لما dependency تتغير فالـ state ترجع لأولها. كل ده منطقي لما تفهمه، بس الـ bugs بتاعته («الـ state رجعت لأولها لوحدها»، «النتيجة راحت بعد الـ await») مش باينة من قراية الكود. في الـ Cubit، الـ object عايش من الـ create للـ close، والـ state مابتتغيرش غير بـ emit.
 - <b>الـ dependencies مستخبية:</b> الـ Cubit بيقولك في الـ constructor هو محتاج إيه. الـ Notifier بيجيب اللي محتاجه من `ref` في أي سطر. التست بيبقى بالـ overrides، ولازم تعرف الـ Notifier بيقرا إيه عشان تعمله override.
 - <b>مفيش events ولا transformers:</b> الـ Notifier زي الـ Cubit: methods، والـ concurrency بإيدك (flag زي `isRefreshing`، و`ref.mounted`). مفيش `droppable()` ولا `restartable()` ولا `onTransition`. الـ `ProviderObserver` بيشوف التغييرات (قبل وبعد)، زي `onChange`، مش السبب.
@@ -765,23 +770,19 @@ List<Book> readingNow(Ref ref) {
 <CodeBlock label="فين كل حاجة">
 
 ```text
-lib/
-  core/                         Result, Failure: no riverpod
-  features/library/
-    domain/                     Book, LibraryRepository, RefreshLibrary: pure Dart, no riverpod
-    data/                       LibraryRepositoryImpl: plain classes, constructor injection, no Ref
-    di/library_providers.dart   repository + use case providers (what get_it did)
-    presentation/
-      library_providers.dart    libraryBooks, LibraryRefresh (what the Cubit did)
-      library_page.dart
+core/                                Result, Failure: no riverpod
+feature_library/lib/src/
+  domain/                            Book, LibraryRepository, RefreshLibrary: pure Dart, no riverpod
+  data/                              LibraryRepositoryImpl: plain classes, constructor injection, no Ref
+  library_providers.dart             repository + use case providers (what registerLibrary did)
+  presentation/
+    library_providers.dart           libraryBooks, LibraryRefresh (what the Cubit did)
+    library_page.dart
 ```
 
 </CodeBlock>
 
-- <b>الـ domain مابيعرفش Riverpod:</b> لو `import 'package:riverpod...` ظهر في `domain/`، ده نفس غلطة `import 'package:flutter/...'` في الـ Cubit.
-- <b>`Ref` مايدخلش الـ data layer:</b> repository بياخد `Ref` في الـ constructor عشان «يجيب اللي محتاجه» هو service locator متخفي. الـ classes بتاخد dependencies صريحة، والـ providers بس هي اللي تعرف `ref`.
-- <b>الـ Notifier هو الـ Cubit:</b> في الـ presentation، بيكلّم use cases (أو repository contract)، ومابيعرفش `BuildContext` ولا dio ولا drift. وكل القواعد اللي في [درس "الـ State management في مشروع حقيقي"](/course/state-management/architecture/) عن الـ Cubit بتنطبق عليه.
-- <b>لو بتنقل من get_it:</b> كوبري مؤقت `@Riverpod(keepAlive: true) LibraryRepository libraryRepository(Ref ref) => getIt<LibraryRepository>();`، وتنقل الشاشات واحدة واحدة، وفي الآخر تشيل get_it.
+القاعدة: مفيش `riverpod` في `domain/` ولا `data/`، ومفيش class بتاخد `Ref`، والـ Notifier بيمشي على نفس قواعد الـ Cubit في [درس "الـ State management في مشروع حقيقي"](/course/state-management/architecture/). ليه، وإزاي تحرسها بتست معمارية، في [درس «ليه Riverpod، وإيه اللي مش هيتغير»](/course/riverpod/why/). ولو بتنقل من get_it، الكوبري المؤقت (provider بيرجّع `getIt<LibraryRepository>()`) وإزاي الاتنين يعيشوا مع بعض في [درس «تختار إيه، وتمن التحويل»](/course/riverpod/decision/).
 
 ### الفريق يختار Riverpod امتى
 
@@ -792,7 +793,7 @@ lib/
 | الفريق مرتاح للـ codegen وفاهم الـ lifecycle | الفريق يعرف bloc، أو بيتغير كتير ومحتاج حاجة الكل يفهمها في ساعة |
 | مشروع جديد، أو الفريق عنده خبرة Riverpod | محتاج events وtransformers وسجل بالسبب (`onTransition`) |
 
-Readly ماشية بالـ Cubit لأسباب اتقالت في الوحدة دي: الـ state صريحة في class واحدة، والـ dependencies في الـ constructor فالتست بسيط، والـ object ليه lifecycle واضح، والـ Cubit والـ Bloc نفس الـ package لما تحتاج transformers. بس ده اختيار، مش حكم: مشروع Riverpod مكتوب كويس مش أقل من مشروع Cubit مكتوب كويس، والمقارنة الكاملة بين كل الحلول في [درس "تختار state management إزاي"](/course/state-management/choosing/).
+Readly ماشية بالـ Cubit لأسباب اتقالت في الوحدة دي: الـ state صريحة في class واحدة، والـ dependencies في الـ constructor فالتست بسيط، والـ object ليه lifecycle واضح، والـ Cubit والـ Bloc نفس الـ package لما تحتاج transformers. بس ده اختيار، مش حكم: مشروع Riverpod مكتوب كويس مش أقل من مشروع Cubit مكتوب كويس، والمقارنة الكاملة بين كل الحلول في [درس "تختار state management إزاي"](/course/state-management/choosing/)، وتمن التحويل بالأرقام بعد ما Readly اتكتبت بالاتنين في [درس «تختار إيه، وتمن التحويل»](/course/riverpod/decision/).
 
 ### لو دخلت مشروع Riverpod بكرة
 
@@ -973,7 +974,7 @@ class LibraryRefresh extends _$LibraryRefresh {
 | refresh واحد في المرة | `isRefreshing` في أول سطر | نفس الحاجة |
 | بعد الـ await | `if (isClosed) return;` | `if (!ref.mounted) return;` |
 | الـ SnackBar مرة واحدة | `BlocListener` + `listenWhen` | `ref.listen` + مقارنة بالـ `previous` |
-| الـ DI | `@injectable` + `getIt` في `BlocProvider` | `libraryRepositoryProvider` و`refreshLibraryProvider` |
+| الـ DI | `registerFactory` في get_it + `getIt` في `BlocProvider` | `libraryRepositoryProvider` و`refreshLibraryProvider` |
 | الـ pull-to-refresh | `onRefresh: cubit.refresh` | `onRefresh: () => ref.read(...notifier).refresh()` |
 | التست | `blocTest` بـ `expect: [states]` | `ProviderContainer.test` + overrides + قراية في الآخر |
 | الكود | ~45 سطر + `LibraryState` | ~25 سطر، من غير state class للبيانات |

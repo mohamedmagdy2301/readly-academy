@@ -269,7 +269,7 @@ _sub = _queries.stream
 
 ```dart
 _local.watchBooks().map((rows) => [for (final r in rows) r.toEntity()]);
-// one row has an id that BookId.fromTrusted rejects: ArgumentError
+// one old row breaks a rule the mapper checks: toEntity throws an ArgumentError
 ```
 
 </CodeBlock>
@@ -334,14 +334,14 @@ final stats = libraryCubit.stream.map((s) => ReadingStats.from(s.books)); // 50m
 
 ### الـ operators مكانها فين في الطبقات؟
 
-- <b>الـ data layer:</b> اللي ليه علاقة بالمصدر: `distinct` بعد drift، وتحويل الـ rows، وتحويل الـ errors لـ CacheException. ده الدرس اللي بعد الجاي.
+- <b>الـ data layer:</b> اللي ليه علاقة بالمصدر: `distinct` بعد drift، وتحويل الـ rows، وتحويل الـ errors لـ CacheException. ده [درس الـ watch()](/course/dart-async/watch/)، اللي بعد الجاي.
 - <b>الـ use case:</b> القواعد: الفلترة والترتيب والدمج بين repositoryين (`WatchLibrary`).
 - <b>الـ Cubit:</b> اللي ليه علاقة بالمستخدم: debounce للكتابة، وswitchMap للبحث.
 - <b>الـ UI:</b> ولا حاجة. `StreamBuilder` على `stream.map(...)` معمول جوه `build` بيعمل stream جديد مع كل rebuild، وبيعمل subscription من الأول.
 
 ### ماتحوّلش كل حاجة لـ stream
 
-الـ pipeline الجميل اللي من 8 operators صعب يتقري، وصعب يتعمله debug (الـ stack trace مليان `_MapStream` و`_ForwardingStreamSubscription`)، وأي تعديل محتاج تفهم كل المحطات. الـ Cubit بـ `Timer` وrequest id اللي في الوحدة 5 أطول بسطرين، بس أي حد يقراه. استخدم الـ operators لما الـ stream موجود أصلًا (drift، connectivity، أحداث الـ SyncQueue)، مش عشان تحوّل method calls عادية لـ stream علشان تستخدمها.
+الـ pipeline الجميل اللي من 8 operators صعب يتقري، وصعب يتعمله debug (الـ stack trace مليان `_MapStream` و`_ForwardingStreamSubscription`)، وأي تعديل محتاج تفهم كل المحطات. الـ Cubit بـ `Timer` وrequest id اللي في [درس الـ Cubit](/course/presentation/cubit/) في الوحدة 5 أطول بسطرين، بس أي حد يقراه. استخدم الـ operators لما الـ stream موجود أصلًا (drift، connectivity، أحداث الـ SyncQueue)، مش عشان تحوّل method calls عادية لـ stream علشان تستخدمها.
 
 <Note kind="interview" title="سؤال interview">
 

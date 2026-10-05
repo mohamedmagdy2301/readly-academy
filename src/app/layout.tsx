@@ -6,7 +6,7 @@ import { themeScript } from "@/lib/keys";
 
 export const metadata: Metadata = {
   title: { default: "Flutter Clean Path · رحلة Clean Architecture في Flutter", template: "%s · Flutter Clean Path" },
-  description: "19 وحدة في خطة 31 أسبوع، وشرح كامل من الصفر للاحتراف، ومعامل تفاعلية، ومراجعة لـ Clean Architecture في Flutter.",
+  description: "19 وحدة في خطة 35 أسبوع، وشرح كامل من الصفر للاحتراف، ومعامل تفاعلية، ومراجعة لـ Clean Architecture في Flutter.",
 };
 
 export const viewport: Viewport = { width: "device-width", initialScale: 1, viewportFit: "cover" };

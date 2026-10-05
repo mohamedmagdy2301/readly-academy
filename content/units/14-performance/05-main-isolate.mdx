@@ -46,7 +46,7 @@ int _compareTitles(Book a, Book b) => a.title.toLowerCase().compareTo(b.title.to
 
 </CodeBlock>
 
-الغريب إن الـ query في `LibraryDao` أصلًا بيرتّب بالعنوان، من [درس الـ Streams في Readly](/course/dart-async/watch/). بس SQLite بيرتّب case-sensitive افتراضيًا، فـ «Zebra» كانت بتيجي قبل «alice»، وحد صلّحها بـ sort تاني في Dart بـ `toLowerCase`. الـ sort ده لـ 4000 عنوان اتقاس 2.3ms على لابتوب، وعلى الموبايل المرجعي حوالي 9ms. والتجميع بالحرف بعده. وكل build بيعيدهم، حتى لو الكتب ماتغيرتش.
+الغريب إن الـ query في `BooksDao` أصلًا بيرتّب بالعنوان، من [درس الـ Streams في Readly](/course/dart-async/watch/). بس SQLite بيرتّب case-sensitive افتراضيًا، فـ «Zebra» كانت بتيجي قبل «alice»، وحد صلّحها بـ sort تاني في Dart بـ `toLowerCase`. الـ sort ده لـ 4000 عنوان اتقاس 2.3ms على لابتوب، وعلى الموبايل المرجعي حوالي 9ms. والتجميع بالحرف بعده. وكل build بيعيدهم، حتى لو الكتب ماتغيرتش.
 
 ### سمّيها في الـ timeline قبل ما تصلّح
 
@@ -69,7 +69,7 @@ final byLetter = Timeline.timeSync(
 <CodeBlock label="الترتيب في الـ SQL، والتجميع مرة في الـ Cubit">
 
 ```dart
-// LibraryDao: the same query, case-insensitive, sorted in the DB isolate
+// BooksDao: the same query, case-insensitive, sorted in the DB isolate
 Stream<List<BookRow>> watchAll({BookStatus? status}) {
   final query = select(books)
     ..where((b) {
@@ -121,6 +121,10 @@ Future<void> _rebuildSections(List<Book> books) async {
 الـ `Future(() => ...)` بيأجّل الشغل لـ event تاني في نفس الـ event loop، زي ما اتشرح في [درس الـ Future](/course/dart-async/future/). الشغل نفسه بيتعمل على نفس الـ thread، فالـ frame اللي هيقع فيه هيتأخر بنفس القدر. نفس الكلام لـ `async` على function مافيهاش `await` حقيقي، ولـ `Future.microtask`، ولـ `scheduleMicrotask`.
 
 الـ async بيساعد لما فيه <b>انتظار</b> (شبكة، ديسك، timer). لو فيه <b>حساب</b>، مفيش غير تلات طرق: تقلله، أو تقسّمه على frames، أو تطلّعه لـ isolate.
+
+في المعمل ده frame تغيير الحالة بالأرقام اللي فوق، وكل switch حاجة من اللي اتصلحت. وفي التاب التاني استيراد Goodreads بـ sync، وبـ `Future(() => …)`، وبـ `Isolate.run`: بص على الـ frames اللي اتشالت في كل واحدة.
+
+<Lab name="frame-budget" />
 
 ### الحاجات الصغيرة اللي بتتضرب في عدد الـ tiles
 

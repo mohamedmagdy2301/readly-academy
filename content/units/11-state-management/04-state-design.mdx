@@ -49,7 +49,7 @@ void _applyFinished(BookId id) {
 
 مفيش error، ومفيش warning، والشاشة فاضلة «بقراه». بص على السطر اللي بيعمل emit: `current` هو نفس الـ object اللي في `state`. والـ `emit` أول حاجة بيعملها إنه يسأل `next == state`، والـ object بيساوي نفسه دايمًا، فالـ emit بيتجاهل.
 
-طب لو عملت wrapper جديد: `emit(LibraryLoaded(current.books))`؟ لو الـ state بـ Equatable، هيقارن الليستتين، والليستتين هما نفس الليست اللي اتعدلت، فهيطلعوا متساويين ويتجاهل برضه. ولو من غير Equatable، الـ emit هيعدّي، بس أي `BlocSelector` أو `buildWhen` بيقارن `prev.books` بـ `curr.books` هيلاقي نفس الـ object، فمش هيرسم. وكمان الـ state القديمة اللي كنت ماسكها عشان ترجع لها لو حاجة فشلت (زي الـ optimistic delete في درس «طلبات متقدمة» في الوحدة 9)، اتعدلت هي كمان. يعني مفيش «قبل» ترجع له.
+طب لو عملت wrapper جديد: `emit(LibraryLoaded(current.books))`؟ لو الـ state بـ Equatable، هيقارن الليستتين، والليستتين هما نفس الليست اللي اتعدلت، فهيطلعوا متساويين ويتجاهل برضه. ولو من غير Equatable، الـ emit هيعدّي، بس أي `BlocSelector` أو `buildWhen` بيقارن `prev.books` بـ `curr.books` هيلاقي نفس الـ object، فمش هيرسم. وكمان الـ state القديمة اللي كنت ماسكها عشان ترجع لها لو حاجة فشلت (زي الـ optimistic delete في [درس «طلبات متقدمة» في الوحدة 9](/course/api-errors/advanced-requests/))، اتعدلت هي كمان. يعني مفيش «قبل» ترجع له.
 
 الحل: ماتلمسش القديم، اعمل جديد.
 
@@ -70,7 +70,7 @@ void _applyFinished(BookId id) {
 
 - <b>الـ `if (state case LibraryLoaded current)`:</b> بيشيّك النوع ويديك متغير من النوع ده في سطر واحد، من غير `as` ممكن يرمي لو الـ state اتغيرت.
 - <b>الـ collection for:</b> بيبني ليست جديدة عنصر عنصر. الكتب اللي ماتغيرتش هي نفس الـ objects (مفيش نسخ على الفاضي)، والكتاب اللي اتغير بس هو الجديد.
-- <b>الـ `markAsFinished()`:</b> من درس الـ Domain في الوحدة 2. هي كمان بترجّع `Book` جديد، مابتعدلش في القديم. الـ immutability من تحت لفوق.
+- <b>الـ `markAsFinished()`:</b> من [درس الـ Domain في الوحدة 2](/course/domain-errors/domain/). هي كمان بترجّع `Book` جديد، مابتعدلش في القديم. الـ immutability من تحت لفوق.
 
 والقاعدة دي لكل الـ collections:
 
@@ -87,7 +87,7 @@ void _applyFinished(BookId id) {
 
 ### المساواة: «نفس الحاجة» يعني إيه؟
 
-في درس Dart في الوحدة 1 شفنا إن `==` الافتراضي بيسأل «ده نفس الـ object في الميموري؟»، مش «ده نفس المحتوى؟». ومع الـ Cubit ده بيعمل bugين عكس بعض:
+في [درس Dart في الوحدة 1](/course/foundations/dart/) شفنا إن `==` الافتراضي بيسأل «ده نفس الـ object في الميموري؟»، مش «ده نفس المحتوى؟». ومع الـ Cubit ده بيعمل bugين عكس بعض:
 
 <Diagram name="d-sm-emit-equality">
 
@@ -100,7 +100,7 @@ void _applyFinished(BookId id) {
 | من غير `==` (identity) | بيعدّي: rebuild على الفاضي، والتستات بتفشل | بيتجاهل |
 | بـ `==` بالقيمة | بيتجاهل، وده الصح | بيتجاهل |
 
-يعني التعديل في المكان غلط في الحالتين. والـ `==` بالقيمة بيصلّح المشكلة التانية: الـ Cubit مابيرسمش الشاشة لو مفيش حاجة اتغيرت، والـ `BlocSelector` بيقارن صح، والـ `blocTest` يقدر يقارن الـ states بـ instances (زي ما شفنا في درس "تست الـ Cubit" في الوحدة 8).
+يعني التعديل في المكان غلط في الحالتين. والـ `==` بالقيمة بيصلّح المشكلة التانية: الـ Cubit مابيرسمش الشاشة لو مفيش حاجة اتغيرت، والـ `BlocSelector` بيقارن صح، والـ `blocTest` يقدر يقارن الـ states بـ instances (زي ما شفنا في [درس "تست الـ Cubit" في الوحدة 8](/course/testing/cubit-tests/)).
 
 ليه الـ states اللي من غير بيانات زي `const LibraryLoading()` شغالة من غير `==`؟ لأن Dart بيعمل كل `const` بنفس القيم <b>object واحد</b> في البرنامج كله. فـ `const LibraryLoading() == const LibraryLoading()` صح حتى بالـ identity. أول ما الـ state يبقى فيها بيانات جاية من الـ runtime، الـ const مابيلحقكش.
 
@@ -129,7 +129,7 @@ final class LibraryLoaded extends LibraryState {
 </CodeBlock>
 
 - <b>الـ `props`:</b> الليستة اللي الـ Equatable بيقارنها. اتنين `LibraryLoaded` متساويين لو الـ props بتاعتهم متساوية عنصر عنصر.
-- <b>الليستات بتتقارن بالمحتوى:</b> الـ Equatable بيقارن الـ List والـ Set والـ Map جوه الـ props عنصر عنصر، مش بالـ identity. وكل عنصر بيتقارن بالـ `==` بتاعه، فالـ `Book` نفسه لازم يكون `==` بتاعه بيقارن كل الحقول (درس الـ Domain في الوحدة 2 شرح ليه الـ `==` بالـ id بس بيخلي «خلّصته» تتجاهل).
+- <b>الليستات بتتقارن بالمحتوى:</b> الـ Equatable بيقارن الـ List والـ Set والـ Map جوه الـ props عنصر عنصر، مش بالـ identity. وكل عنصر بيتقارن بالـ `==` بتاعه، فالـ `Book` نفسه لازم يكون `==` بتاعه بيقارن كل الحقول ([درس الـ Domain في الوحدة 2](/course/domain-errors/domain/) شرح ليه الـ `==` بالـ id بس بيخلي «خلّصته» تتجاهل).
 - <b>الـ `toString`:</b> بيطبع الـ props، فرسايل التستات والـ logs بتبقى مقروءة.
 
 أشهر غلطة مع Equatable: تزوّد حقل وتنسى تحطه في الـ props.
@@ -206,7 +206,7 @@ class CatalogFiltersCubit extends Cubit<CatalogFilters> {
 
 ### الشكل الأول: sealed
 
-ده شكل `LibraryState` من درس الـ Cubit في الوحدة 5، و`BookDetailsState` من أول feature في الوحدة 1: class أب `sealed`، وكل حالة subclass شايلة بياناتها هي بس.
+ده شكل `LibraryState` من [درس الـ Cubit في الوحدة 5](/course/presentation/cubit/)، و`BookDetailsState` من [أول feature في الوحدة 1](/course/foundations/first-feature/): class أب `sealed`، وكل حالة subclass شايلة بياناتها هي بس.
 
 <CodeBlock label="BookDetailsState: sealed">
 
@@ -243,7 +243,7 @@ final class BookDetailsError extends BookDetailsState {
 
 ### الشكل التاني: class واحدة + status
 
-ده شكل `LoginFormState` في درس الـ Forms (و`SettingsState` في درس الإعدادات في الوحدة 6 نفس الفكرة من غير status، لأن مفيش مراحل). class واحدة فيها كل الحقول، وحقل `status` بيقول إحنا فين:
+ده شكل `LoginFormState` في [درس الـ Forms](/course/presentation/forms/) (و`SettingsState` في [درس الإعدادات في الوحدة 6](/course/di-scale/settings/) نفس الفكرة من غير status، لأن مفيش مراحل). class واحدة فيها كل الحقول، وحقل `status` بيقول إحنا فين:
 
 <CodeBlock label="NotesState: class واحدة + status">
 
@@ -324,7 +324,7 @@ switch (state.status) {
 - الـ refresh بدأ؟ الكتب تفضل، فده حقل `isRefreshing` جوه Loaded.
 - الـ refresh فشل؟ الكتب تفضل، فده حقل `refreshFailure` جوه Loaded.
 - أول تحميل فشل؟ مفيش كتب أصلًا، فده `LibraryError` لوحده.
-- المستخدم عمل logout؟ الكتب لازم تختفي، فده مش حقل ولا حالة: الـ redirect بيودّي للـ login، والشاشة بتتشال، والـ Cubit بيموت معاها لأنه factory (درس الـ Session في الوحدة 6).
+- المستخدم عمل logout؟ الكتب لازم تختفي، فده مش حقل ولا حالة: الـ redirect بيودّي للـ login، والشاشة بتتشال، والـ Cubit بيموت معاها لأنه factory ([درس الـ Session في الوحدة 6](/course/di-scale/session/)).
 
 </Level>
 
@@ -334,7 +334,7 @@ switch (state.status) {
 
 الـ copyWith اللي فوق فيه `failure ?? this.failure`. يعني لو ماادتهوش failure، بياخد القديم. ولو اديته `null`؟ برضه بياخد القديم، لأن `null ?? this.failure` هي `this.failure`. مفيش طريقة تقول «امسح الـ failure».
 
-في درس الـ Cubit في الوحدة 5 حلّينا ده بإن `refreshFailure` مالوش `?? this` خالص، فأي copyWith بيمسحه. ده صح لحقل زي `refreshFailure` (حدث عدّى، والمفروض يتمسح مع أي تغيير). بس جرّبه على حقل لازم يفضل:
+في [درس الـ Cubit في الوحدة 5](/course/presentation/cubit/) حلّينا ده بإن `refreshFailure` مالوش `?? this` خالص، فأي copyWith بيمسحه. ده صح لحقل زي `refreshFailure` (حدث عدّى، والمفروض يتمسح مع أي تغيير). بس جرّبه على حقل لازم يفضل:
 
 <CodeBlock label="فلتر بيتمسح من غير ما حد يطلب">
 
@@ -456,7 +456,7 @@ switch (state) {
 </CodeBlock>
 
 - <b>الـ `books: []`:</b> list pattern بيطابق الليست الفاضية بس. والترتيب مهم: الحالة الأخص الأول، لأن الـ switch بياخد أول pattern يطابق.
-- <b>الـ `when`:</b> شرط زيادة على الـ pattern. الـ `isGlobal` من درس «الأخطاء في الشاشة» في الوحدة 9: الـ Failures اللي ليها صاحب على مستوى الـ app مالهاش رسالة في الشاشة.
+- <b>الـ `when`:</b> شرط زيادة على الـ pattern. الـ `isGlobal` من [درس «الأخطاء في الشاشة» في الوحدة 9](/course/api-errors/errors-ui/): الـ Failures اللي ليها صاحب على مستوى الـ app مالهاش رسالة في الشاشة.
 - <b>الـ exhaustiveness لسه شغالة:</b> لأن آخر pattern لكل نوع مالوش شرط. لو شلت `LibraryError(:final failure) =>` وسبت اللي بـ `when` بس، الـ compiler هيقولك إن في `LibraryError` مش متغطية.
 
 ونفس الكلام في الـ Cubit نفسه. بدل سلسلة `if (state is ...)` وفي الآخر `else`، استخدم `if (state case ...)` للحالة اللي تهمك، وswitch لو محتاج تتصرف في كل الحالات.

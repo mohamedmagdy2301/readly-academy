@@ -145,7 +145,7 @@ void initState() {
 
 ### cache مالوش حد
 
-في [درس تمن الطبقات](/course/performance/cost-of-layers/) عملنا `_entities` في الـ repository: Map من الـ id للـ entity، عشان مانعملش entity لكتاب ماتغيرش. والـ repository singleton. لو مفيش حاجة بتمسح منه، كل كتاب المستخدم شافه في عمره فاضل في الـ Map، حتى بعد ما اتمسح من المكتبة، وحتى بعد الـ logout ودخول مستخدم تاني.
+في [درس تمن الطبقات](/course/performance/cost-of-layers/) (آخر الوحدة) هنعمل `_entities` في الـ repository: Map من الـ id للـ entity، عشان مانعملش entity لكتاب ماتغيرش. والـ repository singleton. لو مفيش حاجة بتمسح منه، كل كتاب المستخدم شافه في عمره فاضل في الـ Map، حتى بعد ما اتمسح من المكتبة، وحتى بعد الـ logout ودخول مستخدم تاني.
 
 ده leak «by design»: الكود شغال صح، والـ memory بتكبر بالراحة. أي cache لازم يكون ليه إجابة على تلات أسئلة:
 

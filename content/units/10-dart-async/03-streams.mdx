@@ -130,16 +130,18 @@ Future<void> runImport(List<GoodreadsRow> rows) async {
 
 ```dart
 class SyncQueue {
+  SyncQueue(this._db);
+  final AppDatabase _db;
   final _enqueued = StreamController<void>.broadcast();
 
   Stream<void> get onEnqueued => _enqueued.stream; // readers only see the Stream
 
   Future<void> enqueue(SyncKind kind, String bookId) async {
-    // ... insert the op
+    // ... insert the op into _db.syncOps
     _enqueued.add(null); // "something new": whoever listens right now
   }
 
-  Future<void> dispose() => _enqueued.close();
+  Future<void> dispose() => _enqueued.close(); // new here: the offline lesson never closed it
 }
 ```
 
@@ -289,8 +291,8 @@ final sync = SyncService(queue, remote, db, network)..start(); // listens now: t
 ```dart
 // core/network/network_status.dart
 class ConnectivityNetworkStatus implements NetworkStatus {
-  // ...
-  bool _online = true;
+  // ... onOnline from the offline lesson stays as is; isOnline is a new getter
+  bool _online = true; // updated from onConnectivityChanged, which also feeds _changes
   final _changes = StreamController<bool>.broadcast();
 
   Stream<bool> get isOnline => Stream.multi((listener) {
@@ -310,7 +312,7 @@ class ConnectivityNetworkStatus implements NetworkStatus {
 <CodeBlock label="الـ add بعد الـ close">
 
 ```dart
-// on logout, the session reset closes everything
+// teardown (an integration test's tearDown, or popScope() if the queue lives in the user's scope)
 await getIt<SyncQueue>().dispose();
 
 // meanwhile, a drain that already started finishes and enqueues a retry
@@ -319,7 +321,7 @@ await _queue.enqueue(SyncKind.updateStatus, id); // StateError
 
 </CodeBlock>
 
-الـ controller اتقفل، وفي async function كانت شغالة قبل القفل، وكمّلت بعده. الحل الأول إن القفل يحصل بعد ما كل حاجة تقف (الـ SyncService يقف الأول، وبعدين الـ queue)، وده ترتيب الـ reset في [درس الـ Session](/course/di-scale/session/). والحماية الإضافية في الـ controller نفسه:
+الـ controller اتقفل، وفي async function كانت شغالة قبل القفل، وكمّلت بعده. الحل الأول إن القفل يحصل بعد ما كل حاجة تقف: اللي بيستخدم يقف الأول، وبعدين اللي بيتستخدم (الـ SyncService، وبعدين الـ queue)، يعني بعكس ترتيب الإنشاء. (والـ logout العادي في [درس الـ Session](/course/di-scale/session/) مابيقفلش الـ queue أصلًا، عشان العمليات اللي لسه ماتزامنتش ماتضيعش.) والحماية الإضافية في الـ controller نفسه:
 
 ```dart
 void _notify() {

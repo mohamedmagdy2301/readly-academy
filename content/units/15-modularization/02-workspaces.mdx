@@ -174,7 +174,7 @@ dart run melos exec --diff=origin/main...HEAD --include-dependents -- flutter te
 | الـ packages اللي اتغيرت واللي بيعتمدوا عليها | سكريبت بتكتبه (درس الـ CI) | `--diff` و`--include-dependents` |
 | نسخ وchangelogs لـ packages بتتنشر | بإيدك | `melos version` من الـ commits |
 
-القاعدة في Readly: الـ packages مش بتتنشر، والسكريبتات قليلة، فالـ workspace لوحده كفاية، والـ «اللي اتغير» بسكريبت صغير في درس الـ CI. لو عندك packages بتتنشر على pub.dev بنسخ وchangelogs، أو 30 package وسكريبتات كتير، melos بيوفّر وقت حقيقي.
+القاعدة في Readly: الـ packages مش بتتنشر، والسكريبتات قليلة، فالـ workspace لوحده كفاية، والـ «اللي اتغير» بسكريبت صغير في [درس الـ codegen والـ CI](/course/modularization/codegen-ci/). لو عندك packages بتتنشر على pub.dev بنسخ وchangelogs، أو 30 package وسكريبتات كتير، melos بيوفّر وقت حقيقي.
 
 </Level>
 
@@ -241,7 +241,7 @@ Image.asset('assets/images/cover_placeholder.png', package: 'core_ui')
 
 حد عمل `packages/feature_stats` بـ `resolution: workspace`، ونسي يضيفها في الـ root. الـ `pub get` بيفشل لأن الـ package بتقول إنها في workspace مش لاقيها في الليستة. ولو نسي `resolution: workspace` كمان، الـ package بتعمل resolution لوحدها، وبيبقى عندها lock تاني، ونرجع للمشكلة القديمة.
 
-الحل الأول: الـ globs (`packages/*`) لو الفريق على Dart 3.11. والحل التاني: الـ architecture test يقرا الـ pubspecs ويتأكد إن كل فولدر فيه pubspec عضو. ده بييجي في درس «الـ dependency rule من الـ pubspec».
+الحل الأول: الـ globs (`packages/*`) لو الفريق على Dart 3.11. والحل التاني: الـ architecture test يقرا الـ pubspecs ويتأكد إن كل فولدر فيه pubspec عضو. ده بييجي في درس [«الـ dependency rule من الـ pubspec»](/course/modularization/enforce-rule/).
 
 </Level>
 

@@ -327,6 +327,10 @@ Future<Result<void>> refresh() => guard(() async {
 
 </Diagram>
 
+جرّب الكلام ده على 5 events حقيقيين: الشبكة بتكرر وبتأخر وبتضيّع زي ما انت عايز، وانت بتشغّل الحمايات واحدة واحدة. ابدأ بـ «الحذف وصل قبل التعديل» والحمايات مقفولة، وشوف أنهي واحدة بتصلّحه.
+
+<Lab name="event-merge" />
+
 </Level>
 
 <Level n="3" title="المشاكل الحقيقية وحلولها">
@@ -385,7 +389,7 @@ Future<void> setCursor(String stream, int seq) => customStatement(
 - <b>قاعدة واحدة لكل كتابة جاية من السيرفر:</b> الـ refresh والـ event والـ catch-up ورد الـ 409، كلهم بيعدّوا على `_putServerRow`. لو أي طريق كتب بقاعدة تانية، هو ده الطريق اللي هيبوّظ الداتا، وهتلاقيه بعد أسبوع debugging.
 - <b>الـ cursor جنب الداتا:</b> في نفس الـ DB، وبيتحفظ في نفس الـ transaction، وبيتمسح مع الـ wipe. لو الـ cursor في shared_preferences والداتا في drift، الاتنين هيختلفوا مع أول crash أو أول logout.
 - <b>الـ event إشارة، والـ catch-up هو الضمان:</b> مفيش كود بيعتمد على إن event معين هيوصل. لو شلت الـ socket خالص، الـ catch-up مع كل resume والـ Poller هيوصّلوا لنفس الداتا، بس أبطأ. ده اختبار كويس للتصميم.
-- <b>السيرفر محتاج outbox هو كمان:</b> لو السيرفر بيكتب الكتاب في Mongo وبعدين بيبعت الـ event، والـ process وقع بينهم، الـ event ضاع، والـ seq فيه فجوة مش هتتملي أبدًا. الحل عنده نفس حلنا: الكتابة والـ event (بالـ seq، من counter بيزيد بـ `$inc`) في transaction واحدة، وworker بيبعت الـ events من الجدول. اسأل الـ backend عن ده، لأنه بيحدد إذا كان الـ catch-up بتاعك هيلاقي كل حاجة.
+- <b>السيرفر محتاج outbox هو كمان (transactional outbox على السيرفر):</b> لو السيرفر بيكتب الكتاب في Mongo وبعدين بيبعت الـ event، والـ process وقع بينهم، الـ event ضاع، والـ seq فيه فجوة مش هتتملي أبدًا. الحل عنده نفس فكرة الـ `SyncQueue` بتاعنا: الكتابة والـ event (بالـ seq، من counter بيزيد بـ `$inc`) في transaction واحدة، وworker بيبعت الـ events من الجدول. اسأل الـ backend عن ده، لأنه بيحدد إذا كان الـ catch-up بتاعك هيلاقي كل حاجة.
 - <b>مدة الاحتفاظ بالـ events قرار business:</b> 7 أيام معناها إن المستخدم اللي غاب أكتر من أسبوع بياخد full refresh. لو المكتبات كبيرة والـ refresh تقيل، طوّل المدة. والـ `removedBooks` بيتمسح بنفس المدة.
 - <b>الـ CRDTs:</b> اللي عملناه نوع بسيط منها (last-writer-wins register بالـ version)، وده كفاية لأن السيرفر هو اللي بيدّي الـ versions. لو جهازين بيكتبوا وهما الاتنين أوفلاين ومحتاجين يدمجوا من غير سيرفر، ده عالم تاني خالص.
 
@@ -400,7 +404,7 @@ Future<void> setCursor(String stream, int seq) => customStatement(
 <LessonPart title="الكود كامل في مكان واحد">
 
 ```dart
-// data/app_database.dart (the remote-write part)
+// data/local/app_database.dart (the remote-write part)
 Future<void> applyServerChanges(List<LibraryEventDto> changes) => transaction(() async {
       for (final change in changes) {
         switch (change) {

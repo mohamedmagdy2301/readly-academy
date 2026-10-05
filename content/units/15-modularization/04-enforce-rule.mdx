@@ -219,14 +219,14 @@ package:core => package:flutter => dart:ui
 ```dart
 // packages/feature_library/lib/src/domain/note_counts.dart (exported by the barrel)
 abstract interface class NoteCounts {
-  Stream<Map<BookId, int>> watchCounts();
+  Stream<Map<BookId, int>> watchNotesCounts();
 }
 
 // packages/feature_notes/lib/src/data/notes_repository_impl.dart
 class NotesRepositoryImpl implements NotesRepository, NoteCounts {
   // ...
   @override
-  Stream<Map<BookId, int>> watchCounts() => _local.watchCountsByBook();
+  Stream<Map<BookId, int>> watchNotesCounts() => _local.watchCountsByBook();
 }
 
 // packages/feature_notes/lib/src/notes_di.dart
@@ -241,15 +241,15 @@ void registerNotes(GetIt getIt) {
 
 </CodeBlock>
 
-الـ `LibraryCubit` بياخد `NoteCounts` من الـ constructor ومايعرفش مين وراه. السهم لسه `notes -> library`، والـ `featureEdges` ماتغيرش. وده نفس اللي حصل مع `BookLookup` بالعكس: هناك الـ notes كانت محتاجة من الـ library، فالـ library صدّرت contract. هنا الـ library محتاجة من الـ notes، فالـ library برضه اللي عرّفت الـ contract، والـ notes نفّذته.
+الـ `LibraryCubit` بياخد `NoteCounts` من الـ constructor ومايعرفش مين وراه. السهم لسه `notes -> library`، والـ `featureEdges` ماتغيرش. وده نفس اللي حصل مع `BookLookup` بالعكس: هناك الـ notes كانت محتاجة من الـ library، فالـ library صدّرت contract. هنا الـ library محتاجة من الـ notes، فالـ library برضه اللي عرّفت الـ contract، والـ notes نفّذته. والـ `watchNotesCounts()` بيرجّع كل الأعداد في `Map` من query واحدة، مش query لكل كتاب، زي [درس تمن الطبقات](/course/performance/cost-of-layers/).
 
-ولو app مافيهوش notes خالص (الأدمن مثلًا)، الـ app بيسجّل implementation فاضي:
+ولو app بيستخدم `feature_library` ومافيهوش notes خالص، الـ app بيسجّل implementation فاضي:
 
 ```dart
 final class NoNoteCounts implements NoteCounts {
   const NoNoteCounts();
   @override
-  Stream<Map<BookId, int>> watchCounts() => Stream.value(const {});
+  Stream<Map<BookId, int>> watchNotesCounts() => Stream.value(const {});
 }
 ```
 

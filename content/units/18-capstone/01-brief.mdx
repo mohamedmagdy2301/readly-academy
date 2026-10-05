@@ -108,7 +108,7 @@ And a banner says the book was not saved, with "Add to my library instead"
 
 وكمان الرف في الرد فيه `maxBooks` و`maxMembers`، عشان الحدود تيجي من السيرفر مش متكتبة في الـ app.
 
-والـ events على الـ socket: `shelf.upserted`، و`shelf.entry_added`، و`shelf.entry_removed`، و`shelf.member_joined`، و`shelf.member_left`، و`shelf.removed` ومعاه `reason` (`deleted` أو `kicked`). كل event فيه الـ `seq` بتاع المستخدم والـ `origin`، وبيدخل في نفس الـ catch-up بتاع المكتبة. والـ push اتنين: `shelf.member_joined` لصاحب الرف، و`shelf.entries_added` للأعضاء متجمّع، واحد لكل رف كل 30 دقيقة بالكتير، والضغطة بتفتح `/shelves/{shelfId}`.
+والـ events على الـ socket: `shelf.upserted`، و`shelf.entry_added`، و`shelf.entry_removed`، و`shelf.member_joined`، و`shelf.member_left`، و`shelf.removed` ومعاه `reason` (`deleted` أو `kicked`). كل event فيه الـ `seq` بتاع المستخدم والـ `origin`، وبيدخل في نفس الـ catch-up بتاع المكتبة. والـ push اتنين: `shelf.member_joined` لصاحب الرف، و`shelf.entries_added` للأعضاء متجمّع، واحد لكل رف كل 30 دقيقة بالكتير، والضغطة بتفتح route الرف في الـ app، `/shelves/:id`، زي `/library/books/:id`.
 
 </details>
 
@@ -121,7 +121,7 @@ And a banner says the book was not saved, with "Add to my library instead"
 <details className="qa">
 <summary>تلميح 1: الـ ADR عن قرار، مش عن أداة</summary>
 
-«هنستخدم drift» مش قرار، ده موجود أصلًا. القرار هو: الكتابة في الرف تمشي زي المكتبة (drift الأول والـ outbox بيبعت)، ولا زي Escore (السيرفر الأول، وأوفلاين ممنوع)؟ والانضمام بلينك ينفع يستنى في الـ outbox ولا لأ؟
+«هنستخدم drift» مش قرار، ده موجود أصلًا. القرار هو: الكتابة في الرف تمشي زي المكتبة (drift الأول، والعملية في الـ sync queue، والـ `SyncService` بيبعت)، ولا زي Escore (السيرفر الأول، وأوفلاين ممنوع)؟ والانضمام بلينك ينفع يستنى في الـ sync queue ولا لأ؟
 
 </details>
 
@@ -130,14 +130,14 @@ And a banner says the book was not saved, with "Add to my library instead"
 
 - <b>أ: كله remote-first</b> زي [Escore في وحدة الـ offline](/course/offline/escore/): أبسط، بس بيكسر story رقم 5.
 - <b>ب: كله أوفلاين</b> بما فيه الانضمام والدعوات: الانضمام محتاج السيرفر يقول «اللينك ده لسه شغال؟»، وانت مش هتعرف ده وانت أوفلاين.
-- <b>ج: hybrid</b>: الكتابة جوه الرف (إنشاء، اسم، إضافة، شيل) من drift والـ outbox، والعضوية (دعوة، انضمام، خروج، شيل عضو) أونلاين بس، وبرسالة واضحة لو مفيش نت.
+- <b>ج: hybrid</b>: الكتابة في الرف (إنشاء، اسم، مسح، إضافة، شيل) من drift والـ sync queue، والعضوية (دعوة، انضمام، خروج، شيل عضو) أونلاين بس، وبرسالة واضحة لو مفيش نت.
 
 </details>
 
 <details className="qa">
 <summary>تلميح 3: الـ Consequences اللي لازم تتكتب لـ (ج)</summary>
 
-- الـ outbox بيكبر بأربع أنواع عمليات جديدة، وكلها بمفتاح طبيعي.
+- الـ `SyncQueue` بتكبر بخمس أنواع عمليات جديدة في الـ `SyncKind`، وكلها بمفتاح طبيعي.
 - لازم سياسة لعملية pending على رف اتشلت منه أو اتمسح: dead letter برسالة، مش retry للأبد.
 - الـ events بتعدّي على نفس الـ socket ونفس الـ `seq`، فالـ catch-up مش محتاج كود جديد.
 - الـ logout لازم يمسح الجداول الجديدة.
@@ -172,7 +172,7 @@ And a banner says the book was not saved, with "Add to my library instead"
 1. الـ ADR والعقد والـ fixtures والـ contract tests.
 2. `feature_shelves` فاضية في الـ workspace، والـ domain بتستاته.
 3. جداول drift والـ migration وتست الترقية.
-4. الـ remote source والـ repository والـ outbox ops.
+4. الـ remote source والـ repository وعمليات الرفوف في الـ `SyncQueue`.
 5. الـ events في الـ `LiveSyncService`، والـ push route.
 6. شاشات القايمة والرف والإنشاء، ورا الـ flag.
 7. الدعوة والانضمام بالـ deep link، ورا الـ flag.
@@ -189,7 +189,7 @@ And a banner says the book was not saved, with "Add to my library instead"
 <Ask>ليه الإضافة للرف `PUT /shelves/{shelfId}/books/{bookId}` مش `POST /shelves/{shelfId}/books`؟</Ask>
 <Answer>
 
-لأن العملية ليها مفتاح طبيعي: الرف والكتاب. بالـ `PUT` على الـ URL ده، إرسالها مرتين نتيجته نفس إرسالها مرة، فالـ outbox يقدر يعيدها بعد رد ضايع من غير `Idempotency-Key` ومن غير خوف من نسختين. مع `POST`، كل retry ممكن يعمل entry جديدة، أو السيرفر يرجّع 409 فالعملية اللي نجحت فعلًا تتحسب فشل.
+لأن العملية ليها مفتاح طبيعي: الرف والكتاب. بالـ `PUT` على الـ URL ده، إرسالها مرتين نتيجته نفس إرسالها مرة، فالـ `SyncService` يقدر يعيدها بعد رد ضايع من غير `Idempotency-Key` ومن غير خوف من نسختين. مع `POST`، كل retry ممكن يعمل entry جديدة، أو السيرفر يرجّع 409 فالعملية اللي نجحت فعلًا تتحسب فشل.
 
 </Answer>
 </Question>
@@ -199,6 +199,15 @@ And a banner says the book was not saved, with "Add to my library instead"
 <Answer>
 
 لأن العرض من Open Library معناه طلب لكل كتاب مش في مكتبتك، يعني N+1 طلب لرف فيه 200 كتاب، ومش هيشتغل أوفلاين، وهيضغط على API مجاني. الـ snapshot بيخلي الرف كله ييجي في طلب واحد ويتخزن في drift. والتمن إن العنوان ممكن يبقى قديم لو اتغير في Open Library، وده تمن صغير لعنوان كتاب.
+
+</Answer>
+</Question>
+
+<Question id="cap-brief-q3">
+<Ask>المستخدم فتح لينك الدعوة وهو في المترو من غير نت. ليه الانضمام مايدخلش الـ sync queue ويتبعت لما النت يرجع، زي إضافة كتاب بالظبط؟</Ask>
+<Answer>
+
+لأن الإضافة الـ app يقدر يكتب نتيجتها في drift على طول: الـ entry بتظهر pending، ولو السيرفر رفضها فيه dead letter برسالة. الانضمام نتيجته في إيد السيرفر بس: اللينك ممكن يكون خلص (410)، أو الرف كمل (422 `members_full`)، أو اتمسح. وانت لسه مش عضو، فماعندكش الرف أصلًا في drift تعرضه. لو دخل الطابور، الـ app يا هيقول «انضميت» ويرجع يقول لأ بعد ساعة، يا هيعرض رف فاضي مالوش بيانات. علشان كده القرار (ج) في الـ ADR: العضوية أونلاين بس، وشاشة الانضمام أوفلاين بتقول «محتاج نت عشان تنضم» بدل ما توعد بحاجة مش في إيدها. القاعدة: اللي السيرفر بس يقدر يحكم فيه مالوش مكان في الطابور، وده بالظبط سبب رفض البديل (ب).
 
 </Answer>
 </Question>

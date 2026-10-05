@@ -111,7 +111,7 @@ l10n.welcome('محمود');
 
 ### الاتجاه
 
-لما اللغة عربي، Flutter بيقلب الـ layout لوحده. بس لازم تستخدم الـ widgets اللي بتفهم الاتجاه: `EdgeInsetsDirectional.only(start: 16)` بدل `EdgeInsets.only(left: 16)`، و`AlignmentDirectional.centerStart` بدل `Alignment.centerLeft`.
+لما اللغة عربي، Flutter بيقلب الـ layout لوحده. بس لازم تستخدم الـ widgets اللي بتفهم الاتجاه: `EdgeInsetsDirectional.only(start: 16)` بدل `EdgeInsets.only(left: 16)`، و`AlignmentDirectional.centerStart` بدل `Alignment.centerLeft`. والتفاصيل كلها (الأيقونات والنص المختلط وحقل الإيميل) في [درس الـ RTL بالتفصيل](/course/design-system/rtl/).
 
 ### تغيير اللغة من جوه الـ app
 
@@ -143,7 +143,7 @@ BlocBuilder<SettingsCubit, Locale>(
 - <b>ماتركّبش جمل بالـ +:</b> `'لديك ' + n + ' كتب'` هتطلع غلط في العربي، وترتيب الكلام مختلف بين اللغات. الجملة كلها مفتاح واحد فيه placeholder.
 - <b>الأرقام والتواريخ:</b> استخدم `DateFormat` و`NumberFormat` من intl بالـ locale الحالي، مش toString.
 - <b>الـ Failures بتترجم في الـ Presentation:</b> زي ما شفنا في درس الأخطاء في الوحدة 2، الـ Domain بيرجّع النوع والـ UI تختار المفتاح.
-- <b>اختبر الـ RTL:</b> golden test لكل شاشة مهمة بالعربي بيمسك أي حاجة اتقلبت غلط (درس الاختبارات في الوحدة 7).
+- <b>اختبر الـ RTL:</b> golden test لكل شاشة مهمة بالعربي بيمسك أي حاجة اتقلبت غلط ([درس الـ Golden tests](/course/testing/golden-tests/) في الوحدة 8).
 
 <Note kind="interview" title="سؤال interview">
 

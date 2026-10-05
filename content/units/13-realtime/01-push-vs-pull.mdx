@@ -247,7 +247,7 @@ Readly اختار WebSocket، والأسباب دي خاصة بيه مش قاع�
 | رجع الاتصال | catch-up بالـ cursor، والدمج بالـ version | [دمج الأحداث](/course/realtime/merge-cache/) |
 | الـ socket مش عارف يتوصل خالص | الـ `Poller` القديم كـ fallback | [الـ reconnect](/course/realtime/reconnect/) |
 | حاجة تخص المستخدم والـ app مقفول | push notification بـ FCM، والضغطة بتفتح الشاشة | [الـ Push](/course/realtime/push-notifications/) |
-| تعديلات أوفلاين والـ app اتقفل | workmanager بيشغّل الـ outbox | [الـ sync في الخلفية](/course/realtime/background-sync/) |
+| تعديلات أوفلاين والـ app اتقفل | workmanager بيفضّي الـ `SyncQueue` | [الـ sync في الخلفية](/course/realtime/background-sync/) |
 
 ولاحظ اللي ماتغيرش: الشاشة لسه بتقرا من `watchLibrary()` بتاع drift، والكتابة لسه بتروح للـ `SyncQueue`. الـ real-time طريق جديد بيكتب في الـ DB، بالظبط زي الـ `refresh()`. الـ `LibraryCubit` مش هيعرف إنه موجود.
 

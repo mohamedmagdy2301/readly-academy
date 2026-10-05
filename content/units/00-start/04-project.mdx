@@ -71,7 +71,7 @@ Readly بيكلّم APIين مختلفين خالص، وده مقصود: كل و
 | library | مكتبتك وحالة كل كتاب (أقرأه، بقراه، خلصته) | الـ offline-first، drift، الـ sync queue، سياسة الـ conflicts، والتحديث اللحظي من جهاز تاني | 4، 19–20 |
 | notes | ملاحظات واقتباسات لكل كتاب | تواصل بين features (بتحتاج BookId من library)، ومنع الحفظ المزدوج | 5–6 |
 | settings | الثيم، اللغة (عربي وإنجليزي)، الخروج | feature من غير domain تقريبًا: مثال عملي إنك مش لازم تطبق كل الطبقات دايمًا | 6 |
-| shelves | رفوف مشتركة مع أصحابك أو نادي قراية | المشروع الختامي: كل اللي فات مع بعض من غير كود جاهز، أوفلاين ولايف بين الأعضاء، وإشعارات، وrelease ورا feature flag | 28–31 |
+| shelves | رفوف مشتركة مع أصحابك أو نادي قراية | المشروع الختامي: كل اللي فات مع بعض من غير كود جاهز، أوفلاين ولايف بين الأعضاء، وإشعارات، وrelease ورا feature flag | 30–35 |
 
 ### الهيكل اللي هتبدأ بيه
 
@@ -99,7 +99,7 @@ readly/
 └─ .github/workflows/    # analyze + test on every PR
 ```
 
-في الأسبوع 6 الهيكل ده بيتقسم لـ packages (`core` و`core_network` و`feature_catalog` وغيرهم)، فالـ compiler نفسه يمنع أي import غلط بين الـ features. الشكل النهائي في درس «التوسّع والـ production»، والتقسيم نفسه خطوة خطوة بالـ pub workspaces في وحدة الـ Modularization (الأسبوع 23).
+في الأسبوع 6 الهيكل ده بيتقسم لـ packages (`core` و`core_network` و`feature_catalog` وغيرهم)، فالـ compiler نفسه يمنع أي import غلط بين الـ features. الشكل النهائي في درس «التوسّع والـ production»، والتقسيم نفسه خطوة خطوة بالـ pub workspaces في وحدة الـ Modularization (الأسبوع 23–24).
 
 ### هتبني إيه كل أسبوع
 
@@ -120,10 +120,10 @@ readly/
 | 17–18 | branch `spike/riverpod`: المكتبة والكتالوج وصفحة الكتاب والملاحظات بـ Riverpod 3 | الـ domain والـ data ماتغيروش ولا سطر، وADR بالقرار والتمن |
 | 19–20 | WebSocket بيكتب في drift، والـ reconnect والـ catch-up، وFCM، والـ background sync | تعديل من جهاز تاني بيظهر في أقل من 2 ثانية من غير ما أي Cubit يعرف |
 | 21–22 | baseline على جهاز مرجعي، والـ rebuilds، والليستة الطويلة، والأغلفة، والـ memory، ووقت الفتح | كل تصليح معاه رقم قبل ورقم بعد في الـ PR |
-| 23 | Readly كـ pub workspace: package لكل feature، و`library_domain` مشترك مع app أدمن | الـ dependency rule متشيكة من الـ pubspecs في الـ CI |
-| 24–25 | `core_ui` بالـ tokens والـ components، والـ dark mode، والـ RTL، وTalkBack، والخط 200% | ولا لون ولا left/right في الـ features، والتستات بتمنع الجديد |
-| 26–27 | الـ logging وSentry، والـ decision guide، والـ release من الـ CI، والأمان، والـ feature flags، والـ README بالـ ADRs | مشروع تقدر تدافع عن كل قرار فيه في interview |
-| 28–31 | المشروع الختامي: «الرفوف المشتركة» لوحدك من الـ spec للـ release | الـ feature عند المستخدمين ورا flag، ومراجعة نفسك بالـ rubric |
+| 23–24 | Readly كـ pub workspace: package لكل feature، و`library_domain` مشترك مع app أدمن | الـ dependency rule متشيكة من الـ pubspecs في الـ CI |
+| 25–26 | `core_ui` بالـ tokens والـ components، والـ dark mode، والـ RTL، وTalkBack، والخط 200% | ولا لون ولا left/right في الـ features، والتستات بتمنع الجديد |
+| 27–29 | الـ logging وSentry، والـ decision guide، والـ release من الـ CI، والأمان، والـ feature flags، والـ README بالـ ADRs | مشروع تقدر تدافع عن كل قرار فيه في interview |
+| 30–35 | المشروع الختامي: «الرفوف المشتركة» لوحدك من الـ spec للـ release | الـ feature عند المستخدمين ورا flag، ومراجعة نفسك بالـ rubric |
 
 كل أسبوع مبني على اللي قبله، فماتعديش أسبوع والـ deliverable بتاعه مش شغال. المهام بالتفصيل في آخر درس في كل وحدة.
 

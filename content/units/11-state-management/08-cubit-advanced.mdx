@@ -435,7 +435,7 @@ List<Note> _withPinned(List<Note> notes, NoteId id, bool pinned) =>
 - <b>ملاحظتين مختلفتين:</b> كل واحدة ليها loop بتاعها، فبيشتغلوا مع بعض عادي.
 - <b>الـ `failureId`:</b> نفس الـ SnackBar اللي في [درس الأخطاء في الشاشة](/course/api-errors/errors-ui/). المستخدم لازم يعرف ليه الدبوس رجع.
 
-وفي حاجة مهمة: <b>المكتبة نفسها مش محتاجة ده</b>. تغيير حالة كتاب (`BookStatus`) بيروح لـ drift والـ sync queue، والشاشة بتسمع على `watchLibrary()`. الـ DB هي الـ optimism، والـ queue هي اللي بتضمن الإرسال، زي ما شفنا في درس Offline-first في الوحدة 4. الـ optimistic جوه الـ Cubit للحاجات اللي online بس، زي الملاحظات.
+وفي حاجة مهمة: <b>المكتبة نفسها مش محتاجة ده</b>. تغيير حالة كتاب (`BookStatus`) بيروح لـ drift والـ sync queue، والشاشة بتسمع على `watchLibrary()`. الـ DB هي الـ optimism، والـ queue هي اللي بتضمن الإرسال، زي ما شفنا في [درس Offline-first في الوحدة 4](/course/offline/offline/). الـ optimistic جوه الـ Cubit للحاجات اللي online بس، زي الملاحظات.
 
 ### الأحداث اللي بتحصل مرة واحدة: في الـ state ولا stream لوحده؟
 
@@ -571,14 +571,14 @@ EffectListener<AddBookCubit, AddBookEffect>(
 
 ليه Cubit ماسك Cubit فكرة وحشة:
 
-- <b>النسخة الغلط:</b> الـ `LibraryCubit` متسجّل `factory` في get_it، زي ما شفنا في درس الـ DI في الوحدة 6. لو الـ CatalogCubit أخد `getIt<LibraryCubit>()`، هياخد <b>نسخة جديدة</b>، مش اللي في شاشة المكتبة. النسخة دي محدش نادى `load()` عليها، فالـ state بتاعها `LibraryLoading` للأبد. والـ bug ده مابيرميش error، العلامة بس مابتظهرش.
+- <b>النسخة الغلط:</b> الـ `LibraryCubit` متسجّل `factory` في get_it، زي ما شفنا في [درس الـ DI في الوحدة 6](/course/di-scale/di/). لو الـ CatalogCubit أخد `getIt<LibraryCubit>()`، هياخد <b>نسخة جديدة</b>، مش اللي في شاشة المكتبة. النسخة دي محدش نادى `watch()` عليها، فالـ state بتاعها `LibraryLoading` للأبد. والـ bug ده مابيرميش error، العلامة بس مابتظهرش.
 - <b>العمر:</b> لو جبت النسخة الصح بطريقة ما، شاشة المكتبة ممكن تتقفل وتقفل الـ Cubit بتاعها. الـ CatalogCubit بقى ماسك Cubit مقفول، والـ stream بتاعه خلص.
 - <b>الاعتماد مخفي ومقلوب:</b> الـ CatalogCubit بقى معتمد على presentation تانية، مش على الـ data. والتست محتاج `MockCubit` و`whenListen` بدل fake repository بسيط.
 - <b>الدواير:</b> بكرة الـ LibraryCubit يحتاج حاجة من الكتالوج، وتبقى عندك حلقة.
 
 البيانات اللي الاتنين محتاجينها ليها مصدر واحد: الـ repository. وفي 3 طرق صح:
 
-<b>1. الاتنين يسمعوا على نفس الـ stream من الـ repository (الأساسية).</b> الـ `watchLibrary()` موجود أصلًا، والـ CatalogCubit بياخد الـ `LibraryRepository` ويطلّع منه الـ ids بس، ويحطهم في حقل `owned` جوه `CatalogLoaded`. ده نفس كود علامة «في مكتبتك» اللي في درس «أنواع الـ Cubit (2)» بالظبط، والـ «قبل وبعد» في آخر الدرس بيحطه جنب النسخة اللي بتمسك Cubit. والـ tile بيسأل عن كتابه بس:
+<b>1. الاتنين يسمعوا على نفس الـ stream من الـ repository (الأساسية).</b> الـ `watchLibrary()` موجود أصلًا، والـ CatalogCubit بياخد الـ `LibraryRepository` ويطلّع منه الـ ids بس، ويحطهم في حقل `owned` جوه `CatalogLoaded`. ده نفس كود علامة «في مكتبتك» اللي في درس «أنواع الـ Cubit (2)» بالظبط، والـ «قبل وبعد» في آخر الدرس بيحطه جنب النسخة اللي بتمسك Cubit. ولما الكتالوج والمكتبة يبقوا features منفصلة، المصدر بيبقى `BookLookup` اللي الـ library بتصدّره بدل الـ `LibraryRepository` نفسه، وده في [درس «الـ State management في مشروع حقيقي»](/course/state-management/architecture/). والـ tile بيسأل عن كتابه بس:
 
 <CodeBlock label="كل tile بيسأل عن كتابه">
 
@@ -651,7 +651,7 @@ class CatalogSearchCubit extends Cubit<CatalogSearchState> {
 </CodeBlock>
 
 - <b>الـ `onChange` بيتنادى مع كل emit حقيقي:</b> مش مع الـ emit اللي اتجاهل عشان الـ state زي اللي قبلها. ومعاه `currentState` و`nextState`.
-- <b>الـ `onError` بيوصله الـ `addError` بس:</b> زي ما قلنا في [درس الـ Observability في الوحدة 17](/course/production/observability/)، الـ exception اللي بتطلع من method في الـ Cubit مابتعدّيش عليه. لو عايزها توصل، امسكها وابعتها:
+- <b>الـ `onError` بيوصله الـ `addError` بس:</b> زي ما هتشوف في [درس «الـ Logging والـ Monitoring» في الوحدة 17](/course/production/observability/)، الـ exception اللي بتطلع من method في الـ Cubit مابتعدّيش عليه. لو عايزها توصل، امسكها وابعتها:
 
 <CodeBlock label="الـ exception غير المتوقعة بتوصل الـ observer">
 
@@ -680,7 +680,7 @@ Future<void> load() async {
 
 ### BlocObserver وMultiBlocObserver
 
-الـ `AppBlocObserver` بتاع درس الـ Observability بيبعت كل `onChange` و`onError` للـ `AppLogger`. الـ `Bloc.observer` واحد بس للـ app كله (static setter). ولحد bloc 9.2، لو عايز observer تاني في الـ debug بس، كنت بتكتب class بتنادي الاتنين بإيدك. دلوقتي في `MultiBlocObserver`.
+الـ `AppBlocObserver` (هتبنيه في [درس «الـ Logging والـ Monitoring» في الوحدة 17](/course/production/observability/)) بيبعت كل `onChange` و`onError` للـ `AppLogger`. الـ `Bloc.observer` واحد بس للـ app كله (static setter). ولحد bloc 9.2، لو عايز observer تاني في الـ debug بس، كنت بتكتب class بتنادي الاتنين بإيدك. دلوقتي في `MultiBlocObserver`.
 
 observer مفيد جدًا في الـ debug: بيعد الـ Cubits العايشة. لو فتحت صفحة الكتاب وقفلتها 10 مرات ولقيت `BookDetailsCubit: 10`، يبقى في Cubit مابيتقفلش، غالبًا اتعمل بـ `BlocProvider.value` من غير ما حد يملكه:
 
@@ -800,11 +800,11 @@ mixin SafeEmit<S> on Cubit<S> {
 <Side label="قبل: Cubit ماسك Cubit" kind="before">
 
 ```dart
-@injectable
+// registerCatalog: getIt.registerFactory(() => CatalogCubit(getIt(), getIt()))
 class CatalogCubit extends Cubit<CatalogState> {
   CatalogCubit(this._searchBooks, this._library) : super(const CatalogLoading()) {
     // getIt gives a NEW LibraryCubit here, not the one on screen:
-    // nobody calls load() on it, so this never fires
+    // nobody calls watch() on it, so this never fires
     _sub = _library.stream.listen((s) {
       if (s is LibraryLoaded) _ownedChanged({for (final b in s.books) b.id}); // same as "after"
     });
@@ -821,7 +821,7 @@ class CatalogCubit extends Cubit<CatalogState> {
 <Side label="بعد: الاتنين بيسمعوا على الـ repository" kind="after">
 
 ```dart
-@injectable
+// registerCatalog: same registerFactory line, nothing changes in DI
 class CatalogCubit extends Cubit<CatalogState> {
   CatalogCubit(this._searchBooks, LibraryRepository library) : super(const CatalogLoading()) {
     // the same source LibraryCubit uses: drift, through the repository
@@ -901,7 +901,7 @@ latest: طلب واحد شغال وآخر ترتيب مستني، والجديد
 <Ask>ليه `getIt<LibraryCubit>()` جوه الـ `CatalogCubit` عشان يعرف الكتب اللي في المكتبة bug حتى لو الكود اشتغل من غير errors؟</Ask>
 <Answer>
 
-الـ Cubits متسجّلة `factory`، فـ get_it بيرجّع نسخة جديدة مش اللي على شاشة المكتبة، ومحدش نادى `load()` عليها، فالـ state بتاعتها مش هتتغير والعلامة مش هتظهر. وحتى لو جت النسخة الصح، الـ CatalogCubit هيبقى مربوط بعمر شاشة تانية، والـ presentation بقت معتمدة على presentation. الحل إن الاتنين يسمعوا على `watchLibrary()` من الـ repository.
+الـ Cubits متسجّلة `factory`، فـ get_it بيرجّع نسخة جديدة مش اللي على شاشة المكتبة، ومحدش نادى `watch()` عليها، فالـ state بتاعتها مش هتتغير والعلامة مش هتظهر. وحتى لو جت النسخة الصح، الـ CatalogCubit هيبقى مربوط بعمر شاشة تانية، والـ presentation بقت معتمدة على presentation. الحل إن الاتنين يسمعوا على `watchLibrary()` من الـ repository.
 
 </Answer>
 </Question>

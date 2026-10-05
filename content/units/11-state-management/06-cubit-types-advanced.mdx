@@ -37,15 +37,15 @@ minutes: 45
 
 ### إمتى تحتاجه
 
-Readly offline-first: المكتبة الحقيقية في drift، والشبكة بتكتب فيها والـ UI بتقرا منها، زي ما شفنا في درس Offline-first في الوحدة 4. يعني الكتب ممكن تتغير وانت مش طالب حاجة: الـ SyncService جاب نسخة جديدة من السيرفر، أو المستخدم ضاف كتاب من تاب الكتالوج، أو غيّر حالة كتاب من صفحته. لو `LibraryCubit` بيحمّل مرة واحدة (Load Cubit)، الشاشة هتفضل تعرض الليست القديمة لحد ما حد يعمل refresh بإيده.
+Readly offline-first: المكتبة الحقيقية في drift، والشبكة بتكتب فيها والـ UI بتقرا منها، زي ما شفنا في [درس Offline-first في الوحدة 4](/course/offline/offline/). يعني الكتب ممكن تتغير وانت مش طالب حاجة: الـ SyncService جاب نسخة جديدة من السيرفر، أو المستخدم ضاف كتاب من تاب الكتالوج، أو غيّر حالة كتاب من صفحته. لو `LibraryCubit` بيحمّل مرة واحدة (Load Cubit)، الشاشة هتفضل تعرض الليست القديمة لحد ما حد يعمل refresh بإيده.
 
-الـ repository عنده الحل من الوحدة 2: `watchLibrary()` بيرجّع `Stream<List<Book>>`، يعني وعد إنه هيطلّع الليست كاملة من جديد مع كل تغيير. الـ Stream Cubit هو الـ Cubit اللي <b>بيشترك</b> في stream زي ده، وكل قيمة جاية بيحوّلها state.
+الـ repository عنده الحل من الوحدة 2: `watchLibrary()` بيرجّع `Stream<List<Book>>`، يعني وعد إنه هيطلّع الليست كاملة من جديد مع كل تغيير. الـ Stream Cubit هو الـ Cubit اللي <b>بيشترك</b> في stream زي ده، وكل قيمة جاية بيحوّلها state. الرحلة كاملة من drift للشاشة، و`LibraryCubit` بشكله النهائي، في [درس «الـ Streams في Readly» في الوحدة 10](/course/dart-async/watch/). هنا بنبص عليه كنوع: إمتى تختاره، والـ watch كـ method بفلتر، والمشاكل اللي بتتكرر.
 
 استخدمه لما مصدر الحقيقة نفسه بيتغير لوحده: جدول في drift، أو حالة الـ auth، أو الـ sync queue، أو أي حاجة الـ repository بيطلّعها كـ `Stream`. ولو البيانات بتتجاب مرة ومش بتتغير وانت قاعد (تفاصيل كتاب من Open Library)، الـ Load Cubit أبسط.
 
 ### شكل الـ state
 
-نفس `LibraryState` اللي في درس Cubit في الوحدة 5: `LibraryLoading` لحد ما أول قيمة توصل، و`LibraryLoaded` فيها الكتب ومعاها `isRefreshing` و`refreshFailure`، و`LibraryError` لو الـ stream نفسه رمى error. الفرق مش في الشكل، الفرق إن `LibraryLoaded` ممكن تيجي كذا مرة ورا بعض من غير ما حد يطلبها.
+نفس `LibraryState` اللي في [درس Cubit في الوحدة 5](/course/presentation/cubit/): `LibraryLoading` لحد ما أول قيمة توصل، و`LibraryLoaded` فيها الكتب ومعاها `isRefreshing` و`refreshFailure`، و`LibraryError` لو الـ stream نفسه رمى error قبل ما أي كتب تظهر. الفرق مش في الشكل، الفرق إن `LibraryLoaded` ممكن تيجي كذا مرة ورا بعض من غير ما حد يطلبها.
 
 ### الكود
 
@@ -76,7 +76,8 @@ class LibraryCubit extends Cubit<LibraryState> {
       }),
       onError: (Object error, StackTrace stackTrace) {
         addError(error, stackTrace); // onError + BlocObserver see it
-        emit(LibraryError(CacheFailure(error.toString())));
+        // books on screen? keep them (same rule as the dart-async lesson)
+        if (state is! LibraryLoaded) emit(const LibraryError(CacheFailure('library unavailable')));
       },
     );
   }
@@ -96,7 +97,7 @@ class LibraryCubit extends Cubit<LibraryState> {
 - <b>الـ `watch` مش `load`:</b> الاسم بيقول للي بيقرا إن دي مش عملية بتخلص، دي اشتراك بيفضل شغال لحد ما الـ Cubit يتقفل. ومش `async` لأنه مابيستناش حاجة.
 - <b>الـ `_sub?.cancel()` في الأول:</b> الـ `watch` بتتنادى تاني لما الفلتر يتغير. من غير السطر ده، هيبقى فيه اشتراكين شغالين مع بعض، والاتنين بيعملوا emit، فالشاشة ترمش بين ليستة «كل الكتب» وليستة «بقراها».
 - <b>الـ `LibraryLoading` بس بعد error:</b> أول مرة الـ state أصلًا `LibraryLoading` من الـ constructor. ولما الفلتر يتغير والكتب ظاهرة، مفيش داعي للـ spinner: drift بيطلّع النتيجة الجديدة في ملّي ثواني، والليست تتبدل. الـ spinner بيرجع بس لما الـ retry يبدأ من شاشة الـ error.
-- <b>الـ `onError`:</b> الـ repository streams مابترجّعش `Result` (درس الأخطاء في الوحدة 2)، فالـ error بييجي من الـ stream نفسه. ده نادر (DB بايظة مثلًا)، بس من غير `onError` بيبقى unhandled error. والـ `addError` بيوصّله للـ `BlocObserver` اللي بيبعته للـ logs، زي ما هنشوف في درس «Cubit متقدم».
+- <b>الـ `onError`:</b> الـ repository streams مابترجّعش `Result` (القرار ده في [درس «الـ Streams في Readly» في الوحدة 10](/course/dart-async/watch/))، فالـ error بييجي من الـ stream نفسه. ده نادر (DB بايظة مثلًا)، بس من غير `onError` بيبقى unhandled error. ولو الكتب ظاهرة، مابنمسحهاش عشان خطأ نادر: الـ error state بس لو لسه مفيش حاجة على الشاشة. والـ `addError` بيوصّله للـ `BlocObserver` اللي بيبعته للـ logs، زي ما هنشوف في درس «Cubit متقدم».
 - <b>الـ `close`:</b> ده أهم سطر في النوع ده كله. الاشتراك مش بيتلغي لوحده لما الـ Cubit يتقفل.
 
 <Diagram name="d-sm-stream-cubit">
@@ -137,7 +138,7 @@ BlocListener<LibraryFilterCubit, BookStatus?>(
 
 ### الـ refresh في عالم الـ stream
 
-في الوحدة 5، الـ `refresh` كان بيجيب الليست ويعمل emit بيها. هنا الكتب مش بتيجي من الـ refresh خالص: الـ `refresh()` بتاع الـ repository بيجيب من السيرفر ويكتب في drift، والـ stream هو اللي بيوصّل الكتب الجديدة. الـ refresh راجع بحاجة واحدة بس: نجح ولا فشل.
+في الوحدة 5، الـ `refresh` كان بيجيب الليست ويعمل emit بيها. هنا الكتب مش بتيجي من الـ refresh خالص: الـ `refresh()` بتاع الـ repository بيجيب من السيرفر ويكتب في drift، والـ stream هو اللي بيوصّل الكتب الجديدة. الـ refresh راجع بحاجة واحدة بس: نجح ولا فشل (نفس الـ `refresh` اللي في [درس «الـ Streams في Readly»](/course/dart-async/watch/)).
 
 <CodeBlock label="refresh في الـ Stream Cubit">
 
@@ -166,7 +167,7 @@ Future<void> refresh() async {
 
 ### المشاكل اللي بتحصل في الحقيقة
 
-- <b>نسيت `cancel` في `close`:</b> المستخدم فتح المكتبة وقفلها 20 مرة، يبقى 20 اشتراك شغالين على الجدول. وأول ما الجدول يتغير، الاشتراكات القديمة بتعمل emit على Cubits مقفولة: `Bad state: Cannot emit new states after calling close`. التست بتاعه في درس «تست الـ Cubit» في الوحدة 8 (`hasListener`).
+- <b>نسيت `cancel` في `close`:</b> المستخدم فتح المكتبة وقفلها 20 مرة، يبقى 20 اشتراك شغالين على الجدول. وأول ما الجدول يتغير، الاشتراكات القديمة بتعمل emit على Cubits مقفولة: `Bad state: Cannot emit new states after calling close`. التست بتاعه في [درس «تست الـ Cubit» في الوحدة 8](/course/testing/cubit-tests/) (`hasListener`).
 - <b>الـ stream بيطلّع التغييرات بس، مش القيمة الحالية:</b> drift بيطلّع النتيجة أول ما تشترك، فالـ Loading بتعدّي على طول. بس `StreamController.broadcast` عادي (زي `onCleared` في الـ TokenStore) مابيطلّعش حاجة غير لما يحصل تغيير. لو اشتركت فيه وانت في `Loading`، هتفضل Loading للأبد. الحل: اقرا القيمة الحالية الأول واعمل بيها emit، وبعدين اشترك، أو خلي الـ repository يطلّع stream بيبدأ بالقيمة الحالية.
 - <b>الـ error مش بيقفل الاشتراك:</b> الـ default في Dart إن `cancelOnError` بـ false، فبعد الـ error ممكن ييجي data تاني. الـ listener بتاع الـ data بيعمل `LibraryLoaded` عادي، فالشاشة بترجع لوحدها. ولو الـ stream بيتقفل بعد الـ error (بيحصل في streams كتير)، الـ `retry` بيفتح اشتراك جديد.
 - <b>الاشتراك في الـ constructor ولا في method؟</b> الـ `SyncStatusCubit` في درس Offline-first بيشترك في الـ constructor، وده تمام لـ stream مالوش parameters وشغال طول عمر الـ Cubit. لو فيه parameters (فلتر، id) أو محتاج retry، اعمله method. والـ method أسهل في التست: بتجهّز الـ fake الأول، وبعدين تنادي `watch`.
@@ -180,9 +181,9 @@ Future<void> refresh() async {
 
 <b>إمتى:</b> المستخدم بيكتب، وكل حرف بيغيّر السؤال. اللي بيميّزه عن الـ Load Cubit إن <b>الطلب القديم بيبقى مالوش لازمة</b> أول ما المستخدم يكمّل كتابة.
 
-الأساسيات اتشرحت في درس Cubit في الوحدة 5: الـ debounce بيقلل الطلبات، والـ request id بيتجاهل النتيجة اللي جاية متأخرة. اللي ناقص: النتيجة القديمة بتتجاهل، بس الطلب نفسه لسه بيحمّل. المستخدم كتب «dahl» ومسح الخانة، أو قفل التاب، والطلب لسه شغال على نت المستخدم.
+الأساسيات اتشرحت في [درس Cubit في الوحدة 5](/course/presentation/cubit/): الـ debounce بيقلل الطلبات، والـ request id بيتجاهل النتيجة اللي جاية متأخرة. اللي ناقص: النتيجة القديمة بتتجاهل، بس الطلب نفسه لسه بيحمّل. المستخدم كتب «dahl» ومسح الخانة، أو قفل التاب، والطلب لسه شغال على نت المستخدم.
 
-في درس dio في الوحدة 3، الـ `CatalogRemoteSource` كان بيلغي البحث القديم بـ `CancelToken` لما بحث جديد يبدأ. ده بيغطي حالة واحدة: «بحث جديد بدأ». بس فيه حالتين الـ data source مايعرفهمش: المستخدم مسح البحث، والشاشة اتقفلت. دول الـ Cubit بس اللي يعرفهم. والأداة جاهزة من درس «طلبات متقدمة» في الوحدة 9: `CancelScope` في core، مفيهوش dio، والـ data layer بس هو اللي بيحوّله `CancelToken`.
+في [درس dio في الوحدة 3](/course/data-network/network/)، الـ `CatalogRemoteSource` كان بيلغي البحث القديم بـ `CancelToken` لما بحث جديد يبدأ. ده بيغطي حالة واحدة: «بحث جديد بدأ». بس فيه حالتين الـ data source مايعرفهمش: المستخدم مسح البحث، والشاشة اتقفلت. دول الـ Cubit بس اللي يعرفهم. والأداة جاهزة من [درس «طلبات متقدمة» في الوحدة 9](/course/api-errors/advanced-requests/): `CancelScope` في core، مفيهوش dio، والـ data layer بس هو اللي بيحوّله `CancelToken`.
 
 <CodeBlock label="الـ state: النتايج القديمة بتفضل وهي بتتحدث">
 
@@ -305,7 +306,7 @@ BlocBuilder<CatalogSearchCubit, CatalogSearchState>(
 
 الـ `previous` قرار UX مش قاعدة: لو المستخدم بيكتب «roald» بعد «roa»، الشاشة مابتفضاش وترجع تتملي مع كل حرف. ولو الفريق شايف إن النتايج القديمة بتلخبط، شيل الحقل والـ Loading تبقى spinner بس. و«مفيش نتايج» مش state لوحدها: هي `SearchLoaded` بليستة فاضية، والـ `when` في الـ switch بيفرّقها. لو عملتها state، هتلاقي نفسك بتعمل emit لـ `SearchEmpty` في مكان و`SearchLoaded([])` في مكان تاني بالغلط.
 
-في Readly الحقيقية، الكتالوج بيجمع البحث والصفحات في `CatalogCubit` واحد زي درس الـ Pagination في الوحدة 5. هنا فصلناهم عشان كل نوع يبان لوحده، والـ scope بيدخل في `loadFirst` بنفس الشكل بالظبط.
+في Readly الحقيقية، الكتالوج بيجمع البحث والصفحات في `CatalogCubit` واحد زي [درس الـ Pagination في الوحدة 5](/course/presentation/pagination/). هنا فصلناهم عشان كل نوع يبان لوحده، والـ scope بيدخل في `loadFirst` بنفس الشكل بالظبط.
 
 ### دمج نتيجة بحث مع stream: علامة «في مكتبتك»
 
@@ -386,11 +387,11 @@ class WatchLibraryItems {
 
 </CodeBlock>
 
-لاحظ إن الدمج ده في <b>use case</b> مش في الـ Cubit. الـ Cubit بيشترك في stream واحد زي `LibraryCubit` بالظبط. لو الدمج فيه قاعدة (مين يتعرض، بأنهي ترتيب)، مكانه الـ domain وبيتختبر بـ dart test، زي `WatchLibrary` في درس الـ Domain في الوحدة 2. ولو الدمج عرض بس ومحدش غير شاشة واحدة محتاجه، ممكن تفضل في الـ Cubit زي «في مكتبتك». وفي درس Offline-first عملنا نفس العلامة بـ `context.select` على `SyncStatusCubit` من غير دمج خالص: ده أبسط لو كل tile محتاج سؤال واحد بس. الدمج يستاهل لما الـ Cubit نفسه محتاج المعلومة (يرتّب «اللي لسه ماتزامنش» فوق، أو يعدّهم).
+لاحظ إن الدمج ده في <b>use case</b> مش في الـ Cubit. الـ Cubit بيشترك في stream واحد زي `LibraryCubit` بالظبط. لو الدمج فيه قاعدة (مين يتعرض، بأنهي ترتيب)، مكانه الـ domain وبيتختبر بـ dart test، زي `WatchLibrary` في [درس الـ Domain في الوحدة 2](/course/domain-errors/domain/). ولو الدمج عرض بس ومحدش غير شاشة واحدة محتاجه، ممكن تفضل في الـ Cubit زي «في مكتبتك». وفي درس Offline-first عملنا نفس العلامة بـ `context.select` على `SyncStatusCubit` من غير دمج خالص: ده أبسط لو كل tile محتاج سؤال واحد بس. الدمج يستاهل لما الـ Cubit نفسه محتاج المعلومة (يرتّب «اللي لسه ماتزامنش» فوق، أو يعدّهم).
 
 ### الـ Pagination Cubit: ليستة بتكبر
 
-النوع ده متشرح كامل في درس الـ Pagination في الوحدة 5، بكل مشاكله: الصفحة اللي بتتحمّل مرتين، وآخر الليستة، والـ error في الصفحة 4، والـ refresh، وتغيير كلمة البحث، والكتاب اللي ظهر في صفحتين. هنا الملخص اللي يخليك تعرفه لما تشوفه:
+النوع ده متشرح كامل في [درس الـ Pagination في الوحدة 5](/course/presentation/pagination/)، بكل مشاكله: الصفحة اللي بتتحمّل مرتين، وآخر الليستة، والـ error في الصفحة 4، والـ refresh، وتغيير كلمة البحث، والكتاب اللي ظهر في صفحتين. هنا الملخص اللي يخليك تعرفه لما تشوفه:
 
 | الحاجة | مكانها | ليه |
 | --- | --- | --- |
@@ -425,7 +426,7 @@ class WatchLibraryItems {
 
 الغلطة الشائعة العكسية: كل Cubit يتحط فوق الـ app «عشان أي حد يوصله». النتيجة: `LibraryCubit` عايش ومشترك في drift والمستخدم في شاشة الـ login، وبيانات المستخدم القديم فاضلة في الذاكرة بعد الـ logout (درس الـ Session عدّ الأماكن دي)، وأي emit فيه بيعمل rebuild لحاجات ملهاش دعوة. حط الـ Cubit عند <b>أقرب أب مشترك</b> للي محتاجينه، مش أعلى.
 
-وأي Cubit على مستوى الـ app شايل بيانات تخص المستخدم لازم يتمسح مع الـ logout: الـ `SettingsCubit.reset()` في درس الـ Settings بيتنادى من `BlocListener` على الـ `AuthCubit`. ولو بتفكر تعمل `ConnectivityCubit` للـ app كله يقفل الأزرار لما النت يفصل، ارجع لدرس «الأخطاء في الشاشة» في الوحدة 9: الـ connectivity تلميح مش حقيقة، والحقيقة هي `SyncStatusCubit` والطلب اللي فشل.
+وأي Cubit على مستوى الـ app شايل بيانات تخص المستخدم لازم يتمسح مع الـ logout: الـ `SettingsCubit.reset()` في [درس الـ Settings](/course/di-scale/settings/) بيتنادى من `BlocListener` على الـ `AuthCubit`. ولو بتفكر تعمل `ConnectivityCubit` للـ app كله يقفل الأزرار لما النت يفصل، ارجع لـ [درس «الأخطاء في الشاشة» في الوحدة 9](/course/api-errors/errors-ui/): الـ connectivity تلميح مش حقيقة، والحقيقة هي `SyncStatusCubit` والطلب اللي فشل.
 
 ### الـ flow-scoped: Cubit لكذا شاشة ورا بعض
 
@@ -648,7 +649,7 @@ final class Paged<T> {
 
 <Note kind="interview" title="سؤال interview">
 
-«عندك Cubit بيسمع على stream من الـ database. إيه اللي لازم تعمله عشان مايبقاش فيه leak أو crash؟» الاشتراك بيتحفظ في field ويتلغي في `close()` قبل `super.close()`، وإلا هيفضل شغال ويعمل emit على Cubit مقفول ويرمي `StateError`. ولو الاشتراك بيتعمل من method ممكن تتنادى تاني (فلتر اتغير)، الـ method بتلغي القديم الأول، عشان مايبقاش فيه اشتراكين بيعملوا emit مع بعض. والـ `onError` بيتحوّل لـ error state ويتبلّغ بـ `addError`. ولو الـ stream مابيطلّعش القيمة الحالية أول ما تشترك، تقراها الأول. وأي method async في نفس الـ Cubit بتبني على `state` بعد الـ await مش على نسخة قبله، لأن الـ stream ممكن يكون غيّرها وانت مستني.
+«عندك Cubit بيسمع على stream من الـ database. إيه اللي لازم تعمله عشان مايبقاش فيه leak أو crash؟» الاشتراك بيتحفظ في field ويتلغي في `close()` قبل `super.close()`، وإلا هيفضل شغال ويعمل emit على Cubit مقفول ويرمي `StateError`. ولو الاشتراك بيتعمل من method ممكن تتنادى تاني (فلتر اتغير)، الـ method بتلغي القديم الأول، عشان مايبقاش فيه اشتراكين بيعملوا emit مع بعض. والـ `onError` بيتبلّغ بـ `addError`، ويتحوّل لـ error state لو مفيش بيانات على الشاشة. ولو الـ stream مابيطلّعش القيمة الحالية أول ما تشترك، تقراها الأول. وأي method async في نفس الـ Cubit بتبني على `state` بعد الـ await مش على نسخة قبله، لأن الـ stream ممكن يكون غيّرها وانت مستني.
 
 </Note>
 
@@ -731,7 +732,7 @@ Column(children: [
 - <b>كل Cubit بيتستّ لوحده:</b> تست زرار الحالة مابيجهّزش ملاحظات ولا تفاصيل.
 - <b>الـ rebuild في مكانه:</b> إضافة ملاحظة بتعيد بناء الـ BlocBuilder بتاع الملاحظات بس.
 - <b>التواصل من غير reference:</b> لما الحالة تتغير، الـ `BookStatusCubit` بيكتب في الـ repository. لو التفاصيل محتاجة تعرض الحالة الجديدة، `BookDetailsCubit` يسمع على الكتاب من drift، مش على الـ `BookStatusCubit`.
-- <b>والفشل في مكانه:</b> فشل تحميل الملاحظات بيبان في جزء الملاحظات بس، زي جدول «لو ده ناقص، الصفحة لسه ليها لازمة؟» في درس «طلبات متقدمة» في الوحدة 9.
+- <b>والفشل في مكانه:</b> فشل تحميل الملاحظات بيبان في جزء الملاحظات بس، زي جدول «لو ده ناقص، الصفحة لسه ليها لازمة؟» في [درس «طلبات متقدمة» في الوحدة 9](/course/api-errors/advanced-requests/).
 
 </LessonPart>
 

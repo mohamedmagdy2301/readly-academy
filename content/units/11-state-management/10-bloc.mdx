@@ -179,7 +179,7 @@ class CatalogSearchView extends StatelessWidget {
 - <b>الـ `add` مابترجعش حاجة:</b> `void`. الـ UI بتبعت الـ event وتمشي، ومش بتستنى نتيجة. ده فرق حقيقي هيقابلنا في الدرس الجاي مع `RefreshIndicator` اللي محتاج Future.
 - <b>الـ view في widget لوحده:</b> عشان الـ `context` بتاعه يبقى تحت الـ BlocProvider. لو حطيت الـ Column في نفس الـ build اللي فيه الـ provider، `context.read` هيدوّر فوق الـ provider ويرمي `ProviderNotFoundException`، زي ما شفنا في درس «flutter_bloc بالتفصيل».
 
-والتسجيل في get_it زي أي Cubit: `@injectable` (يعني factory)، عشان كل شاشة تاخد Bloc جديد يتقفل معاها.
+والتسجيل في get_it زي أي Cubit: `registerFactory` في `registerCatalog` (أو `@injectable` لو بتولّد التسجيل)، عشان كل شاشة تاخد Bloc جديد يتقفل معاها.
 
 ### الـ handler لازم يستنى كل اللي جواه
 
@@ -248,7 +248,7 @@ BlocProvider(
 - <b>الـ `onError`:</b> بيحوّل الـ error اللي جاي من الـ stream لـ state. لو ماحطّتهوش، الـ error بيطلع من الـ handler نفسه ويوصل `onError` بتاع الـ Bloc.
 - <b>الـ `restartable()` هنا:</b> لو اتبعت الـ event مرتين، مش عايزين subscriptionين على نفس الـ stream. الأحدث يلغي القديم. ده أول transformer، وهنفهمه كويس في Level 3.
 
-والـ `emit.onEach` نفس الفكرة، بس الـ `onData` بيرجّع `void`، يعني انت اللي تقرر تعمل emit ولا لأ، أو تعمل حاجة تانية خالص. مثال من درس «الأخطاء في الشاشة» في الوحدة 9: لما النت يرجع، اعمل refresh لوحدك:
+والـ `emit.onEach` نفس الفكرة، بس الـ `onData` بيرجّع `void`، يعني انت اللي تقرر تعمل emit ولا لأ، أو تعمل حاجة تانية خالص. مثال من [درس «الأخطاء في الشاشة»](/course/api-errors/errors-ui/) في الوحدة 9: لما النت يرجع، اعمل refresh لوحدك:
 
 <CodeBlock label="stream بيتحول لـ event">
 

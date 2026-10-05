@@ -187,7 +187,7 @@ Book _toEntityCached(BookRow r) {
 
 اتقاس: الـ mapping بالـ `Uri.parse` نزل من 800µs لـ 65µs، لأن الـ parse بقى بيحصل للكتاب اللي اتغير بس. والـ `ListEquality` نزل من 55µs لـ 9µs، لأن الـ `==` في Book أول حاجة بيعملها `identical`، والكتب بقت نفس الـ objects.
 
-بس ده cache، وليه تمن: لازم يتمسح منه الكتاب اللي اتمسح، ولازم يتمسح كله في الـ logout، وأي حقل بيتغير من غير ما الـ `updatedAt` يتغير هيرجّع entity قديم. اعمله بس لو الـ timeline قال إن الـ mapping واخد وقت حقيقي من الـ frame، وبعد ما تكون قللت عدد الـ emits.
+بس ده cache، وليه تمن: لازم يتمسح منه الكتاب اللي اتمسح، ولازم يتمسح كله في الـ logout (والنسخة اللي بتعمل ده في [درس الـ Memory](/course/performance/memory/)، تحت «cache مالوش حد»)، وأي حقل بيتغير من غير ما الـ `updatedAt` يتغير هيرجّع entity قديم. اعمله بس لو الـ timeline قال إن الـ mapping واخد وقت حقيقي من الـ frame، وبعد ما تكون قللت عدد الـ emits.
 
 ### N+1: المكان اللي الطبقات بتكلّف فيه بجد
 
@@ -210,7 +210,7 @@ class BookTile extends StatelessWidget {
 
 الـ `GetNotesCount` use case بينادي `NotesRepository.count(bookId)`، وده query. كل tile بيظهر بيعمل query. اعمل scroll سريع في المكتبة، وهتلاقي 200 query في الثانية، وكل واحدة بتعدّي من isolate الـ DB وراجعة. كل طبقة لوحدها صح، والمجموع غلط: الـ API بتاع الـ repository اتعمل على مقاس كتاب واحد، والشاشة محتاجة 4000.
 
-الحل مش إنك تشيل طبقة. الحل إن الـ repository يدّي اللي الشاشة محتاجاه في query واحدة: `watchLibrary()` يرجّع مع كل كتاب عدد ملاحظاته بـ `JOIN` و`GROUP BY` في drift، أو `watchNotesCounts()` بيرجّع `Map<BookId, int>` مرة واحدة. ده نفس الدرس اللي في [درس الـ HTTP](/course/api-errors/http/) عن الطلبات الكتير الصغيرة: كل رحلة بين طبقتين ليها تمن ثابت، فقلل عدد الرحلات مش حجمها.
+الحل مش إنك تشيل طبقة. الحل إن الـ repository يدّي اللي الشاشة محتاجاه في query واحدة: `watchLibrary()` يرجّع مع كل كتاب عدد ملاحظاته بـ `JOIN` و`GROUP BY` في drift، أو `watchNotesCounts()` بيرجّع `Map<BookId, int>` مرة واحدة. ونفس القاعدة بتنطبق على الطلبات للسيرفر: كل رحلة بين طبقتين (أو بين الـ app والـ API) ليها تمن ثابت، فقلل عدد الرحلات مش حجمها.
 
 ### البيانات اللي بتعدّي بين isolates
 

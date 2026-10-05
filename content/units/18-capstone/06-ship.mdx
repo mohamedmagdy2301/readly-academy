@@ -9,8 +9,8 @@ minutes: 25
 ### المهمة 1: الـ feature flag
 
 <Tasks>
-<Task id="cap-ship-1">اعمل flag اسمه `sharedShelves` ورا الـ contract بتاع الـ `FeatureFlags` في الـ DI، والقيمة من Remote Config، والقيمة الافتراضية `false` لو ماوصلش. اكتب جدول: إيه اللي بيتقفل لما الـ flag يتقفل (المداخل، والـ routes، والـ push routing)، وإيه اللي بيفضل شغال (الـ migration، والـ outbox، والـ events). واقفل الـ feature من السيرفر كمان، مش من الـ app بس.</Task>
-<Task id="cap-ship-2">اكتب تست بيثبت إن الـ flag لما يتقفل والـ app شغال: الرفوف بتختفي من التابات، ولينك الدعوة بيفتح شاشة «مش متاحة لسه» مش crash، والإشعار بيفتح المكتبة، والعمليات اللي في الـ outbox ماتضيعش.</Task>
+<Task id="cap-ship-1">زوّد `Flag.sharedShelves` للـ enum بتاع الـ `FeatureFlags`: release flag بـ `fallback: false` و`removeBy`، والـ key بتاعه `shared_shelves` في `keyOf`، والقيمة من Remote Config، وكل مكان بيسأل `isOn(Flag.sharedShelves)`. اكتب جدول: إيه اللي بيتقفل لما الـ flag يتقفل (المداخل، والـ routes، والـ push routing)، وإيه اللي بيفضل شغال (الـ migration، والـ sync queue، والـ events). واقفل الـ feature من السيرفر كمان، مش من الـ app بس.</Task>
+<Task id="cap-ship-2">اكتب تست بيثبت إن الـ flag لما يتقفل والـ app يتفتح تاني: الرفوف بتختفي من التابات، ولينك الدعوة بيفتح شاشة «مش متاحة لسه» مش crash، والإشعار بيفتح المكتبة، والعمليات اللي في الـ sync queue ماتضيعش.</Task>
 </Tasks>
 
 <details className="qa">
@@ -23,14 +23,14 @@ minutes: 25
 <details className="qa">
 <summary>تلميح 2: product switch مش data switch</summary>
 
-الـ flag بيقفل اللي المستخدم يشوفه ويبدأه. بس اللي المستخدم عمله فعلًا لازم يوصل، وإلا انت بتضيّع بياناته عشان تخبّي شاشة. فالـ outbox يكمّل يبعت، والـ events تكمّل تتكتب في drift. ولو لازم السيرفر نفسه يوقف الكتابة، يرجّع code معين، والعمليات تفضل pending (مش dead) لحد ما الـ flag يرجع.
+الـ flag بيقفل اللي المستخدم يشوفه ويبدأه. بس اللي المستخدم عمله فعلًا لازم يوصل، وإلا انت بتضيّع بياناته عشان تخبّي شاشة. فالـ `SyncService` يكمّل يبعت، والـ events تكمّل تتكتب في drift. ولو لازم السيرفر نفسه يوقف الكتابة، يرجّع code معين، والعمليات تفضل pending (مش dead) لحد ما الـ flag يرجع.
 
 </details>
 
 <details className="qa">
 <summary>تلميح 3: الـ flag مش flavor</summary>
 
-ارجع لـ «الـ flavor مش feature flag» في [درس الـ Flavors والـ release](/course/production/release/): الـ flavor بيتحدد وقت الـ build، والـ flag عشان تقفل حاجة في دقيقة. والتفاصيل في [درس الـ Feature Flags](/course/production/feature-flags/).
+ارجع لـ «الـ flavor مش feature flag» في [درس الـ Flavors والـ release](/course/production/release/): الـ flavor بيتحدد وقت الـ build، والـ flag عشان تقفل حاجة في دقيقة. والتفاصيل في [درس الـ Feature Flags](/course/production/feature-flags/): الـ release flag قيمته ثابتة طول التشغيلة، فالقفل بيوصل مع أول فتحة بعد الـ fetch. لو عايزه يقفل والـ app مفتوح، خليه `live: true`، وساعتها التابات والـ router لازم يسمعوا على `watch(Flag.sharedShelves)`، وده قرار يتكتب بتمنه.
 
 </details>
 
@@ -128,6 +128,15 @@ minutes: 25
 <Answer>
 
 تتبعت. الـ flag قرار منتج عن اللي المستخدم يشوفه ويبدأه، مش عن بيانات المستخدم كتبها فعلًا. لو وقفتها، يا هتتمسح (ضاعت بياناته)، يا هتفضل في الطابور من غير ما يشوفها ولا يعرف عنها حاجة. ولو لازم توقف الكتابة على السيرفر نفسه، السيرفر يرجّع code معين، والعمليات تفضل pending مش dead، لحد ما الـ flag يرجع.
+
+</Answer>
+</Question>
+
+<Question id="cap-ship-q3">
+<Ask>بعد يومين على 5%، الـ crash-free عند اللي الـ flag مفتوح عندهم 99.1%، وعند اللي مقفول عندهم على نفس النسخة 99.6%، وحد الرجوع في الخطة 99.3%. تقفل الـ flag ولا تستنى أرقام أكتر؟</Ask>
+<Answer>
+
+تقفله من غير نقاش. الحد اتكتب في خطة الـ rollout قبل ما تبدأ عشان القرار مايتاخدش وانت متعلّق بالـ feature وبتدوّر على سبب تستنى. والمقارنة نفسها صح: نفس النسخة، مفتوح قصاد مقفول، مش النهارده قصاد الأسبوع اللي فات، فأي فرق تاني (نسخة OS، يوم فيه زحمة) موجود في الناحيتين. والقفل مابيكلّفش حاجة: الرفوف فاضلة في drift، والعمليات اللي في الـ sync queue بتكمّل تتبعت. وبعدها Sentry مقسوم بالنسخة والـ breadcrumbs بتوع الرفوف يقولولك فين، تصلّح، وترجع تبدأ من 5% ([الـ Logging والـ Monitoring](/course/production/observability/)).
 
 </Answer>
 </Question>

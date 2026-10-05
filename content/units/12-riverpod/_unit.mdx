@@ -3,7 +3,7 @@ title: "Riverpod في الـ Clean Architecture"
 description: "Readly كلها بـ Riverpod 3 من غير ما الـ domain والـ data يتغيروا ولا سطر: الـ providers والـ ref بالتفصيل، وRiverpod مكان get_it، والـ Notifier والـ AsyncNotifier قصاد الـ Cubit سطر بسطر، والمكتبة والكتالوج كاملين، والتستات بالـ ProviderContainer، وامتى تختار ده وامتى ده وتمن التحويل."
 ---
 
-درس Riverpod في وحدة الـ State management كان الخريطة: هدف القراية وشاشة المكتبة جنب نسخة الـ Cubit، والجدول اللي بيقول كل حاجة في flutter_bloc بتقابل إيه. الوحدة دي هي الرحلة نفسها على المشروع كله: بتاخد Readly زي ما هي، وتبدّل الـ presentation والـ DI بـ Riverpod، شاشة شاشة، وتشوف كل حاجة بتتكسر فين وبتتصلّح إزاي.
+درس [«Riverpod من الصفر»](/course/state-management/riverpod/) في وحدة الـ State management كان الخريطة: هدف القراية وشاشة المكتبة جنب نسخة الـ Cubit، والجدول اللي بيقول كل حاجة في flutter_bloc بتقابل إيه. الوحدة دي هي الرحلة نفسها على المشروع كله: بتاخد Readly زي ما هي، وتبدّل الـ presentation والـ DI بـ Riverpod، شاشة شاشة، وتشوف كل حاجة بتتكسر فين وبتتصلّح إزاي.
 
 والقاعدة اللي ماشيين عليها من أول درس لآخر درس: <b>ولا ملف في `domain/` ولا في `data/` يتغير</b>. الـ entities والـ use cases والـ repositories والـ `Result` والـ `Failure` وdrift والـ SyncQueue هما هما. اللي بيتغير الـ Cubits (بتبقى Notifiers)، والـ `BlocProvider` والـ get_it (بيبقوا providers)، وتستات الـ presentation. ولو آخر الوحدة الـ `git diff --stat` قال غير كده، يبقى في حاجة اتحطت في المكان الغلط من الأول.
 

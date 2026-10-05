@@ -69,7 +69,7 @@ src/
 npm run new -- lesson presentation forms "الـ Forms والـ validation"
 ```
 
-ده بيعمل `content/units/05-presentation/04-forms.mdx` من القالب، برقم بعد آخر درس وقبل `99-practice`. الدرس بيبدأ `draft: true`: بيظهر في `npm run dev` ومكتوب جنبه «مسودة»، وما بيظهرش في الـ build. لما يخلص، امسح سطر `draft`.
+ده بيعمل `content/units/05-presentation/04-forms.mdx` من القالب، برقم بعد آخر درس وقبل `99-practice`. الدرس بيبدأ منشور، يعني بيظهر في الـ build على طول. لو عايزه يفضل مسودة لحد ما يخلص، ضيف `draft: true` في الـ frontmatter: ساعتها بيظهر في `npm run dev` بس ومكتوب جنبه «مسودة»، ولما يخلص امسح السطر ده.
 
 ### وحدة جديدة
 

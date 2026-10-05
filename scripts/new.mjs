@@ -31,7 +31,7 @@ if (kind === "unit") {
   const nums = fs.readdirSync(dir).map((f) => parseInt(f, 10)).filter((n) => !isNaN(n) && n < 90);
   const file = path.join(dir, `${pad(Math.max(0, ...nums) + 1)}-${slug}.mdx`);
   fs.writeFileSync(file, fill("lesson.mdx", { TITLE: title, ID: slug }));
-  console.log(`created ${path.relative(process.cwd(), file)} (draft: true — remove it to publish)`);
+  console.log(`created ${path.relative(process.cwd(), file)} (published: add "draft: true" to its frontmatter to keep it out of the build)`);
 } else {
   fail('usage:\n  npm run new -- unit <slug> "العنوان"\n  npm run new -- lesson <unit-slug> <lesson-slug> "العنوان"');
 }

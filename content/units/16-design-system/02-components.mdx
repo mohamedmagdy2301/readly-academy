@@ -24,7 +24,7 @@ minutes: 30
 
 ### core_ui: الـ package
 
-في [هيكل الـ packages](/course/di-scale/scale/) كان فيه `core_ui` مكتوب جنبه «theme, shared widgets». دلوقتي بنملاه:
+في [هيكل الـ packages](/course/di-scale/scale/) كان فيه `core_ui` مكتوب جنبه «theme, shared widgets»، وفي [درس تقسيم Readly](/course/modularization/split-readly/) اتعمل فعلًا: الثيم و`ErrorView` وhelpers الـ presentation والنصوص المشتركة اتنقلوا له زي ما هم. دلوقتي بنرتّبه كـ design system (الملفات اللي مش موضوعنا مش ظاهرة هنا):
 
 <CodeBlock label="packages/core_ui">
 
@@ -43,7 +43,7 @@ packages/core_ui/
 │     └─ components/
 │        ├─ readly_button.dart
 │        ├─ status_chip.dart
-│        ├─ error_view.dart        # moved from apps/readly/lib/core/ui/
+│        ├─ error_view.dart        # moved here in the split, from apps/readly/lib/core/ui/
 │        └─ inline_error_banner.dart
 └─ test/
 ```
@@ -59,6 +59,7 @@ resolution: workspace
 environment:
   sdk: ^3.6.0
 dependencies:
+  core:
   flutter:
     sdk: flutter
 ```
@@ -78,7 +79,7 @@ export 'src/theme/theme_context.dart';
 
 </CodeBlock>
 
-الـ dependencies: Flutter بس. مفيش `core` (الـ Result والـ Failure)، ومفيش أي feature، ومفيش flutter_bloc. الـ `core_ui` في قاع الشجرة، وكل الـ features بتعتمد عليه، وهو مابيعتمدش على حد.
+الـ dependencies: Flutter، ومن packages Readly `core` بس، زي الجدول في [درس الـ dependency rule](/course/modularization/enforce-rule/). مفيش أي feature. والـ components نفسها مابتلمسش حتى الـ `core`: مابتعرفش `Result` ولا `Failure`، الـ `core` موجود عشان الـ helpers اللي اتنقلت في التقسيم. الـ `core_ui` تحت كل الـ features، وكلهم بيعتمدوا عليه، وهو مابيعملش import لأي حاجة فوقه.
 
 <Diagram name="d-ds-core-ui">
 
@@ -306,7 +307,7 @@ StatusChip(
 
 ### الـ ErrorView اتنقل والـ build وقف
 
-<b>اللي بيبوظ:</b> بتنقل `ErrorView` من `apps/readly/lib/core/ui/` لـ `core_ui`. أول سطر بيضرب: `AppLocalizations.of(context)!.retry`. الـ `AppLocalizations` في الـ app، والـ `core_ui` مايقدرش يعمل import للـ app، لأن الـ app بيعتمد عليه. ولو حاولت تزوّد الـ app في الـ dependencies بتاعة الـ core_ui، هيبقى عندك دايرة.
+<b>اللي بيبوظ:</b> ده اللي حصل لما نقلنا `ErrorView` من `apps/readly/lib/core/ui/` لـ `core_ui` في [درس تقسيم Readly](/course/modularization/split-readly/). أول سطر ضرب: `AppLocalizations.of(context)!.retry`. الـ `AppLocalizations` في الـ app، والـ `core_ui` مايقدرش يعمل import للـ app، لأن الـ app بيعتمد عليه. ولو حاولت تزوّد الـ app في الـ dependencies بتاعة الـ core_ui، هيبقى عندك دايرة.
 
 <b>ليه:</b> الـ component كان بيعرف حاجة مش بتاعته: النص. وده كان شغال لأنه كان جوه الـ app.
 
@@ -342,7 +343,7 @@ class ErrorView extends StatelessWidget {
 
 والشاشات اللي بتستخدمه كتير بتعمل helper صغير في الـ feature أو الـ app: `ErrorView(retryLabel: l10n.retry, ...)`. الـ `assert` بيمسك اللي نسي الـ label وهو بيطوّر، بدل ما الزرار يطلع فاضي.
 
-والبديل الأكبر: `core_ui` يبقى ليه ملف ARB بتاعه (الـ `flutter gen-l10n` بيشتغل جوه أي package)، والـ app يضيف الـ delegate بتاعه في `localizationsDelegates`. يستاهل لما الـ components تبقى فيها نصوص ثابتة كتير («إلغاء»، «اقفل»، «حاول تاني»). لـ 3 نصوص، الـ parameters أبسط.
+والحل التاني: `core_ui` يبقى ليه ملف ARB بتاعه (الـ `flutter gen-l10n` بيشتغل جوه أي package)، والـ app يضيف الـ delegate بتاعه في `localizationsDelegates`. وده اللي التقسيم عمله للنصوص المشتركة زي «حاول تاني» و«مفيش نت» (`CoreUiLocalizations`). بس حتى معاه، الـ component نفسه بياخد النص parameter: الشاشة هي اللي بتعدّي `CoreUiLocalizations.of(context).retry` أو نص تاني يناسبها، والـ component بيفضل يترسم في الـ catalog والـ goldens من غير أي delegate.
 
 ### الـ goldens بتاعة core_ui طالعة بخط غلط
 

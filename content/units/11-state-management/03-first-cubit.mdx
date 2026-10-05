@@ -32,7 +32,7 @@ minutes: 40
 - الزيادة والنقصان 5 صفحات في المرة.
 - أقل حاجة 5، وأكتر حاجة 200.
 
-أصغر من إنه يبقى feature، وكفاية عشان يبقى فيه قواعد حقيقية. ده الـ «counter» الوحيد في الوحدة، بس بقواعد Readly. ودرس «تست الـ Cubit» في الوحدة 8 والدروس الجاية هنا هتشتغل على `LibraryCubit` وأخواته.
+أصغر من إنه يبقى feature، وكفاية عشان يبقى فيه قواعد حقيقية. ده الـ «counter» الوحيد في الوحدة، بس بقواعد Readly. و[درس «تست الـ Cubit» في الوحدة 8](/course/testing/cubit-tests/) والدروس الجاية هنا هتشتغل على `LibraryCubit` وأخواته.
 
 </Level>
 
@@ -575,12 +575,12 @@ class ReadingGoalCubit extends Cubit<int> {
 
 الـ state رقم واحد شغالة طول ما الشاشة محتاجة رقم واحد. أول ما تحتاج حاجة تانية جنبه، زي «بيحسب الاقتراح» أو «الاقتراح فشل» أو «اتحفظ؟»، الـ `int` مايقدرش يشيلها. ساعتها قدامك اختيارين: class بحقول (`ReadingGoalState(pages, isSuggesting, suggestFailure)`)، أو sealed hierarchy. والاختيار بينهم بالظبط هو [درس "تصميم الـ State"](/course/state-management/state-design/). والـ Cubits اللي state بتاعتها قيمة واحدة (`Cubit<bool>`، `Cubit<LibraryViewMode>`) ليها مكانها في [درس "أنواع الـ Cubit (1)"](/course/state-management/cubit-types/) كنوع مستقل اسمه value Cubit.
 
-وفي حاجة الـ Cubit ده لسه مابيعملهاش: الرقم بيرجع 20 كل ما الـ app يتقفل ويفتح. حفظه في `SettingsStore` (درس الإعدادات في الوحدة 6) حل، و`HydratedCubit` حل تاني بيحفظ الـ state لوحده. المقارنة في [درس "Cubit بيفتكر ويرجع"](/course/state-management/hydrated-replay/).
+وفي حاجة الـ Cubit ده لسه مابيعملهاش: الرقم بيرجع 20 كل ما الـ app يتقفل ويفتح. حفظه في `SettingsStore` ([درس الإعدادات في الوحدة 6](/course/di-scale/settings/)) حل، و`HydratedCubit` حل تاني بيحفظ الـ state لوحده. المقارنة في [درس "Cubit بيفتكر ويرجع"](/course/state-management/hydrated-replay/).
 
 ### شكل الـ API بتاع الـ Cubit
 
 - <b>الـ methods بتوصف نية المستخدم:</b> `increase()` و`decrease()` و`reset()` و`useSuggested()`. مش `setGoal(int)` اللي بتخلي الـ UI تحسب الرقم الجاي وتبعته، فالقاعدة تهرب للـ widget. لو في Slider فعلًا بيبعت رقم، اسمها `goalChanged(int pages)` والـ Cubit هو اللي يعمل clamp.
-- <b>الـ methods بترجّع `void` أو `Future<void>`:</b> النتيجة في الـ state، مش في return value. لو `increase()` رجّعت `bool` «اتزود ولا لأ»، هتلاقي widget بيعمل if عليها، وبقى في طريقين للحقيقة. والـ `Future<void>` مسموح عشان الـ UI تستنى (زي `RefreshIndicator` في درس الـ Cubit في الوحدة 5)، بس مش عشان ترجّع داتا.
+- <b>الـ methods بترجّع `void` أو `Future<void>`:</b> النتيجة في الـ state، مش في return value. لو `increase()` رجّعت `bool` «اتزود ولا لأ»، هتلاقي widget بيعمل if عليها، وبقى في طريقين للحقيقة. والـ `Future<void>` مسموح عشان الـ UI تستنى (زي `RefreshIndicator` في [درس الـ Cubit في الوحدة 5](/course/presentation/cubit/))، بس مش عشان ترجّع داتا.
 - <b>مفيش public fields:</b> الـ `_suggestDailyGoal` private. أي حاجة الـ UI محتاجة تعرفها تبقى في الـ state، والثوابت `static const`.
 
 القواعد التلاتة دي موجودة كـ lint rules في bloc_lint (`prefer_void_public_cubit_methods` و`avoid_public_fields` و`avoid_public_bloc_methods` للـ Bloc)، وهنفعّلها في الـ CI في [درس "الـ State management في مشروع حقيقي"](/course/state-management/architecture/).
@@ -711,7 +711,7 @@ class ReadingGoalView extends StatelessWidget {
 
 <Step file="lib/features/library/domain/usecases/suggest_daily_goal.dart">
 
-الـ use case بيحسب متوسط الصفحات من الـ repository بتاع المكتبة وبيرجّع `Result<int>`. مكانه domain المكتبة، لأن الإعدادات feature من غير domain (درس الإعدادات في الوحدة 6). والـ Cubit مايعرفش جاي منين.
+الـ use case بيحسب متوسط الصفحات من الـ repository بتاع المكتبة وبيرجّع `Result<int>`. مكانه domain المكتبة، لأن الإعدادات feature من غير domain ([درس الإعدادات في الوحدة 6](/course/di-scale/settings/)). والـ Cubit مايعرفش جاي منين.
 
 </Step>
 

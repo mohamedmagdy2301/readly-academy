@@ -4,7 +4,7 @@ description: "الـ value objects والـ entities والصلاحيات وال
 minutes: 25
 ---
 
-الـ spec بيقول «أي حد في الرف يقدر يشيل الكتاب اللي هو ضافه، وصاحب الرف يشيل أي حاجة». الجملة دي هي الـ domain. ولو كتبتها جوه `if` في الـ Cubit، هتتكتب تاني في الـ widget عشان تخفي الزرار، وتالت في الـ outbox عشان تعرف الـ 403 دي متوقعة ولا لأ، وفي الآخر التلاتة هيختلفوا.
+الـ spec بيقول «أي حد في الرف يقدر يشيل الكتاب اللي هو ضافه، وصاحب الرف يشيل أي حاجة». الجملة دي هي الـ domain. ولو كتبتها جوه `if` في الـ Cubit، هتتكتب تاني في الـ widget عشان تخفي الزرار، وتالت في الـ `SyncService` عشان تعرف الـ 403 دي متوقعة ولا لأ، وفي الآخر التلاتة هيختلفوا.
 
 المرحلة دي كلها Dart صافي، والقاعدة فيها واحدة: <b>مفيش سطر كود من غير تست فاشل قبله.</b> كل commit يا red، يا green، يا refactor، واكتب ده في رسالة الـ commit.
 
@@ -189,7 +189,7 @@ String shelfFailureText(AppLocalizations l10n, Failure f) => switch (f) {
 <details className="qa">
 <summary>تلميح 2: تقسيم ممكن</summary>
 
-`ShelvesRepository` للقراية والكتابة جوه الرف (اللي بيعدّوا على drift والـ outbox)، و`ShelfMembership` للدعوات والانضمام والخروج (أونلاين بس). التقسيم ده نفسه هو قرار الـ ADR بتاع الـ Brief: لو بصيت على الـ interface، تعرف أنهي method ممكن تشتغل أوفلاين.
+`ShelvesRepository` للقراية والكتابة جوه الرف (اللي بيعدّوا على drift والـ sync queue)، و`ShelfMembership` للدعوات والانضمام والخروج (أونلاين بس). التقسيم ده نفسه هو قرار الـ ADR بتاع الـ Brief: لو بصيت على الـ interface، تعرف أنهي method ممكن تشتغل أوفلاين.
 
 </details>
 
@@ -230,7 +230,7 @@ abstract interface class ShelvesRepository {
 <details className="qa">
 <summary>تلميح 2: الوقت</summary>
 
-«اللينك خلص؟» محتاجة الوقت. لو كتبت `DateTime.now()` جوه الـ domain، التست هيبقى مرتبط بالساعة. استخدم الـ `Clock` اللي عندك من [درس الـ Conflicts](/course/offline/conflicts/)، و`FixedClock` في التست. وافتكر إن السيرفر هو الحكم: الـ app بيقول «خلص» عشان مايبعتش طلب على الفاضي، بس لو السيرفر رجّع 410 والساعة بتقول لسه، صدّق السيرفر.
+«اللينك خلص؟» محتاجة الوقت. لو كتبت `DateTime.now()` جوه الـ domain، التست هيبقى مرتبط بالساعة. استخدم الـ `Clock` اللي عندك من [درس الـ Conflicts](/course/offline/conflicts/)، و`FixedClock` في التست. والأحسن تدّيه `ServerClock` من نفس الدرس، عشان ساعة الموبايل ممكن تكون متغيّرة بإيد المستخدم. وافتكر إن السيرفر هو الحكم: الـ app بيقول «خلص» عشان مايبعتش طلب على الفاضي، بس لو السيرفر رجّع 410 والساعة بتقول لسه، صدّق السيرفر.
 
 </details>
 
@@ -263,7 +263,7 @@ test('a viewer cannot add, and nothing reaches the repository', () async {
 <Ask>الـ app بيتشيك إن الرف مش مليان قبل ما يضيف، والسيرفر برضه بيتشيك. ليه الاتنين؟</Ask>
 <Answer>
 
-الـ check في الـ app عشان المستخدم يعرف على طول، حتى وهو أوفلاين، ومايتبعتش طلب هيترفض. والـ check في السيرفر هو الحقيقة: عضوين ممكن يضيفوا الكتاب رقم 200 في نفس الثانية من جهازين، والـ app مايعرفش. فالـ app بيقلّل الحالات، والسيرفر بيحسمها، والـ 422 `shelf_full` لازم يتعالج في الـ outbox حتى لو الـ app كان شايف إن فيه مكان. والحد نفسه بييجي من السيرفر مع الرف، مش متكتب في الكود.
+الـ check في الـ app عشان المستخدم يعرف على طول، حتى وهو أوفلاين، ومايتبعتش طلب هيترفض. والـ check في السيرفر هو الحقيقة: عضوين ممكن يضيفوا الكتاب رقم 200 في نفس الثانية من جهازين، والـ app مايعرفش. فالـ app بيقلّل الحالات، والسيرفر بيحسمها، والـ 422 `shelf_full` لازم يتعالج في الـ `SyncService` حتى لو الـ app كان شايف إن فيه مكان. والحد نفسه بييجي من السيرفر مع الرف، مش متكتب في الكود.
 
 </Answer>
 </Question>
@@ -273,6 +273,15 @@ test('a viewer cannot add, and nothing reaches the repository', () async {
 <Answer>
 
 لأن `length` بيعد UTF-16 code units، والـ emoji الواحد ممكن يبقى 2 أو 11 وحدة، فاسم شكله 30 حرف ممكن يترفض على إنه أطول من 40. الـ `characters` بيعد الـ grapheme clusters، يعني الحروف زي ما المستخدم شايفها. والمهم إن الـ backend يعد بنفس الطريقة، وإلا الـ app والسيرفر هيختلفوا على نفس الاسم.
+
+</Answer>
+</Question>
+
+<Question id="cap-domain-q3">
+<Ask>ليه أسباب رفض الرفوف بقت `RuleFailure<ShelfDenial>` بدل ما الـ presentation تعمل `switch` على `ServerFailure.code`؟</Ask>
+<Answer>
+
+لأن الـ `switch` على strings مش exhaustive: لو السيرفر زوّد `members_full` بكرة، أو حد كتب `shelf-full` بدل `shelf_full`، الكود هيعدّي ساكت للـ default، والمستخدم هيشوف «حصل خطأ» على حاجة ليها سبب واضح. بالـ enum، أي سبب جديد بيكسر الـ compile في كل `switch` لحد ما يتعالج. وفي نفس الوقت `core` مابيعرفش حاجة عن الرفوف: اتغيّر مرة واحدة بنوع generic، وكل feature بتجيب الـ enum بتاعها. والترجمة من `code` السيرفر للـ enum في مكان واحد في الـ data، زي [درس الـ Failure pipeline](/course/api-errors/failure-pipeline/)، والـ `code` المش معروف بيبقى `ServerFailure` عادية.
 
 </Answer>
 </Question>

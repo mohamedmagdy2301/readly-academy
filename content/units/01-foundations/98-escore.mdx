@@ -240,4 +240,13 @@ final result = await sl<DioConsumer>().get(
 </Answer>
 </Question>
 
+<Question id="escore-foundations-3">
+<Ask>الكسور في Escore 27 ملف من حوالي 1,740. ليه الرقم ده مايطمّنش، وإيه أرخص حاجة كانت هتمنعه؟</Ask>
+<Answer>
+
+لأن مفيش حاجة بتوقف الكسر اللي جاي. القاعدة عايشة في الـ code review ودماغ الفريق بس، فأول import غلط بيعدّي في يوم زحمة بيبقى مثال للي بعده، والرقم بيكبر مع كل deadline. أرخص حل: lint أو architecture test بيمنع `package:flutter` و`/data/` جوه أي فولدر `domain` من أول commit، وCI بيشغّله على كل PR. ده حوالي 10 دقايق إعداد، وتفاصيله في [درس حراسة المعمارية](/course/quality/architecture-guards/).
+
+</Answer>
+</Question>
+
 </Quiz>

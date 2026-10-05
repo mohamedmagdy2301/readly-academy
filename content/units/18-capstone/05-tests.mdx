@@ -1,6 +1,6 @@
 ---
 title: "الاختبارات: الطبقات الباقية والـ widgets والـ golden والـ integration"
-description: "خريطة باللي اتغطى واللي لسه، وتستات الـ events والـ outbox بـ fake_async، والـ Cubits بـ blocTest، والشاشات بـ widget tests فيها الـ semantics وتكبير الخط، وgolden واحد بس مختار بسبب، وintegration test للـ flow اللي لو باظ الـ feature كلها مالهاش لازمة."
+description: "خريطة باللي اتغطى واللي لسه، وتستات الـ events والـ sync queue بـ fake_async، والـ Cubits بـ blocTest، والشاشات بـ widget tests فيها الـ semantics وتكبير الخط، وgolden واحد بس مختار بسبب، وintegration test للـ flow اللي لو باظ الـ feature كلها مالهاش لازمة."
 minutes: 25
 ---
 
@@ -17,21 +17,21 @@ minutes: 25
 <details className="qa">
 <summary>تلميح 1: ابدأ من الخطر مش من السهولة</summary>
 
-أسهل حاجة تتختبر هي الـ mappers. وأخطر حاجة هي الـ outbox لما يتشال عضو، والـ events لما توصل بترتيب غريب. ارجع لدرس Escore في [وحدة الاختبارات](/course/testing/escore/): التستات كانت على السهل، واللي لو باظ الـ app كله يقع ماكانش عليه حاجة.
+أسهل حاجة تتختبر هي الـ mappers. وأخطر حاجة هي الـ sync queue لما يتشال عضو، والـ events لما توصل بترتيب غريب. ارجع لدرس Escore في [وحدة الاختبارات](/course/testing/escore/): التستات كانت على السهل، واللي لو باظ الـ app كله يقع ماكانش عليه حاجة.
 
 </details>
 
-### المهمة 2: الـ events والـ outbox
+### المهمة 2: الـ events والـ sync queue
 
 <Tasks>
 <Task id="cap-tests-2">اكتب تستات الـ `LiveSyncService` للرفوف بـ `FakeWebSocketChannel` و`fakeAsync`: الترتيب العشوائي والمكرر بيطلّع نفس الحالة، والصدى بتاع تعديلك مابيكتبش تاني، والـ `shelf.removed` وفيه عملية pending، والفجوة في الـ `seq` بتعمل catch-up واحد بس.</Task>
-<Task id="cap-tests-3">اكتب تستات الـ outbox للرفوف بـ `FixedClock` وremote fake: أول رد ضايع والرف بيوصل نسخة واحدة، والـ 5xx بالـ backoff في وقته بالظبط، والـ 403 بيمسح الرف ويسيب الرسالة، والإضافة والشيل وانت أوفلاين بيلغوا بعض، والـ dead على رف مابيوقفش رف تاني ولا المكتبة.</Task>
+<Task id="cap-tests-3">اكتب تستات الـ `SyncQueue` والـ `SyncService` للرفوف بـ `FixedClock` وremote fake: أول رد ضايع والرف بيوصل نسخة واحدة، والـ 5xx بالـ backoff في وقته بالظبط، والـ 403 بيمسح الرف ويسيب الرسالة، والإضافة والشيل وانت أوفلاين بيلغوا بعض، والـ dead على رف مابيوقفش رف تاني ولا المكتبة.</Task>
 </Tasks>
 
 <details className="qa">
 <summary>تلميح 1: الوقت</summary>
 
-مفيش `Future.delayed` حقيقي في أي تست هنا. الـ backoff والـ debounce بتاع الإعلانات والـ heartbeat كلهم على ساعة واحدة انت ماسكها. وفي آخر كل تست، `pendingTimers` لازم تبقى فاضية. التفاصيل في [درس تست الـ real-time](/course/realtime/testing-realtime/).
+مفيش `Future.delayed` حقيقي في أي تست هنا. الـ backoff والـ debounce بتاع الإعلانات والـ heartbeat كلهم على ساعة واحدة انت ماسكها: لو الكود فيه `Timer` و`Clock` مع بعض، استخدم `FakeAsyncClock` عشان `elapse` واحدة تحرّك الاتنين، و`FixedClock` كفاية بس لما الوقت بيتقري من `Clock` من غير Timers، زي الـ backoff بتاع الـ `SyncService`. وفي آخر كل تست، `pendingTimers` لازم تبقى فاضية. التفاصيل في [درس تست الـ real-time](/course/realtime/testing-realtime/).
 
 </details>
 
@@ -122,7 +122,7 @@ minutes: 25
 <Ask>ليه الـ integration test للرفوف بيغطي flow واحد بس، والباقي widget وunit tests؟</Ask>
 <Answer>
 
-لأن الـ integration test أبطأ وأغلى وأهش نوع، ولازم يتحجز للحاجة اللي مفيش طريقة أرخص تثبتها: إن الطبقات كلها متوصلة صح على جهاز حقيقي. الـ flow ده (أوفلاين، وبعدين sync، وبعدين event من عضو تاني) بيعدّي على drift والـ outbox والـ socket والشاشة مع بعض. أما الحالات (كل رد من السيرفر، كل state) فمكانها الـ unit والـ widget tests اللي بتجري في ثواني وبتقول بالظبط إيه اللي باظ.
+لأن الـ integration test أبطأ وأغلى وأهش نوع، ولازم يتحجز للحاجة اللي مفيش طريقة أرخص تثبتها: إن الطبقات كلها متوصلة صح على جهاز حقيقي. الـ flow ده (أوفلاين، وبعدين sync، وبعدين event من عضو تاني) بيعدّي على drift والـ sync queue والـ socket والشاشة مع بعض. أما الحالات (كل رد من السيرفر، كل state) فمكانها الـ unit والـ widget tests اللي بتجري في ثواني وبتقول بالظبط إيه اللي باظ.
 
 </Answer>
 </Question>
@@ -132,6 +132,15 @@ minutes: 25
 <Answer>
 
 كل حاجة ليها علاقة بالرفض: الـ viewer اللي بيضيف، والرف المليان، والعضو اللي اتشال. التست هيعدّي، والـ app هيقع على أول 403 حقيقية في الـ staging. الـ fake لازم يطبّق نفس قواعد السيرفر، وأحسن طريقة تضمن ده إن نفس الـ contract test يشتغل على الـ fake وعلى الـ backend الحقيقي.
+
+</Answer>
+</Question>
+
+<Question id="cap-tests-q3">
+<Ask>زميلك اقترح golden لكل شاشة في الرفوف «عشان نبقى في أمان». ليه golden واحد بس، وعلى رأس شاشة الرف بالذات؟</Ask>
+<Answer>
+
+لأن كل golden ليه تمن ثابت: صورة في الـ repo، ومراجعة مع كل تغيير في الـ design، وفشل لما الخط أو Flutter يتحدث. فلازم يحمي حاجة مفيش تست أرخص بيحميها. الـ components لوحدها عليها goldens في `core_ui`، والـ widget tests بتتأكد إن كل state بتعرض النص والزراير الصح. اللي محدش بيمسكه هو الشكل لما كله يتجمع: اسم طويل بيلف سطرين، وصور الأعضاء المتراكبة في الـ RTL، وعلامة الـ pending، وعنوان إنجليزي جوه UI عربي. ده كله في رأس شاشة الرف. أما شاشة الانضمام فيها نص وزرارين، والـ widget test مغطيها. ولو اخترت شاشة تانية، المهم إن السبب يتكتب في الـ PR، زي «كام golden وفين» في [درس الـ Golden tests](/course/testing/golden-tests/).
 
 </Answer>
 </Question>

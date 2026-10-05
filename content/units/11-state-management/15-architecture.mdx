@@ -32,12 +32,12 @@ minutes: 35
 
 ### الـ Cubit مكانه فين في Clean Architecture
 
-الـ Cubit في الـ presentation layer، والسهم بتاعه رايح لجوه بس، زي ما اتفقنا من درس الطبقات في الوحدة 1. هو بيعرف الـ domain (use cases وcontracts وentities وFailure)، ومايعرفش أي حاجة عن الـ data ولا عن Flutter:
+الـ Cubit في الـ presentation layer، والسهم بتاعه رايح لجوه بس، زي ما اتفقنا من [درس الطبقات](/course/foundations/layers/) في الوحدة 1. هو بيعرف الـ domain (use cases وcontracts وentities وFailure)، ومايعرفش أي حاجة عن الـ data ولا عن Flutter:
 
 | الـ Cubit يعتمد على | مسموح؟ | ليه |
 | --- | --- | --- |
 | use case (`GetLibrary`، `AddBookToLibrary`) | أيوه | ده الطبيعي لما في logic |
-| repository contract (`LibraryRepository`) | أيوه | لما مفيش logic، زي `AuthCubit` و`SyncStatusCubit` (قرار الـ pass-through من درس الـ Domain) |
+| repository contract (`LibraryRepository`) | أيوه | لما مفيش logic، زي `AuthCubit` و`SyncStatusCubit` (قرار الـ pass-through من [درس الـ Domain](/course/domain-errors/domain/)) |
 | contract بتاع feature تانية من الـ barrel (`BookLookup`) | أيوه | ده الـ public API بتاعها |
 | `Result`، `Failure`، الـ entities | أيوه | لغة الـ domain |
 | `dart:async` (`Stream`، `Timer`، `StreamSubscription`) | أيوه | Dart صافي |
@@ -75,7 +75,7 @@ class LibraryCubit extends Cubit<LibraryState> {
 
 </CodeBlock>
 
-- <b>الـ `package:bloc` مش `flutter_bloc`:</b> الـ `Cubit` نفسه جاي من `bloc`، و`flutter_bloc` بيعمل له re-export وبيجيب معاه Flutter. الـ Cubit مش محتاج `BlocProvider` ولا `BlocBuilder`، فبيعمل import للي محتاجه بس. وبما إنك بتعمل import لـ `bloc` مباشرة، لازم يبقى مكتوب في `dependencies` في الـ pubspec، وإلا `depend_on_referenced_packages` من درس «حراسة المعمارية» هيعلّم عليه.
+- <b>الـ `package:bloc` مش `flutter_bloc`:</b> الـ `Cubit` نفسه جاي من `bloc`، و`flutter_bloc` بيعمل له re-export وبيجيب معاه Flutter. الـ Cubit مش محتاج `BlocProvider` ولا `BlocBuilder`، فبيعمل import للي محتاجه بس. وبما إنك بتعمل import لـ `bloc` مباشرة، لازم يبقى مكتوب في `dependencies` في الـ pubspec، وإلا `depend_on_referenced_packages` من [درس «حراسة المعمارية»](/course/quality/architecture-guards/) هيعلّم عليه.
 - <b>الاختبار السريع:</b> لو الملف ده اتنقل لـ package Dart صافية من غير Flutter، يتعمله compile؟ لو أيوه، الـ Cubit في مكانه الصح. وده نفس اللي عملناه في درس «أول Cubit سطر بسطر» لما شغّلنا Cubit بـ `dart run`.
 
 ### الملفات والأسامي
@@ -306,7 +306,7 @@ void registerNotes(GetIt getIt) {
 </CodeBlock>
 
 - <b>الـ registerFactoryParam:</b> بياخد لحد 2 parameters، والتاني `void` لو مش محتاجه. وبتطلبه بـ `getIt<NotesCubit>(param1: bookId)`. ولو بتستخدم injectable، نفس الحكاية بـ `@factoryParam` على الـ parameter في الـ constructor.
-- <b>الـ dispose في الـ lazySingleton:</b> لما الـ logout يعمل `resetLazySingleton` (درس الـ Session)، get_it بينادي `close()` على النسخة القديمة قبل ما يرميها، فالـ subscription بتاعها مايفضلش شغال في الخلفية.
+- <b>الـ dispose في الـ lazySingleton:</b> لما الـ logout يعمل `resetLazySingleton` ([درس الـ Session](/course/di-scale/session/))، get_it بينادي `close()` على النسخة القديمة قبل ما يرميها، فالـ subscription بتاعها مايفضلش شغال في الخلفية.
 - <b>الـ singleton بيتسأل عنه سؤال واحد:</b> «مين بره الـ widgets محتاجه؟». الـ `AuthCubit` محتاجه الـ router (`refreshListenable`) والـ `resetOnLogout`. لو الإجابة «ولا حد»، يبقى factory حتى لو بيتعمل مرة واحدة، زي الـ `SettingsCubit`.
 
 </Level>
@@ -984,7 +984,7 @@ class HomeCubit extends Cubit<HomeStats> {
 - blocTest لكل method × كل نتيجة للـ use case.
 - تست للسباق (ضغطتين، نتيجة قديمة) وللـ cleanup بعد `close()`.
 - widget test للـ View بـ `MockCubit`، من غير get_it.
-- التفاصيل في الوحدة 8: «تست الـ Cubit» و«الـ widget tests».
+- التفاصيل في الوحدة 8: [«تست الـ Cubit»](/course/testing/cubit-tests/) و[«الـ widget tests»](/course/testing/widget-tests/).
 
 </CheatCard>
 

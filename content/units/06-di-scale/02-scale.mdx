@@ -112,7 +112,7 @@ export 'src/presentation/library_page.dart';
 
 </CodeBlock>
 
-دلوقتي لو feature_notes حاولت تعمل import لـ `feature_library/src/data/...`، الـ analyzer هيطلّع تحذير إنك بتستخدم implementation مش public. الحدود بقت حقيقية.
+دلوقتي لو feature_notes حاولت تعمل import لـ `feature_library/src/data/...`، الـ analyzer هيطلّع تحذير إنك بتستخدم implementation مش public. الحدود بقت حقيقية. ده الشكل باختصار، والتقسيم خطوة خطوة في [درس «نقسّم Readly خطوة خطوة»](/course/modularization/split-readly/).
 
 ### CI على GitHub Actions
 
@@ -206,11 +206,11 @@ readly/
 ├─ apps/readly/
 │  └─ lib/
 │     ├─ main_dev.dart / main_prod.dart
-│     ├─ di/                      # composition root (injectable)
+│     ├─ di/                      # composition root: registerCore + registerX per feature
 │     └─ router/                  # go_router + guards
 └─ packages/
-   ├─ core/                       # Result, Failure, guard, UseCase base
-   ├─ core_network/               # Dio, interceptors
+   ├─ core/                       # Result, Failure, BookId, UseCase base
+   ├─ core_network/               # Dio, interceptors, guard
    ├─ core_ui/                    # theme, shared widgets
    ├─ feature_auth/
    │  └─ lib/
@@ -225,7 +225,7 @@ readly/
 
 <Diagram name="d-62babefe28">
 
-الـ app بيجمّع الـ features، وكل feature بتعتمد على packages الـ core. الـ features مابتعتمدش على بعض غير عن طريق الـ public API، زي notes اللي محتاجة BookId من library.
+الـ app بيجمّع الـ features، وكل feature بتعتمد على packages الـ core. الـ features مابتعتمدش على بعض غير عن طريق الـ public API، زي notes اللي محتاجة `BookLookup` من library.
 
 </Diagram>
 

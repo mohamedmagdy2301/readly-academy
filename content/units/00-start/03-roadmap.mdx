@@ -1,6 +1,6 @@
 ---
 title: "خريطة الرحلة"
-description: "المحاور المتقدمة، والـ 19 وحدة بالترتيب، والخط الزمني للـ 31 أسبوع."
+description: "المحاور المتقدمة، والـ 19 وحدة بالترتيب، والخط الزمني للـ 35 أسبوع."
 ---
 
 الكورس بيديك الـ «إيه»، والمحاور دي هي الـ «إزاي في مشروع حقيقي». العمودين الأخيرين بيقولولك المحور في أنهي وحدة وأنهي أسبوع.
@@ -20,16 +20,18 @@ description: "المحاور المتقدمة، والـ 19 وحدة بالتر�
 | الـ State management | يعني إيه state، أدوات Flutter وProvider، كل أنواع الـ Cubit، flutter_bloc، الـ HydratedCubit، الـ Bloc بالـ transformers، GetX وMobX وRedux وsignals، وإزاي تختار وتنقل. وبعدين Readly كلها بـ Riverpod 3 من غير ما الـ domain والـ data يتغيروا | أكتر سؤال بيتسأل في interviews الـ Flutter، والـ spike بـ Riverpod بيثبت بالـ `git diff` إن المعمارية عازلة الـ presentation فعلًا | 11، 12 | 14–18 |
 | Real-time والـ Background | الـ polling والـ SSE والـ WebSocket والـ push وتختار إزاي، الـ WebSocket كـ data source بيكتب في drift، الـ reconnect والـ heartbeat والـ auth، FCM، workmanager، والتست بـ fake_async | المستخدم بقى عنده أكتر من جهاز، وكل طريق سريع لازم يبقى وراه طريق بطيء ومضمون | 13 | 19–20 |
 | الـ Performance | الـ profile mode والـ DevTools، الـ rebuilds، القوايم الطويلة، الصور، الشغل التقيل على الـ main isolate، الـ memory leaks، وقت الفتح، وتمن الطبقات بالأرقام | «الـ Clean Architecture بطيئة؟» سؤال interview، والإجابة لازم تبقى رقم مش رأي | 14 | 21–22 |
-| التقسيم لـ packages | الـ pub workspaces، package لكل feature، public API لكل package، الـ dependency rule من الـ pubspec، domain مشترك بين app وأدمن، الـ codegen والـ CI على اللي اتغير بس | الـ analyzer والـ CI بيمسكوا الـ imports الغلط بدل ما تعتمد على الـ review، والـ build أسرع في المشاريع الكبيرة | 6، 15 | 6، 23 |
-| الـ Design System والـ Accessibility | الـ tokens كـ ThemeExtension، مكتبة components في `core_ui`، الـ dark mode من غير if، الـ RTL والـ bidi، قارئ الشاشة، تكبير الخط 200%، تستات الـ contrast | جمهور عربي يعني RTL صح، واللي مكبّر الخط أو بيستخدم TalkBack لازم يقدر يستخدم الـ app | 16 | 24–25 |
-| الـ Production والأمان | Clean ولا MVVM بالكود والأرقام، الـ logging وSentry، الـ refactor لكود قديم، الـ flavors والـ release من الـ CI، الأسرار والتخزين الحساس والـ threat model، الـ feature flags والـ kill switch | تعرف إن الـ app بيقع قبل ما حد يشتكي، ومايسرّبش بيانات مستخدمينه، وتقفل أي feature في دقيقة من غير release | 17 | 26–27 |
-| المشروع الختامي | feature «الرفوف المشتركة» لوحدك: spec وعقد وADR، الـ domain بالـ TDD، الـ data أوفلاين ولايف، الشاشات والـ accessibility، الـ release ورا flag، ومراجعة بـ rubric | أول مرة تجمع كل اللي فات من غير كود جاهز، ودي القصة اللي هتحكيها في الـ interview | 18 | 28–31 |
+| التقسيم لـ packages | الـ pub workspaces، package لكل feature، public API لكل package، الـ dependency rule من الـ pubspec، domain مشترك بين app وأدمن، الـ codegen والـ CI على اللي اتغير بس | الـ analyzer والـ CI بيمسكوا الـ imports الغلط بدل ما تعتمد على الـ review، والـ build أسرع في المشاريع الكبيرة | 6، 15 | 6، 23–24 |
+| الـ Design System والـ Accessibility | الـ tokens كـ ThemeExtension، مكتبة components في `core_ui`، الـ dark mode من غير if، الـ RTL والـ bidi، قارئ الشاشة، تكبير الخط 200%، تستات الـ contrast | جمهور عربي يعني RTL صح، واللي مكبّر الخط أو بيستخدم TalkBack لازم يقدر يستخدم الـ app | 16 | 25–26 |
+| الـ Production والأمان | Clean ولا MVVM بالكود والأرقام، الـ logging وSentry، الـ refactor لكود قديم، الـ flavors والـ release من الـ CI، الأسرار والتخزين الحساس والـ threat model، الـ feature flags والـ kill switch | تعرف إن الـ app بيقع قبل ما حد يشتكي، ومايسرّبش بيانات مستخدمينه، وتقفل أي feature في دقيقة من غير release | 17 | 27–29 |
+| المشروع الختامي | feature «الرفوف المشتركة» لوحدك: spec وعقد وADR، الـ domain بالـ TDD، الـ data أوفلاين ولايف، الشاشات والـ accessibility، الـ release ورا flag، ومراجعة بـ rubric | أول مرة تجمع كل اللي فات من غير كود جاهز، ودي القصة اللي هتحكيها في الـ interview | 18 | 30–35 |
 
-والـ decision guide المكتوب بين Clean Arch وMVVM (اللي انت بتشتغل بيهم الاتنين) بيتكتب في الأسبوع 26 مع وحدة الـ Production، كامتداد لمحاضرة 38.
+والـ decision guide المكتوب بين Clean Arch وMVVM (اللي انت بتشتغل بيهم الاتنين) بيتكتب في الأسبوع 27 مع وحدة الـ Production، كامتداد لمحاضرة 38.
 
 ### الخط الزمني
 
-31 أسبوع بعد المرحلة 0، بحوالي 8 لـ 10 ساعات في الأسبوع، وكل وحدة بتنتهي بـ deliverable في المشروع التطبيقي. لو أسبوع طوّل معاك عادي، المهم إن الـ deliverable يتسلم قبل ما تنتقل.
+35 أسبوع بعد المرحلة 0، بحوالي 8 لـ 10 ساعات في الأسبوع، وكل وحدة بتنتهي بـ deliverable في المشروع التطبيقي. لو أسبوع طوّل معاك عادي، المهم إن الـ deliverable يتسلم قبل ما تنتقل.
+
+عدد أسابيع كل وحدة على قد شغلها الفعلي: عدد الدروس ووقتها، وحجم المهام في «التطبيق والمهام». علشان كده الـ Modularization أسبوعين (11 مهمة، أغلبها PR بينقل جزء من Readly لـ package)، والـ Production 3 (19 مهمة من الـ logging للـ release للأمان للـ flags)، والمشروع الختامي 6 (الوحدة نفسها بتقدّره بـ 50 لـ 70 ساعة شغل).
 
 <Diagram name="d-31a5d52906">
 
@@ -54,9 +56,9 @@ description: "المحاور المتقدمة، والـ 19 وحدة بالتر�
 | 17–18 | [Riverpod في الـ Clean Architecture](/course/riverpod/) | Readly كلها بـ Riverpod من غير ما الـ domain والـ data يتغيروا |
 | 19–20 | [Real-time والـ Background](/course/realtime/) | WebSocket وdrift، والـ reconnect، والـ push، والـ background sync |
 | 21–22 | [الـ Performance](/course/performance/) | تقيس قبل ما تصلّح: الـ rebuilds والقوايم والصور والـ memory ووقت الفتح |
-| 23 | [الـ Modularization والـ Packages](/course/modularization/) | الـ pub workspaces، وتقسيم Readly، والـ dependency rule من الـ pubspec |
-| 24–25 | [الـ Design System والـ Accessibility](/course/design-system/) | الـ tokens، و`core_ui`، والـ dark mode، والـ RTL، وقارئ الشاشة |
-| 26–27 | [الـ Production والقرار](/course/production/) | Clean ولا MVVM، والـ monitoring، والـ release، والأمان، والـ feature flags |
-| 28–31 | [المشروع الختامي](/course/capstone/) | «الرفوف المشتركة» من الـ spec لحد المستخدمين |
+| 23–24 | [الـ Modularization والـ Packages](/course/modularization/) | الـ pub workspaces، وتقسيم Readly، والـ dependency rule من الـ pubspec |
+| 25–26 | [الـ Design System والـ Accessibility](/course/design-system/) | الـ tokens، و`core_ui`، والـ dark mode، والـ RTL، وقارئ الشاشة |
+| 27–29 | [الـ Production والقرار](/course/production/) | Clean ولا MVVM، والـ monitoring، والـ release، والأمان، والـ feature flags |
+| 30–35 | [المشروع الختامي](/course/capstone/) | «الرفوف المشتركة» من الـ spec لحد المستخدمين |
 
 الوحدات من 8 لـ 16 بتعمّق في حاجة اتشرحت في المسار الأساسي، وأغلبها بيبدأ بإشارة للدرس اللي كان «الخريطة». لو وقتك ضيق، خلّص المسار الأساسي (الأسابيع 0 لـ 7)، وبعدين الـ Production، وارجع للتعمّق بالترتيب اللي شغلك محتاجه. بس المشروع الختامي محتاج كل اللي قبله.

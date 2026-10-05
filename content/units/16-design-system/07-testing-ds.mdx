@@ -383,7 +383,7 @@ const knownPhysical = {
 
 </CodeBlock>
 
-والتست بيلف على الملفات زي ما بيعمل في الألوان، وبنفس الـ `expectOnlyKnown`. والـ `Alignment` في الـ gradient مثلًا (`begin: Alignment.topLeft`) هيتمسك هو كمان. ده مقصود: الـ `AlignmentDirectional` شغال في الـ gradient، فالأحسن يتغير. ولو حالة مقصودة فعلًا، تدخل الـ allowlist بكومنت في الـ review.
+والتست بيلف على الملفات زي ما بيعمل في الألوان، وبيقارن بالـ allowlist في الاتجاهين (جديد ممنوع، واللي اتصلّح يتشال)، نفس فكرة الـ `expectOnlyKnown` في [درس حراسة المعمارية](/course/quality/architecture-guards/). والـ `Alignment` في الـ gradient مثلًا (`begin: Alignment.topLeft`) هيتمسك هو كمان. ده مقصود: الـ `AlignmentDirectional` شغال في الـ gradient، فالأحسن يتغير. ولو حالة مقصودة فعلًا، تدخل الـ allowlist بكومنت في الـ review.
 
 والـ regex بيمسك الحالات المعروفة بس، مش كل حاجة: `Positioned` اتكتب على كذا سطر ممكن يعدّي. ده مقبول: الهدف إن الغلط الشائع مايدخلش، والـ goldens بالعربي بتمسك الباقي.
 

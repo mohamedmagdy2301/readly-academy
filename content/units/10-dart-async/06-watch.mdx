@@ -139,6 +139,8 @@ Stream<Result<T>> guardStream<T>(Stream<T> source) => source.transform(
 
 نفس قاعدة الـ guard: اللي نعرفه بيتحول لـ Failure، والـ bug بيفضل bug. الفرق إن الـ stream بيكمّل بعد الـ Err.
 
+وخد بالك: لما Readly عمل الـ WebSocket فعلًا في [وحدة الـ Realtime](/course/realtime/reconnect/)، الشاشة ماسمعتش على الـ socket أصلًا. الـ events بتتكتب في drift، والشاشة فاضلة على `watchLibrary()` زي ما هي، وحالة الاتصال stream لوحده (`Stream<RealtimeStatus>`) بيغذّي الـ banner. يعني الـ `guardStream` مكانه لما الشاشة نفسها بتسمع على stream من الشبكة ومفيش DB في النص. ولو في DB، الـ watch بيفضل `Stream<T>`.
+
 ### 5. الـ use case
 
 الـ `WatchLibrary` بتاع درس الـ Domain زي ما هو: `map` بيفلتر بالحالة ويرتّب. هو موجود لأن فيه قاعدة. لو الشاشة عايزة الليست زي ما هي، الـ Cubit يسمع على `watchLibrary()` مباشرة.
@@ -199,6 +201,7 @@ class LibraryCubit extends Cubit<LibraryState> {
 
 </CodeBlock>
 
+- <b>الاشتراك هنا في الـ constructor عشان المثال يبقى قصير:</b> في [درس «أنواع الـ Cubit (2)»](/course/state-management/cubit-types-advanced/) الاشتراك بيبقى method اسمها `watch()` بتاخد `status` للفلتر وبتتنادى تاني للـ retry، والـ route بيعمل `getIt<LibraryCubit>()..watch()`. نفس الفكرة، والشكل ده هو اللي بيكمل معاك في باقي الكورس.
 - <b>الـ refresh مابيرجّعش كتب:</b> بيكتب في drift، والـ watch بيجيبها. فالـ `refresh` بيمسك حالة الشبكة بس (`isRefreshing` و`refreshFailure`)، والـ `_onBooks` بيمسك البيانات. ده الـ `LibraryLoaded` بتاع [درس الـ Cubit](/course/presentation/cubit/) بنفس الحقول.
 - <b>الـ `_onBooks` بيحافظ على الـ isRefreshing:</b> الـ refresh بيكتب في drift وهو لسه شغال، فالـ watch بيطلّع ليست جديدة في النص. لو `_onBooks` عمل `LibraryLoaded(books)` جديدة، الـ spinner هيختفي قبل ما الـ refresh يخلص. وبما إن `copyWith` بيمسح `refreshFailure`، أي ليست جديدة بتمسح رسالة الفشل القديمة، والـ SnackBar كان ظهر خلاص.
 - <b>الـ watch error مش شاشة error لو في بيانات:</b> لو الكتب ظاهرة وقراية واحدة فشلت، مسح الليست عشان خطأ نادر أسوأ من إنك تسيبها. الخطأ بيتسجل، والشاشة بتفضل.
@@ -323,7 +326,7 @@ Stream<Result<List<Book>>> call(WatchLibraryParams params) =>
 
 <Note kind="interview" title="سؤال interview">
 
-«الـ repository يرجّع `Stream<Either<Failure, T>>` ولا `Stream<T>`؟» حسب نوع الفشل. لو الـ stream جاي من الشبكة والفشل متوقع والمستخدم لازم يشوفه والـ stream يكمّل (reconnect مثلًا)، الـ Either أو Result صح، لأنه بيحط الفشل في الـ type وبيجبر الـ UI يتعامل معاه. لو الـ stream من DB محلية كمصدر حقيقة، الفشل المتوقع بيحصل في الـ refresh (Future بـ Result)، واللي بيطلع من الـ watch نادر ومن البنية التحتية، فـ `Stream<T>` مع ترجمة الـ errors في الـ data layer و`onError` في الـ Cubit أبسط وأوضح. وفي الحالتين، الـ bugs بتفضل errors مش Failures.
+«الـ repository يرجّع `Stream<Result<T>>` ولا `Stream<T>`؟» حسب نوع الفشل. لو الـ stream جاي من الشبكة والفشل متوقع والمستخدم لازم يشوفه والـ stream يكمّل (reconnect مثلًا)، الـ Result صح، لأنه بيحط الفشل في الـ type وبيجبر الـ UI يتعامل معاه. لو الـ stream من DB محلية كمصدر حقيقة، الفشل المتوقع بيحصل في الـ refresh (Future بـ Result)، واللي بيطلع من الـ watch نادر ومن البنية التحتية، فـ `Stream<T>` مع ترجمة الـ errors في الـ data layer و`onError` في الـ Cubit أبسط وأوضح. وفي الحالتين، الـ bugs بتفضل errors مش Failures.
 
 </Note>
 

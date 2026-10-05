@@ -236,7 +236,7 @@ git diff --stat main -- 'packages/*/test/**/domain' 'packages/*/test/**/data'
 
 <Note kind="interview" title="سؤال interview">
 
-«لو قررتوا تغيّروا الـ state management بكرة، هيكلّفكم كام؟» الإجابة القوية بتبدأ بالحدود: «الـ domain والـ data مابيعرفوش الـ state management، وده متحرس بتست في الـ CI بيمنع أي import لـ flutter_bloc أو riverpod جوههم. فالتحويل بيلمس الـ presentation والـ DI وتستات الـ presentation بس». وبعدين رقم: «عندنا 14 Cubit، أغلبهم load وactions، ونقدّر الشاشة بيوم لـ 3 أيام حسب التعقيد، ونقدر نعمله شاشة شاشة والاتنين عايشين مع بعض». وبعدين التحفظ: «بس مش هنعمله غير لو المعايير اللي في الـ ADR اتغيرت». الإجابة الضعيفة: «كتير، لأن الـ Cubits في كل حتة».
+«لو قررتوا تغيّروا الـ state management بكرة، هيكلّفكم كام؟» الإجابة القوية بتبدأ بالحدود: «الـ domain والـ data مابيعرفوش الـ state management، وده متحرس بتست في الـ CI بيمنع أي import لـ flutter_bloc أو riverpod جوههم. فالتحويل بيلمس الـ presentation والـ DI وتستات الـ presentation بس». وبعدين رقم: «عندنا حوالي 18 Cubit، أغلبهم load وactions، والشاشة بتاخد من ساعتين ليومين حسب شكلها (الأرقام في [درس القرار](/course/riverpod/decision/))، ونقدر نعمله شاشة شاشة والاتنين عايشين مع بعض». وبعدين التحفظ: «بس مش هنعمله غير لو المعايير اللي في الـ ADR اتغيرت». الإجابة الضعيفة: «كتير، لأن الـ Cubits في كل حتة».
 
 </Note>
 

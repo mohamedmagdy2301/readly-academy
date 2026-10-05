@@ -102,6 +102,15 @@ function inspect(file, offset) {
   };
 }
 
+// Lessons written without <Level> blocks on purpose, exempt from the Levels check only
+// (every other check, the <Quiz> included, still applies to them):
+//   - 98-escore.mdx in every unit: a case study of the Escore app, not a concept lesson
+//   - every lesson of the capstone unit (18-capstone): project phases built from tasks
+const isWithoutLevels = (file) => {
+  const f = rel(file);
+  return path.basename(f) === "98-escore.mdx" || /^content\/units\/\d+-capstone\//.test(f);
+};
+
 for (const file of targets) {
   if (!fs.existsSync(file)) { err(file, 0, "file not found"); continue; }
   const { data, content, offset, lineAt } = read(file);
@@ -136,7 +145,7 @@ for (const file of targets) {
     if (!data.title) err(file, 1, "frontmatter title is missing");
     if (!data.description) err(file, 1, "frontmatter description is missing");
     const levels = [...content.matchAll(/<Level n="(\d)"/g)].map((m) => m[1]).join(",");
-    if (levels !== "1,2,3,4") report(file, 0, `Levels found [${levels || "none"}], expected 1,2,3,4 in order`);
+    if (levels !== "1,2,3,4" && !isWithoutLevels(file)) report(file, 0, `Levels found [${levels || "none"}], expected 1,2,3,4 in order`);
     const quizzes = [...content.matchAll(/<Quiz>([\s\S]*?)<\/Quiz>/g)];
     if (quizzes.length !== 1) report(file, 0, `expected one <Quiz>, found ${quizzes.length}`);
     else {

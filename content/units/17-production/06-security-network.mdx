@@ -75,7 +75,7 @@ Readly هيثبّت الـ <b>CA</b>: الشهادة تتجدد براحتها،
 
 ### `validateCertificate` بيتنادى بعد ما الطلب اتبعت
 
-الطريقة اللي في الـ docs بتاعة dio هي `validateCertificate` في `IOHttpClientAdapter`، وده اللي قلناه في درس dio. بس لو قريت كود الـ adapter نفسه، هتلاقي إنه بينادي `validateCertificate` على `responseStream.certificate`، يعني <b>بعد</b> ما الـ request اتبعت والـ response headers رجعت. الـ request نفسه، بالـ `Authorization` header بتاعه، وصل للـ proxy المزيف خلاص. الـ pinning هنا بيمنعك تثق في الرد، مش بيحمي الـ token.
+الطريقة اللي في الـ docs بتاعة dio هي `validateCertificate` في `IOHttpClientAdapter`، وده اللي قلناه في [درس dio](/course/data-network/network/). بس لو قريت كود الـ adapter نفسه، هتلاقي إنه بينادي `validateCertificate` على `responseStream.certificate`، يعني <b>بعد</b> ما الـ request اتبعت والـ response headers رجعت. الـ request نفسه، بالـ `Authorization` header بتاعه، وصل للـ proxy المزيف خلاص. الـ pinning هنا بيمنعك تثق في الرد، مش بيحمي الـ token.
 
 الحل إن التحقق يحصل في الـ handshake نفسه، قبل ما أي byte من الطلب يطلع: `SecurityContext` مابيثقش غير في الـ CAs بتاعتنا.
 
@@ -113,21 +113,26 @@ HttpClient pinnedHttpClient(PinningPolicy policy, AppLogger logger, Clock clock)
 <CodeBlock label="di/network.dart: الـ API بس، والـ refresh كمان">
 
 ```dart
-Dio buildApiDio(AppConfig config, TokenStore tokens, PinningPolicy pins, AppLogger logger) {
-  final options = BaseOptions(/* baseUrl, timeouts as before */);
-  HttpClientAdapter adapter() => IOHttpClientAdapter(
-        createHttpClient: () => pinnedHttpClient(pins, logger, const SystemClock()),
-      );
+HttpClientAdapter pinnedAdapter(PinningPolicy pins, AppLogger logger) => IOHttpClientAdapter(
+      createHttpClient: () => pinnedHttpClient(pins, logger, const SystemClock()),
+    );
 
-  final dio = Dio(options)..httpClientAdapter = adapter();
-  final refreshDio = Dio(options)..httpClientAdapter = adapter(); // it carries the refresh token
+Dio buildApiDio(AppConfig config, TokenStore tokens, TokenRefresher refresher,
+    PinningPolicy pins, AppLogger logger) {
+  final dio = Dio(BaseOptions(/* baseUrl, timeouts as before */))
+    ..httpClientAdapter = pinnedAdapter(pins, logger);
   dio.interceptors.addAll([
-    AuthInterceptor(tokens, refreshDio, dio),
+    AuthInterceptor(tokens, refresher, dio), // the reconnect lesson: _refreshOnce is TokenRefresher now
     RetryInterceptor(dio),
     LoggingInterceptor(logger),
   ]);
   return dio;
 }
+
+// the Dio inside TokenRefresher (the background-sync lesson): it carries the refresh token
+Dio buildRefreshDio(AppConfig config, PinningPolicy pins, AppLogger logger) =>
+    Dio(BaseOptions(/* same baseUrl and timeouts, no interceptors */))
+      ..httpClientAdapter = pinnedAdapter(pins, logger);
 
 // buildOpenLibraryDio stays as it is: not our server, not our token
 
@@ -141,7 +146,7 @@ final readlyPins = PinningPolicy(
 </CodeBlock>
 
 - <b>الـ `withTrustedRoots: false`:</b> الـ app مابقاش بيثق في أي CA في النظام، حتى لو حد ركّب واحدة على الجهاز. والـ hostname لسه بيتشيك عادي، لأن احنا ماقبلناش أي حاجة في الـ callback.
-- <b>الـ `refreshDio` محتاج نفس الـ adapter:</b> ده اللي بيبعت الـ refresh token، وهو أغلى حاجة في الـ session. نسيانه معناه إن الـ pinning بيحمي الطلبات العادية ويسيب الأهم.
+- <b>الـ Dio بتاع الـ `TokenRefresher` محتاج نفس الـ adapter:</b> من [درس الـ reconnect](/course/realtime/reconnect/) الـ refresh بقى في `TokenRefresher` واحد بيستخدمه الـ AuthInterceptor والـ socket، والـ Dio بتاعه بيتعمل بـ `buildRefreshDio` في [درس الـ sync في الخلفية](/course/realtime/background-sync/). ده اللي بيبعت الـ refresh token، وهو أغلى حاجة في الـ session. نسيانه معناه إن الـ pinning بيحمي الطلبات العادية ويسيب الأهم.
 - <b>الـ error بيوصل إزاي؟</b> الـ handshake بيفشل بـ `HandshakeException`، والـ `_mapDio` بتاع [الوحدة 9](/course/api-errors/failure-pipeline/) بيحوّلها لـ `NetworkFailure(hint: clockOrProxy)`، والمستخدم بيشوف «في proxy أو الساعة غلط»، وده صح فعلًا. والفريق بيعرف من الـ `logger.error` اللي في الـ callback. والـ case بتاع `badCertificate` في `_mapDio` يفضل موجود لو حد رجع لـ `validateCertificate` في endpoint تاني.
 
 ### الشهادة اتغيرت والـ app وقف عند الناس
@@ -236,7 +241,7 @@ class AppCheckInterceptor extends Interceptor {
 
 ### الـ logs اللي لسه بتسرّب
 
-في درس الـ Logging عملنا `LoggingInterceptor` بيخفي الـ headers والـ keys الحساسة، وBlocObserver بيسجّل الـ runtimeType بس. مراجعة على Sentry بعد شهر لقت 4 حاجات لسه بتطلع:
+في [درس الـ Logging](/course/production/observability/) عملنا `LoggingInterceptor` بيخفي الـ headers والـ keys الحساسة، وBlocObserver بيسجّل الـ runtimeType بس. مراجعة على Sentry بعد شهر لقت 4 حاجات لسه بتطلع:
 
 | اللي اتسرّب | منين | الحل |
 | --- | --- | --- |

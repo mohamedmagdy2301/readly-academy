@@ -1,6 +1,6 @@
 ---
 title: "الـ sync في الخلفية بـ workmanager"
-description: "الـ outbox بيتبعت والـ app مقفول: تلات triggers (دوري، وone-off لما الـ app يروح الخلفية، وsilent push)، والـ DI جوه isolate فاضي، وdrift في isolateين، والـ refresh token اللي بيتسابق عليه isolateين، وقيود Android وiOS الحقيقية، وإزاي تعرف إن الشغل ده بيحصل أصلًا."
+description: "الـ sync queue بتتبعت والـ app مقفول: تلات triggers (دوري، وone-off لما الـ app يروح الخلفية، وsilent push)، والـ DI جوه isolate فاضي، وdrift في isolateين، والـ refresh token اللي بيتسابق عليه isolateين، وقيود Android وiOS الحقيقية، وإزاي تعرف إن الشغل ده بيحصل أصلًا."
 minutes: 35
 ---
 
@@ -52,20 +52,20 @@ Future<void> registerCore(GetIt getIt, AppConfig config, {required bool backgrou
     ..registerSingleton<AppConfig>(config)
     ..registerSingleton<SharedPreferencesWithCache>(prefs)
     ..registerSingleton<TokenStore>(SecureTokenStore(const FlutterSecureStorage(), prefs))
-    ..registerLazySingleton<AppDatabase>(() => AppDatabase(openReadlyDatabase()))
+    ..registerLazySingleton<AppDatabase>(() => AppDatabase.open()) // shared across isolates: see Level 3
     ..registerLazySingleton<Clock>(() => getIt<ServerClock>())
     // the background never decides the session is over: see Level 3
     ..registerLazySingleton<TokenRefresher>(
         () => TokenRefresher(getIt(), buildRefreshDio(config), clearOnReject: !background))
-    ..registerLazySingleton<Dio>(() => buildApiDio(config, getIt()));
+    ..registerLazySingleton<Dio>(() => buildApiDio(config, getIt(), getIt()), instanceName: 'api'); // tokens + refresher
   // ... ServerClock, InstallationId, AppLogger
 }
 
-/// What the outbox needs: the queue, the remote source, the SyncService.
+/// What draining the sync queue needs: the SyncQueue, the remote source, the SyncService.
 void registerSync(GetIt getIt) {
   getIt
-    ..registerLazySingleton<SyncQueue>(() => SyncQueue(getIt(), getIt()))
-    ..registerLazySingleton<LibraryRemoteSource>(() => LibraryRemoteSource(getIt()))
+    ..registerLazySingleton<SyncQueue>(() => SyncQueue(getIt(), getIt())) // db + Clock, since the conflicts lesson
+    ..registerLazySingleton<LibraryRemoteSource>(() => LibraryRemoteSource(getIt<Dio>(instanceName: 'api')))
     ..registerLazySingleton<ConflictPolicy>(() => const FieldMerge())
     ..registerLazySingleton<SyncService>(() => SyncService(
           getIt(), getIt(), getIt(), getIt(),
@@ -294,17 +294,18 @@ class TokenRefresher {
 
 الـ app مفتوح على المكتبة، والـ one-off task اشتغل (الـ app كان راح الخلفية ثانيتين ورجع). الـ task بعت عمليتين، وعمل `markSynced`، وأيقونة السحابة لسه ظاهرة على الكتابين.
 
-[درس Offline-first](/course/offline/offline/) قال إن drift مابيحسّش بالكتابة اللي من isolate تاني، وحلها بـ `markTablesUpdated` مع الـ resume. ده شغال، بس فيه حل أنضف لما الاتنين في نفس الـ process (وده اللي بيحصل لما الـ workmanager يشتغل والـ app عايش):
+[درس Offline-first](/course/offline/offline/) قال إن drift مابيحسّش بالكتابة اللي من isolate تاني، وحلها بـ `markTablesUpdated` مع الـ resume. ده شغال، بس فيه حل أنضف لما الاتنين في نفس الـ process (وده اللي بيحصل لما الـ workmanager يشتغل والـ app عايش). الحل option واحد في نفس الـ `AppDatabase.open()` بتاع [درس التخزين المحلي](/course/data-network/local-storage/)، فالـ foreground والخلفية بيفتحوا الـ DB بنفس السطر:
 
-<CodeBlock label="data/open_database.dart">
+<CodeBlock label="data/local/app_database.dart">
 
 ```dart
-QueryExecutor openReadlyDatabase() => driftDatabase(
-      name: 'readly',
-      native: const DriftNativeOptions(
-        shareAcrossIsolates: true, // isolates in the same process share one drift instance
-      ),
-    );
+AppDatabase.open()
+    : super(driftDatabase(
+        name: 'readly',
+        native: const DriftNativeOptions(
+          shareAcrossIsolates: true, // isolates in the same process share one drift instance
+        ),
+      ));
 ```
 
 </CodeBlock>

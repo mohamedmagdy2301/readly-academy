@@ -490,7 +490,7 @@ class ReadingGoalView extends StatelessWidget {
 ```dart
 MultiProvider(
   providers: [
-    Provider<LibraryRepository>(create: (_) => DriftLibraryRepository(db, api)),
+    Provider<LibraryRepository>(create: (_) => LibraryRepositoryImpl(db, remote)),
     ProxyProvider<LibraryRepository, RefreshLibrary>(
       update: (_, repository, __) => RefreshLibrary(repository),
     ),
@@ -510,7 +510,7 @@ MultiProvider(
 - <b>الـ `MultiProvider`:</b> شكل أنضف لـ providers جوه بعض. الأول في الليستة هو اللي فوق، فاللي تحته يقدر يقراه بـ `context.read` في الـ `create` بتاعه.
 - <b>الـ `ProxyProvider<A, R>`:</b> object بيعتمد على object تاني من الشجرة. الـ `update` بياخد `(context, a, previous)` وبيتنادى أول مرة، وتاني كل ما `A` يتغير. فيه نسخ لحد 6 dependencies (`ProxyProvider2` ...)، و`ChangeNotifierProxyProvider` لو الناتج notifier.
 - <b>الـ `StreamProvider` و`FutureProvider`:</b> بيحطوا آخر قيمة من stream أو future في الشجرة، وبياخدوا `initialData` إجباري. مناسبين لقيمة بسيطة زي حالة الاتصال، مش لشاشة فيها منطق.
-- <b>في Readly:</b> الـ dependencies في get_it مع injectable ([درس الـ DI في الوحدة 6](/course/di-scale/di/))، والشجرة فيها الـ Cubits بس. ده اختيار، مش قاعدة: فرق كتير بتستخدم provider للاتنين، والـ `RepositoryProvider` في flutter_bloc معمول لده بالظبط.
+- <b>في Readly:</b> الـ dependencies في get_it، وكل feature بتسجّل نفسها في function زي `registerLibrary` ([درس الـ DI في الوحدة 6](/course/di-scale/di/))، والشجرة فيها الـ Cubits بس. ده اختيار، مش قاعدة: فرق كتير بتستخدم provider للاتنين، والـ `RepositoryProvider` في flutter_bloc معمول لده بالظبط.
 
 ### الـ BlocProvider هو provider من تحت
 

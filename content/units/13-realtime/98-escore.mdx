@@ -210,7 +210,7 @@ if (initialMessage != null) {
 
 ### الخلفية: ولا حاجة، وده مقبول
 
-مفيش workmanager، ولا background fetch (مع إن الـ `Info.plist` فيه `fetch` في الـ `UIBackgroundModes` ومفيش كود بيستخدمه)، ولا isolates. ده مش نسيان: Escore remote-first ([درس Escore في الوحدة 4](/course/offline/escore/))، والمستخدم بيقرا أغلب الوقت، والكتابة القليلة (follow، تعليق) بتحصل والنت شغال. مفيش outbox يتبعت، فمفيش حاجة تستاهل الـ OS يصحّي الـ app عشانها. [درس الـ sync في الخلفية](/course/realtime/background-sync/) قال إن الخلفية بونص لما في عمليات بتستنى، وهنا مفيش.
+مفيش workmanager، ولا background fetch (مع إن الـ `Info.plist` فيه `fetch` في الـ `UIBackgroundModes` ومفيش كود بيستخدمه)، ولا isolates. ده مش نسيان: Escore remote-first ([درس Escore في الوحدة 4](/course/offline/escore/))، والمستخدم بيقرا أغلب الوقت، والكتابة القليلة (follow، تعليق) بتحصل والنت شغال. مفيش sync queue زي الـ `SyncQueue` بتاع Readly تتبعت، فمفيش حاجة تستاهل الـ OS يصحّي الـ app عشانها. [درس الـ sync في الخلفية](/course/realtime/background-sync/) قال إن الخلفية بونص لما في عمليات بتستنى، وهنا مفيش.
 
 بداله، Escore بيعتمد على triggers الـ foreground: refresh مع الـ resume (بـ dedupe في ثانيتين)، وrefresh لما النت يرجع، والـ caches بـ TTL (5 دقايق للايف، و30 للتفاصيل). والشغل الوحيد اللي بيحصل والـ app مش شغال مكتوب native: الـ `AppDelegate` بيستلم الـ push ويكتب النتيجة في App Group عشان widget الشاشة الرئيسية في iOS يتحدث. وده اختيار ذكي: الـ widget محتاج يتحدث من غير ما Flutter يقوم أصلًا. والـ Live Activities متكتبة كلها بس مقفولة بـ `kLiveActivityEnabled = false`.
 
@@ -251,7 +251,7 @@ if (initialMessage != null) {
 <Ask>Escore مافيهوش workmanager ولا أي شغل في الخلفية. ده غلط؟</Ask>
 <Answer>
 
-لأ. الخلفية بتستاهل لما في عمليات بتستنى تتبعت (outbox) والمستخدم بيقفل الـ app قبلها. Escore remote-first، والكتابة قليلة وبتحصل والنت شغال، فمفيش حاجة الـ OS يصحّي الـ app عشانها. بيعتمد على triggers الـ foreground (الـ resume، ورجوع النت، والـ caches بـ TTL)، والـ widget بتاع iOS بيتحدث من الـ push بكود native من غير Flutter. اللي غلط بسيط إن الـ `Info.plist` معلن `fetch` من غير كود بيستخدمه.
+لأ. الخلفية بتستاهل لما في عمليات بتستنى تتبعت (الـ sync queue) والمستخدم بيقفل الـ app قبلها. Escore remote-first، والكتابة قليلة وبتحصل والنت شغال، فمفيش حاجة الـ OS يصحّي الـ app عشانها. بيعتمد على triggers الـ foreground (الـ resume، ورجوع النت، والـ caches بـ TTL)، والـ widget بتاع iOS بيتحدث من الـ push بكود native من غير Flutter. اللي غلط بسيط إن الـ `Info.plist` معلن `fetch` من غير كود بيستخدمه.
 
 </Answer>
 </Question>

@@ -38,7 +38,7 @@ minutes: 30
 
 <Tasks>
 <Task id="cap-review-5">الـ domain مافيهوش import لـ Flutter ولا dio ولا drift ولا `DateTime.now()`. ([الطبقات التلاتة](/course/foundations/layers/))</Task>
-<Task id="cap-review-6">كل قاعدة صلاحية مكتوبة مرة واحدة، والشاشة والـ use case والـ outbox بيسألوا نفس الـ method. ([الـ Domain](/course/domain-errors/domain/))</Task>
+<Task id="cap-review-6">كل قاعدة صلاحية مكتوبة مرة واحدة، والشاشة والـ use case والـ `SyncService` بيسألوا نفس الـ method. ([الـ Domain](/course/domain-errors/domain/))</Task>
 <Task id="cap-review-7">الحدود (200 كتاب، 20 عضو) جاية من السيرفر مش `const` في الكود. ([الـ Domain](/course/domain-errors/domain/))</Task>
 <Task id="cap-review-8">مفيش use case pass-through من غير قرار مكتوب، ومفيش interface ليه implementation واحد من غير سبب. ([الأخطاء الشائعة](/course/quality/anti-patterns/))</Task>
 <Task id="cap-review-9">أسباب الرفض أنواع، والـ `switch` عليها exhaustive من غير `default`. ([الأخطاء: من try/catch لـ Result](/course/domain-errors/errors/))</Task>
@@ -48,7 +48,7 @@ minutes: 30
 
 <Tasks>
 <Task id="cap-review-10">مفيش `as Map` ولا `fromJson` برا `parseOrThrow`، والقيم الجديدة من السيرفر مابتوقّعش الـ app. ([من الـ Exception للـ Failure](/course/api-errors/failure-pipeline/))</Task>
-<Task id="cap-review-11">الكتابة في drift والعملية في الـ outbox في transaction واحدة، ومفيش طريق بيكتب في واحد من غير التاني. ([Offline-first](/course/offline/offline/))</Task>
+<Task id="cap-review-11">الكتابة في drift والعملية في الـ sync queue في transaction واحدة، ومفيش طريق بيكتب في واحد من غير التاني. ([Offline-first](/course/offline/offline/))</Task>
 <Task id="cap-review-12">كل عملية كتابة idempotent، والـ retry بعد رد ضايع مابيعملش نسختين. ([الـ Conflicts والـ idempotency](/course/offline/conflicts/))</Task>
 <Task id="cap-review-13">الـ 403 والـ 404 والـ 422 على عمليات الرفوف بيوصلوا لحالة نهائية ورسالة، مش retry للأبد. ([الـ Conflicts والـ idempotency](/course/offline/conflicts/))</Task>
 <Task id="cap-review-14">الـ migration متستة من النسخة اللي قبلها، والـ logout بيمسح الجداول الجديدة. ([التخزين المحلي](/course/data-network/local-storage/) و[الـ Session](/course/di-scale/session/))</Task>
@@ -61,7 +61,7 @@ minutes: 30
 <Task id="cap-review-16">مفيش Cubit ولا widget بيعرف إن فيه socket. الـ events بتكتب في drift بس. ([الـ WebSocket كـ RemoteDataSource](/course/realtime/websocket/))</Task>
 <Task id="cap-review-17">الـ event مابيكتبش فوق صف pending، والصدى بتاع تعديلك مابيتكتبش تاني، والترتيب العشوائي بيطلّع نفس الحالة. ([دمج الأحداث مع الـ cache](/course/realtime/merge-cache/))</Task>
 <Task id="cap-review-18">الضغطة على الإشعار بتفتح الرف من أي حالة للـ app، ومعدّية على الـ allowlist، ومابتفتحش رف اتشلت منه. ([الـ Push notifications](/course/realtime/push-notifications/))</Task>
-<Task id="cap-review-19">الإشعارات متجمّعة على السيرفر، ومفيش مستخدم بياخد 20 إشعار لرف واحد. ([Push ولا Pull](/course/realtime/push-vs-pull/))</Task>
+<Task id="cap-review-19">الإشعارات متجمّعة على السيرفر، ومفيش مستخدم بياخد 20 إشعار لرف واحد. ([الـ Push notifications](/course/realtime/push-notifications/))</Task>
 </Tasks>
 
 #### الـ presentation
@@ -93,7 +93,7 @@ minutes: 30
 #### التستات
 
 <Tasks>
-<Task id="cap-review-31">لو مسحت أي `if` في الـ domain أو الـ outbox، فيه تست هيقع. جرّب 5 منهم بإيدك. ([الاختبارات في فريق حقيقي](/course/testing/strategy/))</Task>
+<Task id="cap-review-31">لو مسحت أي `if` في الـ domain أو في الـ `SyncService`، فيه تست هيقع. جرّب 5 منهم بإيدك. ([الاختبارات في فريق حقيقي](/course/testing/strategy/))</Task>
 <Task id="cap-review-32">مفيش `Future.delayed` ولا `sleep` في أي تست، ومفيش تست بيعتمد على ترتيب التستات. ([تست الـ real-time والـ timers](/course/realtime/testing-realtime/))</Task>
 <Task id="cap-review-33">الـ fakes صادقة: نفس الـ contract test بيشتغل عليها وعلى الحقيقي. ([الـ Test Doubles](/course/testing/test-doubles/))</Task>
 <Task id="cap-review-34">الـ integration test عدّى 10 مرات ورا بعض في الـ CI من غير ولا فشل. ([Integration tests](/course/testing/integration/))</Task>
@@ -150,6 +150,15 @@ minutes: 30
 <Answer>
 
 لأن التقييم بالإحساس بيطلع دايمًا أعلى من الحقيقة: انت فاكر إنك عملت حاجة لأنك فكرت فيها. اللينك لملف أو تست أو PR بيفرق بين «كنت ناوي» و«اتعمل». ونفس الدليل ده هو اللي هتحكيه في interview لما حد يسألك «وريني».
+
+</Answer>
+</Question>
+
+<Question id="cap-review-q3">
+<Ask>لقيت في PR الرفوف إن الـ `ShelfCubit` بيعمل `getIt<ShelvesRepository>()` جوه الـ constructor. التعليق ده blocking ولا suggestion، وتكتبه إزاي؟</Ask>
+<Answer>
+
+blocking، لأن ليه سيناريو بيبوظ فعلًا مش ذوق: الـ `blocTest` مش هيعرف يدّي الـ Cubit `FakeShelvesRepository` غير لو سجّله في الـ get_it الحقيقي، وأي تست بينسى الـ `reset` بيسيب الـ fake بتاعه للتست اللي بعده، فتستات بتعدّي وتقع على حسب الترتيب. فالتعليق: «الـ `ShelfCubit` بيجيب الـ repository من get_it بنفسه، فالـ `blocTest` لازم يلمس الـ locator الحقيقي، ولو تست نسي الـ `reset` اللي بعده هيقرا fake غلط. خليه ياخد `ShelvesRepository` في الـ constructor، والـ route هي اللي تنادي `getIt`». ده نفس قاعدة [الـ Dependency Injection](/course/di-scale/di/): get_it في الـ composition root والـ routes بس.
 
 </Answer>
 </Question>

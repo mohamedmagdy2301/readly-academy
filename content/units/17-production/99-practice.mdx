@@ -1,6 +1,6 @@
 ---
 title: "التطبيق والمهام"
-description: "مهام الأسبوعين 26 و27 في Readly: لمسات الـ production، والأمان، والـ feature flags، والنقد."
+description: "مهام الأسابيع من 27 لـ 29 في Readly: لمسات الـ production، والأمان، والـ feature flags، والنقد."
 type: "practice"
 ---
 
@@ -19,7 +19,7 @@ type: "practice"
 <Task id="sec-storage-practice-2">اعمل قفل البصمة: `BiometricGate` في core و`LocalAuthBiometricGate` في data، و`AppLockStore` و`AppLockCubit` بمهلة دقيقتين، والـ redirect لـ `/unlock` جوه Authenticated بس، وزرار «ادخل بالباسورد بدل كده». اكتب blocTest بـ `FakeBiometricGate` لكل حالة (unlocked، cancelled، lockedOut، unavailable)، وضيف الغطا بتاع الـ app switcher (الكود في درس الأسرار والتخزين الحساس).</Task>
 <Task id="sec-storage-practice-3">كبّر `resetOnLogout` بالـ disk cache والـ `AppLockStore` والإشعارات والـ Sentry user، واكتب الـ integration test اللي بيدخل بـ A ويكتب ملاحظة ويفتح غلاف ويخرج ويدخل بـ B، ويتأكد إن مفيش أي أثر. وأي مكان تخزين جديد بعد كده يزوّد سطر في التست ده (الكود في درس الأسرار والتخزين الحساس).</Task>
 <Task id="sec-network-practice-1">اكتب threat model لـ Readly في صفحة واحدة في `docs/security.md`: المهاجمين، وبيدخلوا منين، واللي عندك، والناقص، وكل صف مربوط ببند من OWASP Mobile Top 10. واكتب ADR بقرار الـ pinning (تعمله ولا لأ وليه)، وراجعه على feature كبيرة واحدة على الأقل (الكود في درس الشبكة والـ threat model).</Task>
-<Task id="sec-network-practice-2">اعمل `pinnedHttpClient` بـ `SecurityContext(withTrustedRoots: false)` على الـ `api` Dio والـ `refreshDio` في staging، بـ CA احتياطية و`enforceUntil`. شغّل الـ app ورا mitmproxy واتأكد من الـ log بتاعه إن ولا طلب وصل، وإن Sentry وصله `Pinning rejected`. واكتب unit test بـ `Clock` إن الـ policy المنتهية بترجع `HttpClient()` عادي (الكود في درس الشبكة والـ threat model).</Task>
+<Task id="sec-network-practice-2">اعمل `pinnedHttpClient` بـ `SecurityContext(withTrustedRoots: false)` على الـ `api` Dio والـ Dio بتاع الـ `TokenRefresher` (`buildRefreshDio`) في staging، بـ CA احتياطية و`enforceUntil`. شغّل الـ app ورا mitmproxy واتأكد من الـ log بتاعه إن ولا طلب وصل، وإن Sentry وصله `Pinning rejected`. واكتب unit test بـ `Clock` إن الـ policy المنتهية بترجع `HttpClient()` عادي (الكود في درس الشبكة والـ threat model).</Task>
 <Task id="sec-network-practice-3">اعمل `_redactDeep` في الـ `LoggingInterceptor`، و`beforeBreadcrumb` و`beforeSend` في Sentry، وفعّل `avoid_print`. واكتب `no_secrets_in_logs_test` بـ `RecordingLogger` على login وتغيير باسورد بـ body متداخل، ويفشل لو أي سطر فيه الباسورد أو الإيميل أو `Bearer` (الكود في درس الشبكة والـ threat model).</Task>
 <Task id="flags-practice-1">اعمل `Flag` و`FeatureFlags` في الـ domain، و`RemoteConfigFeatureFlags` في الـ data (activate للقيم القديمة، وfetch في الخلفية، وrealtime للـ live flags بس)، و`FakeFeatureFlags` للتستات. وحط «هدف القراية السنوي» ورا `readingGoal` بالـ DI (`DisabledReadingGoals`) والـ router، من غير ما `MarkBookAsFinished` يتغير (الكود في درس الـ Feature Flags).</Task>
 <Task id="flags-practice-2">اعمل الـ kill switch بتاع التوصيات: `RecommendationsCubit` بيسمع على `watch` ومابيبعتش طلبات وهو مقفول، وblocTest بيقلب الـ flag والـ Cubit شغال. وجرّبه في staging: اقلب `recommendations_enabled` من الـ console والـ app مفتوح، واتأكد إن السكشن اختفى ومفيش طلبات في الـ logs (الكود في درس الـ Feature Flags).</Task>
@@ -28,7 +28,7 @@ type: "practice"
 
 <Diagram name="d-bec66608a2">
 
-نقطة بداية للـ decision guide بتاعك في الأسبوع 26. ضيف عليها معاييرك انت: الـ offline، وحجم التستات، وميزانية العميل.
+نقطة بداية للـ decision guide بتاعك في الأسبوع 27. ضيف عليها معاييرك انت: الـ offline، وحجم التستات، وميزانية العميل.
 
 </Diagram>
 

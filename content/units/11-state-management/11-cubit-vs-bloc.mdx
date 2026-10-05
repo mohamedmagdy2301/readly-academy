@@ -69,7 +69,7 @@ minutes: 35
 
 ### نفس الـ feature بالطريقتين: المكتبة
 
-شاشة المكتبة بتعمل حاجتين: بتسمع على الكتب من drift (offline-first زي الوحدة 4)، وفيها pull-to-refresh بيجيب من السيرفر ويكتب في drift، والـ stream بيعمل الباقي. الـ state هي `LibraryState` بتاعة درس الـ Cubit في الوحدة 5 بالظبط، بـ `isRefreshing` و`refreshFailure`، ومش هتتغير ولا حرف في الطريقتين.
+شاشة المكتبة بتعمل حاجتين: بتسمع على الكتب من drift (offline-first زي الوحدة 4)، وفيها pull-to-refresh بيجيب من السيرفر ويكتب في drift، والـ stream بيعمل الباقي. الـ state هي `LibraryState` بتاعة [درس الـ Cubit](/course/presentation/cubit/) في الوحدة 5 بالظبط، بـ `isRefreshing` و`refreshFailure`، ومش هتتغير ولا حرف في الطريقتين.
 
 <CodeBlock label="بالـ Cubit">
 
@@ -284,7 +284,7 @@ MultiBlocProvider(
 
 - <b>الـ observer واحد:</b> `onChange` و`onError` بيشتغلوا للاتنين، و`onEvent` و`onTransition` و`onDone` للـ Bloc بس. الـ log بيبقى فيه سطور Cubits (قبل وبعد) وسطور Bloc (بالسبب) مع بعض.
 - <b>التواصل بينهم نفس القواعد:</b> Cubit مايمسكش Bloc ولا العكس. الاتنين يسمعوا stream من نفس الـ repository، أو الـ UI تعمل الربط بـ `BlocListener`: لما `ViewModeCubit` يتغير، الـ listener يعمل `add` للـ `CatalogBloc` لو محتاج.
-- <b>الـ DI واحد:</b> الاتنين `@injectable` (factory) للشاشات، و`@lazySingleton` بس لما كود بره الشجرة محتاج نفس النسخة (زي الـ `AuthCubit`)، زي ما في درس «أنواع الـ Cubit (2)».
+- <b>الـ DI واحد:</b> الاتنين `registerFactory` للشاشات، و`registerLazySingleton` بس لما كود بره الشجرة محتاج نفس النسخة (زي الـ `AuthCubit`)، زي ما في [درس «أنواع الـ Cubit (2)»](/course/state-management/cubit-types-advanced/). (ولو بتولّد التسجيل بـ injectable، دول `@injectable` و`@lazySingleton`.)
 
 الـ Bloc مش «ترقية» للمشروع كله. هو أداة لـ feature معينة، جنب Cubits في باقي الـ app.
 

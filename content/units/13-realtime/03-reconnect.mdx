@@ -198,7 +198,15 @@ class TokenRefresher {
   }
 }
 
-// AuthInterceptor: _refreshOnce() becomes _refresher.refresh()
+// AuthInterceptor: _refreshOnce() becomes _refresher.refresh(),
+// so buildApiDio from the network lesson takes the refresher instead of building its own refreshDio:
+Dio buildRefreshDio(AppConfig config) => Dio(BaseOptions(baseUrl: config.baseUrl)); // no AuthInterceptor
+
+Dio buildApiDio(AppConfig config, TokenStore tokens, TokenRefresher refresher) {
+  final dio = Dio(BaseOptions(baseUrl: config.baseUrl /* , the same timeouts */));
+  dio.interceptors.addAll([AuthInterceptor(tokens, refresher, dio), RetryInterceptor(dio)]);
+  return dio;
+}
 ```
 
 </CodeBlock>
@@ -225,6 +233,10 @@ Future<void> _reauth() async {
 - <b>التلات نتايج هي نفس نتايج الـ interceptor:</b> token جديد يبقى نكمّل. null يبقى السيرفر رفض والـ tokens اتمسحت، والـ `onCleared` هيوصّل الـ AuthCubit لـ `Unauthenticated(sessionExpired: true)` زي [درس الـ Session](/course/di-scale/session/). وexception يبقى مفيش حكم، والـ refresh token لسه سليم.
 - <b>الـ `_authFailures`:</b> بيتصفّر لما الـ `hello` يوصل. لو refresh نجح والسيرفر قفل بـ 4401 تاني على طول، ده مش «token خلص». ده bug (ساعة سيرفر الـ auth مختلفة عن سيرفر الـ realtime مثلًا)، والـ loop هيضرب `/auth/refresh` كل ثانية. فبيقف ويتسجّل.
 - <b>مفيش backoff بعد refresh ناجح:</b> السبب كان معروف واتصلح، فمفيش داعي يستنى.
+
+الخمس حاجات اللي فاتوا بيشتغلوا مع بعض في نفس الـ `_onClosed`. في المعمل ده اختار الـ close code، وشغّل وطفّي الـ jitter والـ heartbeat والـ `onOnline`، وشوف الـ `RealtimeClient` بيعمل إيه ثانية بثانية.
+
+<Lab name="ws-reconnect" />
 
 ### 6. مين عايز اتصال؟
 
@@ -583,7 +595,8 @@ class MergedAppAlerts implements AppAlerts {
 
 // di/setup.dart
 getIt
-  ..registerLazySingleton<TokenRefresher>(() => TokenRefresher(getIt(), refreshDio))
+  ..registerLazySingleton<TokenRefresher>(() => TokenRefresher(getIt(), buildRefreshDio(getIt())))
+  ..registerLazySingleton<Dio>(() => buildApiDio(getIt(), getIt(), getIt()), instanceName: 'api') // + the refresher
   ..registerLazySingleton<RealtimeClient>(
     () => RealtimeClient(realtimeUri, getIt(), getIt(), getIt(), clock: getIt()),
     dispose: (c) => c.stop(),

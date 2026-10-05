@@ -123,7 +123,7 @@ ListTile(
   title: Text(l10n.continueReading),
   subtitle: Text(book.title),
   trailing: const Icon(Icons.chevron_right),        // "go to": flips by itself
-  onTap: () => context.push('/library/${book.id.value}'),
+  onTap: () => context.push('/library/books/${book.id.value}'),
 )
 ```
 
@@ -306,6 +306,10 @@ trailing: Icon(isArabic ? Icons.chevron_left : Icons.chevron_right),
 <b>الحل:</b> امسح الـ `if`. `Icons.chevron_right` لوحدها معناها «قدام» في الاتجاهين. والقاعدة: لو لقيت `isRtl ?` أو `isArabic ?` بيختار بين أيقونتين، غالبًا واحدة منهم بتتقلب لوحدها والكود بيقلبها تاني.
 
 والعكس كمان فخ: `Icons.keyboard_arrow_right` شكلها زي `chevron_right` بالظبط، بس <b>مابتتقلبش</b>. لو حد اختارها من الـ autocomplete، السهم هيشاور يمين في العربي. لو محتاج سهم اتجاه، استخدم `chevron_*` أو `arrow_*`، و`keyboard_arrow_*` بس للحاجات اللي اتجاهها physical فعلًا (زي أسهم الكيبورد).
+
+جرّب التلات مشاكل اللي فاتوا بإيدك: اكتب عنوان فيه `?` أو قوس جوه «خلّصت \{title\}» وشغّل الـ isolate، واكتب ملاحظة بالإنجليزي، وبعدين اقلب الـ app بين العربي والإنجليزي وشوف الـ padding والسهم بالـ physical والـ directional.
+
+<Lab name="bidi" />
 
 ### الحاجات اللي Flutter مابيقلبهاش
 

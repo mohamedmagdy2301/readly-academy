@@ -693,7 +693,7 @@ flutter drive --driver=test_driver/perf_driver.dart \
 - <b>اقرا الملخص:</b> الـ frame عنده حوالي 16ms على شاشة 60Hz. الـ `missed_frame_..._budget_count` هو عدد الفريمات اللي اتأخرت، يعني اللي المستخدم حس بيها تقطيع. والـ `catalog_scroll.timeline.json` الكامل بيتفتح في Perfetto أو `chrome://tracing` لو عايز تعرف أنهي frame بالظبط.
 - <b>على موبايل حقيقي:</b> الـ emulator بيستخدم GPU جهازك، فأرقامه مش أرقام موبايل المستخدم. وأرخص موبايل Android في الفريق أحسن مقياس.
 
-وفيه كمان `binding.watchPerformance(() async { ... }, reportKey: 'frames')` اللي بيسجّل ملخص الفريمات من غير الـ timeline كله، لو محتاج رقم بس.
+وفيه كمان `binding.watchPerformance(() async { ... }, reportKey: 'frames')` اللي بيسجّل ملخص الفريمات من غير الـ timeline كله، لو محتاج رقم بس. وإزاي تقرا الأرقام دي وتطلّع منها baseline تقارن بيه، في [درس القياس](/course/performance/measure/).
 
 ### الـ screenshots
 

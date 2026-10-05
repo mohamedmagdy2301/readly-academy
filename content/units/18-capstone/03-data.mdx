@@ -1,12 +1,12 @@
 ---
 title: "الـ Data: الـ remote والـ local والـ sync"
-description: "الـ backend بالـ endpoints والـ fan-out، والـ DTOs والـ mappers على الـ fixtures، وجداول drift والـ migration، والـ outbox اللي بقى لازم يعرف حاجة غير الكتب، والـ events اللي بتكتب في drift، والـ dead letter لما تتشال من رف وعندك تعديل لسه ماتبعتش."
+description: "الـ backend بالـ endpoints والـ fan-out، والـ DTOs والـ mappers على الـ fixtures، وجداول drift والـ migration، والـ sync queue اللي بقت لازم تعرف حاجة غير الكتب، والـ events اللي بتكتب في drift، والـ dead letter لما تتشال من رف وعندك تعديل لسه ماتبعتش."
 minutes: 30
 ---
 
-في المرحلة دي الـ contracts اللي كتبتها في الـ domain بتلاقي حد ينفّذها. وهنا أغلب المفاجآت: الـ outbox اللي عندك معمول للكتب بس، والـ event ممكن يوصل قبل رد الطلب اللي انت بعته، وعضو ممكن يتشال من الرف وفي إيده تعديل لسه في الطابور.
+في المرحلة دي الـ contracts اللي كتبتها في الـ domain بتلاقي حد ينفّذها. وهنا أغلب المفاجآت: الـ `SyncQueue` اللي عندك معمولة للكتب بس، والـ event ممكن يوصل قبل رد الطلب اللي انت بعته، وعضو ممكن يتشال من الرف وفي إيده تعديل لسه في الطابور.
 
-القاعدة اللي ماشية معاك من [وحدة Offline-first](/course/offline/offline/): <b>drift هو المصدر الوحيد للحقيقة.</b> الـ refresh بيكتب في drift، والـ event بيكتب في drift، والـ outbox بيقرا من drift. والشاشة بتسمع على drift بس، ومش هتعرف إن فيه socket.
+القاعدة اللي ماشية معاك من [وحدة Offline-first](/course/offline/offline/): <b>drift هو المصدر الوحيد للحقيقة.</b> الـ refresh بيكتب في drift، والـ event بيكتب في drift، والـ `SyncService` بيقرا من drift. والشاشة بتسمع على drift بس، ومش هتعرف إن فيه socket.
 
 ### المهمة 1: الـ backend
 
@@ -86,14 +86,14 @@ minutes: 30
 ### المهمة 4: الـ remote source والـ repository
 
 <Tasks>
-<Task id="cap-data-5">اعمل `ShelvesRemoteSource` على الـ Dio بتاع الـ backend (اللي عليه `AuthInterceptor`)، والـ mapping من `code` السيرفر للـ `ShelfDenial` في مكان واحد. واعمل الـ repository: القراية من drift، والـ `refresh` بيكتب في drift، والدعوات والانضمام أونلاين على طول، وبـ `NetworkFailure` واضحة لو مفيش نت، ومن غير ما يدخلوا الـ outbox.</Task>
+<Task id="cap-data-5">اعمل `ShelvesRemoteSource` على الـ Dio بتاع الـ backend (اللي عليه `AuthInterceptor`)، والـ mapping من `code` السيرفر للـ `ShelfDenial` في مكان واحد. واعمل الـ repository: القراية من drift، والـ `refresh` بيكتب في drift، والدعوات والانضمام أونلاين على طول، وبـ `NetworkFailure` واضحة لو مفيش نت، ومن غير ما يدخلوا الـ sync queue.</Task>
 <Task id="cap-data-6">اكتب contract test واحد لـ `ShelvesRepository` يشتغل على الـ fake وعلى الـ impl فوق `NativeDatabase.memory()` وremote fake، عشان الـ `FakeShelvesRepository` اللي الشاشات هتتست بيه يفضل صادق.</Task>
 </Tasks>
 
-### المهمة 5: الـ outbox
+### المهمة 5: الـ sync queue
 
 <Tasks>
-<Task id="cap-data-7">خلي الـ outbox يشيل عمليات الرفوف: إنشاء رف، وتغيير اسمه، ومسحه، وإضافة كتاب، وشيله. الكتابة في drift والعملية في الـ outbox في نفس الـ transaction، والـ entry بتظهر على طول وجنبها علامة إنها pending. والـ dead بيوقف عمليات نفس الرف بس، مش كل الطابور.</Task>
+<Task id="cap-data-7">خلي الـ `SyncQueue` تشيل عمليات الرفوف: إنشاء رف، وتغيير اسمه، ومسحه، وإضافة كتاب، وشيله. الكتابة في drift والعملية في الـ sync queue في نفس الـ transaction، والـ entry بتظهر على طول وجنبها علامة إنها pending. والـ dead بيوقف عمليات نفس الرف بس، مش كل الطابور.</Task>
 <Task id="cap-data-8">صنّف ردود السيرفر لعمليات الرفوف: 403 `not_a_member` و404 على الرف يمسحوا الرف من drift وعملياته، ويسيبوا رسالة للمستخدم فيها الكتب اللي ماتحفظتش. و422 `shelf_full` بيشيل الـ entry من drift وبيبقى dead برسالة. والـ 5xx والـ 429 backoff عادي. واكتب تست لكل سطر.</Task>
 </Tasks>
 
@@ -107,7 +107,7 @@ minutes: 30
 <details className="qa">
 <summary>تلميح 2: البدائل</summary>
 
-- <b>جدول outbox تاني للرفوف</b> بـ `SyncService` تاني: مفيش migration للجدول القديم، بس هيبقى فيه اتنين بيتنافسوا على الشبكة والـ backoff، وترتيب بينهم مش مضمون.
+- <b>جدول sync queue تاني للرفوف</b> بـ `SyncService` تاني: مفيش migration للجدول القديم، بس هيبقى فيه اتنين بيتنافسوا على الشبكة والـ backoff، وترتيب بينهم مش مضمون.
 - <b>تعمم الجدول</b>: `bookId` يبقى `entityKey` (`book:OL45W` أو `shelf:7f3a`)، و`payload` JSON للبيانات الزيادة، والـ `SyncKind` يكبر. migration للجدول، بس طابور واحد وقاعدة dead واحدة: «الـ dead بيوقف الـ entity بتاعته».
 - <b>handlers بالنوع</b>: الـ `SyncService` يبقى بيوزّع كل `kind` على handler (`LibrarySyncHandler` و`ShelfSyncHandler`)، فمش لازم يعرف الرفوف. ده الـ OCP اللي في [درس SOLID](/course/quality/solid-in-readly/).
 
@@ -145,7 +145,7 @@ minutes: 30
 <details className="qa">
 <summary>تلميح 3: تست الترتيب</summary>
 
-نفس فكرة تست الـ «50 ترتيب عشوائي ومعاهم events مكررة»: ليستة events لرف واحد، تخلطها بـ seed ثابت 50 مرة، وتتأكد إن الحالة النهائية في drift واحدة في كل مرة. ولو فيه ترتيب بيطلّع حالة مختلفة، القاعدة فيها ثغرة.
+نفس فكرة تست الـ «50 ترتيب عشوائي ومعاهم events مكررة» في [درس تست الـ real-time](/course/realtime/testing-realtime/): ليستة events لرف واحد، تخلطها بـ seed ثابت 50 مرة، وتتأكد إن الحالة النهائية في drift واحدة في كل مرة. ولو فيه ترتيب بيطلّع حالة مختلفة، القاعدة فيها ثغرة.
 
 </details>
 
@@ -155,7 +155,7 @@ minutes: 30
 <Ask>ضفت كتاب لرف وانت أوفلاين، وقبل ما النت يرجع صاحب الرف شالك. إيه اللي يحصل لما النت يرجع؟</Ask>
 <Answer>
 
-حاجتين ممكن يوصلوا الأول. لو الـ catch-up وصل الأول، فيه `shelf.removed` بـ `kicked`: الرف بيتمسح من drift ومعاه العملية المستنية، والرسالة بتتسجل بالكتب اللي ماتحفظتش. ولو الـ outbox بعت الأول، السيرفر بيرجّع 403 `not_a_member`، وده بيعمل نفس الحاجة بالظبط. في الحالتين الشاشة بتسمع على drift، فالرف بيختفي، والـ banner بيقول إن الكتاب ماتحفظش ومعاه «ضيفه لمكتبتك». ومفيش retry للأبد على 403.
+حاجتين ممكن يوصلوا الأول. لو الـ catch-up وصل الأول، فيه `shelf.removed` بـ `kicked`: الرف بيتمسح من drift ومعاه العملية المستنية، والرسالة بتتسجل بالكتب اللي ماتحفظتش. ولو الـ `SyncService` بعت العملية الأول، السيرفر بيرجّع 403 `not_a_member`، وده بيعمل نفس الحاجة بالظبط. في الحالتين الشاشة بتسمع على drift، فالرف بيختفي، والـ banner بيقول إن الكتاب ماتحفظش ومعاه «ضيفه لمكتبتك». ومفيش retry للأبد على 403.
 
 </Answer>
 </Question>
@@ -169,6 +169,15 @@ minutes: 30
 </Answer>
 </Question>
 
+<Question id="cap-data-q3">
+<Ask>ليه عمليات الرفوف بتدخل نفس جدول `SyncOps` بعد ما يتعمم، بدل جدول sync queue تاني للرفوف بـ `SyncService` تاني؟</Ask>
+<Answer>
+
+لأن طابورين معناهم اتنين بيبعتوا على نفس الشبكة، كل واحد بالـ backoff بتاعه، ومفيش ترتيب بينهم: لو المستخدم ضاف كتاب لمكتبته وبعدين للرف أوفلاين، مش مضمون أنهي هيوصل الأول. وكل trigger (رجوع النت، والـ resume، والـ workmanager) لازم يصحّي الاتنين، و«الباب الواحد للـ drain» من [درس Offline-first](/course/offline/offline/) يبقى بابين. الجدول الواحد بـ `entityKey` و`payload` تمنه migration واحدة، وبعدها قاعدة واحدة: «الـ dead بيوقف الـ entity بتاعته بس»، فرف فيه مشكلة مابيوقفش المكتبة. والـ handlers بالنوع بتخلي الـ `SyncService` مايعرفش الرفوف، فالـ feature الجاية بتزوّد handler من غير ما تلمسه.
+
+</Answer>
+</Question>
+
 </Quiz>
 
 ### اتأكد قبل ما تكمّل
@@ -176,7 +185,7 @@ minutes: 30
 - الـ DTOs بتستحمل أي قيمة جديدة من السيرفر، وعليها تستات fixtures وround-trip ([الـ Data](/course/data-network/data/) و[من الـ Exception للـ Failure](/course/api-errors/failure-pipeline/)).
 - الـ migration متستة من النسخة اللي قبلها ببيانات حقيقية ([التخزين المحلي](/course/data-network/local-storage/)).
 - الـ watch queries من غير N+1، وبتطلّع `null` لما الرف يختفي ([الـ Streams في Readly](/course/dart-async/watch/)).
-- الكتابة في drift والعملية في الـ outbox في transaction واحدة، والـ dead بيوقف الرف بتاعه بس ([الـ Conflicts والـ idempotency](/course/offline/conflicts/)).
+- الكتابة في drift والعملية في الـ sync queue في transaction واحدة، والـ dead بيوقف الرف بتاعه بس ([الـ Conflicts والـ idempotency](/course/offline/conflicts/)).
 - كل رد من السيرفر ليه سطر في التصنيف وتست ([رحلة request واحدة](/course/offline/request-journey/) و[خريطة أخطاء الـ API](/course/api-errors/error-map/)).
 - الـ events بتكتب في drift بقاعدة الكتابة الواحدة، والـ Cubit مش هيعرف إن فيه socket ([الـ WebSocket كـ RemoteDataSource](/course/realtime/websocket/) و[دمج الأحداث](/course/realtime/merge-cache/)).
 - الـ logout بيمسح الرفوف، والتست بيثبت ده ([الـ Session والتخزين الآمن](/course/di-scale/session/)).

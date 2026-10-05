@@ -171,4 +171,13 @@ setUp(() {
 </Answer>
 </Question>
 
+<Question id="escore-testing-3">
+<Ask>استلمت Escore والوقت يكفي لتست واحد بس الأسبوع ده. تكتبه لأنهي جزء، وليه مش أسهل حاجة تتكتبلها تست؟</Ask>
+<Answer>
+
+التست اللي بيعمل `initializeServiceLocator()` وبعدين resolve لكل نوع متسجّل. حوالي 20 سطر، وبيحمي أخطر حاجة في الجدول: لو الـ DI graph باظ الـ app مايفتحش خالص، ومحدش هيعرف غير من المستخدمين. أسهل تست (mapper أو Cubit صغير) بيرفع الـ coverage، بس مابيقللش الـ risk. الترتيب بيمشي بالأخطر والأرخص في الحماية: الـ DI، وبعده `AuthInterceptor`، وبعده CI يشغّلهم على كل PR.
+
+</Answer>
+</Question>
+
 </Quiz>

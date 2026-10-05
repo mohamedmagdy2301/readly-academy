@@ -14,7 +14,7 @@ minutes: 35
 
 </Analogy>
 
-الـ <b>WebSocket</b> هو اللاسلكي: قناة مفتوحة، والرسايل عليها بكود متفق عليه (JSON بـ `type`). الموظف اللي بيترجم هو الـ <b>RemoteDataSource</b>: بيحوّل الرسايل الخام لـ models. والدفتر هو drift، والمدير هو الـ `LibraryCubit` اللي بيقرا من `watchLibrary()` زي ما كان بيعمل من أول الكورس. الـ WebSocket طريق جديد بيكتب في الدفتر، مش طريق جديد للشاشة.
+الـ <b>WebSocket</b> هو اللاسلكي: قناة مفتوحة، والرسايل عليها بكود متفق عليه (JSON بـ `type`). الموظف اللي بيترجم هو الـ <b>remote source</b> (`LibraryRealtimeSource`، أخو الـ `LibraryRemoteSource`): بيحوّل الرسايل الخام لـ models. والدفتر هو drift، والمدير هو الـ `LibraryCubit` اللي بيقرا من `watchLibrary()` زي ما كان بيعمل من أول الكورس. الـ WebSocket طريق جديد بيكتب في الدفتر، مش طريق جديد للشاشة.
 
 </Level>
 
@@ -127,7 +127,7 @@ dependencies:
 | الـ class | المكان | شغلته |
 | --- | --- | --- |
 | `RealtimeClient` | `core/realtime/` | بيملك الاتصال: يفتحه، ويقفله، ويوزّع الرسايل كـ JSON |
-| `LibraryRealtimeSource` | `features/library/data/` | الـ RemoteDataSource: بياخد رسايل `book.*` ويحوّلها لـ `LibraryEventDto` |
+| `LibraryRealtimeSource` | `features/library/data/` | الـ remote source بتاع الـ socket: بياخد رسايل `book.*` ويحوّلها لـ `LibraryEventDto` |
 | `LiveSyncService` | `features/library/data/` | بيسمع على الـ data source ويكتب في drift |
 | `LibraryCubit` | زي ما هو | مايعرفش حاجة |
 
@@ -467,7 +467,7 @@ Readly موبايل بس، فالـ header. ولو جه Readly web في يوم،
 
 <Note kind="interview" title="سؤال interview">
 
-«إزاي تدخّل WebSocket في Clean Architecture؟» الـ WebSocket مصدر بيانات، فمكانه الـ data layer. client واحد في core بيملك الاتصال (بيفتحه بعد الـ auth ويقفله في الـ logout والخلفية) وبيوزّع الرسايل. والـ RemoteDataSource بتاع كل feature بيختار الأنواع بتاعته ويحوّلها لـ DTOs بنفس الـ mapper بتاع الـ REST، ويتجاهل اللي مايعرفهوش. وservice في الـ data layer بيكتب الـ events في الـ local DB، والشاشة بتقرا من الـ DB زي ما هي. كده مفيش Cubit بيعرف إن في socket، والـ offline والشاشات المقفولة شغالين ببلاش، والتست بيستخدم fake data source. والعقد مكتوب في AsyncAPI جنب الـ OpenAPI.
+«إزاي تدخّل WebSocket في Clean Architecture؟» الـ WebSocket مصدر بيانات، فمكانه الـ data layer. client واحد في core بيملك الاتصال (بيفتحه بعد الـ auth ويقفله في الـ logout والخلفية) وبيوزّع الرسايل. والـ remote source بتاع كل feature بيختار الأنواع بتاعته ويحوّلها لـ DTOs بنفس الـ mapper بتاع الـ REST، ويتجاهل اللي مايعرفهوش. وservice في الـ data layer بيكتب الـ events في الـ local DB، والشاشة بتقرا من الـ DB زي ما هي. كده مفيش Cubit بيعرف إن في socket، والـ offline والشاشات المقفولة شغالين ببلاش، والتست بيستخدم fake data source. والعقد مكتوب في AsyncAPI جنب الـ OpenAPI.
 
 </Note>
 

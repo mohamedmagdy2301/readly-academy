@@ -24,7 +24,7 @@ minutes: 45
 | الاتنين مع بعض | | `BlocConsumer` |
 | الوصول من غير ما تسمع | أنادي method | `context.read` |
 
-في درس «أول Cubit سطر بسطر» استخدمنا `BlocProvider` و`BlocBuilder` و`context.read` من غير ما ندخل جواهم. الدرس ده بيفتحهم كلهم، وبيوصّلهم بـ go_router زي ما Readly مبنية في درس go_router في الوحدة 5.
+في درس «أول Cubit سطر بسطر» استخدمنا `BlocProvider` و`BlocBuilder` و`context.read` من غير ما ندخل جواهم. الدرس ده بيفتحهم كلهم، وبيوصّلهم بـ go_router زي ما Readly مبنية في [درس go_router في الوحدة 5](/course/presentation/router/).
 
 </Level>
 
@@ -95,7 +95,7 @@ MultiBlocProvider(
 
 ### RepositoryProvider
 
-نفس الفكرة لأي object مش Cubit: repository، أو client، أو service. Readly مابتستخدموش لأن get_it بيعمل الشغل ده (درس الـ DI في الوحدة 6)، بس هتلاقيه في مشاريع كتير مابتستخدمش get_it، وفي أمثلة الـ bloc الرسمية:
+نفس الفكرة لأي object مش Cubit: repository، أو client، أو service. Readly مابتستخدموش لأن get_it بيعمل الشغل ده ([درس الـ DI في الوحدة 6](/course/di-scale/di/))، بس هتلاقيه في مشاريع كتير مابتستخدمش get_it، وفي أمثلة الـ bloc الرسمية:
 
 <CodeBlock label="من غير get_it">
 
@@ -141,7 +141,7 @@ BlocBuilder<LibraryCubit, LibraryState>(
 </CodeBlock>
 
 - <b>بيدوّر على الـ Cubit لوحده:</b> بـ `context.read<LibraryCubit>()` وقت ما بيتبني. ولو باعتله `bloc:` بإيدك، بيستخدمه ومابيدوّرش.
-- <b>الـ builder بيتنادى مع كل state جديدة</b> (لو الـ `buildWhen` قال أيوه)، و<b>كمان</b> مع أي rebuild للأب. يعني الـ builder لازم يبقى pure: يرسم وبس، من غير navigation ولا snackbar (درس Cubit في الوحدة 5).
+- <b>الـ builder بيتنادى مع كل state جديدة</b> (لو الـ `buildWhen` قال أيوه)، و<b>كمان</b> مع أي rebuild للأب. يعني الـ builder لازم يبقى pure: يرسم وبس، من غير navigation ولا snackbar ([درس Cubit في الوحدة 5](/course/presentation/cubit/)).
 - <b>الـ `buildWhen` مابيتناداش على أول build:</b> أول مرة بيرسم الـ state الحالية على طول.
 
 ### BlocSelector
@@ -196,7 +196,7 @@ MultiBlocListener(
 
 </CodeBlock>
 
-الـ `failureId` ده من درس «الأخطاء في الشاشة» في الوحدة 9: رقم بيزيد مع كل فشل، عشان فشلين ورا بعض بنفس النوع يطلّعوا رسالتين.
+الـ `failureId` ده من [درس «الأخطاء في الشاشة» في الوحدة 9](/course/api-errors/errors-ui/): رقم بيزيد مع كل فشل، عشان فشلين ورا بعض بنفس النوع يطلّعوا رسالتين.
 
 ### BlocConsumer
 
@@ -301,7 +301,7 @@ class LibraryView extends StatelessWidget {
 
 </CodeBlock>
 
-الـ Page والـ View ليهم فايدة تانية أكبر من الـ bug ده: الـ View مابتعرفش الـ Cubit جه منين، فالـ widget test بيحط فوقها mock بـ `BlocProvider.value` من غير get_it خالص (درس «Widget tests» في الوحدة 8، ودرس «الـ State management في مشروع حقيقي»).
+الـ Page والـ View ليهم فايدة تانية أكبر من الـ bug ده: الـ View مابتعرفش الـ Cubit جه منين، فالـ widget test بيحط فوقها mock بـ `BlocProvider.value` من غير get_it خالص ([درس «Widget tests» في الوحدة 8](/course/testing/widget-tests/)، و[درس «الـ State management في مشروع حقيقي»](/course/state-management/architecture/)).
 
 وفيه نسختين تانيين من نفس الـ exception لازم تعرفهم:
 

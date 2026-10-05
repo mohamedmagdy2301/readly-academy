@@ -159,7 +159,7 @@ raster: avg 4.9ms    worst 9ms
 
 ### القياس بالإيد مابيتكررش
 
-كل مرة بتعمل الـ fling بإيدك بسرعة مختلفة، فالرقم بيتغير 3% من غير ما الكود يتغير. عشان تقارن قبل وبعد بجد، خلي الـ scroll يتعمل بكود. الـ `integration_test` فيه `traceAction` بيسجّل الـ timeline للحركة دي:
+كل مرة بتعمل الـ fling بإيدك بسرعة مختلفة، فالرقم بيتغير 3% من غير ما الكود يتغير. عشان تقارن قبل وبعد بجد، خلي الـ scroll يتعمل بكود. الـ `traceAction` والـ `perf_driver.dart` والـ `flutter drive --profile` اتشرحوا في [درس الـ integration tests](/course/testing/integration/) على الكتالوج، ومش هنعيدهم. هنا نفس الـ harness (`TestApp`) على سيناريو الـ baseline بتاع المكتبة:
 
 <CodeBlock label="integration_test/library_scroll_perf_test.dart">
 
@@ -168,8 +168,11 @@ void main() {
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('library scroll', (tester) async {
-    await tester.pumpWidget(ReadlyTestApp(books: fakeBooks(4000))); // fakes from the integration lesson
-    await tester.pumpAndSettle();
+    final app = await TestApp.start();
+    addTearDown(app.dispose);
+    app.backend.library.addAll(fakeLibraryJson(4000)); // the fake API from the integration lesson
+    await app.pump(tester);
+    await LoginRobot(tester).logIn();
     final list = find.byType(Scrollable).first;
 
     await binding.traceAction(() async {
@@ -184,36 +187,11 @@ void main() {
 
 </CodeBlock>
 
-<CodeBlock label="test_driver/perf_driver.dart">
-
-```dart
-import 'package:flutter_driver/flutter_driver.dart' as driver;
-import 'package:integration_test/integration_test_driver.dart';
-
-Future<void> main() => integrationDriver(
-      responseDataCallback: (data) async {
-        if (data == null) return;
-        final timeline = driver.Timeline.fromJson(
-          data['library_scroll'] as Map<String, dynamic>,
-        );
-        final summary = driver.TimelineSummary.summarize(timeline);
-        await summary.writeTimelineToFile('library_scroll', pretty: true, includeSummary: true);
-      },
-    );
-```
-
-</CodeBlock>
-
-```bash
-flutter drive --driver=test_driver/perf_driver.dart \
-  --target=integration_test/library_scroll_perf_test.dart --profile
-```
-
-الـ summary بيطلع في `build/library_scroll.timeline_summary.json` بأرقام زي `average_frame_build_time_millis` و`worst_frame_build_time_millis` و`missed_frame_build_budget_count`، ونفسهم للـ rasterizer. الـ `missed_frame_build_budget_count` هو عدد الـ frames اللي الـ UI فيها عدّى الميزانية، وده الرقم اللي تحطه في الـ PR. والـ fakes هي نفسها بتاعة [درس الـ integration tests](/course/testing/integration/)، فالرقم مش معتمد على النت.
+الـ driver هو نفسه بتاع الكتالوج بس بالـ key `library_scroll`، والـ summary بيطلع في `build/library_scroll.timeline_summary.json`. الرقم اللي تحطه في الـ PR هو `missed_frame_build_budget_count`: عدد الـ frames اللي الـ UI فيها عدّى الميزانية. ولأن الشبكة fake، الرقم مش معتمد على النت.
 
 ### المستخدم مش في DevTools
 
-الـ DevTools بيقيس الموبايل اللي في إيدك. بس الـ jank اللي في التقييمات بيحصل على أجهزة انت عمرك ما هتشوفها. هنا الـ monitoring اللي في [درس الـ Observability](/course/production/observability/): Sentry بيسجّل الـ slow frames (أكتر من الميزانية) والـ frozen frames (أكتر من 700ms) لكل شاشة، فتعرف أنهي شاشة بتقطّع عند المستخدمين فعلًا، مش بس عندك.
+الـ DevTools بيقيس الموبايل اللي في إيدك. بس الـ jank اللي في التقييمات بيحصل على أجهزة انت عمرك ما هتشوفها. هنا ييجي دور Sentry اللي اتركّب في [درس الـ Observability](/course/production/observability/): هناك استخدمناه للـ crashes والـ errors، بس فيه كمان performance monitoring بيسجّل الـ slow frames (أكتر من الميزانية) والـ frozen frames (أكتر من 700ms) لكل شاشة، فتعرف أنهي شاشة بتقطّع عند المستخدمين فعلًا، مش بس عندك.
 
 </Level>
 

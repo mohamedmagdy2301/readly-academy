@@ -65,11 +65,11 @@ import 'package:feature_library/src/data/library_repository_impl.dart';
 
 | العلامة | ليه بتفرق |
 | --- | --- |
-| فيه app تاني محتاج نفس الكود | admin، أو app لعميل تاني، أو widget للـ home screen. ده الدافع الأقوى، ودرس «domain واحد لأكتر من app» بيفصّله |
+| فيه app تاني محتاج نفس الكود | admin، أو app لعميل تاني، أو widget للـ home screen. ده الدافع الأقوى، ودرس [«domain واحد لأكتر من app»](/course/modularization/shared-domain/) بيفصّله |
 | الفريق كبر وكل جزء ليه ناس | 3 فرق شغالين في نفس الـ `lib/` بيدوسوا على بعض. الـ package بتدّي كل فريق حدود وAPI يتفقوا عليه |
 | الحدود بتتكسر وانت حاطط guards | الـ architecture test بيوقف 3 PRs في الأسبوع على نفس الحد، والـ allowlist بتكبر مش بتصغر |
 | الـ codegen والتستات بطيئين | `build_runner` بياخد 4 دقايق على كل تغيير في DTO، والـ CI بيشغّل 2000 تست على تغيير في feature واحدة |
-| عايز الـ domain صافي بالـ compiler | مش بتست بيدوّر في النص، لكن بـ package مافيهاش Flutter أصلًا |
+| عايز الـ domain صافي بالـ compiler | بـ package مافيهاش Flutter أصلًا، مش بتست بيدوّر في النص |
 
 ### العلامات اللي بتقول «استنى»
 
@@ -80,7 +80,7 @@ import 'package:feature_library/src/data/library_repository_impl.dart';
 
 <Note kind="info" title="فيه مرحلة في النص">
 
-بين «فولدرات وخلاص» و«packages» فيه مرحلة اسمها <b>modular monolith</b>: app واحد، بس الفولدرات متقسمة كأنها packages: كل feature فيها ملف واحد هو الـ public API، والباقي تحت `src/`، والـ architecture test بيمنع أي حد يعدّي من غير الملف ده. وده بالظبط اللي Readly كان عليه في الوحدة 7. ميزته إن التقسيم بعد كده بيبقى نقل فولدرات، مش إعادة تفكير.
+بين «فولدرات وخلاص» و«packages» فيه مرحلة اسمها <b>modular monolith</b>: app واحد، بس الفولدرات متقسمة كأنها packages: كل feature فيها ملف واحد هو الـ public API، والباقي تحت `src/`، والـ architecture test بيمنع أي حد يعدّي من غير الملف ده. ده نفس الـ barrel والـ `src/` والـ architecture test اللي في [درس حراسة المعمارية](/course/quality/architecture-guards/)، بس من غير pubspec لكل feature. ميزته إن التقسيم بعد كده بيبقى نقل فولدرات، مش إعادة تفكير.
 
 </Note>
 

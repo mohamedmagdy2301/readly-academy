@@ -135,7 +135,7 @@ WebSocketChannel fakeConnect(Uri uri, Map<String, String> headers) {
 
 ### 2. ساعة واحدة للـ Timers والـ Clock
 
-الـ `RealtimeClient` بيستخدم حاجتين للوقت: `Timer` للـ backoff، و`Clock` عشان يعرف الاتصال عاش قد إيه (الـ reset بعد 30 ثانية). الـ `fakeAsync` بيتحكم في الـ Timers، بس مايعرفش حاجة عن الـ `Clock` بتاعنا. والـ `FixedClock` بتاع [درس الـ test doubles](/course/testing/test-doubles/) بيتحرك بـ `advance`، بس الـ Timers مابتعرفش عنه حاجة. لو استخدمت الاتنين، هتقدّم واحد وتنسى التاني، والتست هيقول حاجة مش حقيقية.
+الـ `RealtimeClient` بيستخدم حاجتين للوقت: `Timer` للـ backoff، و`Clock` عشان يعرف الاتصال عاش قد إيه (الـ reset بعد 30 ثانية). الـ `fakeAsync` (اللي اتشرح من الصفر مع الـ debounce في [درس تست الـ Cubit](/course/testing/cubit-tests/)) بيتحكم في الـ Timers، بس مايعرفش حاجة عن الـ `Clock` بتاعنا. والـ `FixedClock` بتاع [درس الـ test doubles](/course/testing/test-doubles/) بيتحرك بـ `advance`، بس الـ Timers مابتعرفش عنه حاجة. لو استخدمت الاتنين، هتقدّم واحد وتنسى التاني، والتست هيقول حاجة مش حقيقية.
 
 الحل adapter صغير: ساعة بتقرا الوقت من الـ `fakeAsync` نفسه.
 

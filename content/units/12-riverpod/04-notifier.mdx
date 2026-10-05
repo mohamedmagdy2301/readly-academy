@@ -219,7 +219,7 @@ class _AddToLibraryButton extends ConsumerWidget {
 
 </CodeBlock>
 
-- <b>الـ `ref.watch` والـ `ref.listen` هما اللي ماسكين الـ Notifier عايش:</b> من غيرهم، `ref.read(...notifier).save(book)` بيعمل الـ provider ومحدش بيسمع، فممكن يتمسح في نص الـ await، والـ `ref.mounted` يقول false، والنتيجة تروح. ده فخ الـ autoDispose من درس «Riverpod من الصفر». في الـ Cubit مش موجود لأن الـ `BlocProvider` ماسكه لحد ما الصفحة تتقفل.
+- <b>الـ `ref.watch` والـ `ref.listen` هما اللي ماسكين الـ Notifier عايش:</b> من غيرهم، `ref.read(...notifier).save(book)` بيعمل الـ provider ومحدش بيسمع، فممكن يتمسح في نص الـ await، والـ `ref.mounted` يقول false، والنتيجة تروح. ده فخ الـ autoDispose من [درس «Riverpod من الصفر»](/course/state-management/riverpod/). في الـ Cubit مش موجود لأن الـ `BlocProvider` ماسكه لحد ما الصفحة تتقفل.
 - <b>الـ `when previous is AddBookSaving`:</b> الـ `listenWhen` بتاع الـ `BlocListener`. الـ SnackBar بيظهر على الانتقال، مش على الحالة.
 - <b>الـ effect بالكتاب:</b> الـ `AddBookCubit` كان بيطلّع `BookAdded(book)` على stream منفصل لأن الـ SnackBar محتاج اسم الكتاب. هنا الـ widget نفسه عارف الـ `book`، فالـ listener بياخده من الـ closure. الـ mixin بتاع الـ effects مش محتاجينه.
 - <b>`context.showFailure` و`context.showBookAdded`:</b> `showFailure` هو الـ extension بتاع [درس الأخطاء في الشاشة](/course/api-errors/errors-ui/)، اللي بيستبدل الـ SnackBar بدل ما يحطه في طابور، و`showBookAdded` هو اللي كان الـ `EffectListener` بيناديه.

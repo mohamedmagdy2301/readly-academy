@@ -19,7 +19,7 @@ minutes: 40
 - <b>الـ HydratedCubit هو الـ bookmark:</b> المستخدم رتّب الكتالوج «الأحدث» واختار «كتب بالعربي بس». قفل الـ app وفتحه بكرة: لازم يلاقي نفس الاختيارات. والمسودة اللي كان بيكتبها وجاله تليفون والنظام قفل الـ app، لازم يلاقيها. بس الـ loading والـ errors والـ tokens مالهمش مكان في الـ bookmark.
 - <b>الـ ReplayCubit هو الأستيكة:</b> في محرر الملاحظات، undo وredo للنص ولـ «ده اقتباس» ولرقم الصفحة. بس الـ undo بيرجّع الـ state، مش اللي اتبعت للسيرفر أو اتكتب في drift.
 
-في درس «Settings: feature من غير domain» في الوحدة 6 اخترنا `SettingsStore` فوق shared_preferences، وقلنا إن `hydrated_bloc` بديل. الدرس ده هيوريك البديل ده بالكامل، وفي الآخر هتعرف تختار بينهم.
+في درس [«Settings: feature من غير domain»](/course/di-scale/settings/) في الوحدة 6 اخترنا `SettingsStore` فوق shared_preferences، وقلنا إن `hydrated_bloc` بديل. الدرس ده هيوريك البديل ده بالكامل، وفي الآخر هتعرف تختار بينهم.
 
 </Level>
 
@@ -55,7 +55,7 @@ Future<void> main() async {
         ? HydratedStorageDirectory.web
         : HydratedStorageDirectory((await getApplicationSupportDirectory()).path),
   );
-  configureDependencies();
+  await setupDependencies();
   runApp(const ReadlyApp());
 }
 ```
@@ -66,7 +66,7 @@ Future<void> main() async {
 - <b>الـ `HydratedStorage.build`:</b> بيفتح الـ box مرة واحدة ويحمّله. بعدها <b>القراية sync</b>، وده اللي بيخلّي الـ Cubit يبدأ بالـ state المحفوظة من أول frame، من غير ما الشاشة ترمش.
 - <b>الـ `getApplicationSupportDirectory` مش `getTemporaryDirectory`:</b> مثال الـ README بتاع الـ package بيستخدم الـ temporary، بس ده فولدر cache: Android وiOS مسموح لهم يمسحوه لما المساحة تقل. يعني المستخدم ممكن يفتح الـ app يلاقي الفلاتر والمسودة راحوا من غير سبب. الـ support directory مكانه الطبيعي بيانات الـ app اللي مش ملفات للمستخدم.
 - <b>الـ `HydratedStorageDirectory.web`:</b> على الويب مفيش فولدرات، والـ box بيتحفظ في IndexedDB.
-- <b>قبل أي HydratedCubit:</b> الـ Cubit بيقرا `HydratedBloc.storage` في الـ constructor. لو لسه null، بيرمي `StorageNotFound` على طول. فالسطر ده قبل `configureDependencies()` وقبل `runApp`.
+- <b>قبل أي HydratedCubit:</b> الـ Cubit بيقرا `HydratedBloc.storage` في الـ constructor. لو لسه null، بيرمي `StorageNotFound` على طول. فالسطر ده قبل `setupDependencies()` وقبل `runApp`.
 
 ### أول HydratedCubit: فلاتر الكتالوج
 
@@ -377,9 +377,8 @@ hydrate(onError: (error, stackTrace) => HydrationErrorBehavior.retain);
 <CodeBlock label="NoteDraftCubit: مسودة لكل كتاب">
 
 ```dart
-@injectable
 class NoteDraftCubit extends HydratedCubit<NoteDraft> {
-  NoteDraftCubit(@factoryParam this._bookId) : super(const NoteDraft());
+  NoteDraftCubit(this._bookId) : super(const NoteDraft());
 
   final BookId _bookId;
 
@@ -410,6 +409,11 @@ class NoteDraftCubit extends HydratedCubit<NoteDraft> {
       {'text': state.text, 'isQuote': state.isQuote, 'page': state.page};
 }
 
+// registerNotes(getIt) in notes_di.dart (with injectable: @factoryParam on the parameter)
+getIt.registerFactoryParam<NoteDraftCubit, BookId, void>(
+  (bookId, _) => NoteDraftCubit(bookId),
+);
+
 // on the add-note screen
 BlocProvider(create: (_) => getIt<NoteDraftCubit>(param1: bookId))
 ```
@@ -422,7 +426,7 @@ BlocProvider(create: (_) => getIt<NoteDraftCubit>(param1: bookId))
 
 ### الـ logout: مسح كل حاجة
 
-في درس الـ Session في الوحدة 6، الـ logout بيمسح الـ tokens وdrift والـ caches والـ singletons. الـ hydrated storage مكان خامس: مسودات المستخدم القديم وفلاتره لسه في الـ box.
+في [درس الـ Session](/course/di-scale/session/) في الوحدة 6، الـ logout بيمسح الـ tokens وdrift والـ caches والـ singletons. الـ hydrated storage مكان خامس: مسودات المستخدم القديم وفلاتره لسه في الـ box.
 
 <CodeBlock label="di/setup.dart: سطر زيادة في resetOnLogout">
 
@@ -469,20 +473,26 @@ getIt.registerSingleton<Storage>(secureHydrated, instanceName: 'secureHydrated')
 <CodeBlock label="NoteDraftCubit بياخده">
 
 ```dart
-NoteDraftCubit(
-  @factoryParam this._bookId,
-  @Named('secureHydrated') Storage storage,
-) : super(
+NoteDraftCubit(this._bookId, Storage storage)
+    : super(
         const NoteDraft(),
         storage: storage,
         onHydrationError: (_, __) => HydrationErrorBehavior.retain,
       );
+
+// notes_di.dart (with injectable: @Named('secureHydrated') on the parameter)
+getIt.registerFactoryParam<NoteDraftCubit, BookId, void>(
+  (bookId, _) => NoteDraftCubit(
+    bookId,
+    getIt<Storage>(instanceName: 'secureHydrated'),
+  ),
+);
 ```
 
 </CodeBlock>
 
 - <b>المفتاح في الـ secure storage:</b> 32 byte عشوائي، بيتعمل أول مرة ويتحفظ. والـ box نفسه في فولدر لوحده، عشان مايتلخبطش مع الـ box العادي.
-- <b>المفتاح ممكن يضيع:</b> زي ما شفنا في درس التخزين المحلي في الوحدة 3، الـ backup على Android بيرجّع ملفات الـ app من غير مفتاح الـ Keystore. اعتبر المسودات المتشفرة حاجة ممكن تضيع: لف الـ build في `try`، ولو فشل، امسح الفولدر ده وابني من جديد. مسودة ضاعت أهون من app مابيفتحش.
+- <b>المفتاح ممكن يضيع:</b> زي ما شفنا في [درس التخزين المحلي](/course/data-network/local-storage/) في الوحدة 3، الـ backup على Android بيرجّع ملفات الـ app من غير مفتاح الـ Keystore. اعتبر المسودات المتشفرة حاجة ممكن تضيع: لف الـ build في `try`، ولو فشل، امسح الفولدر ده وابني من جديد. مسودة ضاعت أهون من app مابيفتحش.
 - <b>الـ logout:</b> `clear()` على الاتنين: سطر زيادة في `resetOnLogout` اللي فوق، `await getIt<Storage>(instanceName: 'secureHydrated').clear();`.
 
 ### الـ HydratedMixin: لما مش عايز تغيّر الـ extends
@@ -624,7 +634,7 @@ class _NoteTextFieldState extends State<NoteTextField> {
 
 </CodeBlock>
 
-- <b>الـ TextField بيمسك النص وهو بيتكتب، والـ Cubit بيمسك الـ checkpoints:</b> نفس فكرة درس الـ Forms في الوحدة 5: الـ controller بيمشي ورا الـ Cubit بـ BlocListener لما الـ Cubit هو اللي يغيّر النص (هنا: undo وredo).
+- <b>الـ TextField بيمسك النص وهو بيتكتب، والـ Cubit بيمسك الـ checkpoints:</b> نفس فكرة [درس الـ Forms](/course/presentation/forms/) في الوحدة 5: الـ controller بيمشي ورا الـ Cubit بـ BlocListener لما الـ Cubit هو اللي يغيّر النص (هنا: undo وredo).
 - <b>الـ `listenWhen`:</b> وهو بيكتب، الـ checkpoint بيوصل بنفس النص اللي في الـ controller، فالـ listener مابيشتغلش ومابيحركش الـ cursor.
 - <b>زرار undo قبل الـ checkpoint:</b> المستخدم كتب وداس undo على طول قبل الـ 700ms. الـ `onTapOutside` بيشتغل مع لمسة الصباع (pointer down)، والـ `onPressed` بتاع الزرار بيشتغل لما الصباع يترفع. فالـ `_commitNow` بيعمل checkpoint للي اتكتب الأول، وبعدين الـ undo يرجع منه.
 

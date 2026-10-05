@@ -198,7 +198,7 @@ _prefetchCover(book.id).ignore();
 ```dart
 final result = await _repository.refresh().timeout(
   const Duration(seconds: 10),
-  onTimeout: () => const Err(NetworkFailure('timeout')), // instead of throwing TimeoutException
+  onTimeout: () => const Err(NetworkFailure()), // instead of throwing TimeoutException
 );
 ```
 
