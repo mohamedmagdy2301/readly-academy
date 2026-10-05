@@ -1,0 +1,55 @@
+<svg viewBox="0 0 760 360" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="الـ provider graph بتاع المكتبة والكتالوج في Readly: فوق الـ dependencies اللي بتعيش طول الـ app، وفي النص providers بتحوّل الـ contracts لبيانات شاشة، وتحت الشاشات. السهم بيروح من الـ provider للي بيعمله watch">
+<text x="16" y="26" font-size="10.5" fill="var(--accent)" font-weight="600">keepAlive</text>
+<text x="16" y="118" font-size="10.5" fill="var(--muted)" font-weight="600">autoDispose</text>
+<text x="16" y="270" font-size="10.5" fill="var(--muted)" font-weight="600">screens</text>
+<line x1="380" y1="34" x2="380" y2="320" stroke="var(--line)" stroke-width="1" stroke-dasharray="2 4"/>
+<rect x="16" y="36" width="160" height="28" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.4"/>
+<text x="96" y="54" text-anchor="middle" font-size="10.5" fill="var(--ink)">appDatabase</text>
+<rect x="200" y="36" width="160" height="28" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.4"/>
+<text x="280" y="54" text-anchor="middle" font-size="10.5" fill="var(--ink)">libraryRepository</text>
+<line x1="176" y1="50" x2="196" y2="50" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#mk-acc)"/>
+<rect x="16" y="126" width="160" height="28" rx="6" fill="var(--surface)" stroke="var(--line)" stroke-width="1.4"/>
+<text x="96" y="144" text-anchor="middle" font-size="10.5" fill="var(--ink)">libraryFilters</text>
+<rect x="200" y="126" width="160" height="28" rx="6" fill="var(--surface)" stroke="var(--line)" stroke-width="1.4"/>
+<text x="280" y="144" text-anchor="middle" font-size="10.5" fill="var(--ink)">libraryBooks (Stream)</text>
+<line x1="280" y1="64" x2="280" y2="122" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#mk-acc)"/>
+<line x1="176" y1="140" x2="196" y2="140" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#mk-acc)"/>
+<text x="186" y="120" text-anchor="middle" font-size="9.5" fill="var(--muted)">select(status)</text>
+<rect x="200" y="196" width="160" height="28" rx="6" fill="var(--surface)" stroke="var(--line)" stroke-width="1.4"/>
+<text x="280" y="214" text-anchor="middle" font-size="10.5" fill="var(--ink)">visibleBooks</text>
+<line x1="280" y1="154" x2="280" y2="192" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#mk-acc)"/>
+<path d="M96 154 V210 H196" fill="none" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#mk-acc)"/>
+<text x="140" y="204" text-anchor="middle" font-size="9.5" fill="var(--muted)">select(query)</text>
+<rect x="200" y="262" width="160" height="30" rx="8" fill="var(--surface)" stroke="var(--ink)" stroke-width="1.4"/>
+<text x="280" y="281" text-anchor="middle" font-size="11" fill="var(--ink)" font-weight="600">LibraryView</text>
+<line x1="280" y1="224" x2="280" y2="258" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#mk-acc)"/>
+<rect x="398" y="36" width="160" height="28" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.4"/>
+<text x="478" y="54" text-anchor="middle" font-size="10.5" fill="var(--ink)">bookLookup</text>
+<rect x="578" y="36" width="166" height="28" rx="6" fill="var(--surface)" stroke="var(--line)" stroke-width="1.4"/>
+<text x="661" y="54" text-anchor="middle" font-size="10.5" fill="var(--ink)">searchBooks (use case)</text>
+<rect x="398" y="126" width="160" height="28" rx="6" fill="var(--surface)" stroke="var(--line)" stroke-width="1.4"/>
+<text x="478" y="144" text-anchor="middle" font-size="10.5" fill="var(--ink)">ownedBookIds (Stream)</text>
+<line x1="478" y1="64" x2="478" y2="122" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#mk-acc)"/>
+<rect x="578" y="96" width="166" height="26" rx="6" fill="var(--surface)" stroke="var(--line)" stroke-width="1.4"/>
+<text x="661" y="113" text-anchor="middle" font-size="10.5" fill="var(--ink)">catalogQuery</text>
+<rect x="578" y="140" width="166" height="26" rx="6" fill="var(--surface)" stroke="var(--line)" stroke-width="1.4"/>
+<text x="661" y="157" text-anchor="middle" font-size="10.5" fill="var(--ink)">debouncedCatalogQuery</text>
+<line x1="661" y1="122" x2="661" y2="136" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#mk-acc)"/>
+<rect x="578" y="196" width="166" height="28" rx="6" fill="var(--surface)" stroke="var(--line)" stroke-width="1.4"/>
+<text x="661" y="214" text-anchor="middle" font-size="10.5" fill="var(--ink)">catalogResults(query)</text>
+<rect x="584" y="201" width="166" height="28" rx="6" fill="none" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 3"/>
+<line x1="640" y1="166" x2="640" y2="192" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#mk-acc)"/>
+<text x="630" y="184" text-anchor="end" font-size="9.5" fill="var(--muted)">the family key</text>
+<path d="M744 50 H754 V206 H754" fill="none" stroke="var(--accent)" stroke-width="1.4"/>
+<line x1="754" y1="206" x2="748" y2="206" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#mk-acc)"/>
+<path d="M744 58 H750 V218 H752" fill="none" stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="3 3"/>
+<rect x="478" y="262" width="180" height="30" rx="8" fill="var(--surface)" stroke="var(--ink)" stroke-width="1.4"/>
+<text x="568" y="281" text-anchor="middle" font-size="11" fill="var(--ink)" font-weight="600">CatalogView · tiles</text>
+<path d="M478 154 V250 H500 V258" fill="none" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#mk-acc)"/>
+<path d="M661 224 V250 H636 V258" fill="none" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#mk-acc)"/>
+<line x1="20" y1="314" x2="44" y2="314" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#mk-acc)"/>
+<text x="50" y="318" font-size="10" fill="var(--muted)">ref.watch (in build)</text>
+<line x1="180" y1="314" x2="204" y2="314" stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="3 3"/>
+<text x="210" y="318" font-size="10" fill="var(--muted)">ref.read (in loadMore)</text>
+<text x="380" y="346" text-anchor="middle" font-size="11.5" fill="var(--muted)" class="ar" direction="rtl" unicode-bidi="embed">الشاشة بتعمل watch لحاجة واحدة، والـ graph ورا هو اللي بيوصّل الباقي</text>
+</svg>

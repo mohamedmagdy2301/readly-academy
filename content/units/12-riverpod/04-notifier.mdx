@@ -1,0 +1,538 @@
+---
+title: "Notifier وAsyncNotifier قصاد Cubit"
+description: "صفحة الكتاب و«ضيف لمكتبتي» والملاحظات من Cubit لـ Notifier سطر بسطر: النقل الحرفي اللي بيحافظ على الـ state، والنقل الـ idiomatic بالـ AsyncValue، والـ build اللي بيتعاد في نص الـ action، والـ ref.mounted بيحميك من إيه ومابيحميكش من إيه."
+minutes: 40
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="الكاشير والدرج">
+
+كاشير A بيستلم الدرج الصبح فيه 500 جنيه، ومن ساعتها هو اللي بيحط ويشيل. محدش بيعدّ الدرج غيره، ولو حد سأل «في كام؟» بيقول الرقم اللي في دماغه. لما الوردية تخلص، بيقفل ويمشي. ده الـ <b>Cubit</b>: الـ state بتبدأ في الـ constructor (`super(...)`) ومابتتغيرش غير بـ `emit` منه، لحد الـ `close`.
+
+كاشير B شغال بنظام تاني: الدرج <b>بيتعدّ من الأول</b> كل ما حاجة معينة تحصل. المدير بعت فكة جديدة؟ عدّ تاني. حد قال «الرقم ده غلط»؟ عدّ تاني. والكاشير نفسه ممكن يكون في نص عملية (بيرجّع باقي لزبون) لما العدّ الجديد يبدأ. لو مخدش باله، هيحط الباقي فوق رقم الدرج الجديد كأن مفيش حاجة حصلت. ده الـ <b>Notifier</b>: `build()` هي العدّ، وبتتعاد مع كل `invalidate` أو تغيير في dependency.
+
+</Analogy>
+
+والفرق ده هو الدرس كله:
+
+- <b>الـ methods هي هي:</b> `load` و`save` و`add` بتتنقل تقريبًا زي ما هي. `emit(x)` بقت `state = x`، و`isClosed` بقت `ref.mounted`.
+- <b>الـ initial state مش في constructor:</b> في `build()`، وده function بتتنادى أكتر من مرة.
+- <b>الـ action ممكن يعيش أطول من الـ build اللي بدأ فيه:</b> وده اللي مالوش مقابل في الـ Cubit، وهنقضي فيه Level 3.
+
+</Level>
+
+<Level n="2" title="سطر بسطر">
+
+### نقلين، مش نقل واحد
+
+قبل ما تفتح أي Cubit، قرر هتنقله إزاي:
+
+| | النقل الحرفي | النقل الـ idiomatic |
+| --- | --- | --- |
+| الـ state | نفس الـ class (`BookDetailsState`، `NotesState`) | `AsyncValue<T>` بدل الـ Loading والـ Error |
+| الـ Notifier | `Notifier<BookDetailsState>` | `AsyncNotifier<BookDetails>` |
+| الـ UI | الـ `switch` هو هو، بيتغير مصدر القراية بس | الـ `switch` على `AsyncData`/`AsyncError`/`AsyncLoading` |
+| الـ goldens والـ widget tests | زي ما هي | محتاجة مراجعة |
+| امتى | وقت الـ migration، شاشة شاشة | بعد ما الشاشة تتنقل وتستقر، أو في كود جديد |
+
+ده نفس الترتيب اللي في [درس «تختار state management إزاي»](/course/state-management/choosing/): الـ state class هي العقد مع الـ UI، فالنقل الأول بيحافظ عليها. الدرس ده بيوريك الاتنين على 3 شاشات.
+
+### صفحة الكتاب: Load Cubit ← AsyncNotifier
+
+الـ `BookDetailsCubit` بتاع [درس «أنواع الـ Cubit (1)»](/course/state-management/cubit-types/):
+
+<CodeBlock label="feature_catalog/lib/src/presentation/book_details_cubit.dart (قبل)">
+
+```dart
+class BookDetailsCubit extends Cubit<BookDetailsState> {        // 1
+  BookDetailsCubit(this._getBookDetails)                        // 2
+      : super(const BookDetailsLoading());                      // 3
+
+  final GetBookDetails _getBookDetails;
+  BookId? _id;                                                  // 4
+
+  Future<void> load(BookId id) async {                          // 5
+    _id = id;
+    emit(const BookDetailsLoading());
+    final result = await _getBookDetails(id);
+    if (isClosed || id != _id) return;                          // 6
+    emit(switch (result) {                                      // 7
+      Success(:final value) => BookDetailsLoaded(value),
+      Err(:final failure) => BookDetailsError(failure),
+    });
+  }
+
+  Future<void> retry() async {                                  // 8
+    if (_id case final id?) await load(id);
+  }
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="feature_catalog/lib/src/presentation/book_details_providers.dart (بعد)">
+
+```dart
+@riverpod
+class BookDetailsNotifier extends _$BookDetailsNotifier {        // 1
+  @override
+  Future<BookDetails> build(BookId id) async {                  // 3, 4, 5
+    final result = await ref.watch(getBookDetailsProvider)(id); // 2
+    return result.orThrow();                                    // 7
+  }
+
+  void retry() => ref.invalidateSelf();                         // 8
+}
+```
+
+</CodeBlock>
+
+| # | في الـ Cubit | في الـ Notifier | ليه |
+| --- | --- | --- | --- |
+| 1 | `extends Cubit<BookDetailsState>` | `extends _$BookDetailsNotifier` | الـ generator بيعمل `AsyncNotifier<BookDetails>` لأن `build` بترجّع `Future` |
+| 2 | `GetBookDetails` في الـ constructor | `ref.watch(getBookDetailsProvider)` | الـ Notifier مالوش constructor بـ dependencies |
+| 3 | `super(const BookDetailsLoading())` | مفيش | قبل ما الـ Future يخلص، الـ state `AsyncLoading` لوحدها |
+| 4 | `BookId? _id` وparameter في `load` | `build(BookId id)` | family: كل كتاب ليه Notifier |
+| 5 | `load()` بيتنادى من الـ route | `build` بيتنادى مع أول watch | مفيش `..load(id)` في الـ `BlocProvider` |
+| 6 | `isClosed \|\| id != _id` | مفيش | كل `id` instance لوحده، ونتيجة build قديم Riverpod بيرميها |
+| 7 | `emit(switch ...)` على الـ `Result` | `orThrow()` | الـ `Failure` بيبقى الـ `error` بتاع الـ `AsyncError` |
+| 8 | `retry()` بيعيد `load` بالـ `_id` | `ref.invalidateSelf()` | الـ build بيتعاد بنفس الـ `id` |
+
+و`BookDetailsState` بالـ 3 classes بتوعها اتشالت، لأن `AsyncValue<BookDetails>` هو نفس الشكل: loading وerror بـ Failure وdata. ده النقل الـ idiomatic، وهنا هو الصح، لأن الـ state مافيهاش أي حاجة غير الـ 3 حالات دول.
+
+والصفحة:
+
+<CodeBlock label="book_details_page.dart">
+
+```dart
+class BookDetailsPage extends ConsumerWidget {
+  const BookDetailsPage({super.key, required this.id});
+  final BookId id;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = AppLocalizations.of(context)!;
+    return Scaffold(
+      appBar: AppBar(),
+      body: switch (ref.watch(bookDetailsProvider(id))) {
+        AsyncValue(:final value, hasValue: true) => _DetailsView(book: value!),
+        AsyncValue(:final Failure error) => ErrorView(
+            message: error.localized(l10n),
+            onRetry: () => ref.read(bookDetailsProvider(id).notifier).retry(),
+          ),
+        _ => const Center(child: CircularProgressIndicator()),
+      },
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>`hasValue: true` مش `value?`:</b> الـ `riverpod_lint` (rule اسمها `async_value_nullable_pattern`) بيحذّر من `AsyncValue(:final value?)` لو النوع ممكن يبقى `null`. هنا `BookDetails` مش nullable فالاتنين صح، بس عوّد نفسك على الشكل الآمن.
+- <b>الكتاب الأول:</b> نفس قاعدة [درس «Riverpod من الصفر»](/course/state-management/riverpod/): لو في كتاب، اعرضه حتى لو في loading أو error.
+- <b>`AsyncValue(:final Failure error)`:</b> بيمسك الـ error لو هو `Failure`. bug حقيقي (مش Failure) مش هيدخل هنا، وهيوصل للـ default. ولو عايز تعرضه، case تالت لـ `error: final Object e`.
+- <b>مفيش `BlocProvider` في الـ route:</b> `GoRoute(builder: (_, state) => BookDetailsPage(id: BookId.fromTrusted(state.pathParameters['id']!)))` وخلاص.
+
+### «ضيف لمكتبتي»: Action Cubit ← Notifier بنفس الـ state
+
+الـ `AddBookCubit` بتاع [درس «Cubit متقدم»](/course/state-management/cubit-advanced/) action Cubit: مش بيحمّل حاجة، بيعمل حاجة واحدة وحالتها. الـ state هنا مش data/loading/error لحاجة بتتعرض، دي حالة <b>عملية</b>. فالنقل الحرفي هو الصح:
+
+<BeforeAfter>
+
+<Side label="AddBookCubit" kind="before">
+
+```dart
+class AddBookCubit extends Cubit<AddBookState> {
+  AddBookCubit(this._addBook) : super(const AddBookIdle());
+  final AddBookToLibrary _addBook;
+
+  Future<void> save(Book book) async {
+    if (state is AddBookSaving) return;
+    emit(const AddBookSaving());
+    final result = await _addBook(book);
+    if (isClosed) return;
+    emit(switch (result) {
+      Success() => const AddBookSaved(),
+      Err(:final failure) => AddBookError(failure),
+    });
+  }
+}
+```
+
+</Side>
+
+<Side label="AddBookNotifier" kind="after">
+
+```dart
+@riverpod
+class AddBookNotifier extends _$AddBookNotifier {
+  @override
+  AddBookState build() => const AddBookIdle();
+
+  Future<void> save(Book book) async {
+    if (state is AddBookSaving) return;
+    state = const AddBookSaving();
+    final result = await ref.read(addBookToLibraryProvider)(book);
+    if (!ref.mounted) return;
+    state = switch (result) {
+      Success() => const AddBookSaved(),
+      Err(:final failure) => AddBookError(failure),
+    };
+  }
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+نفس عدد السطور، ونفس `AddBookState` بالـ 4 حالات، ونفس الحماية من الضغط المتكرر. الفرق الحقيقي في الـ UI:
+
+<CodeBlock label="زرار «ضيف لمكتبتي» في صفحة الكتاب">
+
+```dart
+class _AddToLibraryButton extends ConsumerWidget {
+  const _AddToLibraryButton({required this.book});
+  final Book book;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    ref.listen(addBookProvider, (previous, next) {
+      switch (next) {
+        case AddBookSaved() when previous is AddBookSaving:
+          context.showBookAdded(book); // SnackBar with "open"
+        case AddBookError(:final failure) when previous is AddBookSaving:
+          context.showFailure(failure);
+        case _:
+      }
+    });
+    final saving = ref.watch(addBookProvider) is AddBookSaving;
+    return FilledButton(
+      onPressed: saving ? null : () => ref.read(addBookProvider.notifier).save(book),
+      child: Text(AppLocalizations.of(context)!.addToLibrary),
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `ref.watch` والـ `ref.listen` هما اللي ماسكين الـ Notifier عايش:</b> من غيرهم، `ref.read(...notifier).save(book)` بيعمل الـ provider ومحدش بيسمع، فممكن يتمسح في نص الـ await، والـ `ref.mounted` يقول false، والنتيجة تروح. ده فخ الـ autoDispose من درس «Riverpod من الصفر». في الـ Cubit مش موجود لأن الـ `BlocProvider` ماسكه لحد ما الصفحة تتقفل.
+- <b>الـ `when previous is AddBookSaving`:</b> الـ `listenWhen` بتاع الـ `BlocListener`. الـ SnackBar بيظهر على الانتقال، مش على الحالة.
+- <b>الـ effect بالكتاب:</b> الـ `AddBookCubit` كان بيطلّع `BookAdded(book)` على stream منفصل لأن الـ SnackBar محتاج اسم الكتاب. هنا الـ widget نفسه عارف الـ `book`، فالـ listener بياخده من الـ closure. الـ mixin بتاع الـ effects مش محتاجينه.
+- <b>`context.showFailure` و`context.showBookAdded`:</b> `showFailure` هو الـ extension بتاع [درس الأخطاء في الشاشة](/course/api-errors/errors-ui/)، اللي بيستبدل الـ SnackBar بدل ما يحطه في طابور، و`showBookAdded` هو اللي كان الـ `EffectListener` بيناديه.
+
+<Note kind="info" title="الـ Mutations: experimental">
+
+Riverpod 3 فيه API اسمه `Mutation` (من `package:flutter_riverpod/experimental/mutation.dart`) معمول بالظبط للحالة دي: action ليها idle وpending وsuccess وerror، من غير ما تكتب Notifier لكل واحدة. بتعرّف `final addBookMutation = Mutation<void>();`، وبتشغّله بـ `addBookMutation.run(ref, (tsx) async { ... })`، والـ UI بتعمل `ref.watch(addBookMutation)`. الـ docs بتقول صراحة إنه experimental والـ API ممكن يتغير من غير major version. اعرف إنه موجود، وماتبنيش عليه Readly لحد ما يستقر.
+
+</Note>
+
+### الملاحظات: لما الـ AsyncValue مايكفيش
+
+`NotesState` فيها `notes` و`saving` و`fieldErrors` و`failure` و`failureId`، من [درس الـ Failure pipeline](/course/api-errors/failure-pipeline/) و[درس «Cubit متقدم»](/course/state-management/cubit-advanced/). لو جربت النقل الـ idiomatic (`AsyncNotifier<List<Note>>`)، الـ 4 حقول التانية مالهمش مكان: `AsyncValue` بيقول «الملاحظات بتحمّل، أو جت، أو فشلت». مابيقولش «الملاحظات جت، وفي ملاحظة جديدة بتتحفظ، والسيرفر رفض النص لأنه طويل».
+
+يا إما تطلّعهم لـ providers تانية (`addNoteProvider(bookId)` بحالة الإضافة، زي `AddBookNotifier`)، يا إما تفضل بالـ state بتاعتك:
+
+<CodeBlock label="feature_notes/lib/src/presentation/notes_providers.dart: النقل الحرفي">
+
+```dart
+@riverpod
+class NotesNotifier extends _$NotesNotifier {
+  @override
+  NotesState build(BookId bookId) {
+    unawaited(_load());
+    return const NotesState();
+  }
+
+  Future<void> _load() async {
+    final buildRef = ref; // see Level 3
+    final result = await ref.read(notesRepositoryProvider).getNotes(bookId);
+    if (!buildRef.mounted) return;
+    state = switch (result) {
+      Success(:final value) => state.copyWith(notes: value),
+      Err(:final failure) => state.copyWith(failure: failure, failureId: state.failureId + 1),
+    };
+  }
+
+  Future<void> add(String text) async {
+    if (state.saving) return;
+    state = state.copyWith(saving: true, fieldErrors: const {});
+    final result = await ref.read(addNoteProvider)(AddNoteParams(bookId: bookId, text: text));
+    if (!ref.mounted) return;
+    state = switch (result) {
+      Success(:final value) => state.copyWith(notes: [value, ...state.notes], saving: false),
+      Err(failure: ServerFailure(:final fieldErrors)) when fieldErrors.isNotEmpty =>
+        state.copyWith(saving: false, fieldErrors: fieldErrors),
+      Err(:final failure) =>
+        state.copyWith(saving: false, failure: failure, failureId: state.failureId + 1),
+    };
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>`bookId` field:</b> مع الـ codegen، الـ family parameter اللي في `build` بيبقى متاح كـ field في الـ Notifier كله. ده الـ `_bookId` اللي كان في الـ constructor بتاع الـ `NotesCubit`.
+- <b>`unawaited(_load())` من `build`:</b> `build` sync بترجّع state فاضية فورًا، والتحميل بيكمّل. ده نفس الـ Cubit اللي بيعمل load من الـ constructor. والـ `ref.read` جوه `_load` مش `watch`: الـ repository keepAlive ومش هيتغير، والـ `buildRef` هتفهمه في Level 3.
+- <b>الـ `failureId` لسه موجود:</b> نفس الـ SnackBar من نفس الـ `ref.listen` بمقارنة الـ id، زي `listenWhen: (p, c) => c.failureId != p.failureId`.
+- <b>الـ optimistic pin:</b> الـ loop بتاع `_wanted` و`_syncing` بيتنقل كما هو: `emit` بقت `state =`، و`isClosed` بقت `!ref.mounted`. وبس؟ تقريبًا. فيه حاجة واحدة في Level 3.
+
+</Level>
+
+<Level n="3" title="الـ action اللي عاش أطول من الـ build بتاعه">
+
+### الـ ref.mounted بيقول إيه بالظبط
+
+في الـ Cubit، `isClosed` عنده معنى واحد: الـ Cubit اتقفل. في Notifier، فيه 3 حاجات ممكن تحصل وانت مستني:
+
+1. <b>الـ provider اتمسح:</b> آخر listener مشي (autoDispose)، أو الـ container اتقفل. `ref.mounted` بيبقى `false`، وأي `state =` بيرمي `UnmountedRefException`.
+2. <b>الـ build اتعاد:</b> حد عمل `ref.invalidate(notesProvider(bookId))`، أو dependency بتعمل لها watch جوه `build` اتغيرت. الـ provider لسه عايش، و<b>نفس الـ Notifier object</b> لسه موجود (الـ fields بتاعته مابتتصفّرش)، بس `build` اترجع والـ state بقت اللي `build` رجّعه.
+3. <b>ولا حاجة:</b> الطلب رجع والدنيا زي ما هي.
+
+`if (!ref.mounted) return;` بيمسك الحالة الأولى بس. في الحالة التانية، `ref` جوه الـ Notifier بيشاور دايمًا على الـ ref الحالي، فـ `mounted` بيقول `true`، والـ method بتكمّل وتكتب فوق الـ state الجديدة.
+
+### الـ bug: ملاحظة متكررة
+
+<CodeBlock label="الترتيب اللي بيعمل الـ bug">
+
+```dart
+// 1. the user taps "save": add('great chapter') starts, awaits the server
+// 2. meanwhile, pull-to-refresh calls ref.invalidate(notesProvider(bookId))
+// 3. build() runs again: NotesState() + _load()
+// 4. _load() returns first: the server's list ALREADY has 'great chapter'
+// 5. add() returns: ref.mounted is true, so...
+state = state.copyWith(notes: [value, ...state.notes], saving: false);
+// 'great chapter' is now in the list twice
+```
+
+</CodeBlock>
+
+والأسوأ إن `add` شايلة `saving: false`، فلو `build` الجديد رجّع `NotesState()` وهي بتحمّل، الـ `saving` كان أصلًا `false`، يعني ممكن تكون في نص حفظ تاني بدأ بعد الـ refresh والـ method القديمة قفلته.
+
+في الـ Cubit مفيش حاجة اسمها «الـ state رجعت لأولها لوحدها». الـ `refresh()` في الـ Cubit method انت كاتبها، وبتقرر هي بتعمل إيه في الـ `saving`.
+
+### الحل: امسك الـ ref بتاع الـ build اللي بدأت فيه
+
+من Riverpod 3.2، كل build بيعمل `Ref` جديد، والـ `mounted` بيرجّع `false` لأي ref قديم، حتى لو الـ provider لسه عايش. فلو خزّنت الـ ref في متغير قبل الـ await، الـ `mounted` بتاعه بيجاوب على السؤال اللي انت عايزه: «الـ state اللي بدأت منها لسه هي هي؟»:
+
+<CodeBlock label="add بـ guard للحالتين">
+
+```dart
+Future<void> add(String text) async {
+  if (state.saving) return;
+  final buildRef = ref; // the Ref of the build this action started in
+  state = state.copyWith(saving: true, fieldErrors: const {});
+  final result = await ref.read(addNoteProvider)(AddNoteParams(bookId: bookId, text: text));
+  // false if the provider was disposed OR build() ran again meanwhile
+  if (!buildRef.mounted) return;
+  state = switch (result) {
+    // ...as before
+  };
+}
+```
+
+</CodeBlock>
+
+- <b>`ref` مقابل `buildRef`:</b> `ref` في الـ Notifier getter بيرجّع ref الـ build الحالي. `buildRef` متغير اتاخد قبل الـ await، فبيفضل ref الـ build القديم. ولو الـ build اتعاد، الـ `buildRef.mounted` بيبقى `false`.
+- <b>النتيجة مش ضايعة:</b> الملاحظة اتحفظت على السيرفر، والـ build الجديد بيحمّل الليستة من السيرفر. فرمي نتيجة `add` هنا هو الصح.
+- <b>بس لو الفشل مهم؟</b> لو `add` فشلت والـ build اتعاد، الـ SnackBar مش هيظهر. لو ده مش مقبول، الفشل يتعرض من مكان مش مربوط بالـ state (`ref.listen` على provider منفصل للعملية، زي `AddBookNotifier`). ده سبب تاني إن الـ actions اللي ليها حالة مهمة بتتنقل لـ Notifier لوحدها.
+
+ده المقابل الحقيقي لـ `if (!identical(state, current)) return;` بتاع الـ Bloc في [درس «Cubit ولا Bloc»](/course/state-management/cubit-vs-bloc/)، و`id != _id` في الـ `BookDetailsCubit`: «أنا لسه بتكلم عن نفس الحاجة اللي بدأت عليها؟».
+
+<Diagram name="d-rp-action-vs-build">
+
+الخط الأفقي هو الـ provider. build 1 بيعمل Ref 1، وadd() بتبدأ وتمسك Ref 1. في النص، invalidate بيعمل build 2 بـ Ref 2. لما add() ترجع: ref.mounted (اللي بيقرا Ref 2) بيقول true، فالكتابة بتحصل فوق state جديدة. buildRef.mounted (Ref 1) بيقول false، فالـ action بتقف. والـ dispose في الآخر بيخلي الاتنين false.
+
+</Diagram>
+
+### `AsyncValue.guard`: بيمسك أكتر من اللي عايزه
+
+في الـ AsyncNotifier، الشكل اللي في الـ docs للـ action:
+
+<CodeBlock label="الـ guard من غير test">
+
+```dart
+Future<void> reload() async {
+  state = const AsyncLoading();
+  state = await AsyncValue.guard(() async => (await ref.read(getBookDetailsProvider)(id)).orThrow());
+}
+```
+
+</CodeBlock>
+
+- <b>`state = const AsyncLoading()` مابيمسحش الكتاب:</b> Riverpod بيدمج الـ loading مع القيمة اللي قبلها، فالـ `value` لسه فيه الكتاب، و`isLoading` بـ true. والـ `AsyncError` اللي بعدها كمان بيشيل الكتاب القديم. يعني ترتيب الـ cases في الـ UI هو اللي بيقرر، مش الـ Notifier.
+- <b>الـ guard بيمسك كل حاجة:</b> `TypeError` من parsing غلط، و`StateError` من bug، كلهم بيبقوا `AsyncError` وبيتعرضوا كأنهم «مفيش نت». ده عكس القاعدة اللي في [درس «الـ Streams في Readly»](/course/dart-async/watch/): «اللي نعرفه بيتحول لـ Failure، والـ bug بيفضل bug».
+
+الـ guard بياخد parameter تاني بيقول يمسك إيه:
+
+<CodeBlock label="الـ Failure بس يبقى state">
+
+```dart
+state = await AsyncValue.guard(
+  () async => (await ref.read(getBookDetailsProvider)(id)).orThrow(),
+  (error) => error is Failure, // a bug is rethrown: it reaches the zone and Sentry
+);
+```
+
+</CodeBlock>
+
+### الـ exception من method
+
+method في Notifier رمت exception مش متمسكة: بتطلع للي ناداها، يعني الـ callback في الـ UI، يعني الـ zone و`PlatformDispatcher.onError`. نفس الـ Cubit بالظبط. الـ state مش بتبقى `AsyncError` لوحدها، ده بيحصل بس لو `build` نفسها رمت، أو لو انت حطيت `AsyncError` بإيدك (أو بالـ guard). يعني «الـ AsyncNotifier بيمسك الأخطاء لوحده» صح لـ `build` بس.
+
+### الـ retry التلقائي والـ actions
+
+الـ retry بتاع Riverpod 3 بيعيد الـ <b>build</b> اللي رمى: لحد 10 محاولات، بتأخير من 200ms لحد 6.4 ثانية، ومابيعيدش لو الـ error من نوع `Error` (bug) أو `ProviderException`. يعني:
+
+- <b>`BookDetailsNotifier.build` رمى `NetworkFailure`:</b> هيتعاد لوحده. كويس.
+- <b>رمى `NotFoundFailure`:</b> هيتعاد 10 مرات على الفاضي، ومجموع التأخيرات لوحده حوالي 38 ثانية (0.2 و0.4 و0.8 و1.6 و3.2، وبعدين 6.4 خمس مرات)، والصفحة loading طول الوقت ده قبل ما الـ error يظهر. الـ `retry` على مستوى الـ `ProviderScope` لازم يقول `NetworkFailure` بس، زي ما [درس «Riverpod من الصفر»](/course/state-management/riverpod/) قال.
+- <b>`AddBookNotifier.save` فشلت:</b> مفيش retry. الـ method مابترميش، بتحط `AddBookError` في الـ state. وده المطلوب: المستخدم هو اللي يقرر يعيد.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+### AsyncNotifier ولا Notifier بـ state بتاعتك
+
+| الـ state فيها | الاختيار | مثال في Readly |
+| --- | --- | --- |
+| data أو loading أو error، وبس | `AsyncNotifier<T>` أو `FutureProvider` | صفحة الكتاب، البروفايل |
+| data + حالة action واحدة | `AsyncNotifier<T>` + Notifier للـ action | الكتاب + «ضيف لمكتبتي» |
+| data + حقول كتير بتتغير مع بعض (saving، fieldErrors، failureId) | `Notifier<NotesState>` | الملاحظات |
+| data بصفحات (hasReachedEnd، loadMoreFailure) | `AsyncNotifier<CatalogPage>`، الـ page class بتاعتك جوه الـ AsyncValue | الكتالوج (الدرس الجاي) |
+| حالة عملية مش data (idle، saving، saved، error) | `Notifier<AddBookState>` | الإضافة، الـ login |
+
+القاعدة: الـ `AsyncValue` ممتاز لسؤال «البيانات دي وصلت؟». مش معمول لسؤال «العملية دي فين؟». لما تحشر الاتنين فيه، بتلاقي نفسك بتقرا `isLoading` وانت مش عارف ده تحميل الصفحة ولا حفظ الملاحظة.
+
+### قرارات
+
+- <b>النقل الحرفي الأول:</b> نفس الـ state، ونفس الـ methods، و`emit` ← `state =`. الـ widget tests والـ goldens بتعدّي من غير تغيير، وده إثبات إن السلوك واحد. الـ idiomatic في PR تاني.
+- <b>`final buildRef = ref;` قبل أي await في action بتكتب state:</b> خصوصًا في Notifier بيعمل `ref.watch` جوه `build`، لأن ده معناه إن الـ build ممكن يتعاد في أي لحظة.
+- <b>الـ public API:</b> methods بترجّع `Future<void>` أو `void`. مفيش getters ولا fields public، والـ `riverpod_lint` عنده `avoid_public_notifier_properties` بيمسكها، نفس `avoid_public_fields` في `bloc_lint`.
+- <b>الـ guard بـ test:</b> `(e) => e is Failure`، عشان الـ bugs تفضل bugs.
+
+<Note kind="interview" title="سؤال interview">
+
+«إيه الفرق بين `isClosed` في الـ Cubit و`ref.mounted` في الـ Notifier؟» `isClosed` معناه إن الـ Cubit اتقفل، ومفيش غيره. `ref.mounted` في Notifier معناه إن الـ provider لسه عايش. بس الـ Notifier عنده حالة تالتة مالهاش مقابل: الـ `build` ممكن يتعاد وانت مستني (invalidate، أو dependency اتغيرت)، والـ provider لسه عايش، فـ `ref.mounted` بيقول `true` والـ method بتكتب فوق الـ state الجديدة. الحل إني آخد `final buildRef = ref;` قبل الـ await، وأسأل `buildRef.mounted` بعده: من Riverpod 3.2 كل build ليه Ref جديد، والقديم بيقول `false`. ده نفس سؤال `identical(state, current)` في الـ Bloc: «أنا لسه على نفس الحاجة اللي بدأت عليها؟».
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### الملاحظات: الإضافة في الـ Cubit وفي الـ Notifier
+
+<BeforeAfter>
+
+<Side label="NotesCubit.add" kind="before">
+
+```dart
+Future<void> add(String text) async {
+  if (state.saving) return;
+  emit(state.copyWith(saving: true, fieldErrors: const {}));
+  final result = await _addNote(
+    AddNoteParams(bookId: _bookId, text: text),
+  );
+  if (isClosed) return;
+  emit(switch (result) {
+    Success(:final value) => state.copyWith(
+        notes: [value, ...state.notes], saving: false),
+    Err(failure: ServerFailure(:final fieldErrors))
+        when fieldErrors.isNotEmpty =>
+      state.copyWith(saving: false, fieldErrors: fieldErrors),
+    Err(:final failure) => state.copyWith(
+        saving: false,
+        failure: failure,
+        failureId: state.failureId + 1),
+  });
+}
+```
+
+</Side>
+
+<Side label="NotesNotifier.add" kind="after">
+
+```dart
+Future<void> add(String text) async {
+  if (state.saving) return;
+  final buildRef = ref;
+  state = state.copyWith(saving: true, fieldErrors: const {});
+  final result = await ref.read(addNoteProvider)(
+    AddNoteParams(bookId: bookId, text: text),
+  );
+  if (!buildRef.mounted) return;
+  state = switch (result) {
+    Success(:final value) => state.copyWith(
+        notes: [value, ...state.notes], saving: false),
+    Err(failure: ServerFailure(:final fieldErrors))
+        when fieldErrors.isNotEmpty =>
+      state.copyWith(saving: false, fieldErrors: fieldErrors),
+    Err(:final failure) => state.copyWith(
+        saving: false,
+        failure: failure,
+        failureId: state.failureId + 1),
+  };
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+الجسم واحد تقريبًا: `emit(...)` بقت `state = ...`، و`_addNote` بقت `ref.read(addNoteProvider)`، و`_bookId` بقت `bookId`. السطرين الجداد هما `final buildRef = ref;` و`!buildRef.mounted`، ودول مش «ترجمة» لـ `isClosed`، دول بيحموا من حاجة الـ Cubit عمره ما كان فيها: إن الـ state ترجع لأولها وانت مستني.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="rp-notifier-1">
+<Ask>في `BookDetailsCubit` كان فيه `if (isClosed || id != _id) return;`. ليه السطر ده كله اختفى في `BookDetailsNotifier`؟</Ask>
+<Answer>
+
+الـ `id != _id` كان بيحمي من إن نتيجة كتاب قديم تغطي على كتاب جديد في نفس الـ Cubit. في Riverpod الـ Notifier family بالـ `BookId`، فكل كتاب ليه instance لوحده، ومفيش Notifier واحد بيتنقل بين كتابين. والـ `isClosed` بعد الـ await مش محتاجه في الـ `build`، لأن Riverpod بيرمي نتيجة build قديم أو provider اتمسح بنفسه. الحماية بتلزم في الـ methods اللي بتكتب `state` بعد await.
+
+</Answer>
+</Question>
+
+<Question id="rp-notifier-2">
+<Ask>الصفحة بتنادي `ref.read(addBookProvider.notifier).save(book)`، ومفيش أي widget بيعمل watch أو listen على `addBookProvider`. أحيانًا الـ SnackBar مابيظهرش والزرار مابيتقفلش. ليه؟</Ask>
+<Answer>
+
+`addBookProvider` بالـ autoDispose، والـ `ref.read` مابيمسكوش عايش. محدش بيسمع عليه، فممكن يتمسح وهو مستني `AddBookToLibrary`، وبعد الـ await `ref.mounted` بيقول false فالـ method بترجع من غير ما تكتب الـ state. ومفيش widget بيعمل watch أصلًا، فالزرار مش شايف `AddBookSaving`. الحل إن الزرار يعمل `ref.watch(addBookProvider)` (للـ disable) و`ref.listen` (للـ SnackBar)، ودول اللي بيمسكوه عايش.
+
+</Answer>
+</Question>
+
+<Question id="rp-notifier-3">
+<Ask>`NotesNotifier.add` فيها `if (!ref.mounted) return;` بعد الـ await. المستخدم حفظ ملاحظة وسحب للـ refresh في نفس الثانية، والملاحظة ظهرت مرتين. ليه الـ `ref.mounted` ماحماش، وإيه الحل؟</Ask>
+<Answer>
+
+الـ refresh عمل invalidate، فالـ `build` اتعاد وحمّل الليستة من السيرفر (وفيها الملاحظة الجديدة)، بس الـ provider لسه عايش، و`ref` في الـ Notifier بيشاور على الـ ref الحالي، فـ `ref.mounted` قال true، و`add` زوّدت الملاحظة تاني. الحل `final buildRef = ref;` قبل الـ await و`if (!buildRef.mounted) return;` بعده: كل build بيعمل Ref جديد، والقديم بيقول false بعد الـ rebuild.
+
+</Answer>
+</Question>
+
+<Question id="rp-notifier-4">
+<Ask>`state = await AsyncValue.guard(() async => (await getBook(id)).orThrow());`. الـ API رجّع JSON ناقص حقل، والـ parsing رمى `TypeError`. المستخدم شاف إيه، وإيه المشكلة؟</Ask>
+<Answer>
+
+الـ guard من غير test بيمسك أي حاجة، فالـ `TypeError` بقى `AsyncError`، والـ UI عرضت شاشة error عادية كأنها مشكلة نت، والـ bug ماوصلش Sentry كـ crash. ده بيخلي الـ bug يستخبى. الحل الـ parameter التاني: `AsyncValue.guard(cb, (e) => e is Failure)`، فالـ Failure بس يبقى state، وأي حاجة تانية تترمي وتوصل للـ zone.
+
+</Answer>
+</Question>
+
+<Question id="rp-notifier-5">
+<Ask>ليه الملاحظات اتنقلت لـ `Notifier<NotesState>` مش `AsyncNotifier<List<Note>>`؟ وامتى `AsyncNotifier` يبقى الاختيار الصح؟</Ask>
+<Answer>
+
+`NotesState` فيها حاجات مش «البيانات وصلت ولا لأ»: `saving` و`fieldErrors` و`failure` و`failureId`. `AsyncValue<List<Note>>` مالوش مكان ليهم، فيا إما تطلّعهم لـ providers تانية، يا إما تفضل بالـ state بتاعتك. والنقل الحرفي بيخلي الـ UI والتستات زي ما هي. الـ `AsyncNotifier` صح لما الـ state هي data/loading/error وبس، زي صفحة الكتاب، أو لما الـ data class بتاعتك (زي صفحة نتايج) تتحط جوه الـ AsyncValue.
+
+</Answer>
+</Question>
+
+</Quiz>

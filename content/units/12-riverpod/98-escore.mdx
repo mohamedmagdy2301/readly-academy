@@ -1,0 +1,306 @@
+---
+title: "في Escore: فيد «For You» بـ Riverpod"
+description: "شاشة حقيقية من Escore (فيد الأخبار المبني على اللي المستخدم متابعه) مكتوبة بـ Riverpod جنب الـ Cubit الأصلي: الـ refresh اللي بيرمش، والصفحة القديمة اللي بتغطي على الجديدة، والـ provider اللي بيظهر ويختفي مع الدخول. وإيه اللي هيبقى أحسن، وإيه اللي هيبقى أوحش."
+minutes: 20
+draft: true
+---
+
+Escore مكتوب بـ flutter_bloc (Cubits بس، مفيش Bloc واحد) وget_it مكتوب بإيده من غير injectable: 18 ملف DI، حوالي 1470 سطر، وفيهم `setupNewsDI()` و`setupAuthDI()` وغيرهم بيتنادوا بالترتيب من `initializeServiceLocator()`. والـ domain بيرجّع `Either<Failure, T>` من dartz. يعني نفس شكل Readly تقريبًا، بأدوات مختلفة شوية.
+
+اخترنا شاشة واحدة: تاب «For You» في الأخبار، الـ `FollowingNewsCubit`. الفيد ده أخبار عن الفرق واللاعبين اللي المستخدم متابعهم. وده اختيار مقصود، لأن الشاشة دي فيها تقريبًا كل حاجة الوحدة اتكلمت عنها: pagination، وrefresh، وcache، وحاجة بتتغير مع الدخول والخروج، وstream بيقول «المتابعات اتغيرت»، ورجوع النت.
+
+### النسخة الأصلية
+
+<CodeBlock label="features/news/presentation/cubit/following_news/following_news_cubit.dart (مختصر)">
+
+```dart
+class FollowingNewsCubit extends BaseCubit<FollowingNewsState> {
+  FollowingNewsCubit({required GetFollowingNewsUseCase getFollowingNewsUseCase})
+      : _getFollowingNewsUseCase = getFollowingNewsUseCase,
+        super(const FollowingNewsInitial()) {
+    _followSubscription = FollowSyncBus.instance.stream.listen(
+      (_) => _scheduleFollowDrivenRefresh(),
+    );
+  }
+
+  final GetFollowingNewsUseCase _getFollowingNewsUseCase;
+  StreamSubscription<FollowChange>? _followSubscription;
+  Timer? _followRefreshTimer;
+  static const Duration _followRefreshWindow = Duration(seconds: 1);
+
+  bool get _isOnline => sl<ConnectivityController>().isInternetNotifier.value;
+
+  Future<void> loadNews({bool forceRefresh = false}) async {
+    if (state is FollowingNewsLoading) return;
+    // 1. in-memory SWR cache (NewsListCache), 2. Hive cache, 3. network
+    // ...
+    safeEmit(const FollowingNewsLoading());
+    final result = await _getFollowingNewsUseCase(const GetFollowingNewsParams());
+    result.fold(
+      (failure) => safeEmit(FollowingNewsError(message: failure.message)),
+      (page) { /* NewsListCache.setFollowing(...); safeEmit(FollowingNewsLoaded(...)) */ },
+    );
+  }
+
+  Future<void> loadMore() async {
+    if (!_isOnline) return;
+    final currentState = state;
+    if (currentState is! FollowingNewsLoaded) return;
+    if (currentState.isLoadingMore || !currentState.hasMore) return;
+    safeEmit(currentState.copyWith(isLoadingMore: true));
+    final result = await _getFollowingNewsUseCase(
+      GetFollowingNewsParams(page: currentState.currentPage + 1),
+    );
+    // ...safeEmit(currentState.copyWith(news: [...currentState.news, ...page.data], ...))
+  }
+
+  Future<void> refresh() async {
+    NewsListCache.clearFollowing();
+    safeEmit(const FollowingNewsInitial());
+    await loadNews(forceRefresh: true);
+  }
+
+  @override
+  Future<void> close() {
+    _followRefreshTimer?.cancel();
+    unawaited(_followSubscription?.cancel());
+    return super.close();
+  }
+}
+```
+
+</CodeBlock>
+
+والـ Cubit ده بيتعمل في `NewsScreen`، بس لو المستخدم داخل بحساب:
+
+<CodeBlock label="features/news/presentation/screens/news_screen.dart (مختصر)">
+
+```dart
+return MultiBlocProvider(
+  providers: [
+    BlocProvider<TrendingNewsCubit>(create: (_) => sl<TrendingNewsCubit>()),
+    BlocProvider<LatestNewsCubit>(create: (_) => sl<LatestNewsCubit>()),
+    // ...
+    // Last on purpose: this one comes and goes with the signed-in identity,
+    // and appending keeps the other providers' positions stable.
+    if (_isAuthenticated)
+      BlocProvider<FollowingNewsCubit>(create: (_) => sl<FollowingNewsCubit>()),
+  ],
+  // ...
+);
+```
+
+</CodeBlock>
+
+والـ `_isAuthenticated` بيتقري مرة في `initState`، وبيتحدث من `AuthSessionSignal.identityChanged` (`ValueNotifier<int>`) بـ listener و`setState` و`removeListener` في الـ `dispose`. لأن الشاشة دي في branch بتاع `StatefulShellRoute`، والـ login مابيعيدش بناها.
+
+فيه حاجات معمولة كويس هنا: `BaseCubit.safeEmit` بيشيل الـ `isClosed` من كل method، والـ debounce بتاع ثانية بيجمع 3 follows ورا بعض في طلب واحد، والـ revalidation بعد follow بتسيب المحتوى ظاهر. بس فيه 4 مشاكل.
+
+### المشاكل الأربعة
+
+<b>1. الـ refresh بيرمش:</b> `refresh()` بتعمل emit لـ `FollowingNewsInitial`، وبعدين `loadNews` بتعمل emit لـ `FollowingNewsLoading`، والـ `BlocBuilder` بيعرض الـ skeleton. يعني وانت بتسحب للـ refresh، الليستة بتختفي، والـ refresh control نفسه بيتشال من الشجرة في نص الحركة. والطريف إن `PaginatedResourceCubit` في نفس المشروع كاتب في التعليقات إن الـ bug ده اتصلّح عنده. هنا لسه موجود.
+
+<b>2. الصفحة القديمة بتغطي على الجديدة:</b> `loadMore` بتمسك `currentState` قبل الـ await، وبعد ما ترجع بتعمل `currentState.copyWith(news: [...currentState.news, ...])`. لو في النص حصل refresh أو revalidation بعد follow، الـ state الجديدة بتتكتب فوقها بليستة قديمة + صفحة 2. ده نفس bug درس الـ Pagination اللي اتحل بـ `_latestRequest`، ومفيش هنا لا request id ولا generation.
+
+<b>3. الـ cache بتاع المستخدم بيتمسح من الـ data layer:</b> لما الهوية تتغير، `AuthRepositoryImpl._clearIdentityScopedCaches()` بتنادي `NewsListCache.clearIdentityScoped()` و`AuthSessionSignal.notifyIdentityChanged()`. يعني repository في الـ data layer بيمسح cache بتاع شاشة في الـ presentation. ده `resetOnLogout` بتاع Readly، بس في المكان الغلط.
+
+<b>4. dependencies مستخبية:</b> `sl<ConnectivityController>()` جوه الـ Cubit (في `_isOnline`) وجوه الـ widget. و`FollowSyncBus.instance` و`NewsListCache` static. ولا واحدة فيهم في الـ constructor، فالتست مايقدرش يبدّلهم. والـ Cubit ده مالوش تستات أصلًا.
+
+### نفس الشاشة بـ Riverpod
+
+الـ domain والـ data زي ما هما: `GetFollowingNewsUseCase` و`NewsRepository` و`PaginatedResponse` و`Either<Failure, ...>`. أول خطوة كوبري للـ DI، زي [درس القرار](/course/riverpod/decision/):
+
+<CodeBlock label="features/news/presentation/news_providers.dart">
+
+```dart
+// TEMPORARY bridge: get_it still builds the data layer
+@Riverpod(keepAlive: true)
+GetFollowingNewsUseCase getFollowingNewsUseCase(Ref ref) => sl<GetFollowingNewsUseCase>();
+
+/// The identity, from the signal the auth repository already fires.
+@Riverpod(keepAlive: true)
+class SignedIn extends _$SignedIn {
+  @override
+  bool build() {
+    final signal = AuthSessionSignal.identityChanged;
+    void sync() => state = isUserAuthenticated();
+    signal.addListener(sync);
+    ref.onDispose(() => signal.removeListener(sync));
+    return isUserAuthenticated();
+  }
+}
+
+@Riverpod(keepAlive: true)
+Stream<bool> isOnline(Ref ref) { /* from ConnectivityController.isInternetNotifier */ }
+```
+
+</CodeBlock>
+
+وبعدين الفيد نفسه:
+
+<CodeBlock label="features/news/presentation/following_news_provider.dart">
+
+```dart
+final class FollowingNewsPage {
+  const FollowingNewsPage({required this.news, required this.page, required this.hasMore});
+  final List<NewsArticleEntity> news;
+  final int page;
+  final bool hasMore;
+}
+
+@riverpod
+class FollowingNews extends _$FollowingNews {
+  bool _loadingMore = false;
+
+  @override
+  Future<FollowingNewsPage> build() async {
+    _loadingMore = false;
+    // a guest has no follows: the tab only exists when signed in, and this
+    // provider is rebuilt (or disposed) on every identity change
+    if (!ref.watch(signedInProvider)) throw const AuthFailure('guest');
+
+    // follow/unfollow anywhere: re-fetch once the toggling settles (1s)
+    Timer? timer;
+    final follows = FollowSyncBus.instance.stream.listen((_) {
+      timer?.cancel();
+      timer = Timer(const Duration(seconds: 1), ref.invalidateSelf);
+    });
+    ref.onDispose(() {
+      timer?.cancel();
+      follows.cancel();
+    });
+
+    // back online after a failure: try again
+    ref.listen(isOnlineProvider, (previous, next) {
+      if (previous?.value == false && next.value == true && state.hasError) ref.invalidateSelf();
+    });
+
+    ref.cacheFor(const Duration(minutes: 3)); // what NewsListCache's stale window did
+    final result = await ref.watch(getFollowingNewsUseCaseProvider)(const GetFollowingNewsParams());
+    return result.fold((failure) => throw failure, (r) => FollowingNewsPage(
+          news: r.data, page: r.pagination.currentPage, hasMore: r.pagination.hasNextPage));
+  }
+
+  Future<void> loadMore() async {
+    final current = state.value;
+    if (current == null || state.isLoading || _loadingMore || !current.hasMore) return;
+    _loadingMore = true;
+    final buildRef = ref;
+    final result = await ref.read(getFollowingNewsUseCaseProvider)(
+      GetFollowingNewsParams(page: current.page + 1),
+    );
+    if (!buildRef.mounted) return; // a refresh or a follow-driven re-fetch won
+    _loadingMore = false;
+    result.fold(
+      (_) {}, // as before: a failed page is ignored, the next scroll retries
+      (r) => state = AsyncData(FollowingNewsPage(
+        news: [...current.news, ...r.data],
+        page: r.pagination.currentPage,
+        hasMore: r.pagination.hasNextPage,
+      )),
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+والـ widget:
+
+<CodeBlock label="following_news_list_widget.dart (الجزء المهم)">
+
+```dart
+return switch (ref.watch(followingNewsProvider)) {
+  AsyncValue(:final value, hasValue: true) => CustomScrollView(
+      slivers: [
+        BrandedSliverRefreshControl(onRefresh: () async {
+          try {
+            final _ = await RefreshZone.run(() => ref.refresh(followingNewsProvider.future));
+          } on Failure {
+            // stays in the AsyncValue: the list is kept
+          }
+        }),
+        // ...the same rows; onNearEnd: () => ref.read(followingNewsProvider.notifier).loadMore()
+      ],
+    ),
+  AsyncValue(:final OfflineFailure error) => const OfflineEmptyStateWidget(),
+  AsyncValue(:final Failure error) => CustomErrorWidget(
+      onPressed: () => ref.invalidate(followingNewsProvider),
+    ),
+  _ => const FollowingNewsSkeletonWidget(),
+};
+```
+
+</CodeBlock>
+
+و`NewsScreen` بيعمل `ref.watch(signedInProvider)` عشان يحسب التابات، ومابقاش فيه `BlocProvider` مشروط ولا ترتيب providers «last on purpose». الـ provider بيتعمل لما تاب «For You» يتبني ويعمل watch، ومش موجود غير كده.
+
+### إيه اللي بقى أحسن
+
+| المشكلة | في الـ Cubit | في Riverpod |
+| --- | --- | --- |
+| الـ refresh بيرمش | `Initial` ثم `Loading` بيمسحوا الليستة | `ref.refresh` بيسيب القيمة القديمة، والـ switch بيعرضها الأول |
+| صفحة قديمة فوق refresh | مفيش حماية | `buildRef.mounted` |
+| الـ revalidation بعد follow | `_scheduleFollowDrivenRefresh` + `_revalidateInBackground` + «لو في محتوى سيبه» | `ref.invalidateSelf()` بعد ثانية، والقيمة القديمة بتفضل ظاهرة لوحدها |
+| الـ provider مع الدخول | `if (_isAuthenticated) BlocProvider` بترتيب مقصود، وlistener وsetState | `ref.watch(signedInProvider)` |
+| الـ cache بتاع المستخدم | الـ auth repository بيمسح `NewsListCache` | الـ provider بيتبني من جديد مع الهوية، والـ data layer مابقاش يعرف الشاشة |
+| الـ subscription والـ timer | fields وcancel في `close` | `ref.onDispose` جنبهم في نفس المكان |
+| رجوع النت | `ReconnectionRefreshMixin` في الـ widget | `ref.listen(isOnlineProvider)` في الـ provider |
+| الـ error | `FollowingNewsError(message: String)` بيرمي نوع الـ Failure، والـ widget بيسأل الـ connectivity تاني | `AsyncError` شايل الـ `Failure` نفسه، و`OfflineFailure` ليها case |
+| التست | `sl<ConnectivityController>()` وstatics جوه الـ Cubit | `isOnlineProvider` و`getFollowingNewsUseCaseProvider` overrides |
+
+وفيه نقطة ماتأكدناش منها 100%: اللغة. الـ Cubit ده مابيسمعش على تغيير اللغة، والكاش في الذاكرة بيتمسح مع تغييرها، بس ماشفناش حاجة بتعيد تحميل الفيد اللي مفتوح فعلًا، فالأخبار ممكن تفضل باللغة القديمة لحد أول refresh. في Riverpod ده سطر: `ref.watch(languageCodeProvider)` في أول `build`، والفيد بيتحمّل تاني لوحده لما اللغة تتغير.
+
+### وإيه اللي بقى أوحش
+
+- <b>الـ migration نفسه:</b> 18 ملف DI مكتوبين بإيد. الكوبري (`sl<...>()` جوه provider) بيخلي الشاشة دي تتنقل لوحدها، بس طول ما الكوبري موجود، فيه نظامين DI وكل object ليه مالك مش واضح.
+- <b>الـ `BaseCubit` والـ helpers:</b> `safeEmit` و`execute(action:, onSuccess:, onFailure:)` و`PaginatedResourceCubit` كلهم اتعملوا عشان يشيلوا boilerplate من 100 Cubit تقريبًا. في Riverpod مالهمش مكان، ونسخة الـ pagination العامة لازم تتكتب من الأول كـ Notifier.
+- <b>سحر الـ lifecycle في `PageView`:</b> الـ tab body بيتشال من الشجرة لما المستخدم يعمل swipe لتاب بعيد، فالـ provider بيفقد الـ listener. الـ `cacheFor(3 minutes)` بيغطي ده، بس لازم حد يعرف إن ده السبب. في الـ Cubit، الـ `BlocProvider` كان فوق الـ `PageView` كله، والـ Cubit عايش طول ما الشاشة عايشة، والـ static cache كان بيغطي الـ `initState` اللي بيتنادى تاني.
+- <b>الـ build بيعمل حاجات كتير:</b> listener على الـ bus، وtimer، وlisten على الشبكة، وcache، وطلب. كل ده بيتعاد مع كل `invalidateSelf`. صح، بس اللي جاي من الـ Cubit متعود إن الـ subscription بتتعمل مرة في الـ constructor.
+- <b>الفريق:</b> الـ codebase كلها Cubit، وكل الناس عارفينها. شاشة واحدة Riverpod معناها أداتين لكل حد جديد، وده التمن اللي [درس القرار](/course/riverpod/decision/) قال عليه.
+- <b>الـ `Failure` مش sealed:</b> في Escore `abstract class Failure`، فالـ switch على الـ error مش exhaustive، والـ `_ =>` بيبلع أي نوع جديد. ده مش ذنب Riverpod، بس الـ `AsyncValue` بيخليه أوضح لأن الـ error بقى بيتعرض في الـ UI بنوعه.
+
+### الخلاصة لـ Escore
+
+Riverpod كان هيحل مشكلتين حقيقيتين في الشاشة دي بالبنية نفسها: الـ refresh اللي بيرمش، والـ state المرتبطة بالهوية. بس المشكلتين ليهم حل في الـ Cubit كمان: الـ refresh مايعملش emit لـ `Initial` (زي ما `PaginatedResourceCubit` بيعمل فعلًا)، و`loadMore` تتأكد إن الـ state لسه هي اللي بدأت منها (`identical(state, currentState)` بعد الـ await)، والـ `FollowingNewsCubit` يسمع على `AuthSessionSignal` بدل ما الـ repository يمسح cache الشاشة.
+
+يعني القرار لـ Escore نفس قرار Readly: الـ Cubit يفضل، والـ bugs تتصلح فيه. والـ spike ده كان مفيد لأنه وضّح الـ bugs، مش لأنه أثبت إن الأداة لازم تتغير.
+
+### لو هنعيدها
+
+1. `refresh()` مايعملش emit لحالة بتمسح المحتوى. الـ `isRefreshing` يبقى field في `FollowingNewsLoaded`، زي `LibraryLoaded` في Readly.
+2. أي method بتعمل `copyWith` على state اتاخدت قبل await، تتأكد بـ `identical(state, current)` إنها لسه هي.
+3. الـ cache المرتبط بالهوية يتمسح من الـ presentation اللي بتسمع على الهوية، مش من الـ auth repository.
+4. `ConnectivityController` و`FollowSyncBus` يدخلوا في الـ constructor، والـ Cubit ياخد تستات.
+5. الـ `FollowingNewsError` يشيل الـ `Failure` نفسه مش `message`، والـ widget يختار الـ offline view من نوع الـ Failure.
+
+<Quiz>
+
+<Question id="escore-rp-1">
+<Ask>ليه الـ refresh في `FollowingNewsCubit` بيخلي الليستة تختفي، وإزاي Riverpod بيمنع ده من غير كود زيادة؟</Ask>
+<Answer>
+
+`refresh()` بتعمل emit لـ `FollowingNewsInitial` وبعدين `loadNews` بتعمل emit لـ `FollowingNewsLoading`، والـ `BlocBuilder` بيعرض الـ skeleton مكان الليستة، فالـ refresh control نفسه بيتشال. في Riverpod، `ref.refresh(followingNewsProvider.future)` بيعيد الـ build، بس الـ `AsyncLoading` اللي بيطلع شايل القيمة القديمة، والـ switch اللي بيبدأ بـ `hasValue: true` بيفضل يعرض الليستة لحد ما الجديدة توصل. ونفس الحاجة لو الـ refresh فشل: الـ `AsyncError` شايل الليستة القديمة.
+
+</Answer>
+</Question>
+
+<Question id="escore-rp-2">
+<Ask>`AuthRepositoryImpl` في Escore بينادي `NewsListCache.clearIdentityScoped()`. إيه المشكلة المعمارية، وإيه اللي بيحل محلها في نسخة Riverpod؟</Ask>
+<Answer>
+
+الـ data layer (الـ auth repository) بقى بيعرف cache بتاع شاشة في الـ presentation، فالاعتماد رايح من جوه لبرا، وأي شاشة جديدة ليها cache مرتبط بالمستخدم لازم حد يفتكر يزوّدها في الـ repository. في Riverpod، الـ `followingNewsProvider` بيعمل `ref.watch(signedInProvider)`، فلما الهوية تتغير بيتبني من جديد أو يتمسح لوحده، والـ auth repository بيكتفي بإنه يبلّغ إن الهوية اتغيرت (الـ `AuthSessionSignal` اللي موجود أصلًا).
+
+</Answer>
+</Question>
+
+<Question id="escore-rp-3">
+<Ask>بعد الـ spike، ليه القرار لـ Escore كان «الـ Cubit يفضل والـ bugs تتصلح فيه»، مع إن Riverpod حل المشاكل بشكل أنضف؟</Ask>
+<Answer>
+
+لأن كل مشكلة ليها حل في الـ Cubit نفسه بتمن صغير: refresh مايمسحش المحتوى (`isRefreshing` في الـ Loaded)، وguard بـ `identical(state, current)` في `loadMore`، والـ Cubit يسمع على إشارة الهوية بدل ما الـ repository يمسح الـ cache. وتمن Riverpod في Escore كبير: 18 ملف DI، و`BaseCubit` و`PaginatedResourceCubit` اللي بيخدموا عشرات الشاشات، وفريق كله Cubit، وفترة بنظامين DI. الـ spike كان مفيد إنه كشف الـ bugs، والقرار بيتاخد بتمن التحويل مش بشكل الكود في شاشة واحدة.
+
+</Answer>
+</Question>
+
+</Quiz>

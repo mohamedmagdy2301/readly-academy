@@ -1,0 +1,330 @@
+---
+title: "تختار إيه، وتمن التحويل"
+description: "بعد ما Readly اتكتبت بالطريقتين: Riverpod كسب فين والـ Cubit كسب فين بالأرقام، وتمن التحويل الثابت واللي بيتدفع لكل شاشة، وإزاي تخلطهم من غير ما المشروع يبقى نظامين، والقرار مكتوب في ADR."
+minutes: 30
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="النقل لشقة جديدة">
+
+اتنين بينقلوا لشقة جديدة. الأول عفشه في كراتين مقفولة، وعلى كل كرتونة مكتوب «مطبخ» أو «أوضة النوم». العمال بيشيلوا ويحطوا، والنقل خلص في يوم. التاني عفشه مفرود: الكوبايات في الدولاب مع الهدوم، والكتب تحت السرير، والسلك بتاع التلفزيون داخل في الحيطة. النقل أخد أسبوع، ونص الحاجات اتكسرت.
+
+الشقة الجديدة نفسها مش فارقة كتير. اللي فارق هو العفش كان متغلّف إزاي.
+
+وفي سؤال قبل ده كله: <b>محتاج تنقل أصلًا؟</b> الشقة الجديدة أوسع، بس أبعد عن الشغل. ولو مش هتنقل، ماتغلّفش العفش في كراتين وتقعد وسطها سنة.
+
+</Analogy>
+
+- <b>الكراتين المقفولة</b> هي الحدود: الـ domain والـ data مابيعرفوش الـ state management، والـ UI مابتعرفش عن الـ Cubit غير الـ state والـ methods. في Readly ده كان صح، فالتحويل كان «شيل وحط».
+- <b>تمن النقل</b> مش في Riverpod نفسه، في عدد الشاشات، وشكل كل واحدة، والتستات، والفريق.
+- <b>السؤال الأول</b> هو اللي الدرس ده بيجاوبه: Readly تنقل ولا لأ؟ وأي مشروع تاني بيجاوبه إزاي؟
+
+</Level>
+
+<Level n="2" title="النتيجة بعد ما كتبنا الاتنين">
+
+### كل شاشة في Readly: مين كسب
+
+الأرقام دي من الـ branch بتاع الوحدة (`spike/riverpod`)، بعدد سطور الـ presentation من غير الـ widgets (اللي بيتغير فيها شكل القراية بس).
+
+| الشاشة | Cubit | Riverpod | الكسبان | ليه |
+| --- | --- | --- | --- | --- |
+| هدف القراية، وضع العرض، فلتر الحالة | Cubit صغير | Notifier صغير | تعادل | `emit` بقت `state =`، ومفيش فرق في السلوك |
+| المكتبة (stream + refresh) | ~45 + `LibraryState` | ~25 | Riverpod | الـ stream بيتلغي لوحده، ومفيش state class للبيانات |
+| الكتالوج (بحث + صفحات + refresh) | ~90 في Cubitين | ~60 | Riverpod، بفرق كبير | الـ family بالـ query شالت `_latestRequest` وسباق الصفحات القديمة |
+| «في مكتبتك» في الكتالوج | subscription في `CatalogCubit` | provider مشتق من سطرين | Riverpod | قيمة محسوبة من stream، متشاركة |
+| صفحة الكتاب | `BookDetailsCubit` | `AsyncNotifier` بـ family | Riverpod، بفرق صغير | الـ refresh بيحافظ على الكتاب ببلاش |
+| الملاحظات (optimistic pin) | loop بـ `_wanted` و`_syncing` | نفس الـ loop | تعادل | الصعوبة في المنطق، مش في الأداة |
+| `AddBookCubit`، `LoginCubit` (submit) | status في الـ state | Notifier بـ status، ولازم حد يسمع | Cubit، بفرق صغير | فخ الـ autoDispose مع `ref.read` |
+| `AuthCubit`، `SyncStatusCubit` | lazySingleton + `.value` | keepAlive provider | Riverpod | الـ session reset بقى `ref.watch` بدل `resetOnLogout` |
+| الـ router redirect | `refreshListenable` على الـ AuthCubit | provider بيعمل `ref.listen` | تعادل | نفس الفكرة بكود مختلف |
+| التستات | `blocTest` بـ `expect: [...]` | `ProviderContainer.test` + listener | Cubit للـ flows، Riverpod للـ setup | الترتيب أوضح في blocTest، والـ overrides أسهل من الـ mocks في الـ constructor |
+
+القراية الأمينة للجدول: Riverpod كسب في كل حاجة <b>شكلها «بيانات بتتعرض»</b>: stream من drift، نتايج بحث، قيمة مشتقة، تفاصيل كتاب. والـ Cubit كسب أو تعادل في كل حاجة <b>شكلها «action ليها خطوات»</b>: submit، optimistic، flow. وده نفس اللي [درس «Riverpod من الصفر»](/course/state-management/riverpod/) قاله بالكلام، بس دلوقتي بأرقام من مشروع كامل.
+
+### تمن التحويل: الثابت والمتغير
+
+<b>الثابت</b> (بيتدفع مرة، مهما كان عدد الشاشات):
+
+| البند | فيه إيه | تقدير لـ Readly |
+| --- | --- | --- |
+| الـ setup | `ProviderScope`، والـ codegen، و`riverpod_lint`، وإعدادات الـ retry | نص يوم |
+| الـ DI | providers لكل repository وuse case (أو كوبري لـ get_it) | يوم لـ 2 |
+| الـ session | `signedInProvider` والـ providers اللي بتعمله watch، مكان `resetOnLogout` | يوم |
+| الـ observability | `ProviderObserver` بيبعت لـ Sentry مكان `AppBlocObserver` | نص يوم |
+| أدوات التست | helper بيسجّل الـ states بالترتيب، وfakes للـ repositories | يوم |
+| الفريق | كل واحد يكتب شاشة ويتعمله review على الـ lifecycle | أسبوع موزع |
+| الـ conventions | ADR، وقواعد الـ review، وتحديث تست المعمارية | نص يوم |
+
+<b>المتغير</b> (لكل شاشة):
+
+| شكل الشاشة | الشغل | تقدير |
+| --- | --- | --- |
+| Value Cubit (قيمة sync) | Notifier + الـ widget يبقى Consumer + تست | ساعة لـ 2 |
+| Load Cubit | `FutureProvider` أو `AsyncNotifier`، والـ switch على `AsyncValue` بالترتيب الصح | نص يوم |
+| Stream Cubit + actions | provider للبيانات + Notifier للـ action، ومين بيسمع على الـ action | يوم |
+| بحث وصفحات | family + guard للـ refresh، وتستات الـ debounce | يومين |
+| Cubit عليه Cubits تانية بتعتمد | صلّح الـ anti-pattern الأول، وبعدين حوّل | مش معروف قبل ما تبص |
+
+يعني Readly بـ 18 Cubit تقريبًا: 4 أيام ثابت، و8 لـ 10 أيام متغير، وأسبوع تعلم. حوالي شهر لمطور واحد، أو أسبوعين لاتنين. وده رقم واقعي <b>بس لأن الحدود نضيفة</b>. لو الـ View بتعمل logic، أو الـ Cubits بتمسك بعض، أو الـ domain بيرجّع `LibraryState`، الرقم ده يتضاعف ومحدش يقدر يقدّره قبل ما يبدأ.
+
+### ينفع تخلطهم؟
+
+أيوه، وأغلب الـ migrations الناجحة بتعدّي بفترة الاتنين فيها شغالين. بس بقواعد:
+
+<Diagram name="d-rp-mixed-app">
+
+الـ ProviderScope فوق كل حاجة، وجواه الـ MultiBlocProvider. كل feature بأداة واحدة: المكتبة والكتالوج Riverpod، والملاحظات والإضافة Cubit. الاتنين بيسمعوا على نفس الـ repository streams، ومفيش سهم من Notifier لـ Cubit ولا العكس. والـ repositories ليها مالك واحد: الـ providers، وget_it بيقرا منها لحد ما يتشال.
+
+</Diagram>
+
+1. <b>الوحدة هي الـ feature، مش الـ widget:</b> شاشة المكتبة كلها Riverpod، أو كلها Cubit. مش `LibraryCubit` للليست و`libraryRefreshProvider` للزرار.
+2. <b>مصدر حقيقة واحد:</b> Notifier وCubit محتاجين نفس الكتب؟ الاتنين يسمعوا على `watchLibrary()`. ماحدش يقرا state التاني.
+3. <b>مفيش حد بيمد إيده جوه التاني:</b> Notifier بيعمل `getIt<LibraryCubit>()`، أو Cubit بياخد `ProviderContainer`، ده ربط عمرين ببعض. نفس الـ smell اللي في [درس «تختار state management إزاي»](/course/state-management/choosing/).
+4. <b>مالك واحد لكل object:</b> `LibraryRepository` يتعمل في مكان واحد. وقت الـ migration، الـ providers هي المالك وget_it بيقرا منها، أو العكس، بس مش الاتنين بيعملوا نسخة.
+5. <b>تاريخ نهاية:</b> «الاتنين لحد آخر الربع، والـ ratchet في الـ CI بيمنع أي Cubit جديد». من غيره، الخليط بيبقى الحالة الدايمة، وكل حد جديد لازم يتعلم الاتنين.
+
+</Level>
+
+<Level n="3" title="الخلط بالكود، والقرار مكتوب">
+
+### الاتنين في نفس الشجرة
+
+<CodeBlock label="app.dart وقت الـ migration">
+
+```dart
+void main() {
+  // ...
+  runApp(const ProviderScope(child: ReadlyApp()));
+}
+
+class ReadlyApp extends ConsumerWidget {
+  const ReadlyApp({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => MultiBlocProvider(
+        providers: [
+          // not migrated yet: the Cubit takes its repository from the provider
+          BlocProvider(
+            create: (_) => SettingsCubit(ref.read(settingsStoreProvider)),
+          ),
+        ],
+        child: BlocBuilder<SettingsCubit, SettingsState>(
+          builder: (context, settings) => MaterialApp.router(
+            themeMode: settings.themeMode,
+            locale: settings.locale,
+            routerConfig: ref.watch(routerProvider),
+            // ...
+          ),
+        ),
+      );
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `ProviderScope` برا:</b> أي `BlocProvider` تحته يقدر يقرا providers وقت الـ `create`، فالـ Cubits اللي لسه ماتحوّلتش بتاخد نفس الـ repositories اللي الـ Notifiers بتاخدها.
+- <b>`ref.read` في الـ `create`:</b> مش `watch`. الـ Cubit بيتعمل مرة، والـ dependency بتاعته في الـ constructor زي ما كانت. ولو الـ provider ده autoDispose ومحدش تاني بيسمع عليه، الـ object اللي اتدّى للـ Cubit ممكن يتعمله dispose وهو لسه في إيده. فالـ dependencies اللي بتتدّى لـ Cubits وقت الـ migration لازم تبقى `keepAlive`، وده أصلًا حال الـ repositories.
+- <b>الـ router provider:</b> الـ redirect محتاج يعرف حالة الـ auth. لو الـ auth بقت provider، الـ router بقى provider بيسمع عليها. ولو الـ auth لسه `AuthCubit`، الـ router بيفضل بـ `refreshListenable` زي ما هو. الاتنين شغالين، المهم إن الـ auth ليها مكان واحد.
+
+### الاتجاه العكسي: get_it بيقرا من Riverpod
+
+في كود بره الشجرة (background handler للـ push notifications، أو isolate، أو `resetOnLogout` القديم) لسه بيعمل `getIt<LibraryRepository>()`. وقت الـ migration، get_it بيسجّل اللي الـ container عمله:
+
+<CodeBlock label="main.dart: container واحد للشجرة وللكود اللي برا">
+
+```dart
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final container = ProviderContainer();
+
+  // TEMPORARY: legacy code outside the tree reads the same instances
+  getIt
+    ..registerLazySingleton<LibraryRepository>(() => container.read(libraryRepositoryProvider))
+    ..registerLazySingleton<SyncQueue>(() => container.read(syncQueueProvider));
+
+  runApp(UncontrolledProviderScope(container: container, child: const ReadlyApp()));
+}
+```
+
+</CodeBlock>
+
+- <b>`UncontrolledProviderScope`:</b> بيحط container انت عامله بإيدك فوق الشجرة، فالـ widgets والكود اللي برا شايفين نفس الـ state. والمسؤولية عليك: انت اللي عملته، فانت اللي بتقفله (`container.dispose()`) لو لزم.
+- <b>اتجاه واحد بس:</b> هنا الـ providers هي المالك وget_it مرايا. لو عملت العكس في نفس الوقت لـ objects تانية (providers بتقرا من get_it)، هتلاقي نفسك بتسأل كل شوية «مين عمل النسخة دي؟». اختار اتجاه واحد للـ migration كله.
+- <b>الـ keepAlive شرط:</b> اللي بيتسجّل في get_it لازم يبقى provider مابيتمسحش، وإلا get_it هيفضل ماسك object الـ container رماه.
+
+### ADR: نتيجة الـ spike
+
+القرار بيتكتب، بنفس شكل الـ ADR 007 في [درس «تختار state management إزاي»](/course/state-management/choosing/)، والـ ADR الجديد بيشاور عليه:
+
+<CodeBlock label="docs/adr/012-riverpod-spike.md">
+
+```markdown
+# ADR 012: Riverpod spike outcome
+
+Status: Accepted (2026-10). Revisits ADR 007.
+
+## Context
+- branch spike/riverpod rewrote presentation + DI for library, catalog,
+  book details, notes, auth/session. domain/ and data/: zero lines changed.
+- ADR 007 "Revisit when": most data from the server without a local DB (no: drift
+  is still the source of truth); team knows Riverpod better (no: 1 of 3).
+
+## Findings
++ catalog (search + pages + refresh): ~90 -> ~60 lines, the stale-page race is gone
+  by construction (family per query).
++ derived values (owned ids, reading now) are 3-line providers.
++ session reset: providers watching signedInProvider replace resetOnLogout.
+- submit/optimistic flows: same complexity, plus the autoDispose + ref.read trap.
+- lifecycle surprises (build re-runs, disposal mid-await) cost 2 bugs in 3 weeks.
+- tests: overrides are easier than constructor mocks; ordered expectations are not.
+
+## Decision
+- Stay on Cubit/Bloc (ADR 007 holds). Do not merge the spike.
+- Keep the spike branch and the architecture test (no riverpod in domain/data).
+
+## Cost if we revisit
+- Fixed ~4 dev-days, ~1 dev-day per screen, ~1 week team ramp-up. ~1 month total.
+
+## Revisit when
+- A new feature is server-only, cache-heavy and has no drift table, AND
+- we plan to move more than half the screens within two quarters.
+```
+
+</CodeBlock>
+
+- <b>الـ «Findings» فيها الاتنين:</b> المكسب والخسارة بأرقام من الكود، مش من مقالات.
+- <b>الـ «Cost if we revisit»:</b> أهم سطر للي هيقرا بعد سنة. القرار مش «لأ للأبد»، ده «لأ دلوقتي، والتمن ده لو غيرنا رأينا».
+- <b>الـ «Revisit when» فيها AND:</b> feature واحدة server-only مش سبب كفاية تدخّل أداة تانية للفريق. السبب الكافي إنها تبقى أول خطوة في نقل حقيقي.
+
+### وليه مش «Riverpod للـ features الجديدة بس»؟
+
+ده أكتر اقتراح بيتقال بعد spike زي ده: «ماننقلش القديم، بس أي حاجة جديدة Riverpod». شكله رخيص، وتمنه مستخبي:
+
+- <b>الفريق بيشيل الاتنين للأبد:</b> كل حد جديد بيتعلم Cubit وRiverpod، وكل review محتاج حد فاهم الاتنين.
+- <b>الحدود بين الـ features مش ثابتة:</b> الكتالوج (Riverpod) محتاج يعرف حاجة من المكتبة (Cubit). لو المعلومة في الـ domain (`BookLookup`)، تمام. لو حد استسهل، Notifier هيقرا Cubit.
+- <b>أدوات مضاعفة:</b> `bloc_lint` و`riverpod_lint`، و`AppBlocObserver` و`ProviderObserver`، وhelpers تستات للاتنين.
+
+ده مقبول لو هو أول مرحلة في نقل ليه تاريخ نهاية. مش مقبول كحالة دايمة.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+### امتى Riverpod يكسب القرار فعلًا
+
+- <b>الـ app أغلبه بيانات سيرفر بتتعرض وتتخزن في الذاكرة:</b> feeds، وتفاصيل، وفلاتر، وصفحات، من غير DB محلية هي مصدر الحقيقة. هنا الـ caching والـ family والـ `AsyncValue` بيشيلوا كود حقيقي.
+- <b>مشروع جديد والفريق يعرفه:</b> مفيش تمن تحويل، والـ DI والـ state في أداة واحدة من أول يوم.
+- <b>قيم مشتقة كتير بين الشاشات:</b> «عدد الكتب اللي بقراها» في الـ Home والبروفايل والـ widget بتاع الشاشة الرئيسية. في الـ Cubit دي streams بتتكرر، في Riverpod provider واحد.
+
+### وامتى الـ Cubit يفضل
+
+- <b>offline-first بـ DB هي الحقيقة:</b> drift هو الـ cache، فميزة Riverpod الأكبر متغطية. ده حال Readly.
+- <b>flows وactions أكتر من عرض:</b> forms، وchecks، وخطوات، وoptimistic. الـ state الصريحة والـ lifecycle الواضح بيكسبوا.
+- <b>الفريق بيتغير كتير:</b> الـ Cubit بيتفهم في ساعة. lifecycle الـ Riverpod (autoDispose، و`build` بيتعاد، والـ family equality) محتاج تجربة.
+
+### القرار نفسه قابل للرجوع
+
+لو الحدود نضيفة، اختيار الـ state management قرار رخيص الرجوع فيه: شهر لمشروع بحجم Readly. وده أهم من الاختيار نفسه. فريق حدوده نضيفة يقدر يختار Cubit النهارده وينقل بعد سنتين لو الظروف اتغيرت. فريق حدوده بايظة محبوس في أي اختيار عمله، حتى لو كان الاختيار الصح.
+
+فالسؤال الأول في أي مراجعة معمارية مش «Riverpod ولا Bloc؟»، هو «لو قررنا نغيّر بكرة، هيكلّف كام؟». ولو الإجابة «مش عارفين»، ده الـ bug.
+
+<Note kind="interview" title="سؤال interview">
+
+«انتو بتستخدموا Bloc. ليه مش Riverpod؟» الإجابة القوية مش «Bloc أحسن». «عملنا spike: كتبنا المكتبة والكتالوج وصفحة الكتاب بـ Riverpod. الـ domain والـ data ماتغيروش ولا سطر، وده كان أهم نتيجة. Riverpod كسب في البحث والصفحات والقيم المشتقة، وتعادل أو خسر في الـ submit والـ optimistic. ولأن الـ app بتاعنا offline-first وdrift هو الـ cache، أكبر ميزة لـ Riverpod كانت متغطية، فقررنا نفضل، والقرار مكتوب في ADR بالتمن لو غيّرنا رأينا: حوالي شهر، والشروط اللي تخلينا نراجعه». دي إجابة بتقول إنك قسته، مش بتدافع عن ذوقك.
+
+</Note>
+
+<Note kind="interview" title="سؤال interview">
+
+«ينفع Riverpod وBloc في نفس الـ app؟» ينفع تقنيًا من غير أي مشكلة: `ProviderScope` فوق، و`BlocProvider` تحته يقدر يقرا providers في الـ `create`. بس بقواعد: كل feature بأداة واحدة، ومصدر الحقيقة في الـ repository والاتنين يسمعوا عليه، ومفيش Notifier بيقرا Cubit أو العكس، وكل object ليه مالك واحد في الـ DI، والخليط ليه تاريخ نهاية والـ CI بيمنع إن القديم يزيد. من غير التاريخ ده، «مؤقتًا» بتبقى «للأبد».
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### الخليط: Notifier بيقرا Cubit ولا الاتنين بيسمعوا على المصدر
+
+<BeforeAfter>
+
+<Side label="قبل: عمرين مربوطين" kind="before">
+
+```dart
+// catalog (Riverpod) needs the owned books,
+// the library is still a Cubit
+@riverpod
+Set<BookId> ownedIds(Ref ref) {
+  final cubit = getIt<LibraryCubit>(); // a NEW factory instance
+  final state = cubit.state;
+  return switch (state) {
+    LibraryLoaded(:final books) => {for (final b in books) b.id},
+    _ => const {},
+  };
+}
+```
+
+</Side>
+
+<Side label="بعد: نفس المصدر" kind="after">
+
+```dart
+// the library's public contract, used by both worlds
+@riverpod
+Stream<Set<BookId>> ownedIds(Ref ref) =>
+    ref.watch(bookLookupProvider).watchLibraryIds();
+
+// LibraryCubit (not migrated) keeps listening to
+// watchLibrary() through LibraryRepository, as before
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: `getIt<LibraryCubit>()` factory، فبيعمل Cubit جديد عمره ما اتعمله `watch()`، فالـ state دايمًا `LibraryLoading` والكتالوج بيقول «مش عندك» لكل الكتب. ولو اتصلّحت بـ lazySingleton، الـ provider بيقرا الـ state مرة ومابيسمعش، فبعد ما المستخدم يضيف كتاب العلامة مش هتظهر. وفي الحالتين الكتالوج بقى مربوط بـ presentation المكتبة. بعد: الاتنين بيسمعوا على `BookLookup` من الـ domain، فمحدش يعرف التاني اتكتب بإيه، وأي واحد فيهم يتنقل من غير ما التاني يحس.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="rp-decision-1">
+<Ask>من جدول «مين كسب»، إيه النمط المشترك بين الشاشات اللي Riverpod كسب فيها، والشاشات اللي الـ Cubit تعادل أو كسب فيها؟</Ask>
+<Answer>
+
+Riverpod كسب في الحاجات اللي شكلها «بيانات بتتعرض»: stream من drift، ونتايج بحث بصفحات، وقيم مشتقة، وتفاصيل بتتعمل لها refresh. الـ caching والـ family والـ `AsyncValue` والإلغاء التلقائي بيشيلوا كود. والـ Cubit تعادل أو كسب في الـ actions اللي ليها خطوات: submit، وoptimistic، وflows. هناك الصعوبة في المنطق نفسه، والـ state الصريحة والـ lifecycle الواضح بيساعدوا أكتر.
+
+</Answer>
+</Question>
+
+<Question id="rp-decision-2">
+<Ask>مدير المشروع سأل: «نقل Readly لـ Riverpod هياخد قد إيه؟». إيه اللي بيخلّي الرقم ده ممكن يتقدّر أصلًا، وإيه اللي ممكن يضاعفه؟</Ask>
+<Answer>
+
+اللي بيخلّيه ممكن: الحدود. الـ domain والـ data مابيعرفوش الـ state management (ومتحرسين بتست)، والـ UI مابتعرفش عن الـ Cubit غير الـ state والـ methods. فالشغل = تمن ثابت (setup، DI، session، observer، helpers للتست، تعلم) + تمن لكل شاشة حسب شكلها. اللي بيضاعفه: logic جوه الـ widgets، وCubits بتمسك بعض، وdomain بيرجّع أنواع من الـ presentation. دول لازم يتصلحوا الأول، وتمنهم مش معروف قبل ما تبص.
+
+</Answer>
+</Question>
+
+<Question id="rp-decision-3">
+<Ask>وقت الـ migration، `BlocProvider(create: (_) => NotesCubit(ref.read(notesRepositoryProvider), bookId))`. إيه الشرط اللازم في `notesRepositoryProvider` عشان ده يبقى آمن، وليه؟</Ask>
+<Answer>
+
+لازم يبقى `keepAlive`. الـ `ref.read` مابيمسكش الـ provider عايش، والـ Cubit شايل الـ repository في field طول عمره. لو الـ provider autoDispose ومحدش تاني بيسمع عليه، الـ container ممكن يرميه (ويشغّل `onDispose` بتاعه) والـ Cubit لسه بيستخدم النسخة القديمة. والـ repositories أصلًا المفروض keepAlive لأنها المقابل لـ lazySingleton.
+
+</Answer>
+</Question>
+
+<Question id="rp-decision-4">
+<Ask>بعد الـ spike، حد اقترح: «نسيب القديم Cubit، وأي feature جديدة Riverpod». ترد بإيه؟</Ask>
+<Answer>
+
+ده مقبول بس كأول مرحلة في نقل ليه تاريخ نهاية وratchet في الـ CI. كحالة دايمة تمنه عالي ومستخبي: الفريق بيشيل أداتين للأبد، وكل حد جديد بيتعلم الاتنين، والأدوات بتتضاعف (lints، observers، helpers للتست)، والحدود بين features بأدوات مختلفة بتغري حد يخلّي Notifier يقرا Cubit. ولو مش ناويين ننقل الباقي، الأحسن الـ feature الجديدة تبقى Cubit زي باقي الـ app.
+
+</Answer>
+</Question>
+
+</Quiz>

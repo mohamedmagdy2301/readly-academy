@@ -1,0 +1,524 @@
+---
+title: "Riverpod مكان get_it"
+description: "الـ composition root بتاع Readly بـ providers: الـ data sources والـ repositories والـ use cases، والـ Dio الاتنين من غير instanceName، والحاجات اللي بتتجهز قبل runApp، والـ flavors بالـ overrides، والـ session من غير resetOnLogout، والـ SyncService، وإزاي الـ domain يفضل مايعرفش حاجة."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="المخزن والوصفة">
+
+get_it زي <b>مخزن</b> فيه أمين بيدّيك اللي تطلبه بالاسم. قبل ما المطعم يفتح، حد لازم يدخل كل حاجة المخزن ويكتب عليها اسمها («دقيق»، «زيت»). ولو طباخ طلب «سمنة» وماحدش دخّلها، بيعرف الصبح وهو بيطبخ: «مش موجودة». ولو في نوعين زيت، لازم تكتب على كل واحد اسم زيادة («زيت قلي»، «زيت سلطة»)، وكل طباخ لازم يفتكر الاسم بالظبط.
+
+Riverpod زي <b>وصفة</b> مكتوب فيها مكوناتها. «الصلصة = طماطم + توم + زيت سلطة». محدش بيدخّل حاجة الصبح: أول ما حد يطلب الصلصة، المطبخ يجهّز اللي ناقص من مكوناتها لوحده، بالترتيب. والمكون اللي مش موجود بيبان وانت بتكتب الوصفة، مش وانت بتطبخ. والزيتين كل واحد ليه سطر في الكتاب باسم مختلف، فمفيش حد هيطلب الغلط.
+
+</Analogy>
+
+- <b>تسجيل كل حاجة في `setupDependencies()`</b> بيبقى providers متعرفة في ملفاتها، ومفيش خطوة «تسجيل» خالص.
+- <b>`getIt<LibraryRepository>()` بيرمي وقت التشغيل لو مش متسجل</b>، و`ref.watch(libraryRepositoryProvider)` مايعملش compile لو مش موجود.
+- <b>`instanceName: 'api'`</b> بيبقى provider تاني باسم تاني.
+- <b>الحاجات اللي محتاجة تتجهز قبل الفتح</b> (`SharedPreferencesWithCache`، الـ `TokenStore` بعد `clearIfReinstalled`) لسه بتتجهز قبل `runApp`، وبتدخل للمطبخ كـ override.
+
+والجملة الأهم في الدرس: <b>الوصفات اتغيرت مكانها، والمكونات نفسها زي ما هي</b>. `LibraryRepositoryImpl` و`SyncService` و`AuthInterceptor` classes عادية بتاخد اللي محتاجاه في الـ constructor، قبل Riverpod وبعده.
+
+</Level>
+
+<Level n="2" title="الـ composition root بالـ providers">
+
+### الخريطة من get_it لـ Riverpod
+
+| في get_it / injectable | في Riverpod | ملاحظة |
+| --- | --- | --- |
+| `registerLazySingleton<T>(...)` / `@LazySingleton(as: T)` | `@Riverpod(keepAlive: true) T x(Ref ref)` | نوع الرجوع هو الـ contract |
+| `registerFactory<T>(...)` لـ object رخيص | `@riverpod T x(Ref ref)` (autoDispose) | الـ use cases غالبًا |
+| `registerFactory` لـ Cubit | Notifier | مش DI أصلًا: ده الـ presentation |
+| `registerFactoryParam<T, P, void>` | family | الـ parameter ليه `==` |
+| `registerSingleton(x)` بعد `await` | provider بيرمي `UnimplementedError` + `overrideWithValue(x)` في `main` | هنشوفه تحت |
+| `instanceName: 'api'` | provider تاني باسم تاني | |
+| `dispose: (x) => x.close()` | `ref.onDispose(x.close)` | |
+| `env: ['dev']` | `overrides` في `main_dev.dart` | |
+| `resetLazySingleton<T>()` على الـ logout | provider بيعمل `watch` لحالة الدخول | هنشوفه في Level 3 |
+| `getIt<T>()` جوه الـ route | `ref.watch(tProvider)` جوه provider أو widget | |
+
+### الـ core: Dio الاتنين والـ config
+
+نفس `buildApiDio` و`buildOpenLibraryDio` اللي في [درس dio](/course/data-network/network/). الـ functions نفسها ماتتغيرش، اللي بيتغير مين بيناديها:
+
+<CodeBlock label="core/lib/src/di/core_providers.dart">
+
+```dart
+import 'package:riverpod_annotation/riverpod_annotation.dart';
+
+part 'core_providers.g.dart';
+
+/// Ready before runApp: overridden in main().
+@Riverpod(keepAlive: true)
+SharedPreferencesWithCache sharedPreferences(Ref ref) =>
+    throw UnimplementedError('override sharedPreferencesProvider in main()');
+
+@Riverpod(keepAlive: true)
+TokenStore tokenStore(Ref ref) =>
+    throw UnimplementedError('override tokenStoreProvider in main()');
+
+@Riverpod(keepAlive: true)
+AppConfig appConfig(Ref ref) =>
+    throw UnimplementedError('override appConfigProvider per flavor');
+
+@Riverpod(keepAlive: true)
+Dio apiDio(Ref ref) {
+  final dio = buildApiDio(ref.watch(appConfigProvider), ref.watch(tokenStoreProvider));
+  ref.onDispose(dio.close);
+  return dio;
+}
+
+@Riverpod(keepAlive: true)
+Dio openLibraryDio(Ref ref) {
+  final dio = buildOpenLibraryDio();
+  ref.onDispose(dio.close);
+  return dio;
+}
+```
+
+</CodeBlock>
+
+- <b>`apiDio` و`openLibraryDio`:</b> الاتنين `Dio`، وكل واحد ليه اسمه. مفيش `getIt<Dio>(instanceName: 'api')` اللي لو اتكتب `'API'` بيقع وقت التشغيل.
+- <b>الـ `throw UnimplementedError`:</b> الـ provider موجود عشان الـ graph يتكتب ويعمل compile، والقيمة الحقيقية بتيجي من `main`. لو حد نسي الـ override، الرسالة بتقول بالظبط يعمل إيه.
+- <b>الـ `ref.watch` للـ config والـ tokens:</b> watch مش read، لأن ده provider والـ watch هو الـ dependency. والاتنين بيتعمل لهم override مرة ومابيتغيروش، فمفيش rebuild عمليًا.
+
+### feature_library: الـ data والـ domain كـ providers
+
+ده اللي كان في `registerLibrary(GetIt getIt)` بتاع [درس «الـ State management في مشروع حقيقي»](/course/state-management/architecture/):
+
+<CodeBlock label="feature_library/lib/src/library_providers.dart">
+
+```dart
+import 'package:core/core.dart';
+import 'package:riverpod_annotation/riverpod_annotation.dart';
+
+import 'data/library_local_source.dart';
+import 'data/library_remote_source.dart';
+import 'data/library_repository_impl.dart';
+import 'domain/book_lookup.dart';
+import 'domain/library_repository.dart';
+import 'domain/refresh_library.dart';
+
+part 'library_providers.g.dart';
+
+@Riverpod(keepAlive: true)
+LibraryRemoteSource libraryRemoteSource(Ref ref) =>
+    LibraryRemoteSource(ref.watch(apiDioProvider));
+
+@Riverpod(keepAlive: true)
+LibraryLocalSource libraryLocalSource(Ref ref) =>
+    LibraryLocalSource(ref.watch(appDatabaseProvider));
+
+/// One instance, two contracts: private, the rest of the app never sees the Impl.
+@Riverpod(keepAlive: true)
+LibraryRepositoryImpl _libraryRepositoryImpl(Ref ref) => LibraryRepositoryImpl(
+      ref.watch(libraryRemoteSourceProvider),
+      ref.watch(libraryLocalSourceProvider),
+    );
+
+@Riverpod(keepAlive: true)
+LibraryRepository libraryRepository(Ref ref) => ref.watch(_libraryRepositoryImplProvider);
+
+/// The public contract for other features (catalog, notes): exported by the barrel.
+@Riverpod(keepAlive: true)
+BookLookup bookLookup(Ref ref) => ref.watch(_libraryRepositoryImplProvider);
+
+@riverpod
+RefreshLibrary refreshLibrary(Ref ref) => RefreshLibrary(ref.watch(libraryRepositoryProvider));
+```
+
+</CodeBlock>
+
+- <b>نوع الرجوع interface:</b> `LibraryRepository` مش `LibraryRepositoryImpl`. أي حد بيعمل watch بيشوف الـ contract بس، زي `@LazySingleton(as: LibraryRepository)`.
+- <b>نسخة واحدة وcontractين:</b> زي `registerLazySingleton<BookLookup>(() => getIt<LibraryRepositoryImpl>())` في [درس «حراسة المعمارية»](/course/quality/architecture-guards/). الـ provider بتاع الـ Impl private (اسمه بيبدأ بـ `_`)، فبيتولد `_libraryRepositoryImplProvider` محدش برا الملف يشوفه. والكتالوج بيعمل watch لـ `bookLookupProvider` ومايعرفش إن وراه repository.
+- <b>الـ use case من غير keepAlive:</b> رخيص ومالوش state، فبيتعمل ويتمسح مع اللي بيستخدمه. ده الـ `registerFactory` القديم.
+- <b>الملف مكانه `src/` مش `domain/` ولا `data/`:</b> هو الـ composition root بتاع الـ feature، مكان `library_di.dart`. وتست المعمارية من الدرس الأول بيعدّيه.
+
+<Diagram name="d-rp-di-map">
+
+الشمال: get_it، كل حاجة بتتسجل في setupDependencies بالترتيب، والـ lookup بالنوع وبالـ instanceName وقت التشغيل. اليمين: نفس الـ objects كـ providers، كل واحد بيعمل watch للي محتاجه، والـ ProviderScope في main بيحط الـ overrides للحاجات اللي اتجهزت قبل runApp. الـ classes في النص (الـ Impl والـ use cases والـ data sources) هي هي في الناحيتين.
+
+</Diagram>
+
+### الـ domain: ولا حرف
+
+<CodeBlock label="feature_library/lib/src/domain/refresh_library.dart (زي ما هو)">
+
+```dart
+class RefreshLibrary {
+  RefreshLibrary(this._repository);
+  final LibraryRepository _repository;
+
+  Future<Result<void>> call() => _repository.refresh();
+}
+```
+
+</CodeBlock>
+
+مفيش `@riverpod` على الـ class، ومفيش `Ref` في الـ constructor، ومفيش import لـ Riverpod. الـ annotations اللي بتعمل الأسلاك بتتحط على functions في ملف الـ providers، مش على الـ classes. ده فرق عن injectable، اللي كان بيحط `@injectable` على الـ class نفسها في الـ data layer. يعني من الناحية دي Riverpod أنضف: الـ data layer مابقاش فيها حتى annotation.
+
+### main: الحاجات اللي بتتجهز قبل runApp
+
+<CodeBlock label="app/lib/main.dart">
+
+```dart
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final prefs = await SharedPreferencesWithCache.create(
+    cacheOptions: const SharedPreferencesWithCacheOptions(),
+  );
+  final tokens = SecureTokenStore(const FlutterSecureStorage(), prefs);
+  await tokens.clearIfReinstalled(); // before anyone reads a token
+
+  runApp(ProviderScope(
+    overrides: [
+      sharedPreferencesProvider.overrideWithValue(prefs),
+      tokenStoreProvider.overrideWithValue(tokens),
+      appConfigProvider.overrideWithValue(AppConfig.prod),
+    ],
+    child: const ReadlyApp(),
+  ));
+}
+```
+
+</CodeBlock>
+
+نفس ترتيب `setupDependencies()` بتاع [درس الـ Session](/course/di-scale/session/) بالظبط: الـ prefs، وبعدين الـ tokens، و`clearIfReinstalled` قبل أي قراية. الفرق إن النتيجة بتدخل الـ container بـ `overrideWithValue` بدل `registerSingleton`. وكل حاجة تانية lazy زي ما كانت.
+
+### الـ flavors: overrides مكان الـ env
+
+<CodeBlock label="app/lib/main_dev.dart">
+
+```dart
+Future<void> main() async {
+  // ... prefs and tokens as in main.dart
+  runApp(ProviderScope(
+    overrides: [
+      sharedPreferencesProvider.overrideWithValue(prefs),
+      tokenStoreProvider.overrideWithValue(tokens),
+      appConfigProvider.overrideWithValue(AppConfig.dev),
+      // work without a server: the same fakes the tests use
+      libraryRepositoryProvider.overrideWith((ref) => FakeLibraryRepository()),
+      bookLookupProvider.overrideWith((ref) => FakeBookLookup()),
+    ],
+    child: const ReadlyApp(),
+  ));
+}
+```
+
+</CodeBlock>
+
+ده اللي كان `@LazySingleton(as: LibraryRepository, env: ['dev'])` على `FakeLibraryRepository` في [درس الـ DI](/course/di-scale/di/). الفرق إن الـ fake مابقاش عليه annotation بتقول «أنا للـ dev»: الـ `main_dev.dart` هو اللي بيقرر. وخلي بالك إن الـ override بيبدّل الـ provider اللي اتكتب بس: `bookLookupProvider` بيقرا الـ Impl مش `libraryRepositoryProvider`، فلازم override ليه هو كمان، بالـ `FakeBookLookup` اللي في `testing.dart` بتاع الـ library. ولو نسيته، الكتالوج هيحاول يفتح drift الحقيقي في الـ dev.
+
+</Level>
+
+<Level n="3" title="الحاجات اللي get_it كان بيعملها بإيدك">
+
+### الـ session: من غير resetOnLogout
+
+في [درس الـ Session](/course/di-scale/session/)، الـ logout كان بيعمل حاجتين في الـ composition root: `imageCache.clear()` و`resetLazySingleton<CatalogRepository>()` عشان الـ cache اللي في الذاكرة بتاع البحث. وكان في تحذير: «لما الـ singletons تكتر، استخدم scope في get_it، بدل قايمة لازم تفتكر تزوّد عليها».
+
+في Riverpod، القايمة دي بتبقى dependency. الأول الـ `AuthCubit` بقى Notifier بنفس الـ `AuthState`:
+
+<CodeBlock label="feature_auth/lib/src/presentation/auth_providers.dart">
+
+```dart
+@Riverpod(keepAlive: true)
+class AuthNotifier extends _$AuthNotifier {
+  @override
+  AuthState build() {
+    final auth = ref.watch(authRepositoryProvider);
+    final sub = auth.sessionCleared.listen((_) {
+      if (state is Authenticated) state = const Unauthenticated(sessionExpired: true);
+    });
+    ref.onDispose(sub.cancel);
+    unawaited(_check(auth));
+    return const AuthUnknown();
+  }
+
+  Future<void> _check(AuthRepository auth) async {
+    final hasSession = await auth.hasSession();
+    if (!ref.mounted) return;
+    state = hasSession ? const Authenticated() : const Unauthenticated();
+  }
+
+  void loggedIn() => state = const Authenticated();
+  // logout(): the same body as AuthCubit.logout, with ref.mounted after each await
+}
+
+/// Everything that belongs to "the user who is signed in now" watches this.
+@Riverpod(keepAlive: true)
+bool signedIn(Ref ref) => ref.watch(authProvider.select((s) => s is Authenticated));
+```
+
+</CodeBlock>
+
+وبعدين أي provider بيشيل حاجة تخص المستخدم بيعمل watch لـ `signedInProvider`:
+
+<CodeBlock label="feature_catalog/lib/src/catalog_providers.dart">
+
+```dart
+@Riverpod(keepAlive: true)
+CatalogRepository catalogRepository(Ref ref) {
+  ref.watch(signedInProvider); // a new instance (and an empty cache) on every sign in/out
+  return CatalogRepositoryImpl(ref.watch(catalogRemoteSourceProvider));
+}
+```
+
+</CodeBlock>
+
+- <b>الـ watch من غير ما تستخدم القيمة:</b> السطر ده معناه «لو الدخول اتغير، ارمي النسخة دي واعمل واحدة جديدة». ده بالظبط `resetLazySingleton`، بس مكتوب جنب الحاجة نفسها، مش في قايمة في ملف تاني.
+- <b>المستخدم A خرج وB دخل:</b> `signedIn` بيروح `false` وبعدين `true`، فالـ repository بيتعمل مرتين، وكل الـ providers اللي بتعمل watch ليه (نتايج البحث، الـ owned ids) بتتبني من جديد. مفيش حاجة من A توصل لـ B.
+- <b>الـ `AuthState` نفسها ماتغيرتش:</b> نفس الـ sealed class بتاعة الـ session. والـ `AuthRepository` contract زي ما هو: `hasSession()` و`sessionCleared`. مفيش method جديدة في الـ domain عشان Riverpod.
+- <b>`imageCache.clear()`:</b> ده مش object بيتعمل، ده effect. مكانه `ref.listen(signedInProvider, ...)` في الـ `ReadlyApp`، مش provider.
+
+<Note kind="warn" title="keepAlive بيعمل watch لـ autoDispose">
+
+لو `signedIn` اتكتب `@riverpod` من غير keepAlive، والـ `catalogRepository` (keepAlive) بيعمل له watch، فيه مشكلة: الـ keepAlive عايش للأبد، وبيعتمد على حاجة ممكن تتمسح وتتبني تاني من غير سبب. الـ `riverpod_lint` عنده rule اسمها `only_use_keep_alive_inside_keep_alive` بتمسك ده. القاعدة: اللي keepAlive بيعتمد على keepAlive بس.
+
+</Note>
+
+### الـ Dio مايتعملش من جديد مع كل token
+
+غلطة بتحصل أول ما الناس تكتشف إن الـ watch بيعيد البناء:
+
+<CodeBlock label="الغلط: Dio جديد مع كل refresh">
+
+```dart
+@Riverpod(keepAlive: true)
+Dio apiDio(Ref ref) {
+  final token = ref.watch(accessTokenProvider); // changes every 15 minutes
+  return Dio(BaseOptions(headers: {'Authorization': 'Bearer $token'}));
+}
+```
+
+</CodeBlock>
+
+كل مرة الـ token يتجدد، الـ Dio بيتعمل من جديد، وكل الـ remote sources والـ repositories اللي بتعمل له watch بيتعملوا من جديد، وكل طلب كان شغال على الـ Dio القديم ممكن يتقفل في نصه (الـ `onDispose(dio.close)`). والأسوأ: `catalogRepository` اتعمل من جديد، فالـ cache بتاعه اتمسح، من غير logout.
+
+الـ token مش dependency بتاعة الـ Dio، ده قيمة بتتقرا <b>مع كل طلب</b>. وده اللي `AuthInterceptor` بيعمله أصلًا: بياخد `TokenStore` في الـ constructor ويقرا منه في `onRequest`. فالـ `apiDio` بيعمل watch للـ `tokenStoreProvider` (اللي مابيتغيرش)، مش للـ token. القاعدة: <b>`ref.watch` للحاجات اللي لو اتغيرت، الـ object نفسه لازم يتعمل من جديد</b>. اللي بيتغير وانت عايش، اقراه وقت ما تحتاجه.
+
+### الـ SyncService: عايش طول الـ app ومحدش بيبص عليه
+
+<CodeBlock label="feature_library/lib/src/library_providers.dart">
+
+```dart
+@Riverpod(keepAlive: true)
+SyncService syncService(Ref ref) {
+  ref.watch(signedInProvider); // the queue belongs to the signed-in user
+  final sync = SyncService(
+    ref.watch(syncQueueProvider),
+    ref.watch(libraryRemoteSourceProvider),
+    ref.watch(appDatabaseProvider),
+    ref.watch(networkStatusProvider),
+  )..start();
+  ref.onDispose(sync.stop);
+  return sync;
+}
+```
+
+</CodeBlock>
+
+بس فيه مشكلة: الـ providers lazy. لو محدش عمل watch لـ `syncServiceProvider`، الـ sync عمره ما هيبدأ. في get_it كان فيه `getIt<SyncService>().start()` في `main`. في Riverpod، الطريقة اللي الـ docs بتقترحها widget فوق الـ app بيعمل watch للحاجات اللي لازم تبدأ بدري:
+
+<CodeBlock label="app/lib/app.dart">
+
+```dart
+class _EagerProviders extends ConsumerWidget {
+  const _EagerProviders({required this.child});
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    ref.watch(syncServiceProvider); // starts it, keeps it, restarts it on sign in/out
+    ref.listen(signedInProvider, (_, _) => PaintingBinding.instance.imageCache.clear());
+    return child;
+  }
+}
+
+// ReadlyApp.build: _EagerProviders(child: MaterialApp.router(...))
+```
+
+</CodeBlock>
+
+- <b>الـ watch هنا مش عشان القيمة:</b> عشان الـ provider يتعمل ويفضل عنده listener. نفس فكرة الـ `ref.watch(signedInProvider)` من غير ما تستخدم القيمة.
+- <b>الـ logout والـ sync:</b> لما `signedIn` يتغير، الـ `SyncService` القديم بيتعمل له `stop()` في الـ `onDispose`، وواحد جديد بيبدأ. والـ pending ops في الـ queue محفوظة في drift، فمش بتضيع. ده نفس الترتيب اللي في [درس الـ Session](/course/di-scale/session/): الـ sync يقف قبل ما حاجة تتمسح.
+- <b>الـ class نفسها:</b> `SyncService(queue, remote, db, network)` بالظبط زي [درس Offline-first](/course/offline/offline/). Riverpod بس بقى بيعمل الـ `start` والـ `stop`.
+
+### الوصول لكل حاجة من كل حتة
+
+<CodeBlock label="ده بيعمل compile عادي">
+
+```dart
+class LibraryView extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    // the widget talks to the repository directly: no Notifier, no rules
+    final books = ref.watch(libraryRepositoryProvider).watchLibrary();
+    // ...
+  }
+}
+```
+
+</CodeBlock>
+
+في get_it، القاعدة كانت «`getIt` يتنادى في الـ composition root والـ routes بس»، والـ review هو اللي بيحرسها. في Riverpod، الـ providers كلها global، فالـ widget يقدر يعمل watch لأي repository من غير ما حاجة تقوله لأ. وده بيلغي الـ presentation logic كلها: مفيش مكان للـ loading ولا للـ failure ولا للـ refresh.
+
+الحل حد في الكود، مش نصيحة:
+
+- <b>الـ barrel مايصدّرش الـ data providers:</b> `feature_library.dart` بيصدّر `bookLookupProvider` (الـ contract العام) والـ presentation، مش `libraryRemoteSourceProvider` ولا `libraryLocalSourceProvider`. الـ features التانية مش شايفاهم أصلًا.
+- <b>تست معمارية تاني:</b> ملفات الـ widgets (`*_page.dart`، `*_view.dart`، `widgets/`) مايظهرش فيها اسم provider بينتهي بـ `RepositoryProvider` أو `SourceProvider`. نفس الـ regex بتاع تست الـ imports، على النص.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+### بتكسب إيه وبتخسر إيه
+
+| | get_it + injectable | Riverpod |
+| --- | --- | --- |
+| dependency مش موجودة | runtime: `Object/factory with type X is not registered` | compile: الـ provider مش موجود |
+| نوعين من نفس الـ type | `instanceName` (string) | providers بأسماء مختلفة |
+| الـ dependencies بتاعة class | في الـ constructor، صريحة | في الـ constructor برضه للـ data والـ domain. الـ Notifiers بس بتقرا من `ref` |
+| async init | `registerSingleton` بعد `await` | override في `ProviderScope` |
+| الـ flavors | `env` على الـ class | overrides في `main_dev.dart` |
+| reset على الـ logout | `resetLazySingleton` في قايمة | `ref.watch(signedInProvider)` جنب الحاجة |
+| التست | `getIt.reset()` بين التستات، أو constructor injection | `ProviderContainer.test` جديد لكل تست |
+| حد يوصل لحاجة مش المفروض يوصلها | `getIt<X>()` من أي حتة، والـ review بيمسكه | `ref.watch(xProvider)` من أي حتة، والـ barrel والتست بيمسكوه |
+| الـ annotations في الـ data | `@LazySingleton(as: ...)` على الـ Impl | مفيش |
+
+### قرارات
+
+- <b>Riverpod للاتنين أو لأ خالص:</b> لو الـ presentation بقت Riverpod، خلّي الـ DI Riverpod. Notifiers بتقرا من get_it يعني نظامين DI، وكل object ليه مالك مش واضح. الكوبري (provider بيرجّع `getIt<T>()`) للـ migration بس، وليه تاريخ نهاية.
+- <b>الـ classes ماتعرفش `Ref`:</b> ده أهم قرار في الدرس. الـ data والـ domain بياخدوا dependencies في الـ constructor، فتقدر ترجع لـ get_it بكرة (أو تكتب CLI من غير Flutter) من غير ما تلمسهم. الـ providers طبقة أسلاك رفيعة، كل واحد سطر أو 3.
+- <b>`watch` ولا `read` في provider؟</b> `watch` تقريبًا دايمًا: ده اللي بيعمل الـ graph. والسؤال قبل كل watch: «لو ده اتغير، الـ object ده لازم يتعمل من جديد؟». الـ token لأ. المستخدم الحالي لـ cache، أيوه.
+- <b>الـ keepAlive للـ dependencies:</b> الـ data sources والـ repositories والـ Dio والـ database keepAlive، لأن ده الـ lazySingleton. وأي provider keepAlive بيعتمد على keepAlive بس.
+
+<Note kind="interview" title="سؤال interview">
+
+«لو شلت get_it وحطيت Riverpod، الـ data layer بتتغير؟» لأ، لو كانت مكتوبة صح. الـ repositories والـ data sources بتاخد dependencies في الـ constructor، ومابتعرفش مين بيعملها. اللي بيتغير هو الـ composition root: بدل `setupDependencies()` بتسجيل بالترتيب، providers كل واحد بيقول محتاج إيه بـ `ref.watch` وبيرجّع الـ contract. والحاجات اللي بتتجهز async (prefs، tokens) بتتجهز قبل `runApp` وبتدخل بـ `overrideWithValue`، والـ flavors بـ overrides بدل `env`، والـ logout reset بـ watch لحالة الدخول بدل `resetLazySingleton`. واللي لازم أحرسه: إن مفيش class في الـ data بتاخد `Ref` (يبقى service locator)، وإن الـ widgets ماتعملش watch للـ repositories مباشرة، لأن Riverpod مابيمنعش ده لوحده.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### تسجيل الـ library
+
+<BeforeAfter>
+
+<Side label="get_it" kind="before">
+
+```dart
+void registerLibrary(GetIt getIt) {
+  getIt
+    ..registerLazySingleton(
+      () => LibraryRemoteSource(getIt<Dio>(instanceName: 'api')),
+    )
+    ..registerLazySingleton(() => LibraryLocalSource(getIt()))
+    ..registerLazySingleton(() => LibraryRepositoryImpl(getIt(), getIt()))
+    ..registerLazySingleton<LibraryRepository>(
+      () => getIt<LibraryRepositoryImpl>(),
+    )
+    ..registerLazySingleton<BookLookup>(() => getIt<LibraryRepositoryImpl>())
+    ..registerFactory(() => RefreshLibrary(getIt()))
+    ..registerFactory(() => LibraryCubit(getIt(), getIt()));
+}
+// + resetLazySingleton in resetOnLogout for anything user-scoped
+```
+
+</Side>
+
+<Side label="Riverpod" kind="after">
+
+```dart
+@Riverpod(keepAlive: true)
+LibraryRemoteSource libraryRemoteSource(Ref ref) =>
+    LibraryRemoteSource(ref.watch(apiDioProvider));
+
+@Riverpod(keepAlive: true)
+LibraryLocalSource libraryLocalSource(Ref ref) =>
+    LibraryLocalSource(ref.watch(appDatabaseProvider));
+
+@Riverpod(keepAlive: true)
+LibraryRepositoryImpl _libraryRepositoryImpl(Ref ref) =>
+    LibraryRepositoryImpl(
+      ref.watch(libraryRemoteSourceProvider),
+      ref.watch(libraryLocalSourceProvider),
+    );
+
+@Riverpod(keepAlive: true)
+LibraryRepository libraryRepository(Ref ref) =>
+    ref.watch(_libraryRepositoryImplProvider);
+
+@Riverpod(keepAlive: true)
+BookLookup bookLookup(Ref ref) =>
+    ref.watch(_libraryRepositoryImplProvider);
+
+@riverpod
+RefreshLibrary refreshLibrary(Ref ref) =>
+    RefreshLibrary(ref.watch(libraryRepositoryProvider));
+// LibraryCubit: gone, see the next lessons
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: الترتيب مهم (لازم الـ Dio يتسجل قبل الـ remote source؟ لأ في الـ lazy، بس لازم يبقى متسجل قبل أول طلب)، و`getIt()` من غير نوع بيعتمد على الـ inference من الـ constructor، والـ `'api'` string. بعد: كل provider بيقول بالاسم هو محتاج إيه، والترتيب مش موجود أصلًا، وأي غلطة اسم compile error. والـ `LibraryRemoteSource` و`LibraryRepositoryImpl` و`RefreshLibrary` هم هم في الناحيتين.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="rp-di-1">
+<Ask>`SharedPreferencesWithCache.create` بترجّع Future. في get_it كانت بتتسجل `registerSingleton` بعد `await`. إزاي تعملها في Riverpod، وليه مش `FutureProvider`؟</Ask>
+<Answer>
+
+provider `keepAlive` بيرمي `UnimplementedError` كقيمة افتراضية، وفي `main` تعمل `await` قبل `runApp` وتحط `sharedPreferencesProvider.overrideWithValue(prefs)` في الـ `ProviderScope`. كده كل اللي بيعمل watch بياخد القيمة sync. لو عملته `FutureProvider`، كل provider بيعتمد عليه (الإعدادات، الـ TokenStore) هيبقى async، وأول frame هيبقى loading في كل حتة، والـ `clearIfReinstalled` مش هتبقى مضمونة قبل أول قراية للـ token.
+
+</Answer>
+</Question>
+
+<Question id="rp-di-2">
+<Ask>`apiDio` بقى بيعمل `ref.watch(accessTokenProvider)` عشان يحط الـ header. بعد ربع ساعة من الاستخدام، نتايج البحث في الكتالوج بتختفي من غير سبب. ليه؟</Ask>
+<Answer>
+
+الـ token اتجدد، فـ `apiDio` اتبنى من جديد، وكل provider بيعمل watch ليه في السلسلة اتبنى من جديد، ومنهم `catalogRepository` اللي فيه الـ cache في الذاكرة، فالـ cache اتمسح، والنتايج اللي بتعتمد عليه اتبنت تاني. والطلبات اللي كانت شغالة على الـ Dio القديم ممكن تتقفل بـ `onDispose(dio.close)`. الحل إن الـ Dio يعمل watch للـ `TokenStore` (اللي مابيتغيرش)، والـ `AuthInterceptor` يقرا الـ token مع كل طلب، زي ما كان.
+
+</Answer>
+</Question>
+
+<Question id="rp-di-3">
+<Ask>إيه اللي بيقابل `resetLazySingleton<CatalogRepository>()` في الـ logout، وليه ده أحسن من قايمة في `resetOnLogout`؟</Ask>
+<Answer>
+
+`ref.watch(signedInProvider)` جوه `catalogRepository`. لما حالة الدخول تتغير، الـ provider بيرمي النسخة القديمة (والـ cache بتاعها) ويعمل واحدة جديدة، وكل اللي بيعتمد عليه بيتبني من جديد. أحسن لأن الاعتماد مكتوب جنب الحاجة نفسها: اللي بيضيف cache جديد بيعرف وهو بيكتبه إنه مرتبط بالمستخدم. القايمة في ملف تاني لازم حد يفتكر يزوّد عليها، وأول مرة حد ينسى، بيانات مستخدم بتوصل للتاني.
+
+</Answer>
+</Question>
+
+<Question id="rp-di-4">
+<Ask>`syncServiceProvider` متعرّف صح وkeepAlive، بس الـ sync مابيبدأش أبدًا. ليه؟ والحل؟</Ask>
+<Answer>
+
+الـ providers lazy: مابتتعملش غير لما حد يعمل watch أو read. محدش طلب `syncServiceProvider`، فالـ `SyncService` عمره ما اتعمل، فالـ `start()` ماتنادتش. الحل widget فوق الـ app (`_EagerProviders`) بيعمل `ref.watch(syncServiceProvider)`، فالـ provider يتعمل مع أول frame ويفضل عنده listener، ويتعمل من جديد لو `signedIn` اتغير.
+
+</Answer>
+</Question>
+
+<Question id="rp-di-5">
+<Ask>`LibraryView` بيعمل `ref.watch(libraryRepositoryProvider).watchLibrary()` مباشرة. الكود بيعمل compile وشغال. إيه المشكلة، وإزاي تمنعها؟</Ask>
+<Answer>
+
+الـ widget بقى بيكلّم الـ data contract مباشرة من غير presentation logic: مفيش مكان للـ loading والـ failure والـ refresh، والـ stream بيتعمل من جديد مع كل build. وRiverpod مابيمنعش ده لأن الـ providers global. المنع بييجي من الكود: الـ barrel مايصدّرش الـ data providers للـ features التانية، وتست معمارية بيدوّر في ملفات الـ widgets على أسماء providers بتنتهي بـ `RepositoryProvider` أو `SourceProvider`.
+
+</Answer>
+</Question>
+
+</Quiz>

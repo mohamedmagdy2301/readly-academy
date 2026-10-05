@@ -1,0 +1,512 @@
+---
+title: "اختبار الـ providers"
+description: "تستات Readly بعد Riverpod: الـ ProviderContainer.test والـ overrides مكان الـ constructor mocks، وhelper بيسجّل الـ states بالترتيب زي blocTest، والـ seed بـ overrideWithBuild، والـ debounce بـ fake_async، والـ dispose في نص الـ await، والـ widget tests والـ goldens، وكل parameter في blocTest بيقابل إيه."
+minutes: 40
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="البروفة">
+
+مسرحية فيها 10 ممثلين، وانت عايز تتأكد إن مشهد البطل مع أمه ماشي صح. مش محتاج الـ 10 ييجوا. بتجيب البطل الحقيقي، وحد من الفرقة يقف مكان الأم ويقول جُملها من الورق. والمسرح نفسه فاضي ونضيف، وبعد البروفة بيتقفل، والبروفة الجاية بتبدأ على مسرح فاضي تاني.
+
+</Analogy>
+
+- <b>البطل الحقيقي</b> هو الـ Notifier اللي بتختبره. بيشتغل زي ما هو، بالـ `build` بتاعه والـ methods بتاعته.
+- <b>اللي واقف مكان الأم</b> هو الـ override: `libraryRepositoryProvider.overrideWith((ref) => FakeLibraryRepository())`. الـ Notifier بيعمل `ref.watch(libraryRepositoryProvider)` زي العادة، ومايعرفش إن اللي رد عليه بديل.
+- <b>المسرح الفاضي</b> هو `ProviderContainer.test()`: container جديد لكل تست، بيتقفل لوحده في الآخر.
+
+في الـ Cubit، البديل كان بيتدّى في الـ constructor: `LibraryCubit(mockRepo, mockRefresh)`. هنا الـ Notifier مالوش constructor بـ dependencies، فالبديل بيتحط في الـ container. نفس الفكرة، مكان تاني. والحاجة اللي ماتغيرتش خالص: تستات الـ domain والـ data. دول بيتشغلوا زي ما هما، وده جزء من الإثبات.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### التجهيز
+
+<CodeBlock label="pubspec.yaml">
+
+```yaml
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  mocktail: ^1.0.4
+  fake_async: ^1.3.0
+  # bloc_test: removed with the last Cubit
+```
+
+</CodeBlock>
+
+ومفيش package تستات خاصة بـ Riverpod: `ProviderContainer.test` جوه `riverpod` نفسه، و`tester.container()` جوه `flutter_riverpod`.
+
+### helper واحد للمشروع
+
+<CodeBlock label="test/helpers/riverpod.dart">
+
+```dart
+/// A fresh container per test, disposed automatically, with no automatic retry:
+/// a failing build must fail now, not 200ms later.
+ProviderContainer makeContainer({List<Override> overrides = const []}) =>
+    ProviderContainer.test(overrides: overrides, retry: (_, _) => null);
+
+/// What blocTest's `expect: [...]` gave us: every state, in order.
+/// Also keeps an autoDispose provider alive for the whole test.
+List<T> record<T>(ProviderContainer container, ProviderListenable<T> provider) {
+  final states = <T>[];
+  container.listen<T>(provider, (_, next) => states.add(next), fireImmediately: true);
+  return states;
+}
+```
+
+</CodeBlock>
+
+- <b>`retry: (_, _) => null`:</b> من غير ده، أي build بيرمي `NetworkFailure` في تست هيتعاد بعد 200ms، والتست يا يستنى يا يخلص والـ state لسه loading. الـ retry نفسه بيتختبر لوحده تحت.
+- <b>`fireImmediately: true`:</b> أول عنصر في الليستة هو الـ state الأولى. ده بيخلي الليستة تبدأ زي ما الـ blocTest كان بيتجاهلها، فخلي بالك: هنا الـ state الأولى جوه الليستة.
+- <b>الـ listen بيمسك الـ provider عايش:</b> من غيره، provider بالـ autoDispose ممكن يتمسح بين سطرين في التست، وده مصدر flaky شهير.
+
+### أول تست: «ضيف لمكتبتي»
+
+نفس السيناريو اللي كان `blocTest` في [درس «تست الـ Cubit»](/course/testing/cubit-tests/):
+
+<CodeBlock label="test/features/catalog/presentation/add_book_notifier_test.dart">
+
+```dart
+class MockAddBookToLibrary extends Mock implements AddBookToLibrary {}
+
+void main() {
+  late MockAddBookToLibrary addBook;
+  final book = aBook();
+
+  setUpAll(() => registerFallbackValue(aBook()));
+  setUp(() => addBook = MockAddBookToLibrary());
+
+  test('emits [Idle, Saving, Saved] when the book is added', () async {
+    when(() => addBook(any())).thenAnswer((_) async => const Success(null));
+    final container = makeContainer(overrides: [
+      addBookToLibraryProvider.overrideWithValue(addBook),
+    ]);
+    final states = record(container, addBookProvider);
+
+    await container.read(addBookProvider.notifier).save(book);
+
+    expect(states, [const AddBookIdle(), const AddBookSaving(), const AddBookSaved()]);
+    verify(() => addBook(book)).called(1);
+  });
+
+  test('a second tap while saving is ignored', () async {
+    final pending = Completer<Result<void>>();
+    when(() => addBook(any())).thenAnswer((_) => pending.future);
+    final container = makeContainer(overrides: [
+      addBookToLibraryProvider.overrideWithValue(addBook),
+    ]);
+    record(container, addBookProvider);
+    final notifier = container.read(addBookProvider.notifier);
+
+    final first = notifier.save(book);
+    await notifier.save(book); // returns at once: state is AddBookSaving
+    pending.complete(const Success(null));
+    await first;
+
+    verify(() => addBook(book)).called(1);
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>الـ override للـ use case مش للـ Notifier:</b> الـ `AddBookNotifier` الحقيقي هو اللي بيتختبر. ده نفس `AddBookCubit(mockAddBook)`، بس البديل دخل من الـ container.
+- <b>`overrideWithValue`:</b> للـ providers العادية (اللي بترجّع object). لو عايز تبني البديل من providers تانية، `overrideWith((ref) => ...)`.
+- <b>الـ states بنفس الـ `==`:</b> `AddBookState` نفس الـ classes، فنفس الـ `expect` بالظبط، بس الـ `AddBookIdle` في أول الليستة.
+- <b>التست التاني:</b> نفس «الضغط المتكرر: نداء واحد بس» بتاع درس تست الـ Cubit، بـ `Completer` بيمسك الطلب مفتوح.
+
+### الـ AsyncNotifier: القيمة والـ error
+
+<CodeBlock label="book_details_notifier_test.dart">
+
+```dart
+test('a failure becomes AsyncError with the same Failure', () async {
+  when(() => getBookDetails(any())).thenAnswer((_) async => const Err(NetworkFailure()));
+  final container = makeContainer(overrides: [
+    getBookDetailsProvider.overrideWithValue(getBookDetails),
+  ]);
+  final provider = bookDetailsProvider(const BookId('ol123'));
+  final states = record(container, provider);
+
+  await expectLater(container.read(provider.future), throwsA(anything));
+
+  expect(states, [
+    isA<AsyncLoading<BookDetails>>(),
+    isA<AsyncError<BookDetails>>().having((s) => s.error, 'error', const NetworkFailure()),
+  ]);
+});
+```
+
+</CodeBlock>
+
+- <b>`provider.future`:</b> بيخلص لما الـ build يخلص. لو فشل، الـ Future بيخلص بـ error، فبنستناه بـ `throwsA(anything)` وبعدين نبص على الـ state نفسها.
+- <b>الـ `error` هو الـ `Failure` نفسه:</b> ده اللي `orThrow()` بيضمنه. لو حد غيّره يلف الـ Failure في exception تانية، التست ده بيقع، والـ `failure.localized(l10n)` في الـ UI كان هيقع معاه.
+
+### الـ seed: `overrideWithBuild`
+
+`blocTest(seed: () => NotesState(notes: [note]))` كان بيبدأ التست من نص الحكاية. المقابل:
+
+<CodeBlock label="notes_notifier_test.dart">
+
+```dart
+test('a field error keeps the notes and stops saving', () async {
+  when(() => addNote(any())).thenAnswer(
+    (_) async => const Err(ServerFailure('HTTP 422', statusCode: 422, fieldErrors: {'text': 'too_long'})),
+  );
+  final provider = notesProvider(bookId);
+  final container = makeContainer(overrides: [
+    addNoteProvider.overrideWithValue(addNote),
+    // start from "notes already loaded": the real build (and its _load) never runs
+    provider.overrideWithBuild((ref, notifier) => NotesState(notes: [note])),
+  ]);
+  final states = record(container, provider);
+
+  await container.read(provider.notifier).add('x' * 5000);
+
+  expect(states.last, NotesState(notes: [note], fieldErrors: const {'text': 'too_long'}));
+});
+```
+
+</CodeBlock>
+
+- <b>بيبدّل الـ `build` بس:</b> الـ methods (`add`، `togglePin`) هي الحقيقية. فالتست بيبدأ من state معينة ويختبر الـ action الحقيقي.
+- <b>الـ `_load` مابيشتغلش:</b> لأن الـ `build` الأصلي ماتنادهوش، فمش محتاج تعمل stub لـ `getNotes`.
+
+### الـ debounce بـ fake_async
+
+نفس الأسلوب اللي في درس تست الـ Cubit: 349 وبعدين 1. الفرق إن مفيش `CatalogSearchCubit` بنعمله، فيه container:
+
+<CodeBlock label="catalog_query_test.dart">
+
+```dart
+test('the query settles 350ms after the last keystroke', () {
+  fakeAsync((async) {
+    final container = makeContainer();
+    final debounced = container.listen(debouncedCatalogQueryProvider, (_, _) {});
+    final input = container.read(catalogQueryProvider.notifier);
+
+    input.changed('fl');
+    async.elapse(const Duration(milliseconds: 200));
+    input.changed('flutter'); // restarts the wait
+
+    async.elapse(const Duration(milliseconds: 349));
+    expect(debounced.read().isLoading, isTrue);
+    expect(debounced.read().value, ''); // still the previous query
+
+    async.elapse(const Duration(milliseconds: 1));
+    expect(debounced.read(), const AsyncData('flutter'));
+  });
+});
+```
+
+</CodeBlock>
+
+- <b>الـ `elapse` بيشغّل الـ microtasks:</b> وده اللي Riverpod بيستخدمه عشان يعيد بناء الـ provider بعد الـ `changed`. فمش محتاج `container.pump()` جوه الـ `fakeAsync`.
+- <b>«fl» اتنست:</b> الـ delay بتاعها خلص عند 350ms، بس الـ build بتاعها قديم فنتيجته اترمت. لو حد شال الـ debounce، الـ `isLoading` عند 349 هيبقى false والتست هيقع.
+- <b>`value` بيساوي `''`:</b> ده بيحرس الحاجة التانية: إن النتايج القديمة بتفضل ظاهرة وانت بتكتب.
+
+### جدول: blocTest بيقابل إيه
+
+| في `blocTest` | في Riverpod |
+| --- | --- |
+| `build: () => Cubit(mock)` | `makeContainer(overrides: [...])` |
+| `seed: () => state` | `provider.overrideWithBuild((ref, notifier) => state)` |
+| `act: (c) => c.save(book)` | `container.read(provider.notifier).save(book)` |
+| `expect: () => [...]` | `record(container, provider)` وبعدين `expect(states, [...])` |
+| `skip: 1` | `states.skip(1)` |
+| `wait: Duration` | `fakeAsync` و`elapse` (والـ wait كان غلط من الأول) |
+| `verify: (_) => ...` | `verify(...)` بتاع mocktail بعد الـ act |
+| `errors: () => [...]` | `container.listen(provider, ..., onError: errors.add)` لو الـ build بيرمي |
+| `tearDown` / `close()` | مش محتاج: `ProviderContainer.test` بيتقفل لوحده |
+
+</Level>
+
+<Level n="3" title="الحالات الصعبة">
+
+### الـ dispose في نص الـ await
+
+في الـ Cubit كان فيه تست «الـ emit بعد الـ close مابيرميش» بـ `isClosed`. المقابل هنا: الـ provider اتمسح والطلب لسه راجع.
+
+<CodeBlock label="add_book_notifier_test.dart">
+
+```dart
+test('a result after the screen closed is dropped without throwing', () async {
+  final pending = Completer<Result<void>>();
+  when(() => addBook(any())).thenAnswer((_) => pending.future);
+  final container = makeContainer(overrides: [
+    addBookToLibraryProvider.overrideWithValue(addBook),
+  ]);
+  final sub = container.listen(addBookProvider, (_, _) {});
+
+  final save = container.read(addBookProvider.notifier).save(book);
+  sub.close();            // the button left the tree: no listener anymore
+  await container.pump(); // let the autoDispose happen
+  pending.complete(const Success(null));
+
+  await expectLater(save, completes); // no UnmountedRefException
+});
+```
+
+</CodeBlock>
+
+امسح سطر `if (!ref.mounted) return;` من `save` وشغّل: التست هيقع بـ `UnmountedRefException`، لأن الـ `state =` على provider اتمسح بيرمي. ده الـ mutation testing بإيدك اللي [درس «تست الـ Cubit»](/course/testing/cubit-tests/) قال عليه: لو مسحت السطر اللي بيحمي والتست فضل أخضر، التست مش بيحرس حاجة.
+
+### الـ refresh في نص loadMore
+
+ده الـ bug بتاع [درس المكتبة والكتالوج](/course/riverpod/same-feature/)، والتست لازم يمسك نسخة `ref.mounted` الغلط:
+
+<CodeBlock label="catalog_results_test.dart">
+
+```dart
+test('a page that arrives after a refresh is dropped', () async {
+  final page2 = Completer<Result<PagedResult<Book>>>();
+  var firstPageCalls = 0;
+  when(() => search(any())).thenAnswer((inv) {
+    final params = inv.positionalArguments.single as SearchParams;
+    if (params.page == 2) return page2.future;
+    firstPageCalls++;
+    return Future.value(Success(PagedResult(
+      items: [aBook(id: 'p1-v$firstPageCalls')],
+      hasMore: true,
+    )));
+  });
+  final provider = catalogResultsProvider('flutter');
+  final container = makeContainer(overrides: [searchBooksProvider.overrideWithValue(search)]);
+  final results = container.listen(provider, (_, _) {});
+  await container.read(provider.future);
+
+  final more = container.read(provider.notifier).loadMore(); // waits on page 2
+  await container.refresh(provider.future);                 // page 1, version 2
+  page2.complete(Success(PagedResult(items: [aBook(id: 'p2-old')], hasMore: false)));
+  await more;
+
+  expect(results.read().value!.books.map((b) => b.id), ['p1-v2']);
+});
+```
+
+</CodeBlock>
+
+بـ `ref.mounted` بدل `buildRef.mounted`، النتيجة بتبقى `['p1-v1', 'p2-old']` مكتوبة فوق الـ refresh: الـ state اللي `loadMore` مسكتها (`current`) كانت الصفحة الأولى القديمة. التست ده هو اللي بيثبت إن السطر بيعمل حاجة.
+
+### الـ retry نفسه
+
+الـ retry مقفول في `makeContainer`، فالـ function بتاعة الـ app بتتختبر لوحدها. وده أسهل، لأنها function عادية:
+
+<CodeBlock label="app/lib/retry.dart وتسته">
+
+```dart
+Duration? readlyRetry(int retryCount, Object error) {
+  if (error is! NetworkFailure || retryCount >= 3) return null;
+  return Duration(milliseconds: 500 * (retryCount + 1));
+}
+
+// test/retry_test.dart
+test('only network failures are retried, 3 times at most', () {
+  expect(readlyRetry(0, const NetworkFailure()), const Duration(milliseconds: 500));
+  expect(readlyRetry(3, const NetworkFailure()), isNull);
+  expect(readlyRetry(0, const ValidationFailure('title')), isNull);
+  expect(readlyRetry(0, StateError('bug')), isNull);
+});
+```
+
+</CodeBlock>
+
+والـ `ProviderScope(retry: readlyRetry, ...)` في `main` بيستخدمها. ولو عايز تتأكد إن الـ wiring صح، تست واحد بـ `ProviderContainer.test(retry: readlyRetry)` وfake_async بيقدّم الساعة ويعدّ نداءات الـ use case.
+
+### الـ widget tests: مفيش MockCubit
+
+في [درس الـ widget tests](/course/testing/widget-tests/)، الـ `LibraryView` كانت بتتختبر بـ `MockLibraryCubit` و`whenListen` و`BlocProvider.value`. هنا فيه طريقتين، والـ docs الرسمية بتقول الأولى:
+
+<CodeBlock label="library_view_test.dart">
+
+```dart
+testWidgets('shows the books from the repository', (tester) async {
+  final repo = FakeLibraryRepository();
+  await repo.addBook(aBook(title: 'Matilda'));
+  await tester.pumpWidget(ProviderScope(
+    overrides: [libraryRepositoryProvider.overrideWithValue(repo)],
+    retry: (_, _) => null,
+    child: const MaterialApp(home: Scaffold(body: LibraryView())),
+  ));
+  await tester.pump(); // the first value of the stream
+
+  expect(find.text('Matilda'), findsOneWidget);
+});
+
+testWidgets('an error view with retry when the library stream fails', (tester) async {
+  await tester.pumpWidget(ProviderScope(
+    overrides: [
+      // the shortcut: replace the screen-level provider with a fixed value
+      visibleBooksProvider.overrideWithValue(AsyncError(Exception('db'), StackTrace.empty)),
+    ],
+    child: const MaterialApp(home: Scaffold(body: LibraryView())),
+  ));
+
+  expect(find.byType(ErrorView), findsOneWidget);
+});
+```
+
+</CodeBlock>
+
+- <b>الأولى: repository وهمي، والـ providers الحقيقية:</b> بتختبر الشاشة والـ providers مع بعض. الـ `FakeLibraryRepository` هو نفسه اللي في `testing.dart` بتاع الـ library، واللي تستات الـ data بتستخدمه من غير ما تتغير.
+- <b>التانية: الـ provider اللي الشاشة بتقراه بقيمة ثابتة:</b> أسرع، ومفيدة للحالات اللي صعب توصلها (error، loading للأبد). ده الأقرب لـ `MockCubit` بـ state ثابتة.
+- <b>`tester.container()`:</b> لو محتاج توصل للـ container جوه widget test (تنادي method في Notifier، أو تقرا state)، `final container = tester.container();` بيرجّع اللي الـ `ProviderScope` عمله.
+
+### الـ goldens
+
+الـ golden tests من [درس الـ Golden tests](/course/testing/golden-tests/) بيتغير فيها سطر الـ setup بس: `BlocProvider.value(value: mockCubit)` بقى `ProviderScope(overrides: [...])`. الصور نفسها لازم تفضل زي ما هي بالظبط. ولو golden اتغير في الـ PR بتاع التحويل، ده مش «تحديث الصورة»، ده إن السلوك اتغير، غالبًا ترتيب الـ cases في الـ switch على الـ `AsyncValue`.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+### بتختبر إيه، وبتعمل override لإيه
+
+- <b>override للـ repository أو الـ use case، مش للـ Notifier:</b> الـ docs الرسمية بتقول كده صراحة: الـ mock للـ Notifier «generally discouraged»، والأحسن mock للـ repository اللي الـ Notifier بيستخدمه. وده نفس قاعدة [درس الـ test doubles](/course/testing/test-doubles/): ماتعملش double للحاجة اللي بتختبرها.
+- <b>fake ولا mock؟</b> الـ `FakeLibraryRepository` (in-memory بـ stream حقيقي) للـ streams والـ widget tests، لأن الـ mock لـ `watchLibrary` محتاج `StreamController` بإيدك في كل تست. والـ mock (mocktail) للـ use cases اللي بترجّع Future، لأن الـ `verify` بيبقى مهم.
+- <b>الـ order ولا الحالة الأخيرة؟</b> الـ `record` بيدّيك الاتنين. لـ action ليها خطوات (Idle، Saving، Saved)، اختبر الترتيب كله. لحاجة الترتيب فيها تفصيلة (الـ AsyncLoading بيعدّي كام مرة وقت الـ refresh)، اختبر الأخيرة بس، وإلا التست هيقع مع أي تغيير في إصدار Riverpod.
+
+### تستات الـ domain والـ data: ولا سطر
+
+ده جزء من الإثبات في الوحدة. قبل التحويل وبعده:
+
+<CodeBlock label="الـ CI في الـ branch">
+
+```bash
+# domain + data tests: untouched files, same results
+git diff --stat main -- 'packages/*/test/**/domain' 'packages/*/test/**/data'   # empty
+flutter test packages/feature_library/test/src/domain packages/feature_library/test/src/data
+```
+
+</CodeBlock>
+
+لو تست في الـ data احتاج يتغير عشان Riverpod، يبقى الـ data بقت تعرف Riverpod، وتست المعمارية من الدرس الأول كان المفروض يمسكها قبله.
+
+### Riverpod ولا blocTest: مين أسهل؟
+
+| | `blocTest` | Riverpod |
+| --- | --- | --- |
+| البدائل | في الـ constructor، صريحة | overrides، ولازم تعرف الـ Notifier بيقرا إيه |
+| الـ seed | `seed:` | `overrideWithBuild` |
+| الترتيب | `expect: [...]` جاهز | `record` helper |
+| الـ cleanup | `close` لوحده | `ProviderContainer.test` لوحده |
+| الـ autoDispose | مش موجود | `listen` لازم وإلا flaky |
+| الـ retry | مش موجود | لازم يتقفل في التستات |
+| تست شاشة كاملة بـ fake repository | `BlocProvider` بـ Cubit حقيقي وfake، أو MockCubit | `ProviderScope` بـ override واحد، والـ graph كله حقيقي |
+
+الـ blocTest أوضح لتست Cubit لوحده: كل حاجة في parameter. Riverpod أسهل لتست شاشة أو مجموعة providers مع بعض: override واحد تحت، والباقي حقيقي. وده نفس فرق الأداتين: الـ Cubit وحدة مقفولة، وRiverpod graph.
+
+<Note kind="interview" title="سؤال interview">
+
+«بتختبر Notifier إزاي، وإيه الفرق عن blocTest؟» بعمل `ProviderContainer.test` جديد لكل تست، بـ overrides للـ repository أو الـ use case (مش للـ Notifier نفسه)، وبقفل الـ retry عشان الفشل يبان فورًا. بعمل `container.listen` على الـ provider عشان الـ autoDispose مايمسحوش، وبسجّل الـ states في ليستة عشان أختبر الترتيب زي `expect` في blocTest. الـ seed بـ `overrideWithBuild`، والوقت بـ fake_async. والحالات اللي ليها تست خاص في Riverpod: الـ provider اتمسح في نص الـ await (مفيش `UnmountedRefException`)، والـ build اتعاد في نص action (النتيجة القديمة تترمي). وفي widget tests بحط override للـ repository في `ProviderScope`، والـ providers الحقيقية بتشتغل فوقه، فمفيش `MockCubit` ولا `whenListen`.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### نفس التست: blocTest وcontainer
+
+<BeforeAfter>
+
+<Side label="blocTest" kind="before">
+
+```dart
+blocTest<AddBookCubit, AddBookState>(
+  'emits [Saving, Error] when adding fails',
+  setUp: () => when(() => addBook(any()))
+      .thenAnswer((_) async => const Err(NetworkFailure())),
+  build: () => AddBookCubit(addBook),
+  act: (cubit) => cubit.save(book),
+  expect: () => [
+    const AddBookSaving(),
+    const AddBookError(NetworkFailure()),
+  ],
+);
+```
+
+</Side>
+
+<Side label="ProviderContainer" kind="after">
+
+```dart
+test('emits [Idle, Saving, Error] when adding fails', () async {
+  when(() => addBook(any()))
+      .thenAnswer((_) async => const Err(NetworkFailure()));
+  final container = makeContainer(overrides: [
+    addBookToLibraryProvider.overrideWithValue(addBook),
+  ]);
+  final states = record(container, addBookProvider);
+
+  await container.read(addBookProvider.notifier).save(book);
+
+  expect(states, [
+    const AddBookIdle(),
+    const AddBookSaving(),
+    const AddBookError(NetworkFailure()),
+  ]);
+});
+```
+
+</Side>
+
+</BeforeAfter>
+
+نفس السيناريو، ونفس الـ states، ونفس الـ mocktail. الـ `build:` بقى `makeContainer` بـ override، والـ `act:` بقى سطر عادي، والـ `expect:` بقى ليستة من `record`. والفرق اللي يستاهل تفتكره: الـ `AddBookIdle` في أول الليستة، لأن الـ `fireImmediately` بيسجّل الـ state الأولى، والـ blocTest كان بيتجاهلها.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="rp-testing-1">
+<Ask>تست لـ `BookDetailsNotifier` بيعمل `container.read(bookDetailsProvider(id))` مرة، وبعدين `await Future.delayed(Duration.zero)`، وبعدين بيقرا تاني ويلاقي `AsyncLoading` كل مرة. التست مش مستقر. ليه؟</Ask>
+<Answer>
+
+الـ `read` مابيمسكش الـ provider عايش، وهو autoDispose، فممكن يتمسح بين القرايتين ويتبني من الأول. الحل `container.listen(provider, (_, _) {})` (أو `record`) في أول التست، فيفضل عنده listener طول التست. واستنى النتيجة بـ `await container.read(provider.future)` بدل `Future.delayed`.
+
+</Answer>
+</Question>
+
+<Question id="rp-testing-2">
+<Ask>تست بيتأكد إن `NetworkFailure` بتبان كـ `AsyncError`، بس بعد `await container.read(provider.future)` الـ state لسه `AsyncLoading`، والتست أحيانًا بياخد ثواني. إيه السبب؟</Ask>
+<Answer>
+
+الـ retry التلقائي في Riverpod 3 شغال: الـ build رمى `NetworkFailure`، فبيتعاد بعد 200ms، وبعدين 400ms وهكذا، والـ `future` مابيخلصش غير بعد آخر محاولة. الحل `ProviderContainer.test(retry: (_, _) => null)` في كل التستات (الـ `makeContainer` helper)، والـ retry function نفسها تتختبر لوحدها كـ function عادية.
+
+</Answer>
+</Question>
+
+<Question id="rp-testing-3">
+<Ask>إزاي تبدأ تست `NotesNotifier.add` من «الملاحظات اتحملت فيها ملاحظة واحدة»، من غير ما تعمل stub لـ `getNotes`؟ وده بيقابل إيه في blocTest؟</Ask>
+<Answer>
+
+`notesProvider(bookId).overrideWithBuild((ref, notifier) => NotesState(notes: [note]))`. الـ build الأصلي مابيتناداش (فالـ `_load` مابيشتغلش)، والـ state بتبدأ من اللي رجّعته، والـ methods هي الحقيقية. ده الـ `seed:` في blocTest.
+
+</Answer>
+</Question>
+
+<Question id="rp-testing-4">
+<Ask>عايز تتأكد إن `if (!ref.mounted) return;` في `AddBookNotifier.save` بيحمي فعلًا. إزاي تكتب التست، وإيه اللي هيحصل لو مسحت السطر؟</Ask>
+<Answer>
+
+Completer بيمسك الـ use case مفتوح، و`container.listen` على الـ provider، وتبدأ `save` من غير await. بعدين `sub.close()` و`await container.pump()` عشان الـ autoDispose يمسحه، وبعدين تكمّل الـ Completer وتعمل `expectLater(save, completes)`. لو مسحت السطر، الـ `state =` بعد الـ await هيبقى على provider اتمسح، فبيرمي `UnmountedRefException` والتست يقع، وده اللي بيثبت إن السطر بيعمل حاجة.
+
+</Answer>
+</Question>
+
+<Question id="rp-testing-5">
+<Ask>في widget test للـ `LibraryView`، إمتى تعمل override للـ `libraryRepositoryProvider` بـ fake، وإمتى تعمل override للـ `visibleBooksProvider` بقيمة ثابتة؟</Ask>
+<Answer>
+
+الـ repository الوهمي لما عايز تختبر الشاشة والـ providers الحقيقية مع بعض: الفلترة، والـ stream، والـ refresh. ده الأقرب للاستخدام الحقيقي، والـ docs بتنصح بيه. والقيمة الثابتة للـ `visibleBooksProvider` لما عايز حالة معينة للشاشة بس، خصوصًا الصعب توصلها (error، loading للأبد)، أو للـ goldens. ده الأقرب لـ `MockCubit` بـ state ثابتة.
+
+</Answer>
+</Question>
+
+</Quiz>

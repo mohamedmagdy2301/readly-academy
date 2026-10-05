@@ -1,0 +1,517 @@
+---
+title: "المكتبة والكتالوج كاملين بـ Riverpod"
+description: "كتب Readly كلها بـ Riverpod: تاب المكتبة بالفلتر والبحث والـ refresh، وتاب الكتالوج بالبحث بـ debounce والـ pagination والـ refresh وعلامة «في مكتبتك». والـ family بالـ query بتشيل سباق الصفحات القديمة من أساسه، والـ fields اللي بتعيش بعد الـ rebuild بتعمل bugs جديدة."
+minutes: 45
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="درج لكل سؤال">
+
+موظف الأرشيف بيدوّر لك على ملفات. النظام القديم: درج واحد على مكتبه، وكل ما تسأله سؤال، بيفضّي الدرج ويبدأ يحط فيه. سألته عن «Flutter»، وبدأ يجيب ملفات. وقبل ما يخلص، غيّرت رأيك وسألت عن «Dart». فضّى الدرج وبدأ. بس الملف التالت بتاع «Flutter» كان في إيده وهو راجع من المخزن، فحطه في الدرج. دلوقتي درج «Dart» فيه ملف «Flutter». عشان يمنع ده، لازم يكتب على كل ملف رقم السؤال، ويقارن قبل ما يحط.
+
+النظام الجديد: <b>درج لكل سؤال</b>، ومكتوب عليه السؤال. «Flutter» ليه درج، و«Dart» ليه درج. الملف اللي راجع من المخزن بيروح لدرجه هو. ولو محدش بيبص على درج «Flutter» خلاص، بيترمي بكل اللي فيه، ومفيش حاجة منه تقدر توصل لدرج «Dart».
+
+</Analogy>
+
+- <b>الدرج الواحد</b> هو الـ `CatalogCubit`: state واحدة، وكل `loadFirst(query)` بيفضّيها، و`_latestRequest` هو «رقم السؤال على الملف».
+- <b>درج لكل سؤال</b> هو `catalogResultsProvider(query)`: family، وكل كلمة بحث ليها Notifier وstate. الصفحة التالتة بتاعة «flutter» مش ممكن توصل لنتايج «dart»، لأنها حرفيًا في object تاني.
+
+وده أهم مكسب في الوحدة كلها: bug كان محتاج guard في الـ Cubit (وفي الـ Bloc كمان، زي ما شفنا في [درس «Cubit ولا Bloc»](/course/state-management/cubit-vs-bloc/))، هنا مش ممكن يحصل من شكل الكود. بس فيه درج جديد بيتفتح بمشاكل جديدة، وده Level 3.
+
+</Level>
+
+<Level n="2" title="التابين">
+
+### تاب المكتبة
+
+الـ providers اتكتبت في الدروس اللي فاتت: `libraryFilters` و`libraryBooks` و`visibleBooks` في [درس الـ providers والـ ref](/course/riverpod/basics/)، و`LibraryRefresh` بالـ `(isRefreshing, failure)` في [درس «Riverpod من الصفر»](/course/state-management/riverpod/). الشاشة بتجمعهم:
+
+<CodeBlock label="feature_library/lib/src/presentation/library_view.dart">
+
+```dart
+class LibraryView extends ConsumerWidget {
+  const LibraryView({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = AppLocalizations.of(context)!;
+    ref.listen(libraryRefreshProvider, (previous, next) {
+      if (next.failure case final failure? when failure != previous?.failure) {
+        context.showFailure(failure);
+      }
+    });
+
+    return Column(
+      children: [
+        const _SearchField(), // TextEditingController lives in the widget
+        const _StatusChips(),  // watches libraryFiltersProvider.select((f) => f.status)
+        Expanded(
+          child: switch (ref.watch(visibleBooksProvider)) {
+            AsyncValue(:final value, hasValue: true) => RefreshIndicator(
+                onRefresh: () => ref.read(libraryRefreshProvider.notifier).refresh(),
+                child: value!.isEmpty ? const _EmptyLibrary() : BookList(books: value),
+              ),
+            AsyncValue(:final error?) => ErrorView(
+                message: CacheFailure('$error').localized(l10n),
+                onRetry: () => ref.invalidate(libraryBooksProvider),
+              ),
+            _ => const Center(child: CircularProgressIndicator()),
+          },
+        ),
+      ],
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>البحث في المكتبة من غير debounce:</b> الفلترة في الذاكرة على ليستة موجودة، بتاخد microseconds. الـ debounce هنا هيخلي الشاشة أبطأ في الرد من غير فايدة.
+- <b>الـ `invalidate` للـ `libraryBooksProvider` مش لـ `visibleBooksProvider`:</b> الـ error جاي من الـ stream، فالـ retry يعيد الاشتراك فيه. و`visibleBooks` بيتحسب تاني لوحده لأنه بيعمل watch له.
+- <b>الـ `LibraryRefresh` عايش ليه؟</b> الـ `ref.listen` في نفس الـ build هو اللي ماسكه. ده مهم: الـ `RefreshIndicator` بيعمل `ref.read` بس.
+
+### تاب الكتالوج: 3 providers بدل Cubitين
+
+في Readly النهارده الكتالوج فيه `CatalogSearchCubit` (الـ debounce والـ request id) من [درس الـ Cubit](/course/presentation/cubit/)، و`CatalogCubit` (الصفحات والـ refresh) من [درس الـ Pagination](/course/presentation/pagination/). في Riverpod الشغل بيتقسم بشكل تاني:
+
+| السؤال | الـ provider | بيعيش قد إيه |
+| --- | --- | --- |
+| المستخدم كاتب إيه دلوقتي؟ | `catalogQueryProvider` (Notifier بـ `String`) | مع التاب |
+| الكلمة اللي هنبحث بيها بعد ما بطّل كتابة؟ | `debouncedCatalogQueryProvider` (`Future<String>`) | مع التاب |
+| النتايج لكلمة معينة، بالصفحات | `catalogResultsProvider(query)` (AsyncNotifier family) | مع الكلمة |
+| الكتب اللي في مكتبتي | `ownedBookIdsProvider` (`Stream<Set<BookId>>`) | مع التاب |
+
+<Diagram name="d-rp-catalog-family">
+
+الـ TextField بيكتب في catalogQuery مع كل حرف. debouncedCatalogQuery بيستنى 350ms من آخر تغيير. الشاشة بتعمل watch لـ catalogResults بالكلمة دي. كل كلمة ليها instance: «flutter» فيه صفحتين، ولما الكلمة بقت «dart»، الشاشة بقت بتبص على instance تاني، والقديم مالوش listeners فاتمسح، والصفحة 3 بتاعته اللي كانت لسه راجعة اترمت.
+
+</Diagram>
+
+### الـ debounce
+
+<CodeBlock label="feature_catalog/lib/src/presentation/catalog_providers.dart">
+
+```dart
+@riverpod
+class CatalogQueryNotifier extends _$CatalogQueryNotifier {
+  @override
+  String build() => '';
+
+  void changed(String input) => state = input.trim();
+}
+
+@riverpod
+Future<String> debouncedCatalogQuery(Ref ref) async {
+  final query = ref.watch(catalogQueryProvider);
+  if (query.length < 2) return query; // clearing the box is instant
+  await Future<void>.delayed(const Duration(milliseconds: 350));
+  return query;
+}
+```
+
+</CodeBlock>
+
+مفيش `Timer` ولا `cancel` ولا `close`. كل حرف بيغيّر `catalogQuery`، فـ `debouncedCatalogQuery` بيتبني من جديد، والـ Future القديم بتاعه بيكمّل الـ delay بتاعه بس نتيجته بتترمي، لأن Riverpod بياخد نتيجة آخر build بس. والكلمة اللي بتطلع هي اللي فضلت 350ms من غير ما تتغير.
+
+وفيه حاجة ببلاش: بين الحروف، `debouncedCatalogQuery` بيبقى `AsyncLoading`، بس الـ loading ده <b>شايل القيمة اللي قبله</b>. فلو الشاشة بتقرا `.value`، بتفضل على الكلمة القديمة ونتايجها لحد ما الجديدة تستقر. النتايج مش بتختفي وانت بتكتب.
+
+### النتايج بالصفحات
+
+نفس الـ `SearchBooks` ونفس `PagedResult` بتوع درس الـ Pagination. والـ state class بتاعتنا جوه الـ `AsyncValue`، لأن الـ `AsyncValue` بيجاوب «الصفحة الأولى وصلت؟»، والباقي (آخر الليست؟ الصفحة الجاية فشلت؟) أسئلة تانية:
+
+<CodeBlock label="catalog_providers.dart: CatalogPage">
+
+```dart
+final class CatalogPage {
+  const CatalogPage({required this.books, required this.hasReachedEnd, this.loadMoreFailure});
+  final List<Book> books;
+  final bool hasReachedEnd;
+  final Failure? loadMoreFailure;
+
+  // no "?? this" on loadMoreFailure: any copy clears it unless passed again
+  CatalogPage copyWith({List<Book>? books, bool? hasReachedEnd, Failure? loadMoreFailure}) =>
+      CatalogPage(
+        books: books ?? this.books,
+        hasReachedEnd: hasReachedEnd ?? this.hasReachedEnd,
+        loadMoreFailure: loadMoreFailure,
+      );
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="catalog_providers.dart: CatalogResults">
+
+```dart
+@riverpod
+class CatalogResults extends _$CatalogResults {
+  int _page = 1;
+  bool _loadingMore = false;
+
+  @override
+  Future<CatalogPage> build(String query) async {
+    _page = 1;            // the Notifier survives a refresh: reset its fields here
+    _loadingMore = false;
+    final first = (await ref.watch(searchBooksProvider)(SearchParams(query: query, page: 1))).orThrow();
+    return CatalogPage(books: first.items, hasReachedEnd: !first.hasMore);
+  }
+
+  Future<void> loadMore() async {
+    final current = state.value;
+    if (current == null || state.isLoading || _loadingMore) return;
+    if (current.hasReachedEnd || current.loadMoreFailure != null) return;
+    _loadingMore = true;
+    final buildRef = ref; // a refresh or a disposal makes this one stale
+    final result = await ref.read(searchBooksProvider)(SearchParams(query: query, page: _page + 1));
+    if (!buildRef.mounted) return;
+    _loadingMore = false;
+    switch (result) {
+      case Success(:final value):
+        _page++;
+        final seen = current.books.map((b) => b.id).toSet();
+        state = AsyncData(current.copyWith(
+          books: [...current.books, ...value.items.where((b) => seen.add(b.id))],
+          hasReachedEnd: !value.hasMore,
+        ));
+      case Err(:final failure):
+        state = AsyncData(current.copyWith(loadMoreFailure: failure));
+    }
+  }
+
+  void retryMore() {
+    if (state.value case final current?) state = AsyncData(current.copyWith()); // clears the failure
+    unawaited(loadMore());
+  }
+}
+```
+
+</CodeBlock>
+
+قارنه بالـ `CatalogCubit` الكامل في درس الـ Pagination سطر بسطر:
+
+| في الـ `CatalogCubit` | في `CatalogResults` |
+| --- | --- |
+| `String _query` | `query` (الـ family parameter) |
+| `loadFirst(query)` بيفضّي ويبدأ | `build(query)`. كلمة جديدة = instance جديد |
+| `int _latestRequest` ومقارنته بعد كل await | مفيش. الكلمة القديمة instance تاني |
+| `if (isClosed \|\| requestId != _latestRequest)` في `loadMore` | `if (!buildRef.mounted)`: بيمسك الـ dispose والـ refresh |
+| `refresh()` بـ `++_latestRequest` و`refreshFailure` | `ref.refresh(catalogResultsProvider(q).future)` من الـ UI |
+| `CatalogLoading` و`CatalogError` | `AsyncLoading` و`AsyncError` للصفحة الأولى |
+| `CatalogLoaded(books, hasReachedEnd, loadMoreFailure, refreshFailure)` | `AsyncData(CatalogPage(books, hasReachedEnd, loadMoreFailure))`، والـ refresh الفاشل `AsyncError` شايل الصفحة القديمة |
+| الـ dedupe بالـ id | زي ما هو |
+
+الـ `_loadingMore` والـ `_page` لسه موجودين، لأن دول عن الـ action مش عن الكلمة. اللي اختفى هو كل حاجة كانت بتجاوب «النتيجة دي لسه تخص الكلمة الحالية؟».
+
+### الـ «في مكتبتك»
+
+نفس الـ `BookLookup.watchLibraryIds()` اللي في [درس «الـ State management في مشروع حقيقي»](/course/state-management/architecture/). هناك كان `CatalogCubit` بيشترك فيه ويحط الـ ids في `CatalogLoaded.owned`، ويخزّن `_owned` عشان أول `CatalogLoaded` يطلع بيها. هنا:
+
+<CodeBlock label="catalog_providers.dart">
+
+```dart
+@riverpod
+Stream<Set<BookId>> ownedBookIds(Ref ref) => ref.watch(bookLookupProvider).watchLibraryIds();
+
+// in CatalogBookTile.build: rebuilds only when THIS book's flag flips
+final owned = ref.watch(ownedBookIdsProvider.select((ids) => ids.value?.contains(book.id) ?? false));
+```
+
+</CodeBlock>
+
+الـ owned ids مابقتش جزء من نتايج البحث خالص. ده provider لوحده، والـ tile بيسأل عن نفسه. الكتاب يتضاف من صفحته، drift يطلّع الـ ids الجديدة، والـ tile بتاعه بس يتبني تاني. ولا `copyWith(owned: ...)`، ولا `_ownedSub`، ولا cancel في `close`.
+
+### الشاشة
+
+<CodeBlock label="feature_catalog/lib/src/presentation/catalog_view.dart">
+
+```dart
+class CatalogView extends ConsumerWidget {
+  const CatalogView({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final query = ref.watch(debouncedCatalogQueryProvider).value ?? '';
+    if (query.length < 2) return const _SearchHint();
+
+    final results = catalogResultsProvider(query);
+    ref.listen(results, (previous, next) {
+      // a refresh that ended in an error while we still show books
+      if (next case AsyncError(:final Failure error, hasValue: true)
+          when previous?.isLoading ?? false) {
+        context.showFailure(error);
+      }
+    });
+
+    return switch (ref.watch(results)) {
+      AsyncValue(:final value, hasValue: true) => RefreshIndicator(
+          onRefresh: () async {
+            try {
+              final _ = await ref.refresh(results.future); // just wait
+            } on Failure {
+              // already in the AsyncValue: the listener shows it, the books stay
+            }
+          },
+          child: _CatalogList(
+            page: value!,
+            onNearEnd: () => ref.read(results.notifier).loadMore(),
+            onRetryMore: () => ref.read(results.notifier).retryMore(),
+          ),
+        ),
+      AsyncValue(:final Failure error) => ErrorView(
+          message: error.localized(AppLocalizations.of(context)!),
+          onRetry: () => ref.invalidate(results),
+        ),
+      _ => const Center(child: CircularProgressIndicator()),
+    };
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>`final results = catalogResultsProvider(query)`:</b> متغير للـ provider نفسه (مش للقيمة)، عشان الـ watch والـ listen والـ refresh والـ notifier كلهم على نفس الكلمة.
+- <b>`ref.listen` بـ provider بيتغير:</b> لما الكلمة تتغير، الـ build الجاي بيعمل listen على provider تاني، والـ listener القديم بيتشال لوحده. فـ refresh فاشل في كلمة قديمة مش هيطلع SnackBar.
+- <b>الـ `try` حوالين الـ `ref.refresh`:</b> نفس سبب [درس «Riverpod من الصفر»](/course/state-management/riverpod/): الـ Future بيخلص بـ error لو الـ refresh فشل، والـ `RefreshIndicator` مابيمسكهوش.
+- <b>`_SearchHint` لأقل من حرفين:</b> ده الـ `SearchIdle` بتاع `CatalogSearchCubit`. مفيش provider بيتعمل أصلًا.
+
+</Level>
+
+<Level n="3" title="الأدراج الجديدة ومشاكلها">
+
+### الـ refresh والـ `_page` اللي فضل 3
+
+قبل ما نحط `_page = 1` في أول `build`:
+
+<CodeBlock label="الـ bug">
+
+```dart
+// the user scrolled to page 3: _page == 3
+// pull-to-refresh: ref.refresh(...) -> build('flutter') runs again, returns page 1
+// the user scrolls: loadMore() asks for _page + 1 == 4
+// pages 2 and 3 are missing from the list
+```
+
+</CodeBlock>
+
+الـ refresh بيعيد `build`، بس <b>الـ Notifier نفسه مش بيتعمل من جديد</b>. نفس الـ object، بنفس الـ fields. ده اللي [درس Notifier وAsyncNotifier](/course/riverpod/notifier/) قاله: الـ build بيرجّع الـ state، مش الـ object. فأي field بيوصف «فين احنا في الـ state» لازم يرجع لأوله في `build`. وفي الـ Cubit مكانش في حاجة اسمها «الـ state رجعت لأولها والـ fields لأ»، لأن `refresh()` كانت method انت كاتبها، وبتعمل `_page = 1` بإيدك.
+
+القاعدة: <b>أي field في Notifier ليه علاقة بالـ state بيترجع في أول `build`</b>. أو أحسن: حطه في الـ state نفسها. لو `_page` بقى `CatalogPage.page`، الـ build بيرجّعه 1 من غير ما تفتكر.
+
+### refresh وloadMore في نفس الوقت
+
+المستخدم في آخر الليست، الصفحة 3 بتحمّل، وسحب للـ refresh:
+
+1. `loadMore` مستني الصفحة 3، و`buildRef` = ref الـ build الأول.
+2. الـ refresh بيعيد `build`: ref جديد، `_page = 1`، `_loadingMore = false`، والصفحة 1 الجديدة بتوصل.
+3. الصفحة 3 القديمة بترجع. `buildRef.mounted` بيقول `false`، فالـ method بترجع.
+
+من غير الـ `buildRef`، كانت `ref.mounted` هتقول `true` (الـ provider عايش)، وكانت الصفحة 3 القديمة هتتزوّد على الصفحة 1 الجديدة: ليستة فيها 1 جديدة و3 قديمة ومفيش 2. ده بالظبط الـ race اللي في درس الـ Pagination، وكان محتاج `++_latestRequest` في الـ `refresh`. هنا محتاج سطر واحد، بس السطر لازم يكون موجود.
+
+### كلمة جديدة والصفحة 3 لسه راجعة
+
+ده الـ race اللي الـ family بتلغيه:
+
+1. المستخدم كتب «flutter»، ونزل للصفحة 3، و`loadMore` مستني.
+2. كتب «dart». بعد 350ms، الشاشة بقت بتعمل watch لـ `catalogResultsProvider('dart')`.
+3. `catalogResultsProvider('flutter')` مابقاش ليه listeners، فاتمسح. `buildRef.mounted` بتاعه `false`.
+4. الصفحة 3 بتاعة «flutter» بترجع، و`loadMore` بترجع من غير ما تكتب. ولو كانت كتبت، كانت هتكتب في درج «flutter» اللي محدش بيبص عليه.
+
+في الـ Bloc، ده كان محتاج guard بـ `identical(state, current)` لأن البحث والصفحات في handlers مختلفة. هنا مفيش مكان مشترك تتلخبط فيه أصلًا.
+
+### الرجوع لكلمة قديمة
+
+المستخدم كتب «flutter»، ونزل 3 صفحات، وبعدين عدّل لـ «flutter clean»، ومالقاش حاجة، ورجع لـ «flutter». مع الـ autoDispose، الـ instance بتاع «flutter» اتمسح، فبيبدأ من الصفحة الأولى، والـ scroll راح.
+
+لو ده مهم، نفس الـ `cacheFor` اللي في [درس الـ providers والـ ref](/course/riverpod/basics/):
+
+<CodeBlock label="آخر كلمات البحث تفضل 60 ثانية">
+
+```dart
+@override
+Future<CatalogPage> build(String query) async {
+  _page = 1;
+  _loadingMore = false;
+  final first = (await ref.watch(searchBooksProvider)(SearchParams(query: query, page: 1))).orThrow();
+  ref.cacheFor(const Duration(seconds: 60)); // after success only
+  return CatalogPage(books: first.items, hasReachedEnd: !first.hasMore);
+}
+```
+
+</CodeBlock>
+
+دلوقتي الرجوع لـ «flutter» في خلال دقيقة بيرجّع الـ 3 صفحات من غير طلب. ده مكانش ممكن في الـ `CatalogCubit` من غير ما تكتب cache بإيدك، لأن الـ state واحدة والكلمة الجديدة بتمسحها. التمن ذاكرة: كل كلمة في آخر دقيقة بصفحاتها. لكتالوج بـ 20 كتاب في الصفحة، مقبول. لـ feed فيه صور كبيرة، فكّر مرتين.
+
+### الـ retry التلقائي والصفحات
+
+`build` بيرمي `NetworkFailure` للصفحة الأولى: الـ retry بيعيده، والشاشة بتفضل loading لحد ما ينجح أو المحاولات تخلص. بس `loadMore` مابترميش، بتحط `loadMoreFailure`، فمفيش retry تلقائي للصفحة 4. وده المطلوب: زرار «جرّب تاني» تحت الليست، زي درس الـ Pagination.
+
+ولاحظ تفصيلة: لو المستخدم غيّر الكلمة والصفحة الأولى بتاعة القديمة في retry، الـ instance القديم بيتمسح والـ retry بيقف معاه. في الـ Cubit مكانش في retry تلقائي أصلًا، فمكانش في حاجة تقفها.
+
+### فلتر اللغة: الـ family key بيكبر
+
+لو الكتالوج زوّد فلتر لغة (الـ `CatalogFiltersCubit` اللي في [درس «Cubit بيفتكر ويرجع»](/course/state-management/hydrated-replay/))، الـ family key بقى الكلمة + اللغة:
+
+<CodeBlock label="record كـ family parameter">
+
+```dart
+typedef CatalogKey = ({String query, String? language});
+
+@riverpod
+class CatalogResults extends _$CatalogResults {
+  @override
+  Future<CatalogPage> build(CatalogKey key) async { /* SearchParams(query: key.query, ...) */ }
+}
+
+// in the view
+final results = catalogResultsProvider((query: query, language: ref.watch(catalogLanguageProvider)));
+```
+
+</CodeBlock>
+
+الـ record ليه `==` بالقيمة، فنفس الكلمة ونفس اللغة = نفس الـ instance. وتغيير اللغة بيعمل instance جديد، بالظبط زي تغيير الكلمة، فالصفحات القديمة مش ممكن تتخلط. في الـ Bloc ده كان event تالت بـ transformer تالت.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+### النتيجة بأمانة
+
+| | Cubit | Riverpod |
+| --- | --- | --- |
+| السطور (الكتالوج من غير widgets) | ~90 في `CatalogSearchCubit` و`CatalogCubit` | ~60 في 3 providers و`CatalogResults` |
+| الـ debounce | `Timer` + cancel في كل حرف وفي `close` | provider بيستنى، والنتيجة القديمة بتترمي |
+| النتيجة القديمة للكلمة | `_latestRequest` في كل method | family: مستحيلة |
+| الصفحة القديمة بعد refresh | `++_latestRequest` في `refresh` | `buildRef.mounted` في `loadMore` |
+| الـ fields بعد الـ refresh | انت اللي بتصفّرها في `refresh()` | لازم تصفّرها في `build`، والنسيان bug |
+| النتايج وانت بتكتب | `SearchLoading` بيمسحها | القديمة تفضل (`value` وقت الـ loading) |
+| الرجوع لكلمة قديمة | من الأول | من الأول، أو `cacheFor` بسطر |
+| «في مكتبتك» | subscription وfield وcopyWith | provider سطرين وselect في الـ tile |
+| الـ SnackBar للـ refresh | `refreshFailure` في `CatalogLoaded` | `ref.listen` على انتقال loading ← error فيه قيمة |
+
+Riverpod كسب هنا بوضوح، والسبب مش «أقل سطور». السبب إن أصعب bugs في الكتالوج كانت كلها نوع واحد: «النتيجة دي تخص أنهي سؤال؟». والـ family بتجاوب على السؤال ده بالبنية نفسها. اللي فضل يدوي هو الـ action جوه نفس السؤال (`loadMore` مع الـ refresh)، ودي نفس صعوبة الـ Cubit بالظبط.
+
+### Pagination بـ family لكل صفحة؟
+
+فيه نمط تاني هتشوفه في مشاريع Riverpod: provider لكل صفحة (`catalogPageProvider(query, page)`)، والـ `ListView.builder` بيحسب الصفحة من الـ index ويعمل watch ليها. كل صفحة ليها loading وerror وretry لوحدها، ومفيش `loadMore` ولا `_page` خالص.
+
+بيكسب لما الليستة ضخمة والمستخدم بيقفز في النص (الصفحات اللي برا الشاشة بتتمسح). بيخسر في الـ dedupe بين الصفحات (كل صفحة مش عارفة اللي قبلها)، وفي «آخر الليست» (لازم تعرف من أي صفحة)، وفي إن الـ tile بقى بيعتمد على صفحة مش على ليستة. لكتالوج Readly، `CatalogResults` بـ `loadMore` أوضح، وهو نفس شكل الـ Cubit فاللي بيقرا يلاقي اللي يعرفه.
+
+### قرارات
+
+- <b>الـ family key هو السؤال:</b> كل حاجة بتغيّر «إيه اللي بيتجاب» (الكلمة، اللغة، الترتيب) تدخل في الـ key. كل حاجة بتغيّر «إزاي بيتعرض» (list ولا grid) تفضل برا.
+- <b>الـ fields في Notifier بـ family:</b> أقل ما يمكن، ويترجعوا في `build`. ولو لقيت نفسك بتضيف تالت، حطهم في الـ state.
+- <b>`buildRef` في كل action بتكتب بعد await:</b> `loadMore` و`retryMore`. ده مش اختياري في Notifier بيتعمل له refresh.
+- <b>الـ debounce في provider منفصل:</b> مش جوه `CatalogResults`، عشان الكلمة المستقرة تبقى هي الـ key، والنتايج القديمة تفضل ظاهرة وانت بتكتب.
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي بتعمل search بـ pagination في Riverpod من غير ما نتايج قديمة تتخلط بالجديدة؟» الكلمة (وأي فلتر بيغيّر النتايج) بتبقى family parameter لـ AsyncNotifier: كل كلمة ليها instance وstate. الشاشة بتعمل watch للكلمة الحالية، فالقديمة بتفقد الـ listeners وبتتمسح، وأي صفحة راجعة ليها بتكتب في instance ميت. الـ debounce في provider قبلها بيستنى 350ms، ونتيجة أي build قديم بتترمي. الحاجة الوحيدة اللي محتاجة guard هي `loadMore` جوه نفس الكلمة لو حصل refresh: باخد `final buildRef = ref` قبل الـ await، لأن الـ refresh بيعيد `build` على نفس الـ Notifier والـ `ref.mounted` العادي هيقول true. وبصفّر أي field زي `_page` في أول `build`، لأن الـ Notifier بيعيش بعد الـ refresh.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### loadMore: الـ Cubit والـ Notifier
+
+<BeforeAfter>
+
+<Side label="CatalogCubit.loadMore" kind="before">
+
+```dart
+Future<void> loadMore() async {
+  final current = state;
+  if (current is! CatalogLoaded || _loadingMore) return;
+  if (current.hasReachedEnd ||
+      current.loadMoreFailure != null) return;
+  _loadingMore = true;
+  final requestId = _latestRequest;
+  final result = await _searchBooks(
+    SearchParams(query: _query, page: _page + 1),
+  );
+  if (isClosed || requestId != _latestRequest) return;
+  _loadingMore = false;
+  // ...append or set loadMoreFailure
+}
+```
+
+</Side>
+
+<Side label="CatalogResults.loadMore" kind="after">
+
+```dart
+Future<void> loadMore() async {
+  final current = state.value;
+  if (current == null || state.isLoading || _loadingMore) return;
+  if (current.hasReachedEnd ||
+      current.loadMoreFailure != null) return;
+  _loadingMore = true;
+  final buildRef = ref;
+  final result = await ref.read(searchBooksProvider)(
+    SearchParams(query: query, page: _page + 1),
+  );
+  if (!buildRef.mounted) return;
+  _loadingMore = false;
+  // ...append or set loadMoreFailure
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+الشكل واحد تقريبًا، والسطر المهم اتبدل: `requestId != _latestRequest` بقى `!buildRef.mounted`. بس الـ `_latestRequest` في الـ Cubit كان بيحمي من حاجتين: كلمة جديدة، وrefresh. في Riverpod الكلمة الجديدة instance تاني (فالـ `buildRef` بيبقى unmounted لأن الـ provider اتمسح)، والـ refresh build جديد (فالـ `buildRef` قديم). نفس السطر بيغطي الاتنين، والـ `_query` و`_latestRequest` والـ `++` في كل method اتشالوا.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="rp-same-feature-1">
+<Ask>في الـ `CatalogCubit`، `_latestRequest` كان بيمنع صفحة قديمة من كلمة قديمة تتزوّد على نتايج كلمة جديدة. إيه اللي بيمنع ده في `catalogResultsProvider(query)` من غير أي counter؟</Ask>
+<Answer>
+
+الكلمة family parameter، فكل كلمة ليها Notifier وstate لوحدها. لما الكلمة تتغير، الشاشة بتعمل watch للـ instance الجديد، والقديم بيفقد الـ listeners ويتمسح. الصفحة القديمة لما ترجع بتلاقي `buildRef.mounted` بـ false فبترجع، ولو كتبت أصلًا كانت هتكتب في الـ instance القديم مش الجديد. مفيش state مشتركة بين الكلمتين عشان تتلخبط.
+
+</Answer>
+</Question>
+
+<Question id="rp-same-feature-2">
+<Ask>`CatalogResults` من غير `_page = 1` في `build`. المستخدم نزل للصفحة 3، وعمل refresh، وكمّل scroll. إيه اللي هيظهر؟ وليه ده مكانش بيحصل في الـ Cubit؟</Ask>
+<Answer>
+
+الـ refresh بيعيد `build` على نفس الـ Notifier، فالـ state بقت الصفحة 1، بس `_page` لسه 3. أول `loadMore` هيطلب الصفحة 4، فالصفحتين 2 و3 هيختفوا من الليستة. في الـ Cubit، `refresh()` method انت كاتبها وبتعمل `_page = 1` جواها، ومفيش حاجة بترجّع الـ state لأولها من وراك. في Riverpod، أي field ليه علاقة بالـ state لازم يترجع في `build`، أو يتنقل للـ state نفسها.
+
+</Answer>
+</Question>
+
+<Question id="rp-same-feature-3">
+<Ask>ليه الـ debounce في provider لوحده (`debouncedCatalogQuery`) مش `Future.delayed` في أول `CatalogResults.build`؟</Ask>
+<Answer>
+
+لو الـ delay جوه `CatalogResults.build(query)`، الشاشة هتعمل watch لـ instance جديد مع كل حرف، وكل instance جديد بيبدأ `AsyncLoading` من غير قيمة، فالنتايج هتختفي وتظهر spinner مع كل حرف. ومع كل حرف instance بيتعمل ويتمسح. في provider منفصل، الشاشة بتقرا `.value` من الكلمة المستقرة، وده بيفضل على الكلمة القديمة وقت الـ loading، فالـ `CatalogResults` مابيتعملش غير للكلمة اللي فضلت 350ms، والنتايج القديمة بتفضل ظاهرة وانت بتكتب.
+
+</Answer>
+</Question>
+
+<Question id="rp-same-feature-4">
+<Ask>المستخدم في آخر الكتالوج والصفحة 3 بتحمّل، وسحب للـ refresh. لو `loadMore` بتسأل `ref.mounted` بدل `buildRef.mounted`، إيه اللي هيحصل؟</Ask>
+<Answer>
+
+الـ refresh بيعيد `build` على نفس الـ provider، فالـ provider لسه عايش و`ref` بيشاور على الـ ref الجديد، فـ `ref.mounted` بيقول true. الصفحة 3 القديمة هتتزوّد على الصفحة 1 الجديدة، وهتبقى الليستة فيها الصفحة 1 والصفحة 3 من غير 2. `buildRef` اتاخد قبل الـ await، فهو ref الـ build القديم، و`mounted` بتاعه false بعد أي rebuild.
+
+</Answer>
+</Question>
+
+<Question id="rp-same-feature-5">
+<Ask>علامة «في مكتبتك» على كل كتاب في الكتالوج. إزاي تخلي إضافة كتاب واحد تعيد بناء الـ tile بتاعه بس، مش الليستة كلها؟</Ask>
+<Answer>
+
+الـ ids في provider لوحده (`ownedBookIdsProvider` من `BookLookup.watchLibraryIds()`)، مش جوه نتايج البحث. وكل tile بيعمل `ref.watch(ownedBookIdsProvider.select((ids) => ids.value?.contains(book.id) ?? false))`. الـ select بيرجّع `bool` للكتاب ده بس، فلما الـ set يتغير، الـ tiles اللي الـ bool بتاعها ماتغيرش مابتتبنيش.
+
+</Answer>
+</Question>
+
+</Quiz>

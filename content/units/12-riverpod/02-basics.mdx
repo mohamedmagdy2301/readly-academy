@@ -1,0 +1,474 @@
+---
+title: "الـ providers والـ ref"
+description: "الـ providers كـ graph بيعتمد على بعضه، والـ ref في الأماكن التلاتة وإيه المسموح في كل واحد، والفرق الحقيقي بين watch وread وlisten، والـ autoDispose من جوه (مين بيمسك الـ provider عايش، وonCancel وkeepAlive بمهلة)، والـ family وقواعد الـ parameter بتاعها."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="شيت الـ Excel">
+
+افتح شيت فيه عمود «سعر الكتاب» وعمود «الخصم»، وخلية «الإجمالي» فيها formula: `=SUM(A2:A10) - B1`. غيّر سعر كتاب واحد، الإجمالي اتحسب لوحده. انت ماقلتش للإجمالي «اتحسب»، هو عارف هو معتمد على مين.
+
+وفيه 3 حاجات تانية الشيت بيعملها من غير ما تاخد بالك:
+
+- <b>الخلية اللي محدش بيبص عليها مابتتحسبش:</b> شيت فيه 50 tab، والـ Excel بيحسب اللي ظاهر قدامك. لو قفلت الـ tab، مش لازم يفضل يحسب.
+- <b>نفس الـ formula على كل صف:</b> «سعر بعد الضريبة» في الصف 2 والصف 3 والصف 100. formula واحدة، وكل صف ليه نتيجته.
+- <b>اللفة المقفولة:</b> لو A1 معتمدة على B1 وB1 معتمدة على A1، الـ Excel بيقولك «circular reference» وبيرفض.
+
+</Analogy>
+
+ده Riverpod بالظبط:
+
+- <b>الخلية</b> هي الـ provider، و<b>الـ formula</b> هي الـ function أو `build` بتاعه.
+- <b>«معتمدة على»</b> هي `ref.watch`: كل watch خط في graph. لو اللي فوق اتغير، اللي تحت يتحسب تاني.
+- <b>اللي محدش بيبص عليه</b> هو الـ autoDispose: provider مالوش حد بيسمع بيتمسح.
+- <b>نفس الـ formula لكل صف</b> هي الـ family: `bookDetailsProvider(id)`.
+- <b>الـ circular reference</b> هي `CircularDependencyError`.
+
+درس [«Riverpod من الصفر»](/course/state-management/riverpod/) وراك الأدوات واحدة واحدة. الدرس ده بيوريك الشيت كله: إزاي الـ providers بتاعة Readly بتتوصل ببعض، والـ ref مسموح له يعمل إيه في كل مكان، والـ provider بيعيش ويموت امتى بالظبط.
+
+</Level>
+
+<Level n="2" title="الـ graph والـ ref">
+
+### الـ providers بتاعة Readly كـ graph
+
+قبل أي كود، دي الخريطة اللي هنبنيها في الوحدة كلها للمكتبة والكتالوج:
+
+<Diagram name="d-rp-provider-graph">
+
+فوق: الـ dependencies (keepAlive): الـ database والـ dio والـ repositories. في النص: providers بتحوّل الـ contracts لبيانات شاشة: الكتب من drift بفلتر الحالة، ونتايج الكتالوج لكل كلمة بحث (family)، والـ ids اللي في المكتبة. تحت: الشاشات. السهم رايح من الـ provider للي بيعمله watch، والخط المتقطع ref.read جوه loadMore. والـ domain نفسه مش في الرسمة: الـ providers بتلف الـ contracts بتاعته، وهو مايعرفش عنهم حاجة.
+
+</Diagram>
+
+| الـ provider | النوع | بيعيش قد إيه | بيعمل watch لـ |
+| --- | --- | --- | --- |
+| `appDatabaseProvider` | `AppDatabase` | keepAlive | ولا حاجة (بيتعمل له override في `main`) |
+| `libraryRepositoryProvider` | `LibraryRepository` | keepAlive | الـ remote والـ local sources |
+| `libraryFiltersProvider` | Notifier: `LibraryFilters` | مع الشاشة | ولا حاجة |
+| `libraryBooksProvider` | `Stream<List<Book>>` | مع الشاشة | الـ repository، و`status` بس من الفلاتر |
+| `visibleBooksProvider` | `AsyncValue<List<Book>>` | مع الشاشة | `libraryBooks`، و`query` بس من الفلاتر |
+| `ownedBookIdsProvider` | `Stream<Set<BookId>>` | مع الكتالوج | `bookLookupProvider` |
+| `catalogResultsProvider(query)` | AsyncNotifier لكل كلمة | مع الكلمة | `searchBooksProvider` |
+
+الجدول ده بيتقري زي الـ formulas: «الكتب الظاهرة = الكتب من drift + كلمة البحث». ولو حد سأل «الليست اتحدثت ليه؟»، الإجابة في عمود الـ watch.
+
+### الـ ref في 3 أماكن
+
+الـ `ref` واحد في الفكرة، بس مسموح له بحاجات مختلفة حسب هو فين:
+
+| المكان | النوع | `watch` | `read` | `listen` | `onDispose`، `keepAlive` |
+| --- | --- | --- | --- | --- | --- |
+| جوه provider function أو `build` بتاع Notifier | `Ref` | أيوه، وده الـ graph | أيوه، لو مش عايز dependency | أيوه | أيوه |
+| جوه method في Notifier (`refresh`، `loadMore`) | `ref` بتاع الـ Notifier | لأ | أيوه | نادرًا | لأ، ده مكانه `build` |
+| جوه `build` بتاع `ConsumerWidget` | `WidgetRef` | أيوه | لأ، غير جوه callbacks | أيوه | مش موجودين |
+| `initState` في `ConsumerState` | `WidgetRef` | لأ | أيوه | `listenManual` بس | مش موجودين |
+
+- <b>الـ `Ref` مالوش generic:</b> من 3.0 مفيش `LibraryBooksRef` ولا `FutureProviderRef<T>`. كل الـ providers بتاخد `Ref`. لو شفت النوع القديم في كود، ده 2.x.
+- <b>`ref.watch` جوه method:</b> الـ watch معناه «لما ده يتغير، ابنيني تاني». الـ method مالهاش «تاني». ومفيش lint بيمسكها، فدي على الـ review.
+- <b>`onDispose` جوه `build`:</b> بيتسجّل مع كل build. فلو الـ provider اتبنى 3 مرات، كل build بيسجّل الـ cleanup بتاعه، وكل cleanup بيتنادى قبل الـ build اللي بعده. ده اللي بيخلي `onDispose(sub.cancel)` صح حتى لو الـ build اتعاد.
+
+### watch: الـ graph نفسه
+
+الفلتر بالحالة لازم يروح لـ drift (عشان الـ query يفلتر)، والبحث بالكلمة في الذاكرة. نفس الـ `LibraryFilters` اللي في [درس «تصميم الـ State»](/course/state-management/state-design/):
+
+<CodeBlock label="feature_library/lib/src/presentation/library_providers.dart">
+
+```dart
+@riverpod
+class LibraryFiltersNotifier extends _$LibraryFiltersNotifier {
+  @override
+  LibraryFilters build() => const LibraryFilters();
+
+  void queryChanged(String query) => state = state.copyWith(query: query.trim());
+  void statusChanged(BookStatus? status) =>
+      state = LibraryFilters(query: state.query, status: status);
+}
+
+@riverpod
+Stream<List<Book>> libraryBooks(Ref ref) {
+  // only the status: typing in the search box must not re-open the drift query
+  final status = ref.watch(libraryFiltersProvider.select((f) => f.status));
+  return ref.watch(libraryRepositoryProvider).watchLibrary(status: status);
+}
+
+@riverpod
+AsyncValue<List<Book>> visibleBooks(Ref ref) {
+  final query = ref.watch(libraryFiltersProvider.select((f) => f.query)).toLowerCase();
+  return ref.watch(libraryBooksProvider).whenData(
+        (books) => query.isEmpty
+            ? books
+            : [for (final b in books) if (b.title.toLowerCase().contains(query)) b],
+      );
+}
+```
+
+</CodeBlock>
+
+- <b>الاسم:</b> `LibraryFiltersNotifier` بيطلع `libraryFiltersProvider`. الـ generator بيشيل `Notifier` من آخر الاسم.
+- <b>الـ `select` في `libraryBooks`:</b> لو كتبت `ref.watch(libraryFiltersProvider).status`، أي حرف في البحث هيغيّر `LibraryFilters`، فـ `libraryBooks` يتبني تاني ويشترك في drift من جديد. الـ `select` بيقول «ابنيني لما الـ status نفسها تتغير». ده اللي كان `filterChanged(status)` بيعمله في الـ `LibraryCubit` بالـ `_sub?.cancel()`: هنا الـ provider القديم بيتلغي الـ stream بتاعه لوحده لما يتبني تاني.
+- <b>`visibleBooks` مش Stream:</b> provider عادي بيرجّع `AsyncValue`. بياخد الـ `AsyncValue` بتاع الكتب ويطبّق عليه الكلمة بـ `whenData`، فالـ loading والـ error بيعدّوا زي ما هما. ولو الكلمة اتغيرت، الحساب بيتعاد في الذاكرة من غير ما drift يحس.
+- <b>الـ status مش في `visibleBooks`:</b> الـ `select` هنا على `query` بس. لو الحالة اتغيرت، `libraryBooks` هو اللي هيتغير، و`visibleBooks` بيتحسب بسببه.
+
+والشاشة بتعمل watch لـ `visibleBooksProvider` بس. مابتعرفش إن فيه provider تاني ورا، ولا إن الفلترة بتحصل في مكانين.
+
+### read: مش «watch أرخص»
+
+الـ docs الرسمية بتقول الجملة دي صراحة: ماتستخدمش `read` عشان «توفّر» rebuilds. لو عايز تقلل الـ rebuilds، `select`:
+
+<CodeBlock label="الغلط والصح">
+
+```dart
+// ❌ "I only need the status, so read it": the chip never updates
+final status = ref.read(libraryFiltersProvider).status;
+
+// ✅ rebuilds only when the status changes
+final status = ref.watch(libraryFiltersProvider.select((f) => f.status));
+
+// ✅ read in a callback: the value at the moment of the tap
+onSelected: (s) => ref.read(libraryFiltersProvider.notifier).statusChanged(s),
+```
+
+</CodeBlock>
+
+ولو الـ provider async، فيه `selectAsync` بيرجّع `Future` للجزء اللي يهمك، وده مفيد جوه provider تاني: `final pageSize = await ref.watch(remoteConfigProvider.selectAsync((c) => c.pageSize));`. الـ provider اللي بيعمل كده بيتبني تاني بس لما `pageSize` نفسه يتغير.
+
+### listen: effect من غير rebuild
+
+`ref.listen` بينادي function لما القيمة تتغير. في الـ widget ده الـ SnackBar والـ navigation. وجوه provider كمان مسموح، وده مالوش مقابل مباشر في الـ Cubit:
+
+<CodeBlock label="الشاشة ترجع لفوق لما الفلتر يتغير">
+
+```dart
+class _LibraryViewState extends ConsumerState<LibraryView> {
+  final _scroll = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    // outside build: listenManual. It is closed with the widget.
+    ref.listenManual(libraryFiltersProvider.select((f) => f.status), (_, _) {
+      if (_scroll.hasClients) _scroll.jumpTo(0);
+    });
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+  // build: ref.watch(visibleBooksProvider) ...
+}
+```
+
+</CodeBlock>
+
+- <b>`listenManual` في `initState`:</b> `ref.listen` مكانه `build` بس. برا `build` بتستخدم `listenManual`، وبيرجّع subscription بيتقفل لوحده مع الـ widget.
+- <b>`ref.listen` في `build` مابيتكررش:</b> بيتسجّل مرة لكل widget مش مع كل rebuild، ومابيتناداش على القيمة الحالية إلا لو قلت `fireImmediately: true`.
+- <b>الـ `ScrollController` في الـ widget:</b> ده ephemeral state. الـ docs الرسمية نفسها بتقول ماتحطش controllers ولا form state ولا animations في providers. نفس قاعدة [درس «الـ State من الصفر»](/course/state-management/state-basics/).
+
+</Level>
+
+<Level n="3" title="الـ provider بيعيش ويموت امتى">
+
+### مين بيمسك الـ provider عايش
+
+provider بالـ autoDispose (الـ default مع الـ codegen) بيعيش طول ما فيه <b>listener</b>. والـ listener واحد من دول:
+
+| بيمسكه عايش | مابيمسكوش |
+| --- | --- |
+| `ref.watch` في widget أو provider | `ref.read` |
+| `ref.listen` و`listenManual` | provider عمل له watch قبل كده واتمسح |
+| `container.listen` في التست | `ref.invalidate` |
+| provider تاني عايش بيعمل له watch | |
+
+يعني الـ graph كله بيعيش من تحت لفوق: الشاشة بتمسك `visibleBooks`، و`visibleBooks` بيمسك `libraryBooks`، و`libraryBooks` بيمسك الـ repository (وده keepAlive أصلًا). الشاشة تتقفل، السلسلة كلها بتتمسح من تحت لفوق، والـ stream بتاع drift بيتلغي.
+
+<Diagram name="d-rp-listener-chain">
+
+الشاشة مفتوحة: كل provider ليه listener، فالسلسلة عايشة. الشاشة اتقفلت: visibleBooks مابقاش ليه حد، فاتمسح، فـ libraryBooks مابقاش ليه حد، فاتمسح والـ drift query اتقفل. الـ repository keepAlive فبيفضل. ولو الشاشة مستخبية تحت شاشة تانية، الـ listeners بتتوقف (pause) مش بتتشال، فمفيش حاجة بتتمسح.
+
+</Diagram>
+
+### الشاشة المستخبية: pause مش dispose
+
+المستخدم في المكتبة وفتح صفحة كتاب فوقها. الـ `LibraryView` لسه في الشجرة بس مش ظاهرة، والـ `TickerMode` بتاعها false. Riverpod 3 بيعمل pause للـ listeners بتوعها: مفيش rebuilds، والـ providers اللي محدش غير الشاشات المستخبية بيسمع عليها بتتوقف هي كمان. بس مش بتتمسح، لأن الـ listener لسه موجود. أول ما المستخدم يرجع، كل حاجة بتكمّل من مكانها.
+
+وده نفس اللي بيحصل للتاب اللي مش ظاهر في الـ `StatefulShellRoute.indexedStack`. فالـ `catalogResultsProvider` بتاع آخر بحث بيفضل موجود وانت في تاب المكتبة، ومش بيعمل حاجة. ولو عندك حاجة لازم تفضل شغالة وهي مستخبية (نادر)، الـ docs بتقول تلفّها في `TickerMode(enabled: true, ...)`.
+
+### keepAlive بمهلة: cache صغير لصفحة الكتاب
+
+المستخدم فتح كتاب، رجع، فتحه تاني بعد 10 ثواني. مع الـ autoDispose، الكتاب اتمسح أول ما رجع، فالفتحة التانية طلب جديد وspinner. ومع `keepAlive: true`، كل كتاب اتفتح هيفضل في الذاكرة للأبد. الحل في النص:
+
+<CodeBlock label="الكتاب يفضل 30 ثانية بعد ما محدش يبص عليه">
+
+```dart
+extension CacheFor on Ref {
+  void cacheFor(Duration duration) {
+    final link = keepAlive();
+    Timer? timer;
+    onCancel(() => timer = Timer(duration, link.close)); // last listener left
+    onResume(() => timer?.cancel());                      // someone came back
+    onDispose(() => timer?.cancel());
+  }
+}
+
+@riverpod
+Future<Book> bookDetails(Ref ref, BookId id) async {
+  final book = (await ref.watch(getBookDetailsProvider)(id)).orThrow();
+  ref.cacheFor(const Duration(seconds: 30)); // only after success: failures are not cached
+  return book;
+}
+```
+
+</CodeBlock>
+
+- <b>`keepAlive()` بيرجّع link:</b> طول ما الـ link مفتوح، الـ provider مابيتمسحش حتى لو محدش بيسمع. و`link.close()` بيرجّع الـ autoDispose يشتغل.
+- <b>`onCancel` و`onResume`:</b> `onCancel` بيتنادى لما آخر listener يمشي، و`onResume` لما حد يرجع يسمع بعدها. الاتنين مع بعض هما الـ «مهلة».
+- <b>بعد النجاح بس:</b> لو `orThrow()` رمى، السطر بتاع `cacheFor` مابيتنفّذش، فالفشل بيتمسح عادي ومش هيتعرض تاني من الـ cache.
+- <b>ده مش بديل للـ cache في الـ repository:</b> ده «ماترميش الشاشة لو المستخدم راجع حالًا». قواعد الـ cache الحقيقية (مدة، invalidation، offline) مكانها الـ data layer اللي مش بتتغير.
+
+### الـ family: كل parameter ليه state
+
+`bookDetailsProvider(id)` مش provider واحد، ده provider لكل `BookId`. وفي الـ codegen، أي parameter بعد الـ `Ref` (أو في `build` بتاع Notifier) بيعمل family. ومن غير الـ codegen، الـ Notifier بياخد الـ parameter في الـ <b>constructor</b> من 3.0:
+
+<CodeBlock label="نفس الـ family من غير codegen">
+
+```dart
+final notesProvider =
+    AsyncNotifierProvider.autoDispose.family<NotesNotifier, List<Note>, BookId>(
+  NotesNotifier.new,
+);
+
+class NotesNotifier extends AsyncNotifier<List<Note>> {
+  NotesNotifier(this.bookId); // the family argument, in a field
+  final BookId bookId;
+
+  @override
+  Future<List<Note>> build() async =>
+      (await ref.watch(notesRepositoryProvider).getNotes(bookId)).orThrow();
+}
+```
+
+</CodeBlock>
+
+ده بيقابل `registerFactoryParam<NotesCubit, BookId, void>` في [درس «الـ State management في مشروع حقيقي»](/course/state-management/architecture/): الـ Cubit بياخد الـ `BookId` في الـ constructor عشان مايبقاش في لحظة هو موجود ومش عارف هو بتاع أنهي كتاب. نفس السبب هنا. (والـ docs بتنبّه: ماتعملش logic في الـ constructor نفسه، الـ `ref` لسه مش جاهز. خزّن الـ argument وبس.)
+
+وقواعد الـ parameter:
+
+- <b>لازم يبقى ليه `==` و`hashCode` ثابتين:</b> الـ container بيدوّر على الـ state بالـ parameter. `BookId` value object، تمام. `String` و`int` و`enum`، تمام. record زي `(query: 'clean', page: 2)`، تمام، لأن الـ records ليها `==` بالقيمة.
+- <b>`List` أو class من غير `==`:</b> `catalogResultsProvider(SearchParams(query: q))` لو `SearchParams` مالوش `==`، كل build بيعمل object جديد، يعني provider جديد، يعني طلب جديد وspinner للأبد. الـ lint اسمه `provider_parameters`.
+- <b>كل instance بيعيش لوحده:</b> فتحت 3 كتب ورا بعض في الـ stack، فيه 3 `bookDetailsProvider`. اتقفل واحد، اتمسح هو بس.
+- <b>`ref.invalidate(bookDetailsProvider)` من غير parameter:</b> بيعمل invalidate لكل الكتب. و`ref.invalidate(bookDetailsProvider(id))` لكتاب واحد. بعد ما المستخدم يغيّر حالة كتاب، الواحد هو اللي محتاجه.
+
+### provider بيستنى provider async
+
+`catalogResults` محتاج الـ `pageSize` من remote config، وده `FutureProvider`. الطريقة:
+
+<CodeBlock label="await جوه build">
+
+```dart
+@riverpod
+class CatalogResults extends _$CatalogResults {
+  @override
+  Future<CatalogPage> build(String query) async {
+    final pageSize = await ref.watch(remoteConfigProvider.selectAsync((c) => c.catalogPageSize));
+    // ...first page with pageSize
+  }
+}
+```
+
+</CodeBlock>
+
+الـ `ref.watch(p.future)` (أو `selectAsync`) بيرجّع Future بيخلص لما الـ provider التاني يجيب قيمة، وبيستنى حتى محاولات الـ retry بتاعته. ولو التاني فشل في الآخر، الـ error بيوصلك ملفوف في `ProviderException`، والـ `AsyncError` بتاعك بيشيله. ده فرق مهم لو بتعمل `error is NetworkFailure` في الـ UI: الـ error الأصلي موجود في `ProviderException.exception`.
+
+### الـ circular dependency
+
+<CodeBlock label="لفة مقفولة">
+
+```dart
+@riverpod
+Set<BookId> ownedBookIds(Ref ref) => {
+      for (final b in ref.watch(catalogResultsProvider('')).value?.books ?? <Book>[])
+        if (b.inLibrary) b.id,
+    };
+
+// and inside CatalogResults.build:
+final owned = ref.watch(ownedBookIdsProvider); // CircularDependencyError
+```
+
+</CodeBlock>
+
+Riverpod بيرمي `CircularDependencyError` أول ما اللفة تحصل. والحل دايمًا واحد: المعلومة اللي الاتنين محتاجينها تيجي من مصدر تالت تحت الاتنين. هنا `ownedBookIds` يسمع على `BookLookup.watchLibraryIds()` من الـ domain، مش على نتايج الكتالوج. نفس قاعدة الـ Cubits: الاتنين يسمعوا على المصدر، مش على بعض.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+### codegen ولا لأ
+
+الـ docs الرسمية بتقول الاتنين: Riverpod «بيحب» الـ codegen، و«استخدمه بس لو بتستخدم codegen أصلًا لحاجات تانية زي freezed وjson_serializable». Readly عندها freezed وinjectable وdrift، و`build_runner` شغال من الوحدة 2، فالـ codegen هنا مفيش تمن زيادة. والوحدة كلها ماشية بيه، بالإصدارات دي:
+
+<CodeBlock label="pubspec.yaml (Readly، الـ branch التجريبي)">
+
+```yaml
+dependencies:
+  flutter_riverpod: ^3.4.3
+  riverpod_annotation: ^4.0.7
+
+dev_dependencies:
+  build_runner:
+  riverpod_generator: ^4.0.9
+```
+
+</CodeBlock>
+
+وفي مشروع مافيهوش codegen، الكتابة اليدوية مش «درجة تانية»: نفس الـ API، بس `.autoDispose` و`.family` بإيدك، والـ family Notifier بياخد الـ argument في الـ constructor. المهم الفريق يختار واحدة، لأن الـ default مختلف: الـ codegen autoDispose by default، واليدوي لأ.
+
+### riverpod_lint
+
+من 3.1 بقى analyzer plugin رسمي (مش `custom_lint`)، وبيتحط في `analysis_options.yaml` مش في الـ dev_dependencies:
+
+<CodeBlock label="analysis_options.yaml">
+
+```yaml
+plugins:
+  riverpod_lint: ^3.1.9
+```
+
+</CodeBlock>
+
+ومحتاج Dart 3.13 أو أحدث. أهم الـ rules بتاعته لـ Readly:
+
+- <b>`provider_parameters`:</b> family parameter عبارة عن list مش `const`، أو closure، أو object من class مالهاش `==`.
+- <b>`only_use_keep_alive_inside_keep_alive`:</b> provider بـ keepAlive بيعتمد على provider بيتمسح. هنشوفها في درس الـ DI.
+- <b>`avoid_public_notifier_properties`:</b> Notifier فيه field أو getter public. نفس `avoid_public_fields` في `bloc_lint`: الـ UI تعرف الـ state والـ methods بس.
+- <b>`avoid_build_context_in_providers`:</b> `BuildContext` داخل provider أو method في Notifier. نفس قاعدة «الـ Cubit مايعرفش Flutter».
+- <b>`async_value_nullable_pattern`:</b> `AsyncValue(:final value?)` على نوع ممكن يبقى `null`، لأن القيمة `null` الحقيقية هتتعامل كأن مفيش قيمة. البديل `AsyncValue(:final value, hasValue: true)`.
+
+وكونه plugin معناه إن `dart analyze` في الـ CI بيطلّعه زي أي lint تاني، نفس فكرة الـ plugins في [درس «حراسة المعمارية»](/course/quality/architecture-guards/).
+
+### قرارات صغيرة بتفرق
+
+- <b>provider صغير لكل سؤال:</b> `libraryBooks` و`visibleBooks` منفصلين لأن كل واحد بيتغير لسبب مختلف. provider واحد كبير بيرجّع «كل حاجة الشاشة محتاجاها» هو god Cubit بشكل جديد، وكل حرف في البحث هيعيد كل حاجة.
+- <b>الـ providers في `presentation/` أو ملفات `*_providers.dart`:</b> مش في `domain/` ولا `data/`. ده متحرس بتست المعمارية من الدرس اللي فات.
+- <b>الـ keepAlive سؤال واحد:</b> «لازم يفضل عايش لما مفيش شاشة بتبص عليه؟». الـ database والـ repositories والـ session: أيوه. أي حاجة تانية: لأ، أو `cacheFor` لو في سبب.
+- <b>الـ family parameter بسيط:</b> id أو `String` أو record. لو محتاج object كبير، يبقى غالبًا محتاج provider للـ object ده، والـ family بالـ id بتاعه.
+
+<Note kind="interview" title="سؤال interview">
+
+«إيه اللي بيخلّي provider بالـ autoDispose يفضل عايش؟» أي listener: `ref.watch` أو `ref.listen` من widget أو من provider تاني عايش، أو `container.listen` في تست. الـ `ref.read` مابيمسكوش. والـ graph بيعيش من تحت لفوق: الشاشة بتمسك اللي بتعمله watch، وده بيمسك اللي تحته. ولما الشاشة تكون مستخبية تحت route تاني، الـ listeners بتتوقف (pause) في Riverpod 3، مش بتتشال، فمفيش حاجة بتتمسح ومفيش rebuilds. ولو عايز provider يعيش شوية بعد آخر listener، `ref.keepAlive()` مع `onCancel` و`onResume` وtimer بيقفل الـ link.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### فلتر المكتبة: Cubitين ولا providers متوصلة
+
+<BeforeAfter>
+
+<Side label="Cubit: الشاشة بتوصّل الاتنين" kind="before">
+
+```dart
+// LibraryFilterCubit holds BookStatus?
+// LibraryCubit.filterChanged(status) re-subscribes
+
+BlocListener<LibraryFilterCubit, BookStatus?>(
+  listener: (context, status) =>
+      context.read<LibraryCubit>().filterChanged(status),
+  child: BlocBuilder<LibraryCubit, LibraryState>(
+    builder: (context, state) => /* switch */,
+  ),
+)
+
+// LibraryCubit
+void filterChanged(BookStatus? status) {
+  _sub?.cancel();
+  emit(const LibraryLoading());
+  _sub = _repository.watchLibrary(status: status).listen(
+        (books) => emit(LibraryLoaded(books)),
+        onError: addError,
+      );
+}
+```
+
+</Side>
+
+<Side label="Riverpod: الـ graph بيوصّل نفسه" kind="after">
+
+```dart
+@riverpod
+Stream<List<Book>> libraryBooks(Ref ref) {
+  final status = ref.watch(
+    libraryFiltersProvider.select((f) => f.status),
+  );
+  return ref
+      .watch(libraryRepositoryProvider)
+      .watchLibrary(status: status);
+}
+
+// LibraryView.build
+final books = ref.watch(visibleBooksProvider);
+// switch (books) ...
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: الشاشة هي اللي بتعرف إن تغيير الفلتر لازم يعيد الاشتراك، والـ `_sub?.cancel()` لازم يتكتب صح وإلا اشتراكين يعملوا emit مع بعض. بعد: الاعتماد مكتوب في الـ provider نفسه، والـ stream القديم بيتلغي لوحده لما الـ provider يتبني بالـ status الجديدة. التمن: لو حد كتب `ref.watch(libraryFiltersProvider)` من غير `select`، كل حرف في البحث هيعيد الـ query، ومفيش حاجة في شكل الكود هتقول ده.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="rp-basics-1">
+<Ask>زميلك كتب في `libraryBooks`: `final status = ref.watch(libraryFiltersProvider).status;`. الشاشة شغالة، بس الـ profiler بيقول إن drift بيعمل query جديد مع كل حرف في خانة البحث. ليه؟ والحل؟</Ask>
+<Answer>
+
+الـ watch على الـ `LibraryFilters` كله، والـ query حقل فيه. أي حرف بيغيّر الـ object، فـ `libraryBooks` بيتبني تاني ويشترك في `watchLibrary` من جديد. الحل `ref.watch(libraryFiltersProvider.select((f) => f.status))`، فالـ rebuild يحصل لما الـ status نفسها تتغير. والفلترة بالكلمة في provider تاني (`visibleBooks`) بيعمل select على الـ query.
+
+</Answer>
+</Question>
+
+<Question id="rp-basics-2">
+<Ask>حد اقترح يكتب `ref.read(libraryFiltersProvider).status` في `build` بتاع الـ chip «عشان مايعملش rebuild كتير». إيه اللي هيحصل، وإيه الصح؟</Ask>
+<Answer>
+
+الـ chip هيعرض القيمة اللي كانت وقت أول build ومش هيتحدث لما الفلتر يتغير. الـ docs الرسمية بتقول صراحة ماتستخدمش `read` عشان تتجنب الـ rebuilds. الصح `ref.watch(libraryFiltersProvider.select((f) => f.status))`: rebuild بس لما الـ status تتغير. والـ `read` مكانه الـ callbacks زي `onSelected`.
+
+</Answer>
+</Question>
+
+<Question id="rp-basics-3">
+<Ask>`catalogResultsProvider(SearchParams(query: q))`، و`SearchParams` class عادية من غير `==`. الشاشة بتلف spinner للأبد وبتبعت طلبات كتير. ليه؟</Ask>
+<Answer>
+
+الـ family بتدوّر على الـ state بالـ parameter، والـ parameter من غير `==` معناه إن كل build بيعمل `SearchParams` جديد مش بيساوي القديم، فالـ container بيعمل provider جديد بـ state جديدة (loading) وبيبعت طلب جديد. الحل parameter ليه `==` ثابت: الـ `String` نفسه، أو record، أو `SearchParams` بـ `==` و`hashCode`. والـ lint `provider_parameters` بيمسك ده.
+
+</Answer>
+</Question>
+
+<Question id="rp-basics-4">
+<Ask>المستخدم في المكتبة، فتح صفحة كتاب فوقها بـ push. إيه اللي بيحصل لـ `libraryBooksProvider` وللـ stream بتاع drift؟ وإيه اللي بيحصل لو رجع للمكتبة؟</Ask>
+<Answer>
+
+الـ `LibraryView` لسه في الشجرة بس مستخبية، فـ Riverpod 3 بيعمل pause للـ listeners بتوعها (عن طريق `TickerMode`). الـ provider مش بيتمسح لأن الـ listener لسه موجود، بس مفيش rebuilds، والـ providers اللي مالهاش غير listeners متوقفة بتتوقف هي كمان. لما يرجع، الـ listeners بتكمّل والشاشة بتتحدث بآخر قيمة، من غير ما الـ provider يتبني من الأول.
+
+</Answer>
+</Question>
+
+<Question id="rp-basics-5">
+<Ask>عايز صفحة الكتاب تفضل في الذاكرة 30 ثانية بعد ما المستخدم يرجع منها، بس لو التحميل فشل ماتتخزنش. إزاي؟</Ask>
+<Answer>
+
+جوه `build` بعد ما الكتاب يرجع بنجاح: `final link = ref.keepAlive();`، وtimer بيبدأ في `ref.onCancel` (آخر listener مشي) وبيعمل `link.close()` بعد 30 ثانية، وبيتلغي في `ref.onResume` لو حد رجع يسمع، وفي `ref.onDispose`. ولأن السطر ده بعد الـ `orThrow()`، الفشل بيرمي قبل ما يوصله، فالـ provider الفاشل بيتمسح عادي.
+
+</Answer>
+</Question>
+
+</Quiz>

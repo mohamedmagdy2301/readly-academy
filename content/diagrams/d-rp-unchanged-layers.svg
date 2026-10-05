@@ -1,0 +1,33 @@
+<svg viewBox="0 0 760 330" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Readly قبل وبعد Riverpod: الـ presentation والـ DI بس اللي اتبدلوا، والـ domain والـ data والـ core زي ما هما، والـ Notifiers بتكلّم نفس الـ contracts اللي الـ Cubits كانت بتكلّمها">
+<text x="186" y="24" text-anchor="middle" font-size="11" fill="var(--muted)" font-weight="600">main · Cubit</text>
+<text x="574" y="24" text-anchor="middle" font-size="11" fill="var(--accent)" font-weight="600">spike/riverpod</text>
+<rect x="16" y="36" width="340" height="48" rx="8" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="186" y="57" text-anchor="middle" font-size="11.5" fill="var(--ink)" font-weight="600">presentation</text>
+<text x="186" y="74" text-anchor="middle" font-size="10" fill="var(--muted)">LibraryCubit · BlocProvider · BlocBuilder</text>
+<rect x="404" y="36" width="340" height="48" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="574" y="57" text-anchor="middle" font-size="11.5" fill="var(--ink)" font-weight="600">presentation</text>
+<text x="574" y="74" text-anchor="middle" font-size="10" fill="var(--ink)">LibraryRefresh (Notifier) · ref.watch · ConsumerWidget</text>
+<line x1="358" y1="60" x2="400" y2="60" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#mk-acc)"/>
+<rect x="16" y="98" width="340" height="48" rx="8" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="186" y="119" text-anchor="middle" font-size="11.5" fill="var(--ink)" font-weight="600">DI</text>
+<text x="186" y="136" text-anchor="middle" font-size="10" fill="var(--muted)">get_it · registerLibrary(getIt) · resetOnLogout</text>
+<rect x="404" y="98" width="340" height="48" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="574" y="119" text-anchor="middle" font-size="11.5" fill="var(--ink)" font-weight="600">DI</text>
+<text x="574" y="136" text-anchor="middle" font-size="10" fill="var(--ink)">providers · ProviderScope(overrides) · signedInProvider</text>
+<line x1="358" y1="122" x2="400" y2="122" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#mk-acc)"/>
+<line x1="186" y1="148" x2="186" y2="178" stroke="var(--muted)" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#mk-mut)"/>
+<line x1="574" y1="148" x2="574" y2="178" stroke="var(--muted)" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#mk-mut)"/>
+<text x="380" y="168" text-anchor="middle" font-size="10" fill="var(--muted)">both wire the same contracts</text>
+<rect x="16" y="182" width="728" height="40" rx="8" fill="var(--good-soft)" stroke="var(--good)" stroke-width="1.5"/>
+<text x="30" y="207" font-size="11.5" fill="var(--ink)" font-weight="600">domain</text>
+<text x="100" y="207" font-size="10.5" fill="var(--ink)">Book · BookId · LibraryRepository · BookLookup · RefreshLibrary · SearchBooks</text>
+<text x="730" y="207" text-anchor="end" font-size="10.5" fill="var(--good)" font-weight="600">0 lines</text>
+<rect x="16" y="230" width="728" height="40" rx="8" fill="var(--good-soft)" stroke="var(--good)" stroke-width="1.5"/>
+<text x="30" y="255" font-size="11.5" fill="var(--ink)" font-weight="600">data</text>
+<text x="100" y="255" font-size="10.5" fill="var(--ink)">LibraryRepositoryImpl · drift · dio · SyncQueue · SyncService · DTOs</text>
+<text x="730" y="255" text-anchor="end" font-size="10.5" fill="var(--good)" font-weight="600">0 lines</text>
+<rect x="16" y="278" width="728" height="22" rx="6" fill="none" stroke="var(--good)" stroke-width="1.2" stroke-dasharray="4 3"/>
+<text x="30" y="293" font-size="10" fill="var(--ink)">core: Result · Success · Err · Failure</text>
+<text x="730" y="293" text-anchor="end" font-size="10" fill="var(--good)" font-weight="600">0 lines</text>
+<text x="380" y="321" text-anchor="middle" font-size="11.5" fill="var(--muted)" class="ar" direction="rtl" unicode-bidi="embed">الحلقة اللي برا اتبدلت، والطبقتين اللي جوه زي ما هما</text>
+</svg>

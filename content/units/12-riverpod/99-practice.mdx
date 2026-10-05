@@ -1,0 +1,25 @@
+---
+title: "التطبيق والمهام"
+description: "مهام وحدة Riverpod في Readly: الـ presentation والـ DI بـ Riverpod في branch تجريبي، والـ domain والـ data من غير ولا سطر، وتست معمارية بيحرس ده، والمكتبة والكتالوج وصفحة الكتاب والملاحظات بالتستات، وفي الآخر ADR بالقرار والتمن."
+type: "practice"
+---
+
+<Tasks>
+<Task id="rp-practice-1">اعمل branch اسمه `spike/riverpod`. قبل أي كود، اكتب في الـ PR description الملفات اللي مش المفروض تتغير، وزوّد في `tools/architecture/test/architecture_test.dart` منع `package:riverpod` و`package:flutter_riverpod` في `domain/` و`data/`. وفي آخر كل مهمة من اللي جاية، شغّل `git diff --stat main` على `domain` و`data` و`core` واتأكد إنه فاضي (درس «ليه Riverpod، وإيه اللي مش هيتغير»).</Task>
+<Task id="rp-practice-2">اعمل `orThrow()` على `Result` في الـ presentation، واكتب له تست: `Success` بيرجّع القيمة، و`Err(NetworkFailure())` بيرمي نفس الـ `NetworkFailure` بالظبط (مش ملفوف)، فالـ `failure.localized(l10n)` يفضل شغال.</Task>
+<Task id="rp-practice-3">ارسم الـ provider graph بتاع المكتبة والكتالوج وصفحة الكتاب: كل provider، keepAlive ولا لأ، family بإيه، ومين بيعمل watch لمين، ومين بيعمل read بس. وعلّم على كل `ref.watch` جوه `build` بتاع Notifier وجاوب: «لو ده اتغير، عايز الـ state ترجع لأولها؟» (درس «الـ providers والـ ref»).</Task>
+<Task id="rp-practice-4">انقل الـ DI بتاع `feature_library` و`feature_catalog` و`feature_notes` من `registerLibrary(GetIt)` لملفات `*_providers.dart`: الـ repositories والـ data sources keepAlive، وكل provider بيرجّع الـ contract مش الـ Impl. والـ `AppDatabase` والـ `SharedPreferences` بيتجهزوا قبل `runApp` ويدخلوا بـ override. واعمل `main_dev.dart` بيبدّل `LibraryRepository` بـ `FakeLibraryRepository` بـ override بدل الـ `env` بتاع injectable (درس «Riverpod مكان get_it»).</Task>
+<Task id="rp-practice-5">بدّل `resetOnLogout()` بـ `signedInProvider` (مشتق من `AuthState`): كل provider بيشيل بيانات مستخدم بيعمل له `ref.watch`، واكتب تست بيعمل login بمستخدم، ويحمّل الكتالوج، ويعمل logout وlogin بمستخدم تاني، ويتأكد إن مفيش state من الأول وصلت للتاني. وفي نفس التست، اتأكد إن الـ `Dio` نفسه ماتعملش من جديد مع تجديد الـ token.</Task>
+<Task id="rp-practice-6">اكتب `BookDetails` كـ `AsyncNotifier` بـ family بالـ `BookId`، ومعاه `changeStatus` و«ضيف لمكتبتي». الصفحة تفضل عارضة الكتاب وقت الـ refresh ولو فشل، والـ SnackBar يظهر مرة واحدة لكل فشل، والـ action بيتجاهل الضغط المتكرر. وحط جنبه `BookDetailsCubit` في الـ PR وقارن سطر بسطر (درس «Notifier وAsyncNotifier قصاد Cubit»).</Task>
+<Task id="rp-practice-7">انقل `NotesCubit` لـ Notifier بنفس `NotesState` (النقل الحرفي) مع الـ optimistic pin بالـ loop بتاع `_wanted` و`_syncing`، وبعدين اكتب نسخة تانية idiomatic بـ `AsyncNotifier<List<Note>>`. اختار واحدة، واكتب في الـ PR ليه، وإيه اللي اتنقل من الـ state للـ UI في النسخة التانية.</Task>
+<Task id="rp-practice-8">اكتب المكتبة كاملة: `libraryFilters` (query وstatus)، والكتب من drift بتتفلتر بالـ status في الـ query وبالـ query في الذاكرة، والـ refresh. والكتالوج: بحث بـ debounce 350ms جوه provider بـ family بالـ query، وpagination بـ `loadMore` و`hasReachedEnd` و`loadMoreFailure`، وguard يمنع صفحة قديمة تتزوّد بعد refresh، وعلامة «في مكتبتك» من `BookLookup` (درس «المكتبة والكتالوج كاملين»).</Task>
+<Task id="rp-practice-9">اكتب تستات الـ providers اللي فوق بـ `ProviderContainer.test`: helper بيسجّل الـ states بالترتيب، وتست الـ debounce بـ fake_async (349 ثم 1)، وتست إن تغيير الـ query بيرمي النتيجة القديمة، وتست إن الـ dispose في نص الـ await مابيكتبش state، وتست إن الـ retry مقفول للـ `ValidationFailure`. وwidget test لـ `LibraryPage` بـ `ProviderScope(overrides:)`، والـ goldens بتاعتها من غير ما تتغير (درس «اختبار الـ providers»).</Task>
+<Task id="rp-practice-10">اعمل `ProviderObserver` بيبعت الـ errors لـ Sentry ويسجّل breadcrumbs بأسماء الـ providers وأنواع الـ state بس (من غير بيانات المستخدم)، زي الـ `AppBlocObserver`. وفعّل `riverpod_lint` في الـ CI، وصلّح كل warning.</Task>
+<Task id="rp-practice-11">املا جدول «مين كسب» من درس القرار بأرقام الـ branch بتاعك (سطور، وتستات، وbugs اتكشفت)، واحسب تمن نقل باقي Readly: الثابت والمتغير لكل شاشة. واكتب `docs/adr/012-riverpod-spike.md` بالـ Findings والـ Decision والـ «Cost if we revisit» والـ «Revisit when» (درس «تختار إيه، وتمن التحويل»).</Task>
+</Tasks>
+
+<Deliverable>branch `spike/riverpod` فيه المكتبة والكتالوج وصفحة الكتاب والملاحظات والـ session بـ Riverpod، والـ CI أخضر: تست المعمارية بيمنع Riverpod في الـ domain والـ data، وتستات الـ domain والـ data نفسها بتعدّي من غير ما تتلمس، والـ goldens زي ما هي. والـ `git diff --stat main` على `domain` و`data` و`core` فاضي. وفي الآخر ADR بالقرار: نعمل merge ولا لأ، بالأرقام وبالتمن لو غيّرنا رأينا.</Deliverable>
+
+<ReviewQuestion>اختار feature واحدة كتبتها بالطريقتين (المكتبة، أو الكتالوج، أو صفحة الكتاب)، واحكي رحلة الـ state فيها في النسختين: مين بيعمل الـ state، وبتعيش قد إيه، وإيه اللي بيحصل لو المستخدم قفل الشاشة والطلب لسه راجع، أو داس مرتين، أو عمل logout. وبعدين قول: إيه السطر في الـ Cubit اللي اتشال في Riverpod، وإيه اللي ظهر بداله؟ وإيه الـ bug اللي قابلته في Riverpod وماكانش ممكن يحصل في الـ Cubit؟</ReviewQuestion>
+
+<LogBox id="rp-practice-log" />

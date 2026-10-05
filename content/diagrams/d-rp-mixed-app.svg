@@ -1,0 +1,33 @@
+<svg viewBox="0 0 760 330" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Readly وقت الـ migration: الـ ProviderScope فوق كل حاجة وجواه الـ MultiBlocProvider. المكتبة والكتالوج Riverpod، والملاحظات والإضافة Cubit، والاتنين بيسمعوا على نفس الـ repositories، ومفيش سهم من Notifier لـ Cubit. والـ providers هي مالك الـ repositories، وget_it بيقرا منها لحد ما يتشال">
+<rect x="16" y="16" width="728" height="220" rx="12" fill="none" stroke="var(--accent)" stroke-width="1.6"/>
+<text x="30" y="36" font-size="11" fill="var(--accent)" font-weight="600">ProviderScope (UncontrolledProviderScope during the migration)</text>
+<rect x="390" y="50" width="340" height="120" rx="10" fill="none" stroke="var(--muted)" stroke-width="1.4"/>
+<text x="404" y="68" font-size="10.5" fill="var(--muted)" font-weight="600">MultiBlocProvider</text>
+<rect x="36" y="80" width="150" height="40" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.4"/>
+<text x="111" y="98" text-anchor="middle" font-size="10.5" fill="var(--ink)" font-weight="600">library</text>
+<text x="111" y="112" text-anchor="middle" font-size="9.5" fill="var(--ink)">Riverpod</text>
+<rect x="206" y="80" width="150" height="40" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.4"/>
+<text x="281" y="98" text-anchor="middle" font-size="10.5" fill="var(--ink)" font-weight="600">catalog</text>
+<text x="281" y="112" text-anchor="middle" font-size="9.5" fill="var(--ink)">Riverpod</text>
+<rect x="410" y="80" width="150" height="40" rx="8" fill="var(--surface)" stroke="var(--line)" stroke-width="1.4"/>
+<text x="485" y="98" text-anchor="middle" font-size="10.5" fill="var(--ink)" font-weight="600">notes</text>
+<text x="485" y="112" text-anchor="middle" font-size="9.5" fill="var(--muted)">NotesCubit</text>
+<rect x="570" y="80" width="150" height="40" rx="8" fill="var(--surface)" stroke="var(--line)" stroke-width="1.4"/>
+<text x="645" y="98" text-anchor="middle" font-size="10.5" fill="var(--ink)" font-weight="600">add book</text>
+<text x="645" y="112" text-anchor="middle" font-size="9.5" fill="var(--muted)">AddBookCubit</text>
+<path d="M356 92 C 380 70, 390 70, 406 92" fill="none" stroke="var(--warn)" stroke-width="1.4" stroke-dasharray="4 3"/>
+<text x="381" y="64" text-anchor="middle" font-size="13" fill="var(--warn)" font-weight="700">✕</text>
+<text x="300" y="148" text-anchor="middle" font-size="9.5" fill="var(--warn)">no Notifier ↔ Cubit</text>
+<rect x="36" y="186" width="684" height="36" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.4"/>
+<text x="378" y="208" text-anchor="middle" font-size="10.5" fill="var(--ink)">libraryRepositoryProvider · bookLookupProvider · notesRepositoryProvider (keepAlive, one owner)</text>
+<line x1="111" y1="120" x2="111" y2="182" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#mk-acc)"/>
+<line x1="281" y1="120" x2="281" y2="182" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#mk-acc)"/>
+<line x1="485" y1="120" x2="485" y2="182" stroke="var(--muted)" stroke-width="1.3" marker-end="url(#mk-mut)"/>
+<line x1="645" y1="120" x2="645" y2="182" stroke="var(--muted)" stroke-width="1.3" marker-end="url(#mk-mut)"/>
+<text x="560" y="160" text-anchor="middle" font-size="9.5" fill="var(--muted)">ref.read in BlocProvider.create</text>
+<rect x="470" y="256" width="250" height="34" rx="8" fill="none" stroke="var(--muted)" stroke-width="1.3" stroke-dasharray="4 3"/>
+<text x="595" y="277" text-anchor="middle" font-size="10" fill="var(--muted)">get_it (legacy code outside the tree)</text>
+<path d="M595 256 V230" fill="none" stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="3 3" marker-end="url(#mk-mut)"/>
+<text x="460" y="250" text-anchor="end" font-size="9.5" fill="var(--muted)">container.read(...): a mirror, not an owner</text>
+<text x="380" y="318" text-anchor="middle" font-size="11.5" fill="var(--muted)" class="ar" direction="rtl" unicode-bidi="embed">كل feature بأداة واحدة، وكل object ليه مالك واحد</text>
+</svg>

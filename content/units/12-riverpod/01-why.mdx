@@ -1,0 +1,327 @@
+---
+title: "ليه Riverpod، وإيه اللي مش هيتغير"
+description: "ليه تتعلم Riverpod في كورس مبني على Cubit، وإيه بالظبط اللي هيتغير في Readly وإيه اللي مش هيتلمس، وإزاي تثبت ده بالـ diff وبتست المعمارية مش بالكلام."
+minutes: 25
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="المطعم اللي غيّر نظام الطلبات">
+
+مطعم شغال من سنين بنظام ورق: الجرسون بيكتب الطلب في بون، ويحطه على شباك المطبخ، والطباخ يطبخ. صاحب المطعم قرر يجيب تابلت: الجرسون يدوس على الطبق، والطلب يظهر على شاشة في المطبخ.
+
+اتغير إيه؟ الصالة: الجرسونات اتعلموا التابلت، والبون اتشال، والشاشة اتركبت. ومين اللي بيوصّل الطلب للمطبخ اتغير: بدل الشباك، بقى في سيستم.
+
+ماتغيرش إيه؟ الوصفات، والمطبخ، والموردين، والمخزن. المكرونة بالبشاميل لسه بنفس المقادير، والطماطم لسه جاية من نفس التاجر. ولو حد في المطبخ قال «عشان التابلت لازم نغيّر الوصفة»، يبقى في حاجة غلط في المطبخ من الأول: الوصفة كانت مربوطة بشكل البون.
+
+</Analogy>
+
+في Readly:
+
+- <b>الوصفات</b> هي الـ domain: `Book`، و`BookId`، و`LibraryRepository` (الـ contract)، و`RefreshLibrary`، و`SearchBooks`، و`Result` و`Failure`.
+- <b>المطبخ والمخزن والموردين</b> هما الـ data: `LibraryRepositoryImpl`، وdrift، وdio، والـ `SyncQueue`، والـ DTOs.
+- <b>الصالة</b> هي الـ presentation: الـ Cubits والـ widgets.
+- <b>مين بيوصّل مين</b> هو الـ DI: get_it والـ `BlocProvider`.
+
+الوحدة دي بتغيّر نظام الطلبات: الـ Cubits تبقى Notifiers، وget_it يبقى providers. والوعد إن المطبخ مايتلمسش. ولو اتلمس، ده مش «تمن Riverpod»، ده عيب في المعمارية بنكتشفه.
+
+</Level>
+
+<Level n="2" title="ليه، وإيه اللي بيتغير">
+
+### ليه نتعلم Riverpod في كورس مبني على Cubit
+
+Readly اختارت Cubit، والقرار مكتوب في الـ ADR بتاع [درس «تختار state management إزاي»](/course/state-management/choosing/) بمعاييره. فليه وحدة كاملة لأداة تانية؟ 4 أسباب:
+
+1. <b>هتشتغل في مشروع Riverpod:</b> Riverpod وBloc هما الاتنين الكبار في مشاريع Flutter. لو اتعينت في شركة بكرة، الاحتمال كبير إن الـ codebase يبقى واحد منهم. ودرس [«Riverpod من الصفر»](/course/state-management/riverpod/) عرّفك الأداة على شاشتين. الوحدة دي بتوريك مشروع كامل بيها: الـ DI، والـ session، والـ pagination، والتستات، والحاجات اللي بتبوظ لما المشروع يكبر.
+2. <b>الدليل إن المعمارية شغالة:</b> طول الكورس بنقول «الـ presentation تفصيلة». الكلام ده سهل. إنك تبدّل الـ presentation كلها والـ domain والـ data يفضلوا زي ما هما، ده اختبار حقيقي. ولو فشل في حتة، الحتة دي هي الدرس.
+3. <b>الـ «Revisit when» في الـ ADR:</b> الـ ADR 007 بيقول «راجع القرار لو أغلب البيانات بقت جاية من السيرفر من غير DB محلية، أو أغلب الفريق بقى يعرف Riverpod أحسن». القرار ده مش حقيقي غير لو حد في الفريق يعرف يقيس تمن التحويل بالأرقام. ده بالظبط اللي هتعمله في [درس القرار](/course/riverpod/decision/).
+4. <b>هتفهم الـ Cubit أحسن:</b> كل حاجة الـ Cubit بيعملها بإيدك (`_sub` و`close`، و`isClosed`، و`_latestRequest`) Riverpod بيعملها بطريقة تانية أو بيلغيها. لما تشوف الاتنين جنب بعض، بتعرف كل سطر في الـ Cubit كان بيحميك من إيه.
+
+### اللي مش هيتغير، بالملف
+
+| المكان | فيه إيه | بيتغير؟ |
+| --- | --- | --- |
+| `core/` | `Result`، `Success`، `Err`، `Failure` وأنواعه، `Clock` | لأ |
+| `feature_*/lib/src/domain/` | الـ entities، والـ value objects، والـ contracts، والـ use cases | لأ |
+| `feature_*/lib/src/data/` | الـ Impl، والـ DTOs، وdrift، والـ remote sources، والـ `SyncQueue` | لأ |
+| تستات الـ domain والـ data | `dart test` على الـ use cases والـ repositories بالـ fakes | لأ |
+| `feature_*/lib/src/*_di.dart` | `registerLibrary(GetIt getIt)` | بيتشال، ومكانه `*_providers.dart` |
+| `feature_*/lib/src/presentation/` | الـ Cubits، والـ states، والـ pages | الـ Cubits تبقى Notifiers. الـ widgets تبقى `ConsumerWidget` |
+| تستات الـ presentation | `blocTest` و`MockCubit` | تبقى `ProviderContainer.test` و`ProviderScope(overrides:)` |
+| `main.dart` و`app.dart` | `setupDependencies()`، و`MultiBlocProvider` | `ProviderScope` |
+| الـ goldens والـ integration tests | اللي المستخدم شايفه | لأ، غير سطر الـ setup |
+
+يعني الـ diff المتوقع: الـ presentation والـ DI والـ entry point وتستات الـ presentation. وأي سطر برا القايمة دي محتاج تبرير.
+
+<Diagram name="d-rp-unchanged-layers">
+
+الطبقتين اللي جوه (الـ domain والـ data) والـ core ماتغيروش. الحلقة اللي برا بس اتبدلت: الـ Cubits بقت Notifiers والـ BlocProvider بقى ref.watch. والـ DI اللي كان get_it بيوصّل الطبقات ببعض بقى providers، بس الأسهم نفسها رايحة لنفس الـ contracts.
+
+</Diagram>
+
+### نقطة الالتقاء: الـ contracts
+
+الـ Cubit النهارده بيكلّم حاجتين: use cases، وrepository contracts. الـ Notifier بكرة هيكلّم نفس الحاجتين بالظبط:
+
+<CodeBlock label="الـ Cubit والـ Notifier بيشوفوا نفس الـ domain">
+
+```dart
+// today
+class LibraryCubit extends Cubit<LibraryState> {
+  LibraryCubit(this._repository, this._refreshLibrary) : super(const LibraryLoading());
+  final LibraryRepository _repository;   // domain contract
+  final RefreshLibrary _refreshLibrary;  // domain use case
+  // ...
+}
+
+// tomorrow
+@riverpod
+class LibraryRefresh extends _$LibraryRefresh {
+  // ...
+  Future<void> refresh() async {
+    final result = await ref.read(refreshLibraryProvider)(); // the same RefreshLibrary
+    // ...
+  }
+}
+```
+
+</CodeBlock>
+
+`RefreshLibrary` مابيعرفش مين بيناديه. هو class فيها `call()` بترجّع `Future<Result<void>>`. Cubit ناداها، Notifier ناداها، تست ناداها، كله واحد. ده اللي بيخلّي التحويل ممكن أصلًا: الـ presentation بتتكلم مع الـ domain من خلال <b>contracts</b>، مش من خلال أنواع جاية من أداة الـ state management.
+
+### واللي بيتغير فعلًا
+
+| في Readly النهارده | بعد الوحدة | الدرس |
+| --- | --- | --- |
+| `getIt.registerLazySingleton<LibraryRepository>(...)` | `@Riverpod(keepAlive: true) LibraryRepository libraryRepository(Ref ref)` | [Riverpod مكان get_it](/course/riverpod/di/) |
+| `registerFactoryParam<NotesCubit, BookId, void>` | provider بـ family | [الـ providers والـ ref](/course/riverpod/basics/) |
+| `NotesCubit` و`BookDetailsCubit` | `AsyncNotifier` | [Notifier وAsyncNotifier](/course/riverpod/notifier/) |
+| `LibraryCubit` و`CatalogCubit` و`CatalogSearchCubit` | providers للبيانات وNotifiers للـ actions | [المكتبة كاملة](/course/riverpod/same-feature/) |
+| `blocTest` و`MockCubit` | `ProviderContainer.test` و`overrides` | [اختبار الـ providers](/course/riverpod/testing/) |
+| `resetOnLogout()` في الـ composition root | providers بتعمل `watch` للمستخدم الحالي | [Riverpod مكان get_it](/course/riverpod/di/) |
+
+</Level>
+
+<Level n="3" title="الحاجات اللي شكلها لازم تتغير، وماتتغيرش">
+
+دي أهم حتة في الدرس. كل نقطة هنا حد في فريق حقيقي اقترحها «عشان Riverpod»، والإجابة كانت لأ.
+
+### «خلي الـ repository يرجّع `AsyncValue`»
+
+`AsyncValue` نوع من Riverpod. لو `LibraryRepository.watchLibrary()` بقت ترجّع `Stream<AsyncValue<List<Book>>>`، الـ domain بقى بيعمل `import 'package:riverpod/...'`. وأول ما حد يرجع لـ Cubit أو يكتب CLI بيستخدم نفس الـ domain، هيلاقي نفسه شايل Riverpod معاه. والأسوأ: الـ loading مش معلومة domain. «الكتب لسه ماوصلتش» ده سؤال الشاشة، والـ repository بيقول حاجة واحدة: «دي الكتب»، أو «في error».
+
+الـ contracts تفضل `Stream<List<Book>>` و`Future<Result<T>>`، وتحويلها لـ `AsyncValue` شغل الـ provider، زي ما تحويلها لـ `LibraryState` كان شغل الـ Cubit.
+
+### «الـ `Result` مش مناسب لـ Riverpod، خلينا نرمي exceptions»
+
+Riverpod بيفهم الفشل كـ exception: `FutureProvider` بيرمي، يبقى `AsyncError`. فالـ `Result` محتاج تحويل. الحل الغلط إن الـ use cases كلها تبقى بترمي. الحل الصح إن التحويل يحصل في مكان واحد في الـ presentation:
+
+<CodeBlock label="core_ui/lib/src/result_x.dart: في الـ presentation، مش في الـ domain">
+
+```dart
+extension ResultOrThrow<T> on Result<T> {
+  /// For providers only: a Failure becomes the AsyncError of the provider.
+  T orThrow() => switch (this) {
+        Success(:final value) => value,
+        Err(:final failure) => throw failure,
+      };
+}
+```
+
+</CodeBlock>
+
+الـ `Failure` بيعدّي زي ما هو، والـ `error` جوه الـ `AsyncError` بيبقى `NetworkFailure` نفسها، والـ `failure.localized(l10n)` شغال زي ما هو. والـ use cases ماتعرفش إن في حد بيرمي نتيجتها. ده نفس دور الـ `switch` اللي في كل Cubit: ترجمة من لغة الـ domain للغة الشاشة.
+
+### «الـ repositories ياخدوا `Ref` عشان يجيبوا اللي محتاجينه»
+
+<CodeBlock label="الغلط: service locator باسم جديد">
+
+```dart
+class LibraryRepositoryImpl implements LibraryRepository {
+  LibraryRepositoryImpl(this._ref);
+  final Ref _ref;
+
+  @override
+  Future<Result<void>> refresh() async {
+    final remote = _ref.read(libraryRemoteSourceProvider); // hidden dependency
+    // ...
+  }
+}
+```
+
+</CodeBlock>
+
+ده بالظبط `GetIt.I<...>()` جوه الـ class اللي [درس الـ DI](/course/di-scale/di/) قال عليه «نفس المشكلة القديمة بس بشكل أشيك». الـ data layer بقت بتعمل import لـ Riverpod، والتست محتاج container عشان يعمل repository، والـ constructor مابقاش بيقول الـ class محتاجة إيه. الـ Impl يفضل بياخد `LibraryRemoteSource` و`LibraryLocalSource` في الـ constructor، والـ provider هو اللي بيوصّل.
+
+### «Riverpod عنده offline persistence، نشيل drift؟»
+
+لأ. الـ persistence بتاع Riverpod بيحفظ state الـ Notifier (زي `HydratedCubit`)، ودي حاجة مختلفة تمامًا عن DB هي مصدر الحقيقة، فيها sync queue، وconflicts، وqueries بفلاتر. drift في الـ data layer، والـ data layer مابتتغيرش. نفس المنطق لأي ميزة في Riverpod بتعمل شغل data: الـ caching بتاعه caching للـ state في الذاكرة، مش بديل لـ cache مكتوب في الـ repository بقواعد.
+
+### «الـ SyncService يبقى Notifier»
+
+الـ `SyncService` بتاع [درس Offline-first](/course/offline/offline/) بيسمع على الـ queue والشبكة ويبعت العمليات. مالوش UI، ومالوش state بيعرضها حد. هو object في الـ data layer عمره عمر الـ app. اللي بيتغير هو مين بيعمله ويقفله: بدل `getIt.registerLazySingleton(..., dispose:)`، provider بـ `keepAlive` و`ref.onDispose(sync.stop)`. الـ class نفسها زي ما هي.
+
+### الحارس: تست المعمارية
+
+الكلام ده لازم يبقى قاعدة في الـ CI، مش نصيحة في الـ review. التست اللي عملناه في [درس «حراسة المعمارية»](/course/quality/architecture-guards/) بيزيد سطرين:
+
+<CodeBlock label="tools/architecture/test/architecture_test.dart">
+
+```dart
+const forbiddenInDomain = [
+  'package:flutter/', 'package:dio/', 'package:drift/',
+  'package:riverpod', 'package:flutter_riverpod', 'package:riverpod_annotation', // new
+];
+
+Directory dataOf(Directory pkg) => Directory('${pkg.path}/lib/src/data');
+
+test('data layer knows nothing about riverpod', () {
+  final violations = [
+    for (final pkg in packages)
+      if (dataOf(pkg).existsSync())
+        for (final i in importsIn(dataOf(pkg)))
+          if (i.uri.startsWith('package:riverpod') ||
+              i.uri.startsWith('package:flutter_riverpod') ||
+              i.uri.startsWith('package:hooks_riverpod'))
+            i,
+  ];
+  expect(violations, isEmpty);
+});
+```
+
+</CodeBlock>
+
+- <b>الـ `'package:riverpod'` من غير `/`:</b> بيمسك `riverpod` و`riverpod_annotation` مع بعض، لأن الـ `startsWith` بيقارن البداية بس.
+- <b>الـ data ليها تست لوحدها:</b> الـ data مسموح لها dio وdrift، فمش بتدخل في `forbiddenInDomain`. بس Riverpod لأ.
+- <b>الـ providers مكانها فين؟</b> في `*_providers.dart` جنب الـ `*_di.dart` القديم، وفي `presentation/`. الاتنين برا `domain/` و`data/`، فالتست مايعترضش.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+### الـ diff هو الـ acceptance criteria
+
+قبل ما تبدأ أي تحويل (لـ Riverpod أو لأي حاجة تانية)، اكتب في الـ PR description الملفات اللي <b>مش</b> المفروض تتغير. وفي الآخر:
+
+<CodeBlock label="الإثبات في سطرين">
+
+```bash
+git diff --stat main -- 'packages/*/lib/src/domain' 'packages/*/lib/src/data' packages/core
+# expected: nothing
+
+git diff --stat main -- 'packages/*/test/**/domain' 'packages/*/test/**/data'
+# expected: nothing, and the same tests still pass
+```
+
+</CodeBlock>
+
+لو الـ diff ده مش فاضي، اسأل عن كل سطر: ده كان «تسريب» قديم من الـ presentation للـ domain والتحويل كشفه؟ ولا ده تسريب جديد بندخّله؟ الأول مكسب (صلّحه في PR لوحده قبل التحويل). التاني ممنوع.
+
+### اللي التحويل بيكشفه
+
+التحويل بيبقى أصعب بالظبط في الأماكن اللي المعمارية فيها ضعيفة. أمثلة بتحصل:
+
+- <b>Cubit بيعرف Cubit:</b> لو `HomeCubit` بياخد `LibraryCubit` في الـ constructor (الـ anti-pattern في [درس «الـ State management في مشروع حقيقي»](/course/state-management/architecture/))، مش هتعرف تحوّل واحد من غير التاني.
+- <b>logic في الـ widget:</b> لو الـ View بتحسب «بقرا دلوقتي» بـ `where` على الـ books، الحساب ده هيتنسخ في مكانين وقت التحويل.
+- <b>use case بيرجّع نوع من bloc:</b> نادر، بس لو حصل (`Stream<LibraryState>` من الـ domain)، الـ domain بقى مربوط بالشاشة.
+
+كل واحدة من دول bug معماري موجود من قبل Riverpod. الوحدة دي طريقة رخيصة تلاقيهم.
+
+### إيه اللي مش بنعمله هنا
+
+- <b>مش بنقول Riverpod أحسن:</b> القرار في [درس القرار](/course/riverpod/decision/) بأرقام. والإجابة لـ Readly ممكن تبقى «نفضل Cubit».
+- <b>مش بنعيد درس «Riverpod من الصفر»:</b> الـ API الأساسي (الـ `ProviderScope`، و`ConsumerWidget`، والـ `AsyncValue`، و`ref.mounted`) اتشرح هناك. هنا بنبني عليه ونروح للحاجات اللي مابتظهرش غير في مشروع كامل.
+- <b>مش بنحوّل في `main`:</b> كل الوحدة branch تجريبي اسمه `spike/riverpod`. اللي يتعمل له merge بيتقرر في الآخر.
+
+<Note kind="interview" title="سؤال interview">
+
+«لو قررتوا تغيّروا الـ state management بكرة، هيكلّفكم كام؟» الإجابة القوية بتبدأ بالحدود: «الـ domain والـ data مابيعرفوش الـ state management، وده متحرس بتست في الـ CI بيمنع أي import لـ flutter_bloc أو riverpod جوههم. فالتحويل بيلمس الـ presentation والـ DI وتستات الـ presentation بس». وبعدين رقم: «عندنا 14 Cubit، أغلبهم load وactions، ونقدّر الشاشة بيوم لـ 3 أيام حسب التعقيد، ونقدر نعمله شاشة شاشة والاتنين عايشين مع بعض». وبعدين التحفظ: «بس مش هنعمله غير لو المعايير اللي في الـ ADR اتغيرت». الإجابة الضعيفة: «كتير، لأن الـ Cubits في كل حتة».
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### الـ contract: Riverpod جوه الـ domain ولا لأ
+
+<BeforeAfter>
+
+<Side label="قبل: الـ domain بقى بيعرف Riverpod" kind="before">
+
+```dart
+// domain/library_repository.dart
+import 'package:riverpod/riverpod.dart';
+
+abstract interface class LibraryRepository {
+  Stream<AsyncValue<List<Book>>> watchLibrary({BookStatus? status});
+  Future<AsyncValue<void>> refresh();
+}
+```
+
+</Side>
+
+<Side label="بعد: الـ domain زي ما هو" kind="after">
+
+```dart
+// domain/library_repository.dart (unchanged)
+abstract interface class LibraryRepository {
+  Stream<List<Book>> watchLibrary({BookStatus? status});
+  Future<Result<void>> refresh();
+}
+
+// presentation/library_providers.dart
+@riverpod
+Stream<List<Book>> libraryBooks(Ref ref) =>
+    ref.watch(libraryRepositoryProvider).watchLibrary();
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: الـ `AsyncValue` دخل الـ domain، فأي Cubit أو تست أو package تانية بتستخدم `LibraryRepository` لازم تشيل Riverpod، والـ loading بقى معلومة جوه الـ contract. بعد: الـ contract هو هو، والـ provider بيعمل اللي كان الـ Cubit بيعمله: ياخد الـ stream ويحوّله لحالة شاشة. ولو رجعتوا لـ Cubit بعد سنة، الـ domain مش هيحس.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="rp-why-1">
+<Ask>بعد ما خلصت تحويل شاشة المكتبة لـ Riverpod، `git diff --stat` بيقول إن `library_repository.dart` في `domain/` اتغير. تعمل إيه؟</Ask>
+<Answer>
+
+توقف وتشوف السطر. لو حد غيّر الـ contract عشان يناسب Riverpod (رجّع `AsyncValue`، أو شال الـ `Result` وبقى بيرمي)، ده تسريب جديد لازم يترجع: التحويل لـ `AsyncValue` أو الـ throw مكانه الـ provider. ولو التغيير بيصلّح حاجة كانت غلط من الأول (مثلًا الـ contract كان بيرجّع حاجة من الـ presentation)، يتعمل في PR لوحده قبل التحويل، مش جواه.
+
+</Answer>
+</Question>
+
+<Question id="rp-why-2">
+<Ask>زميلك بيقول: «Riverpod بيفهم الـ exceptions بس، فخلّي كل الـ use cases ترمي `Failure` بدل ما ترجّع `Result`». ترد بإيه؟</Ask>
+<Answer>
+
+لأ. الـ `Result` قرار domain: الفشل المتوقع جزء من نوع الرجوع، والـ compiler بيجبرك تتعامل معاه. تغييره عشان أداة في الـ presentation معناه إن الـ domain بقى بيتشكّل على حسب الـ UI. التحويل يحصل في مكان واحد في الـ presentation: extension زي `orThrow()` جوه الـ provider، فالـ `Failure` نفسه يبقى الـ `error` بتاع الـ `AsyncError`. والـ use cases ماتعرفش حاجة.
+
+</Answer>
+</Question>
+
+<Question id="rp-why-3">
+<Ask>`LibraryRepositoryImpl` بقى بياخد `Ref` في الـ constructor «عشان مانكتبش providers كتير». إيه المشكلة، وإيه اللي هيمسكها في الـ CI؟</Ask>
+<Answer>
+
+ده service locator: الـ dependencies اتخبت جوه الـ methods، والـ data layer بقت مربوطة بـ Riverpod، والتست محتاج container عشان يعمل repository بدل ما يبعت fakes في الـ constructor. والـ CI هيمسكها بالتست الجديد في `architecture_test.dart` اللي بيمنع أي import لـ `package:riverpod` أو `package:flutter_riverpod` جوه `lib/src/data`.
+
+</Answer>
+</Question>
+
+<Question id="rp-why-4">
+<Ask>اذكر 3 حاجات في Readly مش هتتغير خالص لما الـ presentation تبقى Riverpod، وحاجة واحدة بتتغير في مكانها بس مش في الكود بتاعها.</Ask>
+<Answer>
+
+مش هيتغيروا: الـ entities والـ use cases (`RefreshLibrary`، `SearchBooks`)، والـ repository contracts وimplementations، و`Result` و`Failure`، وdrift والـ `SyncQueue`، وتستات الـ domain والـ data. واللي بيتغير مكانه بس: الـ `SyncService` (أو أي object عايش طول الـ app): الـ class زي ما هي، بس اللي بيعملها ويقفلها بقى provider بـ `keepAlive` و`ref.onDispose` بدل `registerLazySingleton` بـ `dispose`.
+
+</Answer>
+</Question>
+
+</Quiz>
