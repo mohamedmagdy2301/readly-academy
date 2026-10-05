@@ -1,0 +1,40 @@
+<svg viewBox="0 0 760 400" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="الـ RTL: الـ layout وأسهم الاتجاه بيتقلبوا، والحاجات اللي ليها شكل في الدنيا الحقيقية مابتتقلبش، والنص اتجاهه من محتواه، وفيه حاجات انت اللي لازم تقلبها">
+<text x="200" y="26" text-anchor="middle" font-size="12" fill="var(--muted)">English (LTR)</text>
+<rect x="60" y="36" width="280" height="46" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<circle cx="86" cy="59" r="11" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.2"/>
+<text x="106" y="63" font-size="12" fill="var(--ink)">Atomic Habits</text>
+<text x="322" y="65" text-anchor="middle" font-size="20" fill="var(--ink)">›</text>
+<text x="560" y="26" text-anchor="middle" font-size="12" fill="var(--muted)" class="ar" direction="rtl">عربي (RTL)</text>
+<rect x="420" y="36" width="280" height="46" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<circle cx="674" cy="59" r="11" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.2"/>
+<text x="654" y="63" text-anchor="start" font-size="12" fill="var(--ink)" class="ar" direction="rtl">كمّل القراية</text>
+<text x="438" y="65" text-anchor="middle" font-size="20" fill="var(--ink)">‹</text>
+<text x="380" y="56" text-anchor="middle" font-size="11" fill="var(--muted)">same code</text>
+<text x="380" y="72" text-anchor="middle" font-size="11" fill="var(--muted)">⇄</text>
+<rect x="510" y="104" width="230" height="190" rx="12" fill="var(--good-soft)" stroke="var(--good)" stroke-width="1.5"/>
+<text x="625" y="128" text-anchor="middle" font-size="13" fill="var(--ink)" font-weight="600" class="ar" direction="rtl">بيتقلب لوحده</text>
+<text x="728" y="156" text-anchor="start" font-size="11" fill="var(--ink)" class="ar" direction="rtl">Row، والـ padding والـ alignment</text>
+<text x="728" y="176" text-anchor="end" font-size="10" fill="var(--muted)">EdgeInsetsDirectional · TextAlign.start</text>
+<text x="728" y="204" text-anchor="start" font-size="11" fill="var(--ink)" class="ar" direction="rtl">أسهم «قدام» و«ورا»</text>
+<text x="728" y="224" text-anchor="end" font-size="10" fill="var(--muted)">arrow_back · chevron_right · send · undo</text>
+<text x="728" y="252" text-anchor="start" font-size="11" fill="var(--ink)" class="ar" direction="rtl">الـ progress bar والـ PageView</text>
+<text x="728" y="272" text-anchor="end" font-size="10" fill="var(--muted)">ListTile: leading / trailing</text>
+<rect x="265" y="104" width="230" height="190" rx="12" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="1.5"/>
+<text x="380" y="128" text-anchor="middle" font-size="13" fill="var(--ink)" font-weight="600" class="ar" direction="rtl">مابيتقلبش</text>
+<text x="483" y="156" text-anchor="start" font-size="11" fill="var(--ink)" class="ar" direction="rtl">حاجات ليها شكل في الدنيا</text>
+<text x="483" y="176" text-anchor="end" font-size="10" fill="var(--muted)">play_arrow · check · schedule · camera</text>
+<text x="483" y="204" text-anchor="start" font-size="11" fill="var(--ink)" class="ar" direction="rtl">اللوجو والصور اللي فيها كلام</text>
+<text x="483" y="232" text-anchor="start" font-size="11" fill="var(--warn)" font-weight="600" class="ar" direction="rtl">فخ: شكلها سهم ومابتتقلبش</text>
+<text x="483" y="252" text-anchor="end" font-size="10" fill="var(--muted)">keyboard_arrow_left / right</text>
+<rect x="20" y="104" width="230" height="190" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="135" y="128" text-anchor="middle" font-size="13" fill="var(--ink)" font-weight="600" class="ar" direction="rtl">اتجاهه من المحتوى</text>
+<text x="238" y="156" text-anchor="start" font-size="11" fill="var(--ink)" class="ar" direction="rtl">عنوان إنجليزي جوه جملة عربي</text>
+<text x="238" y="176" text-anchor="end" font-size="10" fill="var(--muted)">isolate: U+2068 … U+2069</text>
+<text x="238" y="204" text-anchor="start" font-size="11" fill="var(--ink)" class="ar" direction="rtl">ملاحظة المستخدم: من حروفها</text>
+<text x="238" y="224" text-anchor="end" font-size="10" fill="var(--muted)">Bidi.detectRtlDirectionality</text>
+<text x="238" y="252" text-anchor="start" font-size="11" fill="var(--ink)" class="ar" direction="rtl">الإيميل والتليفون: LTR دايمًا</text>
+<text x="238" y="272" text-anchor="end" font-size="10" fill="var(--muted)">textDirection: TextDirection.ltr</text>
+<rect x="20" y="312" width="720" height="70" rx="12" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5" stroke-dasharray="6 5"/>
+<text x="728" y="340" text-anchor="start" font-size="12" fill="var(--ink)" font-weight="600" class="ar" direction="rtl">Flutter مابيعرفش يقلبها، فانت اللي بتقلبها:</text>
+<text x="728" y="364" text-anchor="start" font-size="11" fill="var(--muted)" class="ar" direction="rtl">الرسم بـ CustomPainter، والـ Offset في الـ SlideTransition، واتجاه السحب، والـ SVG بتاعك (Transform.flip)</text>
+</svg>

@@ -1,0 +1,603 @@
+---
+title: "مكتبة الـ components في core_ui"
+description: "الـ components المشتركة في package لوحدها، وإزاي تصمم الـ API بتاع الـ widget: الـ variants والـ states، وامتى تعمل theme للـ Material widget وامتى تلفّه، وليه الـ component مايعرفش Book."
+minutes: 30
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="سلسلة محلات الفطير">
+
+سلسلة محلات فطير ليها 20 فرع. أي فرع تدخله، الفطيرة نفس الحجم ونفس الطعم. السر مش إن الطباخين شاطرين، السر في <b>كارت الطلب</b>: فيه الحجم (صغير، كبير)، والحشو من ليستة ثابتة، وخلاص. الكاشير مايقدرش يوعدك «اعملهالي أرفع شوية»، لأن الكارت مافيهوش الخانة دي. ولو كل فرع زوّد خانات على مزاجه، بعد سنة هيبقى عندك 20 فطيرة مختلفة.
+
+والمطبخ مايعرفش انت مين. مش بيسأل «ده زبون دايم؟». بياخد الكارت، ويطلّع الفطيرة. اللي يعرف الزبون هو الكاشير اللي برا.
+
+</Analogy>
+
+الـ component في الـ design system هو الفطيرة، والـ constructor بتاعه هو كارت الطلب. كل parameter خانة في الكارت: لو الخانات قليلة وواضحة، كل الشاشات هتطلع شبه بعض. ولو فيه `color` و`padding` و`fontSize` مفتوحين، كل شاشة هتعمل نسختها.
+
+والـ component مايعرفش الـ domain. `ReadlyButton` مايعرفش إن ده زرار «ضيف للمكتبة». بياخد نص وcallback، والشاشة هي اللي تعرف المعنى.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### core_ui: الـ package
+
+في [هيكل الـ packages](/course/di-scale/scale/) كان فيه `core_ui` مكتوب جنبه «theme, shared widgets». دلوقتي بنملاه:
+
+<CodeBlock label="packages/core_ui">
+
+```text
+packages/core_ui/
+├─ pubspec.yaml
+├─ lib/
+│  ├─ core_ui.dart                 # the barrel: what features may use
+│  └─ src/
+│     ├─ theme/
+│     │  ├─ app_theme.dart
+│     │  ├─ palette.dart           # not exported
+│     │  ├─ readly_colors.dart
+│     │  ├─ app_space.dart
+│     │  └─ theme_context.dart
+│     └─ components/
+│        ├─ readly_button.dart
+│        ├─ status_chip.dart
+│        ├─ error_view.dart        # moved from apps/readly/lib/core/ui/
+│        └─ inline_error_banner.dart
+└─ test/
+```
+
+</CodeBlock>
+
+<CodeBlock label="packages/core_ui/pubspec.yaml والـ barrel">
+
+```yaml
+name: core_ui
+publish_to: none
+resolution: workspace
+environment:
+  sdk: ^3.6.0
+dependencies:
+  flutter:
+    sdk: flutter
+```
+
+```dart
+// packages/core_ui/lib/core_ui.dart
+export 'src/components/error_view.dart';
+export 'src/components/inline_error_banner.dart';
+export 'src/components/readly_button.dart';
+export 'src/components/status_chip.dart';
+export 'src/theme/app_space.dart';
+export 'src/theme/app_theme.dart';
+export 'src/theme/readly_colors.dart';
+export 'src/theme/theme_context.dart';
+// palette.dart stays private
+```
+
+</CodeBlock>
+
+الـ dependencies: Flutter بس. مفيش `core` (الـ Result والـ Failure)، ومفيش أي feature، ومفيش flutter_bloc. الـ `core_ui` في قاع الشجرة، وكل الـ features بتعتمد عليه، وهو مابيعتمدش على حد.
+
+<Diagram name="d-ds-core-ui">
+
+الـ core_ui في القاع: theme وcomponents مابتعرفش الـ domain. كل feature بتبني الـ widgets بتاعتها (BookTile، NoteCard) من الـ components دي، والـ app بيحط الثيم في الـ MaterialApp. السهم دايمًا لتحت: الـ core_ui مابيعملش import لحاجة فوقه.
+
+</Diagram>
+
+### الخطوة الأولى: theme للـ Material widgets
+
+قبل ما تكتب أي component، اسأل: هل الـ `FilledButton` العادي ممكن يبقى شكل Readly لو ظبطت الثيم بتاعه؟ غالبًا أيوه:
+
+<CodeBlock label="AppTheme: الأزرار بتاخد شكل Readly في كل مكان">
+
+```dart
+static ThemeData _build(Brightness brightness) {
+  final scheme = ColorScheme.fromSeed(seedColor: Palette.teal600, brightness: brightness);
+  const shape = RoundedRectangleBorder(borderRadius: BorderRadius.all(AppRadius.md));
+  const minSize = Size(64, 48);
+  return ThemeData(
+    colorScheme: scheme,
+    fontFamily: 'Cairo',
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(shape: shape, minimumSize: minSize),
+    ),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+      style: OutlinedButton.styleFrom(shape: shape, minimumSize: minSize),
+    ),
+    textButtonTheme: TextButtonThemeData(
+      style: TextButton.styleFrom(shape: shape, minimumSize: minSize),
+    ),
+    extensions: [/* ReadlyColors */],
+  );
+}
+```
+
+</CodeBlock>
+
+كده أي `FilledButton` في أي شاشة، حتى اللي في package حد نسي يستخدم الـ component فيها، بيطلع بالـ radius والارتفاع الصح. ودي أرخص طبقة في الـ design system: صفر widgets جديدة.
+
+### الخطوة التانية: component لما في سلوك زيادة
+
+في [درس الـ Forms](/course/presentation/forms/) كتبنا ده في زرار الـ login:
+
+```dart
+FilledButton(
+  onPressed: submitting ? null : cubit.submit,
+  child: submitting
+      ? const SizedBox.square(dimension: 20, child: CircularProgressIndicator(strokeWidth: 2))
+      : Text(l10n.loginButton),
+),
+```
+
+ونفس الكود بالظبط في زرار الـ retry بتاع `ErrorView`. وفي زرار «احفظ الملاحظة». 3 نسخ، وفيهم نفس المشكلتين اللي هتشوفهم في Level 3: الزرار بيصغر لما الـ spinner يظهر، وقارئ الشاشة بيقول «زرار» من غير اسم. ده سلوك مش شكل، والثيم مايقدرش يعمله. يبقى component:
+
+<CodeBlock label="packages/core_ui/lib/src/components/readly_button.dart">
+
+```dart
+enum ReadlyButtonVariant { primary, secondary, text, danger }
+
+class ReadlyButton extends StatelessWidget {
+  const ReadlyButton({
+    super.key,
+    required this.label,
+    required this.onPressed,
+    this.variant = ReadlyButtonVariant.primary,
+    this.icon,
+    this.loading = false,
+    this.expand = false,
+  });
+
+  final String label;
+  final VoidCallback? onPressed; // null = disabled, like every Flutter button
+  final ReadlyButtonVariant variant;
+  final IconData? icon;
+  final bool loading;
+  final bool expand; // full width, for forms and bottom bars
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = context.colorScheme;
+    final content = Stack(
+      alignment: Alignment.center,
+      children: [
+        // keeps the button's width, and keeps the label for screen readers
+        Opacity(
+          opacity: loading ? 0 : 1,
+          alwaysIncludeSemantics: true,
+          child: icon == null
+              ? Text(label)
+              : Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [Icon(icon, size: 18), const SizedBox(width: AppSpace.sm), Text(label)],
+                ),
+        ),
+        if (loading)
+          const SizedBox.square(
+            dimension: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+      ],
+    );
+    final pressed = loading ? null : onPressed;
+
+    final button = switch (variant) {
+      ReadlyButtonVariant.primary => FilledButton(onPressed: pressed, child: content),
+      ReadlyButtonVariant.secondary => OutlinedButton(onPressed: pressed, child: content),
+      ReadlyButtonVariant.text => TextButton(onPressed: pressed, child: content),
+      ReadlyButtonVariant.danger => FilledButton(
+          onPressed: pressed,
+          style: FilledButton.styleFrom(
+            backgroundColor: scheme.error,
+            foregroundColor: scheme.onError,
+          ),
+          child: content,
+        ),
+    };
+    return expand ? SizedBox(width: double.infinity, child: button) : button;
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `onPressed: null` معناها disabled:</b> نفس عرف Flutter في كل زرار. مفيش `enabled: false` جنبها، عشان مايبقاش فيه طريقتين لنفس الحاجة، ومايبقاش فيه حالة غريبة زي `enabled: true` و`onPressed: null`.
+- <b>الـ `loading` بيقفل الزرار لوحده:</b> الشاشة مش محتاجة تكتب `submitting ? null : ...`. وده ماكانش بيحمي من الضغط المتكرر لوحده: الحماية الحقيقية في الـ Cubit زي ما قلنا في درس الـ Forms. الزرار المقفول للشكل.
+- <b>الـ variant enum:</b> 4 اختيارات بس، والـ `switch` بيجبرك تغطيهم كلهم. وفي التست تقدر تلف على `ReadlyButtonVariant.values` وتصوّرهم كلهم في golden واحد.
+- <b>الـ `Opacity` والـ `Stack`:</b> النص بيفضل موجود وهو شفاف، فالزرار مايصغرش لما الـ spinner يظهر. و`alwaysIncludeSemantics: true` بيخلي قارئ الشاشة يقرا اسم الزرار حتى وهو شفاف.
+- <b>المقاسات والألوان من الثيم:</b> الـ component مافيهوش `minimumSize` ولا shape. دول جايين من الـ `filledButtonTheme` اللي فوق. الـ component بيزوّد السلوك بس.
+
+<CodeBlock label="الاستخدام">
+
+```dart
+ReadlyButton(
+  label: l10n.loginButton,
+  onPressed: cubit.submit,
+  loading: state.status == FormStatus.submitting,
+  expand: true,
+)
+
+ReadlyButton(
+  label: l10n.removeFromLibrary,
+  variant: ReadlyButtonVariant.danger,
+  icon: Icons.delete_outline,
+  onPressed: () => cubit.remove(book.id),
+)
+```
+
+</CodeBlock>
+
+### StatusChip: component مايعرفش Book
+
+<CodeBlock label="packages/core_ui/lib/src/components/status_chip.dart">
+
+```dart
+class StatusChip extends StatelessWidget {
+  const StatusChip({
+    super.key,
+    required this.label,
+    required this.icon,
+    required this.color,
+  });
+
+  final String label;
+  final IconData icon; // never color alone: see the semantics lesson
+  final Color color;   // a role from ReadlyColors, not a hex
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.12), // the component token lives here, once
+          borderRadius: const BorderRadius.all(AppRadius.lg),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: AppSpace.sm, vertical: AppSpace.xs),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 16, color: color),
+              const SizedBox(width: AppSpace.xs),
+              Text(label, style: context.textTheme.labelMedium?.copyWith(color: color)),
+            ],
+          ),
+        ),
+      );
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="packages/feature_library: الترجمة من Book لـ StatusChip">
+
+```dart
+extension BookStatusUi on BookStatus {
+  Color color(ReadlyColors colors) => /* ... as in the tokens lesson */;
+  String localized(AppLocalizations l10n) => /* ... */;
+  IconData get icon => switch (this) {
+        BookStatus.wantToRead => Icons.bookmark_outline,
+        BookStatus.reading => Icons.auto_stories_outlined,
+        BookStatus.finished => Icons.check_circle_outline,
+      };
+}
+
+// inside BookTile
+StatusChip(
+  label: book.status.localized(l10n),
+  icon: book.status.icon,
+  color: book.status.color(context.readlyColors),
+)
+```
+
+</CodeBlock>
+
+الـ `BookTile` بيفضل في `feature_library` لأنه بياخد `Book`. هو component بتاع feature، مبني من components الـ design system. الفرق بينهم:
+
+| | في `core_ui` | في الـ feature |
+| --- | --- | --- |
+| أمثلة | `ReadlyButton`، `StatusChip`، `ErrorView` | `BookTile`، `NoteCard`، `SyncBadge` |
+| بياخد | نصوص وأيقونات وcallbacks وأدوار | entities من الـ domain (`Book`، `Note`) |
+| بيعرف الـ l10n؟ | لأ: النص بييجي جاهز | أيوه: بيترجم الحالة والأخطاء |
+| بيقرا Cubit؟ | أبدًا | ممكن (`context.select` في الـ `BookTile`) |
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### الـ ErrorView اتنقل والـ build وقف
+
+<b>اللي بيبوظ:</b> بتنقل `ErrorView` من `apps/readly/lib/core/ui/` لـ `core_ui`. أول سطر بيضرب: `AppLocalizations.of(context)!.retry`. الـ `AppLocalizations` في الـ app، والـ `core_ui` مايقدرش يعمل import للـ app، لأن الـ app بيعتمد عليه. ولو حاولت تزوّد الـ app في الـ dependencies بتاعة الـ core_ui، هيبقى عندك دايرة.
+
+<b>ليه:</b> الـ component كان بيعرف حاجة مش بتاعته: النص. وده كان شغال لأنه كان جوه الـ app.
+
+<b>الحل:</b> النص يدخل من برا، زي أي حاجة تانية:
+
+<CodeBlock label="ErrorView في core_ui">
+
+```dart
+class ErrorView extends StatelessWidget {
+  const ErrorView({
+    super.key,
+    required this.message,
+    this.title,
+    this.icon = Icons.error_outline,
+    this.onRetry,
+    this.retryLabel,
+    this.retrying = false,
+  }) : assert(onRetry == null || retryLabel != null, 'a retry button needs a label');
+
+  final String message;
+  final String? title;
+  final IconData icon;
+  final VoidCallback? onRetry;
+  final String? retryLabel;
+  final bool retrying;
+
+  // build: same layout as before, and the button is now
+  // ReadlyButton(label: retryLabel!, onPressed: onRetry, loading: retrying)
+}
+```
+
+</CodeBlock>
+
+والشاشات اللي بتستخدمه كتير بتعمل helper صغير في الـ feature أو الـ app: `ErrorView(retryLabel: l10n.retry, ...)`. الـ `assert` بيمسك اللي نسي الـ label وهو بيطوّر، بدل ما الزرار يطلع فاضي.
+
+والبديل الأكبر: `core_ui` يبقى ليه ملف ARB بتاعه (الـ `flutter gen-l10n` بيشتغل جوه أي package)، والـ app يضيف الـ delegate بتاعه في `localizationsDelegates`. يستاهل لما الـ components تبقى فيها نصوص ثابتة كتير («إلغاء»، «اقفل»، «حاول تاني»). لـ 3 نصوص، الـ parameters أبسط.
+
+### الـ goldens بتاعة core_ui طالعة بخط غلط
+
+<b>اللي بيبوظ:</b> الـ components في الـ app شكلها تمام. بس أول golden في `packages/core_ui/test/` طالع بالمربعات، حتى بعد ما نقلت `flutter_test_config.dart` بتاع [درس الـ goldens](/course/testing/golden-tests/) جوه الـ package.
+
+<b>ليه:</b> خط Cairo متعرّف في الـ pubspec بتاع الـ app. الـ `loadAppFonts` بيقرا الـ `FontManifest.json` بتاع الـ package اللي التست شغال فيها، والـ `core_ui` مافيهاش خطوط. الـ package بتعتمد على حاجة موجودة برّاها بس، وده نفس الغلط بتاع الـ `AppLocalizations`.
+
+<b>الحل:</b> الخط جزء من الـ design system، فمكانه `core_ui`:
+
+<CodeBlock label="الخط في core_ui">
+
+```yaml
+# packages/core_ui/pubspec.yaml
+flutter:
+  fonts:
+    - family: Cairo
+      fonts:
+        - asset: fonts/Cairo-Regular.ttf
+        - asset: fonts/Cairo-Bold.ttf
+          weight: 700
+```
+
+```dart
+// AppTheme._build
+return ThemeData(
+  colorScheme: scheme,
+  fontFamily: 'Cairo',
+  package: 'core_ui', // the font is declared in core_ui, not in the app
+  // ...
+);
+```
+
+</CodeBlock>
+
+الخط اللي متعرّف في package اسمه الحقيقي `packages/core_ui/Cairo`. والـ `package:` في الـ `ThemeData` بيزوّد البادئة دي على كل الـ text themes، وده نفس الـ `package:` اللي في `TextStyle` و`AssetImage`. ومن غيره الـ app هيدوّر على `Cairo` في خطوطه هو، ومش هيلاقيه، ويرجع للخط الافتراضي من غير ولا error. والـ `FontManifest.json` بتاع الـ app فيه خطوط كل الـ packages اللي بيعتمد عليها، فالـ `loadAppFonts` في تستات الـ app لسه شغال.
+
+### زرار بـ 4 booleans
+
+<b>اللي بيبوظ:</b> الـ `ReadlyButton` الأول كان كده:
+
+```dart
+ReadlyButton(label: '...', isPrimary: true, isOutlined: true, isDanger: true, isSmall: false)
+```
+
+يعني primary وoutlined في نفس الوقت؟ والـ danger يكسب ولا الـ primary؟ كل واحد في الفريق جاوب بطريقة، والكود جواه بقى `if` جوه `if`.
+
+<b>ليه:</b> 4 booleans معناهم 16 تركيبة، و4 بس منهم ليها معنى. الـ API بيسمح بحاجات الـ design مافيهاش.
+
+<b>الحل:</b> اللي مايجتمعوش مع بعض يبقوا enum واحد (`variant`). والـ booleans تفضل للحاجات اللي فعلًا مستقلة: `loading` و`expand` ممكن يبقوا مع أي variant. القاعدة: لو boolean ماينفعش يبقى true مع boolean تاني، الاتنين قيم في enum.
+
+### «ممكن أعدّي لون للزرار ده بس؟»
+
+<b>اللي بيبوظ:</b> شاشة الـ onboarding عايزة زرار أبيض على صورة. حد زوّد `Color? backgroundColor` في `ReadlyButton` «عشان الشاشة دي بس». بعد 3 شهور فيه 14 شاشة بتعدّي ألوان، ونص الأزرار في الـ dark mode مش مقروءة، لأن كل واحد عدّى لون من غير الـ `on` بتاعه.
+
+<b>ليه:</b> كل parameter مفتوح باب. والباب ده بيدخل منه كل القرارات اللي الـ design system كان موجود عشان يمنعها.
+
+<b>الحل:</b> قبل ما تفتح parameter، اسأل: ده variant جديد ولا استثناء؟
+
+- <b>لو بيتكرر وله معنى</b> (زرار على خلفية صورة)، ده variant: `ReadlyButtonVariant.onImage`، بلون معمول له حساب في الـ light والـ dark، بعد ما الـ designer يوافق.
+- <b>لو استثناء فعلًا في شاشة واحدة</b>، الشاشة تلف الزرار في `Theme` بـ `copyWith` (زي درس الـ tokens) أو تستخدم `FilledButton` بـ style خاص. الاستثناء يبان في الشاشة اللي عملته، مش يبقى جزء من الـ API لكل الناس.
+
+### component بيعمل كل حاجة
+
+<b>اللي بيبوظ:</b> الـ `BookTile` بقى بياخد 19 parameter: `showStatus` و`showProgress` و`compact` و`onLongPress` و`trailing` و`showSyncBadge` و`highlightQuery`... وفيه 6 أماكن بتستخدمه، كل واحد بتركيبة مختلفة. أي تعديل في واحد بيكسر التاني.
+
+<b>ليه:</b> الـ component بيحاول يبقى كل الـ tiles في الـ app. الـ parameters الكتير علامة إن فيه أكتر من component جواه.
+
+<b>الحل:</b> اقسم حسب الاستخدام الحقيقي: `BookTile` في المكتبة، و`CatalogResultTile` في البحث (فيه highlight ومافيهوش حالة). والحاجات المشتركة بينهم (الغلاف، العنوان بالـ style بتاعه) تبقى widgets صغيرة يتبنوا منها. نسختين واضحين أحسن من component واحد بـ 19 خانة.
+
+### الـ component بيجيب الـ Cubit بنفسه
+
+<b>اللي بيبوظ:</b> حد كتب `SyncBadge` بيعمل `getIt<SyncService>()` جوه الـ `initState`. شغال في الـ app، بس مايتحطش في catalog، ومايتستّش من غير get_it، ولو اتحط في شاشة قبل ما الـ DI يجهز بيقع.
+
+<b>ليه:</b> الـ widget بيجيب الـ data بتاعته بنفسه بدل ما ياخدها.
+
+<b>الحل:</b> الـ `SyncBadge` في [درس عمر الـ subscription](/course/dart-async/lifecycle/) بياخد `Stream<int>` من برا، وده الصح. القاعدة لأي component: الـ data بتدخل من الـ constructor، والأحداث بتطلع بـ callbacks. اللي بيوصّل الـ Cubit هو الشاشة أو الـ Page، زي ما اتعمل في [درس الـ flutter_bloc widgets](/course/state-management/flutter-bloc-widgets/).
+
+### الـ catalog: تشوف كل حاجة في مكان واحد
+
+<b>اللي بيبوظ:</b> الـ designer سأل «الزرار الـ danger وهو loading شكله إيه في الـ dark؟». عشان تشوفه لازم تفتح شاشة فيها زرار danger، وتعمل حاجة تخليه loading، وتقلب dark. 5 دقايق لسؤال واحد.
+
+<b>الحل:</b> app صغير في الـ workspace بيعرض كل component بكل حالاته:
+
+<CodeBlock label="apps/catalog/lib/main.dart">
+
+```dart
+void main() => runApp(const CatalogApp());
+
+class CatalogApp extends StatefulWidget {
+  const CatalogApp({super.key});
+  @override
+  State<CatalogApp> createState() => _CatalogAppState();
+}
+
+class _CatalogAppState extends State<CatalogApp> {
+  var _mode = ThemeMode.light;
+  var _locale = const Locale('ar');
+
+  @override
+  Widget build(BuildContext context) => MaterialApp(
+        theme: AppTheme.light,
+        darkTheme: AppTheme.dark,
+        themeMode: _mode,
+        locale: _locale,
+        supportedLocales: const [Locale('ar'), Locale('en')],
+        localizationsDelegates: GlobalMaterialLocalizations.delegates,
+        home: Scaffold(
+          appBar: AppBar(actions: [
+            IconButton(
+              tooltip: 'Dark',
+              icon: const Icon(Icons.dark_mode_outlined),
+              onPressed: () => setState(() =>
+                  _mode = _mode == ThemeMode.light ? ThemeMode.dark : ThemeMode.light),
+            ),
+            IconButton(
+              tooltip: 'RTL / LTR',
+              icon: const Icon(Icons.translate),
+              onPressed: () => setState(() =>
+                  _locale = _locale.languageCode == 'ar' ? const Locale('en') : const Locale('ar')),
+            ),
+          ]),
+          body: ListView(
+            padding: const EdgeInsets.all(AppSpace.lg),
+            children: [
+              for (final v in ReadlyButtonVariant.values) ...[
+                ReadlyButton(label: 'احفظ ${v.name}', variant: v, onPressed: () {}),
+                const SizedBox(height: AppSpace.sm),
+                ReadlyButton(label: 'loading ${v.name}', variant: v, loading: true, onPressed: () {}),
+                const SizedBox(height: AppSpace.sm),
+                ReadlyButton(label: 'disabled ${v.name}', variant: v, onPressed: null),
+                const SizedBox(height: AppSpace.lg),
+              ],
+            ],
+          ),
+        ),
+      );
+}
+```
+
+</CodeBlock>
+
+بيعتمد على `core_ui` بس، فبيفتح في ثانية من غير backend ولا login. وده نفس الـ matrix اللي الـ golden tests بتصوّرها في [درس تست الـ Design System](/course/design-system/testing-ds/). ولو الـ catalog كبر، فيه packages معمولة للفكرة دي زي widgetbook، بتديك knobs تغيّر بيها الـ parameters من الـ UI.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>theme الأول، component تاني:</b> لو اللي عايزه شكل بس (لون، radius، ارتفاع)، ظبّط الـ Material theme. كل `FilledButton` في الـ app هيمشي وراه، حتى اللي محدش فاكر يستخدم الـ component فيه. اعمل component لما في سلوك (loading)، أو تركيبة بتتكرر (أيقونة + نص + spinner)، أو لما عايز تقفل اختيارات (4 variants بس).
+- <b>القاعدة التلاتية:</b> أول مرة تكتب الحاجة في الشاشة. تاني مرة تنسخها وتاخد بالك. تالت مرة تعملها component. الـ component اللي اتعمل من أول استخدام بيتصمم على حالة واحدة، وبيتكسر في التانية.
+- <b>اتبع عرف Flutter:</b> `onPressed` nullable للـ disabled، `child` لو بتاخد widget و`label` لو بتاخد نص، `const` constructor، و`super.key`. اللي بيستخدم الـ component عارف Flutter، فكل حاجة شبهه بتبقى مفهومة من غير docs.
+- <b>data جوا، callbacks برا:</b> الـ component مابيعملش `getIt` ولا `context.read` ولا navigation. ده اللي بيخليه يتحط في catalog ويتصوّر في golden ويتنقل بين features.
+- <b>مين بيغيّر الـ core_ui؟</b> أي تعديل فيه بيلمس كل الـ features. خليه في الـ CODEOWNERS بتاع واحد أو اتنين في الفريق، وأي PR فيه component جديد أو parameter جديد بيتراجع من حد بيفكر في الـ API، مش بس في الشاشة اللي محتاجاه.
+- <b>الـ core_ui بيحميك من تغييرات Flutter نفسه:</b> مثال حي: Flutter بينقل الـ Material والـ Cupertino من الـ framework لـ packages منفصلة (`material_ui` و`cupertino_ui`)، ومن 3.47 بقوا متاحين opt-in، والـ `package:flutter/material.dart` هيبقى deprecated في نسخة جاية. لو كل feature بتبني أزرارها من `FilledButton` على طول، الهجرة بتلمس كل ملف. لو الـ features بتستخدم `ReadlyButton` والثيم في `core_ui`، أغلب الهجرة في package واحدة.
+- <b>تغيير API مستخدم في 40 مكان:</b> في workspace مفيش versions: كل الـ features بتشوف نفس النسخة من `core_ui` في نفس اللحظة. فالتغيير اللي بيكسر بيتعمل على مرحلتين: الـ API الجديد يدخل والقديم عليه `@Deprecated('Use variant: ReadlyButtonVariant.danger')`، فالـ analyzer بيعلّم على كل مكان. وبعد ما الأماكن تتنقل، القديم يتشال. ولو التغيير ميكانيكي، Dart بيدعم data-driven fixes (ملف `lib/fix_data.yaml` في الـ package)، فـ `dart fix --apply` بينقل الأماكن كلها لوحده.
+
+<Note kind="interview" title="سؤال interview">
+
+«بتصمم الـ API بتاع component مشترك إزاي؟» أبدأ بسؤال: الـ Material widget بالثيم كفاية؟ لو أيوه مش هعمل component. لو لأ، الـ API بيبقى أضيق ما يمكن: الاختيارات اللي ماتجتمعش enum واحد (variant)، والحالات المستقلة booleans (loading)، والـ disabled هو `onPressed: null` زي Flutter. مفيش parameters للون أو الـ padding، لأن دي قرارات الـ design system مش الشاشة، والاستثناء الحقيقي بيتعمل بـ Theme override في الشاشة نفسها. الـ component مايعرفش الـ domain ولا الـ l10n ولا الـ DI: النصوص والـ data بتدخل، والأحداث بتطلع. وبيتحط في package في قاع الشجرة، وليه catalog وgoldens بكل variant وحالة.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### زرار الحفظ في صفحة الملاحظة
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+SizedBox(
+  width: double.infinity,
+  height: 52,
+  child: ElevatedButton(
+    style: ElevatedButton.styleFrom(
+      backgroundColor: const Color(0xFF00696B),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+    ),
+    onPressed: saving ? null : cubit.save,
+    child: saving
+        ? const CircularProgressIndicator(color: Colors.white)
+        : Text(l10n.saveNote, style: const TextStyle(color: Colors.white)),
+  ),
+)
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+ReadlyButton(
+  label: l10n.saveNote,
+  onPressed: cubit.save,
+  loading: saving,
+  expand: true,
+)
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: لون وradius وارتفاع مكتوبين بإيد الشاشة، والـ radius 10 مش موجود في `AppRadius`. والـ spinner أبيض ثابت، فلو الزرار disabled في الـ dark هيبقى أبيض على رمادي فاتح. والزرار بيتنطط في الحجم لما الـ spinner يظهر، وقارئ الشاشة بيقول «زرار، مش متاح» من غير اسم. بعد: الشكل من الثيم، والـ loading والـ semantics جوه الـ component، والشاشة بتقول اللي تعرفه بس: النص، والفعل، وهل بيحفظ دلوقتي.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="ds-components-1">
+<Ask>عايز كل الأزرار في Readly يبقى ليها radius 12 وارتفاع 48. تعمل `ReadlyButton` ولا حاجة تانية؟</Ask>
+<Answer>
+
+حاجة تانية: `filledButtonTheme` و`outlinedButtonTheme` و`textButtonTheme` في `AppTheme`. ده شكل بس، والثيم بيطبّقه على كل `FilledButton` في الـ app حتى اللي محدش لفّه. الـ component يستاهل لما يبقى في سلوك زيادة زي الـ loading.
+
+</Answer>
+</Question>
+
+<Question id="ds-components-2">
+<Ask>ليه `ReadlyButton` مافيهوش `enabled: bool`؟</Ask>
+<Answer>
+
+لأن عرف Flutter إن `onPressed: null` معناها disabled. لو زوّدت `enabled`، هيبقى فيه طريقتين لنفس الحاجة، وحالة مالهاش معنى زي `enabled: true` مع `onPressed: null`.
+
+</Answer>
+</Question>
+
+<Question id="ds-components-3">
+<Ask>`ErrorView` بيستخدم `AppLocalizations` عشان كلمة «حاول تاني». ليه ده بيمنع نقله لـ `core_ui`، وإيه الحل؟</Ask>
+<Answer>
+
+الـ `AppLocalizations` جوه الـ app، والـ app بيعتمد على `core_ui`. لو `core_ui` عمل import منه هيبقى فيه dependency دايرية. الحل إن النص يدخل كـ parameter (`retryLabel`)، أو `core_ui` يبقى ليه ARB وdelegate بتوعه لو النصوص الثابتة كتير.
+
+</Answer>
+</Question>
+
+<Question id="ds-components-4">
+<Ask>حد عايز يزوّد `Color? backgroundColor` في `ReadlyButton` عشان شاشة الـ onboarding. ترد تقول إيه؟</Ask>
+<Answer>
+
+الأول: ده variant بيتكرر ولا استثناء؟ لو بيتكرر وليه معنى (زرار فوق صورة)، يبقى variant جديد بألوان متظبطة للـ light والـ dark بعد موافقة الـ design. لو استثناء في شاشة واحدة، الشاشة تعمل `Theme` override أو تستخدم `FilledButton` بـ style خاص. اللون المفتوح في الـ API بيخلي كل شاشة تعمل نسختها، وغالبًا من غير لون الـ `on` المناسب.
+
+</Answer>
+</Question>
+
+<Question id="ds-components-5">
+<Ask>الزرار وهو loading، النص بيتشال والـ spinner بيظهر. إيه المشكلتين، وإزاي `ReadlyButton` بيحلهم؟</Ask>
+<Answer>
+
+الزرار بيصغر لأن الـ spinner أصغر من النص، وقارئ الشاشة بيقول «زرار» من غير اسم لأن النص اختفى من الشجرة. الحل `Stack` فيه النص جوه `Opacity(opacity: 0)` فالمقاس بيفضل زي ما هو، و`alwaysIncludeSemantics: true` فالاسم بيفضل مقروء، والـ spinner فوقه.
+
+</Answer>
+</Question>
+
+</Quiz>

@@ -1,0 +1,283 @@
+---
+title: "في Escore: الـ Design System والـ Accessibility"
+description: "ألوان في ملف واحد وأدوار متغيّر معناها، و136 text style بالمقاس، و3 أزرار أساسية، وdark mode مقفول بـ TODO، وأحسن helpers للـ bidi في الكورس كله، وأسهم بتتقلب مرتين، وصور من غير label، وتكبير خط مفتوح بس الصناديق ثابتة."
+minutes: 20
+draft: true
+---
+
+الوحدة دي اتكلمت عن الـ tokens والـ components والـ dark mode والـ RTL والـ semantics وتكبير الخط والتستات. Escore عنده محاولة في كل واحدة فيهم: palette، وtext styles، وhelpers للـ theme، و70 shared widget، وhelpers للـ bidi مكتوبة أحسن من أي حاجة في الكورس. بس كل محاولة وقفت في النص، والنتيجة إن الـ app فيه 56 `Color(0x` برا ملف الألوان، و326 `Colors.` غير `transparent`، و1038 `withAlpha`.
+
+الأرقام هنا من `lib/` (حوالي 1700 ملف Dart)، وده مش حكم على الفريق: app بيكبر بسرعة من غير design system متفق عليه، ده شكله الطبيعي. اللي يستاهل نتعلمه هو أنهي قرار صغير كان هيوفّر أنهي مشكلة كبيرة.
+
+### الـ tokens: موجودة، بس الأدوار متغيّر معناها
+
+الألوان في ملف واحد، 29 سطر:
+
+<CodeBlock label="core/styles/colors/app_colors.dart">
+
+```dart
+class AppColors {
+  static const Color primary = Color(0xff248840);
+  static const Color secondary = Color(0xff35408F);
+  static const Color mvpGold = Color(0xFFE0A536);
+  // Backgrounds
+  static const Color backgroundLightColor = Color(0xffF8F9FA);
+  static const Color backgroundDarkColor = Color(0xff121212);
+  // Text colors
+  static const Color textLightColor = Color(0xff1C1C1C);
+  static const Color textDarkColor = Color(0xffE0E0E0);
+  // ...
+}
+```
+
+</CodeBlock>
+
+وده primitives كويسة، بس مفيش طبقة أدوار فوقها. الـ ColorScheme بيتعمل بـ `fromSeed` وبعدين الأدوار بتتبدل بإيد:
+
+<CodeBlock label="core/styles/themes/app_theme_data.dart">
+
+```dart
+return ColorScheme.fromSeed(
+  seedColor: primary,
+  brightness: brightness,
+  primary: primary,
+  surface: isDark ? AppColors.backgroundDarkColor : AppColors.backgroundLightColor,
+  onPrimary: isDark ? AppColors.textDarkColor : AppColors.textLightColor,
+  onSecondary: isDark ? AppColors.textSubDarkColor : AppColors.textSubLightColor,
+  // ...
+);
+```
+
+</CodeBlock>
+
+الـ `onPrimary` معناه في Material «النص اللي فوق الـ primary». هنا بقى «لون النص العادي»، و`context.onPrimaryColor` متستخدم 644 مرة كلون نص على الخلفية. و`onSecondary` بقى «النص الأهدى» (618 مرة). ده بالظبط اللي [درس الـ tokens](/course/design-system/tokens/) حذّر منه: لما تحشر دورك في دور Material موجود، Material نفسه بيكمّل يستخدمه بمعناه الأصلي. أي `FilledButton` من غير style هيحط `#E0E0E0` على الأخضر: contrast حوالي 3.4، تحت الـ 4.5. والصح كان ThemeExtension فيه `textPrimary` و`textMuted`، والـ `onPrimary` يفضل بمعناه.
+
+والأدوار اللي مالهاش مكان اتوزعت: حالات البطولة (`ongoing` و`completed` و`cancelled` و`upcoming`) في helper لوحده بـ hex، والأحمر بتاع «live» في widget تاني بـ hex مختلف، والدهبي `#FFD700` متكرر في 7 أماكن مع إن `AppColors.mvpGold` موجود ومتستخدم مرتين بس. دي 3 أدوار («حالة البطولة»، «مباشر»، «MVP») كانت محتاجة 3 أسطر في extension.
+
+#### الخطوط بالمقاس مش بالدور
+
+<CodeBlock label="core/styles/fonts/app_text_style.dart">
+
+```dart
+class AppTextStyle {
+  AppTextStyle._();
+  static String fontFamily = 'Expo Arabic';
+
+  static TextStyle _baseTextStyle({required double fontSize, required FontWeight fontWeight}) {
+    return TextStyle(
+      fontFamily: fontFamily,
+      fontSize: fontSize.sp,
+      fontWeight: fontWeight,
+      color: Colors.black,
+    );
+  }
+  // ... medium12(), bold14(), regular(13) ... 136 methods
+}
+```
+
+</CodeBlock>
+
+3 مشاكل في 15 سطر:
+
+1. **مفيش أدوار**: `medium12` مابيقولش ده عنوان ولا caption. والأحجام المستخدمة فعلًا من 7 لـ 38، ومنهم 124 استدعاء بأرقام زي `medium(13)` و`(11)` و`(9)`. يعني كل شاشة بتختار المقاس على عينها، وده «اللون المخلوط بالعين» بس للخطوط.
+2. **اللون الافتراضي أسود في app dark**: فـ 649 من حوالي 700 استدعاء بيعملوا `.copyWith(color: ...)`. الـ default اللي لازم تغيّره في 93% من الأماكن مش default.
+3. **الخط ثابت**: الـ app بيختار `Poppins` للإنجليزي في الـ ThemeData، بس الـ `_baseTextStyle` بيكتب `fontFamily: 'Expo Arabic'` صريح، فكل الـ 700 استدعاء بالخط العربي في كل اللغات. الـ Poppins بيوصل بس للـ widgets اللي من غير style. والحل اللي في الدرس: الـ `TextTheme` بأدوار، والخط من الثيم.
+
+### الـ dark mode: مقفول بـ TODO
+
+<CodeBlock label="escore_app.dart">
+
+```dart
+return AdaptiveTheme(
+  // TODO(dark-only): restore `widget.savedThemeMode ?? AdaptiveThemeMode.system`
+  initial: AdaptiveThemeMode.dark,
+  // TODO(dark-only): restore lightTheme below
+  light: AppThemeData.darkTheme(/* ... */),
+  dark: AppThemeData.darkTheme(/* ... */),
+```
+
+</CodeBlock>
+
+الـ app dark بس دلوقتي: الخانتين بياخدوا الـ dark theme، و`_forceDarkMode()` في الـ startup بيكتب dark في الـ prefs كل مرة، واختيار الثيم في الإعدادات متعلّق. والحلو إن القرار ده متعلّم بـ `TODO(dark-only)` في 5 أماكن، فاللي هيرجّع الـ light هيلاقيهم كلهم بـ search واحد.
+
+بس [درس الـ dark mode](/course/design-system/dark-mode/) قال: «dark بس» قرار منتج، والـ light لسه يتبني ويتستّ. هنا الـ light مش متستّ، والحاجات اللي هتبوظ لما يرجع اتراكمت: `Colors.white` 90 مرة (نص الأزرار، والـ viewer)، وشاشات الصيانة والتحديث الإجباري بـ palette رمادي ثابت، والـ splash `Colors.black`، والـ `AppTextStyle` اللي لونه أسود. ولما الـ light يرجع، الـ `isDark ?` (25 مرة) هيبقى هو الـ dark mode بتاع الـ app، بنفس الطريقة اللي الدرس قال عليها «كشاف في إيد كل ممثل». وفيه مكان بيعمل `final isDark = !context.isDark;` من غير كومنت، ومكان تاني بيسأل `Theme.of(context).brightness` بدل `context.isDark`، يعني مصدرين للحقيقة.
+
+وفي الـ `MaterialApp.builder` نفسه، الـ fallback وهو بيحمّل `Scaffold(backgroundColor: Colors.white)`: frame أبيض في app كله أسود.
+
+### الـ components: 3 أزرار أساسية
+
+`lib/core/utils/widgets/` فيه حوالي 70 widget مشترك، وده مجهود حقيقي. بس فيه 3 أزرار أساسية بتعمل نفس الحاجة:
+
+<CodeBlock label="3 contracts لنفس الزرار">
+
+```dart
+// custom_button.dart: free colors, no variants
+const CustomButton({
+  required this.title,
+  this.isLoading = false,
+  this.onPressed,
+  this.colorBackground,
+  this.colorBorder,
+  this.colorText,
+  this.icon,
+  this.borderRadius,
+});
+
+// brand_gradient_button.dart: title "expected to be already localized by the caller"
+const BrandGradientButton({required this.title, this.onTap, this.icon, this.isLoading = false, this.radius = 14});
+
+// custom_button_escore.dart: translates inside, with title.tr(context)
+```
+
+</CodeBlock>
+
+الـ radius 8 و14 و16، والارتفاع `50.h` و`52.h` و`0.075` من ارتفاع الشاشة. ولو عدّيت نص مترجم لـ `CustomButtonEscore` هيحاول يترجمه تاني، ولو عدّيت key لـ `BrandGradientButton` هيعرض الـ key. ده اللي [درس الـ components](/course/design-system/components/) قاله عن الـ API: الـ `colorBackground` و`colorText` المفتوحين بيخلوا كل شاشة تعمل نسختها، والـ variant enum في component واحد كان هيجمع التلاتة. والـ contract بتاع النصوص لازم يبقى واحد: النص بييجي مترجم من برا، زي `retryLabel` في الـ `ErrorView`.
+
+وفيه زرارين إغلاق متطابقين سطر بسطر في مكانين، وزرار «Apply Filters» بنص إنجليزي ثابت ومحدش بيستخدمه. والحلو: `CustomEmptyDataWidget` مجرد wrapper رفيع فوق `AppEmptyState` بدل ما يبقى نسخة، و`BrandDecoration` معمول مخصوص عشان الـ gradient بتاع البراند مايتكتبش inline تاني، ومكتوب كده في الـ doc comment بتاعه.
+
+### الـ RTL: أحسن helpers في الكورس، وأسهم بتتقلب مرتين
+
+#### الحلو
+
+<CodeBlock label="core/styles/fonts/text_direction.dart">
+
+```dart
+/// Direction for a single free-form string, derived from its own content.
+/// Use this for values whose script is independent of the app locale — proper
+/// names, nicknames, team/tournament/game names ...
+TextDirection textDirection(String text) {
+  return text.isArabicFormat ? TextDirection.rtl : TextDirection.ltr;
+}
+
+/// Direction for backend-localized copy (news titles/content, etc.) ...
+/// Do NOT derive the direction from the string here: a localized Arabic title
+/// packed with Latin proper nouns ("Hanwha Life Esports", "MSI 2026") tips the
+/// character-majority heuristic in [textDirection] into LTR ...
+TextDirection localizedTextDirection(BuildContext context) { /* follows the locale */ }
+
+/// Wraps a label that mixes localized copy with a Latin tag ("Lobby A" →
+/// "اللوبي A") in a first-strong bidi isolate ...
+String bidiIsolate(String text) => '⁨$text⁩';
+```
+
+</CodeBlock>
+
+ده بالظبط التقسيم اللي في [درس الـ RTL](/course/design-system/rtl/): محتوى اتجاهه من حروفه، ونص اتجاهه من الـ locale، وisolate للـ data اللي بتدخل جملة. والكومنت التاني فيه حاجة الدرس ماقالهاش: عنوان خبر عربي مليان أسماء فرق لاتيني ممكن الـ heuristic يحسبه LTR، فالنص اللي «لغته معروفة» (جاي من السيرفر بلغة الـ app) مايتخمنش اتجاهه. وفيه تست للـ `bidiIsolate` وتست لاتجاه الـ badge، وده نادر.
+
+وقفل الاتجاه LTR في كروت الماتشات قرار متكتب:
+
+<CodeBlock label="match_group_card_widget.dart">
+
+```dart
+return Directionality(
+  // Every feed card reads left-to-right in all 38 locales: a match row is a
+  // scoreline (home on the left, away on the right) ...
+  // Locked once here so the whole card ... agrees, instead of each widget locking itself.
+  textDirection: TextDirection.ltr,
+```
+
+</CodeBlock>
+
+ده الاستثناء اللي الدرس قال عليه: محتوى LTR بطبيعته بقرار منتج، متقفل في مكان واحد، وجنبه السبب.
+
+#### الوحش
+
+<CodeBlock label="settings/.../notification_entity_mutes_entry_widget.dart">
+
+```dart
+trailing: Icon(
+  context.isArabic ? Icons.chevron_left : Icons.chevron_right,
+),
+```
+
+</CodeBlock>
+
+الـ `chevron_left` عليها `matchTextDirection: true`، فـ Flutter بيقلبها في العربي، والسهم بيشاور يمين: ورا بدل قدام. ونفس الحكاية في `former_identities_widget.dart` بـ `isRtl ? Icons.arrow_back_ios_new_rounded : Icons.chevron_right_rounded`: الاتنين بيتقلبوا لوحدهم. السطرين محتاجين يبقوا `Icons.chevron_right` من غير `if`. والطريف إن نفس المشروع فيه `date_picker_month_navigation_arrows_widget.dart` بيقلب الأيقونة بإيده صح، لأنه بيستخدم أيقونات Cupertino اللي مابتتقلبش لوحدها. نفس الكود صح في مكان وغلط في مكان، والفرق في الـ `IconData`.
+
+وباقي الصورة:
+
+- **`isArabic` بدل `Directionality.of`**: 52 مرة `isArabic ?`، منهم `textAlign: context.isArabic ? TextAlign.right : TextAlign.left` في 4 أماكن، و`Alignment.centerRight : centerLeft` في الـ showcase. والـ app بيدعم حوالي 38 لغة من السيرفر. لو الفارسي أو الأوردو اتفعّلوا، الـ `isArabic` هيبقى false والـ layout RTL، فكل الـ 52 مكان هيطلعوا معكوسين. ونفس الكلام في اختيار الخط: `isArabicLocale` بيختار `Poppins` للفارسي.
+- **الـ physical APIs**: 17 `EdgeInsets.only` بـ left أو right، و39 `fromLTRB`، و58 `Positioned` بـ left أو right، و24 `TextAlign.left` و20 `right`، قصاد 8 `EdgeInsetsDirectional` و9 `PositionedDirectional`. وفيه helpers في الـ extensions اسمها `paddingLeft` و`paddingRight`، يعني الغلط بقى API.
+- **سهم SVG بيتقلب على حسب اللغة**: بـ `Matrix4.diagonal3Values(context.isArabic ? 1.0 : -1.0, ...)`. الفكرة صح (الـ SVG مابيتقلبش لوحده)، بس السؤال لازم يبقى `Directionality.of`، والأداة `Transform.flip(flipX: ...)`.
+- **الـ splash RTL حتى في الإنجليزي**: `Directionality(textDirection: TextDirection.rtl)` ثابت.
+
+### الـ Semantics: الأساس موجود والصور ساكتة
+
+**الحلو**: زرار الرجوع المشترك عليه `MergeSemantics` و`Semantics(button: true, label: LangKeys.back.tr(context))`. والـ navbar بيقول `selected` لكل tab. و`AppBarActionIconButton` فيه `semanticLabel` اختياري ومكتوب جنبه ليه. يعني فيه حد في الفريق فاهم الموضوع.
+
+**الوحش**:
+
+- **الصور**: `CustomImageWidget` عنده parameter `semanticLabel`، ومستخدم 94 مرة، وولا مرة اتعدّى فيها label. لوجوهات الفرق وصور اللاعيبة ليها معنى، ومفيش ولا واحدة فيهم ليها اسم، ولا واحدة متعلّم إنها decoration. الـ parameter الموجود ومحدش بيستخدمه أسوأ من مفيش: بيدّي إحساس إن الموضوع اتحل.
+- **الـ tap targets**: `CircularCloseButton` 28×28، وزرار قفل الـ offline banner حوالي 28 من غير label، وأسهم الـ date picker حوالي 34. كلهم `InkWell` أو `GestureDetector` حوالين أيقونة صغيرة. و`IconButton` بـ tooltip كان هيدّي 48×48 واسم في سطر.
+- **الـ tooltips**: 4 بس في الـ app كله، قصاد 18 `IconButton`. منهم زرار المسح في البحث: «زرار» وبس.
+- **مفيش `liveRegion` ولا announcements**: الأخطاء والـ snackbars بتظهر وقارئ الشاشة مش بيعرف.
+- **الخطوط الصغيرة**: حوالي 11 استدعاء بمقاس 8، وواحد بـ 7. ده تحت أي حد مقروء، حتى قبل الـ contrast.
+- **الـ contrast على الحافة**: الـ `ElevatedButton` في الثيم نصه `Colors.white` على `AppColors.primary` (`#248840`). النسبة 4.496، يعني أقل من 4.5 بفرق 0.004. ولأن المستخدم يقدر يغيّر الـ primary من الإعدادات، والنص ثابت أبيض، فيه ألوان تانية هتبقى أسوأ بكتير. تست الـ contrast اللي في [درس تست الـ Design System](/course/design-system/testing-ds/) كان هيمسكها، وكان هيقفل الـ primary colors اللي مابتعدّيش.
+
+### تكبير الخط: مفتوح، والصناديق ثابتة
+
+حاجة حلوة الأول: مفيش ولا `withNoTextScaling` ولا clamp في الـ app كله. اللي مكبّر الخط بيشوفه كبير، وده عكس الغلط الأشهر اللي [درس تكبير الخط](/course/design-system/text-scaling/) بدأ بيه.
+
+بس الصناديق مش بتكبر معاه:
+
+<CodeBlock label="الثيم: الزرار ارتفاعه ثابت">
+
+```dart
+ElevatedButton.styleFrom(
+  foregroundColor: Colors.white,
+  backgroundColor: primaryColor,
+  fixedSize: Size(800.w, 50.h),
+  // ...
+)
+```
+
+</CodeBlock>
+
+`fixedSize` بارتفاع `50.h`، والـ `.h` بيكبر مع ارتفاع الشاشة مش مع الخط. يعني في 200% النص بيتقص جوه الزرار، وده المثال اللي في الدرس بالحرف. ونفس الحكاية في `BrandGradientButton` (`52.h`)، و`CustomButtonEscore` (`0.075` من ارتفاع الشاشة). وفوق ده 361 `TextOverflow.ellipsis` و396 `maxLines`، فكتير من النصوص اللي محتاجة تتقري بتتقص بدل ما تنزل سطر. و`AutoSizeText` (13 مرة، منهم عنوان الزرار) بيصغّر النص تاني لحد `minFontSize: 10`، يعني بيلغي التكبير في أهم مكان.
+
+والـ `flutter_screenutil` بيكبّر الـ `.sp` على قد عرض الشاشة، والـ `Text` بيكبّره تاني بإعدادات المستخدم. والـ design size للتابلت بيتحسب من مقاس الشاشة. ده كله بيخلي التابلت بخط مكبّر يطلع بأكبر خطوط وأصغر مساحات، وده بالظبط حالة «التكبير مرتين» في الدرس.
+
+### التستات
+
+70 ملف تست، 8 منهم بس `testWidgets`، وكلهم regressions لـ features معينة. صفر `matchesGoldenFile`، وصفر `meetsGuideline`، وصفر `ensureSemantics`، وصفر تستات للـ 70 shared widget. الاستثناء الحلو: تستات الـ bidi (`bidi_isolate_test` واتجاه الـ badge، وحالات RTL في تست ترتيب الـ standings). يعني الحاجة الوحيدة اللي اتكسرت قبل كده واتصلّحت بجد هي اللي ليها تست. وده درس لوحده: التستات بتتكتب بعد أول bug، والطبقات اللي في درس التستات بتخليها تتكتب قبله.
+
+### لو هنعيدها
+
+1. **ThemeExtension للأدوار اللي ناقصة** (`textPrimary`، `textMuted`، حالات البطولة، live، MVP)، والـ `onPrimary` يرجع لمعناه. وتست contrast لكل دور، ومنهم الـ primary اللي المستخدم بيختاره.
+2. **`TextTheme` بأدوار بدل 136 method**: 8 أو 10 أدوار، والخط من الثيم حسب اللغة، واللون من الـ ColorScheme.
+3. **زرار أساسي واحد بـ variants**، والنص بييجي مترجم دايمًا، ومفيش ألوان مفتوحة في الـ API. وزرار إغلاق واحد في `core`، بـ `IconButton` و48×48.
+4. **`Directionality.of` بدل `isArabic` في الـ layout**، وتست بيمنع `EdgeInsets.only(left` و`TextAlign.left` الجداد، والـ `paddingLeft` في الـ extensions يتشال. ومسح الـ `if` حوالين الـ chevrons.
+5. **`semanticLabel` إجباري في `CustomImageWidget`** (أو `excludeFromSemantics: true` صريح)، عشان كل استدعاء يقرر.
+6. **`minimumSize` بدل `fixedSize`** في الثيم، ومفيش `.h` حوالين نص، وبلاش `AutoSizeText` في الأزرار.
+7. **الـ light theme يفضل متستّ** حتى وهو مستخبي: golden لكل shared widget بالثيمين، فاليوم اللي الـ TODO يتشال فيه مايبقاش مشروع لوحده.
+
+<Quiz>
+
+<Question id="escore-ds-1">
+<Ask>Escore عامل `onPrimary` في الـ ColorScheme هو لون النص العادي على الخلفية، ومستخدمه 644 مرة كده. إيه المشكلة، طالما الشاشات شكلها صح؟</Ask>
+<Answer>
+
+الـ Material widgets بتستخدم `onPrimary` بمعناه الأصلي: النص اللي فوق الـ primary. أي `FilledButton` أو chip مختار من غير style هيحط لون النص العادي (`#E0E0E0` في الـ dark) على الأخضر، بـ contrast حوالي 3.4، تحت الـ 4.5. والأدوار اللي ناقصة مكانها ThemeExtension (`textPrimary`، `textMuted`)، والـ `onPrimary` يفضل بمعناه.
+
+</Answer>
+</Question>
+
+<Question id="escore-ds-2">
+<Ask>في Escore، `Icon(context.isArabic ? Icons.chevron_left : Icons.chevron_right)`، وفي مكان تاني نفس الـ `if` بأيقونات Cupertino. ليه الأولى غلط والتانية صح؟</Ask>
+<Answer>
+
+الـ `Icons.chevron_left` و`chevron_right` عليهم `matchTextDirection: true`، فـ Flutter بيقلبهم في الـ RTL، والـ `if` بيقلبهم مرة تانية، فالسهم بيشاور ورا. أيقونات Cupertino مافيهاش الـ flag ده، فمابتتقلبش لوحدها، والقلب اليدوي هو الصح هناك. الحل في الأولى `Icons.chevron_right` من غير `if`، وفي الاتنين السؤال يبقى `Directionality.of` مش `isArabic`.
+
+</Answer>
+</Question>
+
+<Question id="escore-ds-3">
+<Ask>Escore مابيقفلش تكبير الخط خالص، ومع ده النصوص بتتقص في الخط الكبير. ليه؟</Ask>
+<Answer>
+
+الخط بيكبر، بس الصناديق اللي حواليه لأ: الأزرار في الثيم `fixedSize` بارتفاع `50.h`، والـ `.h` بيكبر مع ارتفاع الشاشة مش مع الخط. وفيه 361 `ellipsis` و`AutoSizeText` في الأزرار بيصغّر النص تاني. الحل `minimumSize` بدل `fixedSize`، ومفيش ارتفاعات ثابتة حوالين نص، والقص بس للنصوص اللي ليها مكان تاني تتقري فيه كاملة.
+
+</Answer>
+</Question>
+
+</Quiz>

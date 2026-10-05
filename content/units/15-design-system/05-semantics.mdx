@@ -1,0 +1,446 @@
+---
+title: "الـ Semantics وقارئ الشاشة"
+description: "شجرة الـ semantics اللي TalkBack وVoiceOver بيقروها: اللي Flutter بيديهولك ببلاش واللي لازم تكمّله، والـ MergeSemantics والـ ExcludeSemantics والـ headings، وأحجام الـ touch targets، والـ contrast، وليه اللون لوحده مايكفيش."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="معلّق الماتش في الراديو">
+
+اللي بيسمع الماتش في الراديو مش شايف حاجة. المعلّق الشاطر بيقول: «الكورة مع محمد صلاح، على الجناب اليمين، بيعدّي واحد، بيسدد...». بيقول <b>مين</b>، و<b>فين</b>، و<b>بيعمل إيه</b>، و<b>بالترتيب</b> اللي الحاجات بتحصل بيه.
+
+المعلّق الوحش بيقول: «اللي لابس أحمر عدّى للي جنبه». السامع مش شايف الأحمر. أو بيوصف كل حاجة في الملعب: «فيه عشب، وفيه خطوط بيضا، والجمهور قاعد...» لحد ما الهدف يعدّي وهو لسه بيوصف الكراسي. أو بيقول «جووول!» من غير ما يقول مين اللي جاب.
+
+</Analogy>
+
+قارئ الشاشة (TalkBack على Android، وVoiceOver على iOS) هو الراديو ده. المستخدم الكفيف أو ضعيف النظر بيحرّك صباعه على الشاشة، والموبايل بيقوله اللي تحته. ومش بيقرا الـ pixels: بيقرا شجرة تانية Flutter بيبنيها جنب الـ widget tree اسمها <b>semantics tree</b>. كل node فيها فيه: الـ label (ده إيه)، والـ value (قيمته كام)، والـ flags (زرار؟ متعلّم؟ عنوان؟)، والـ actions (ينفع يتداس؟ يتسحب؟).
+
+وشغلك إن الشجرة دي تبقى المعلّق الشاطر: كل حاجة ليها اسم، ومفيش كلام زيادة، ومفيش معنى معتمد على اللون بس.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### اللي Flutter بيديهولك ببلاش
+
+أغلب الـ widgets الجاهزة بتبني الـ semantics بتاعتها لوحدها:
+
+| الـ widget | قارئ الشاشة بيقول |
+| --- | --- |
+| `Text('مكتبتي')` | «مكتبتي» |
+| `FilledButton(child: Text('احفظ'))` | «احفظ، زرار» |
+| `TextField(decoration: InputDecoration(labelText: 'الإيميل'))` | «الإيميل، حقل تعديل» |
+| `Switch` جوه `SwitchListTile` | «الوضع الليلي، مفعّل، switch» |
+| `ListTile(title:, subtitle:, onTap:)` | العنوان والـ subtitle مع بعض، ومعاهم إنه يتداس |
+| `IconButton(icon:, tooltip: 'تحديث')` | «تحديث، زرار» |
+
+يعني لو بتبني الشاشة من الـ Material widgets ومن components الـ `core_ui`، نص الشغل خلص. النص التاني في الحاجات اللي ماتعرفش معناها لوحدها.
+
+### الحاجات اللي لازم تقولها انت
+
+<CodeBlock label="أيقونات وصور ليها معنى">
+
+```dart
+// an IconButton without a tooltip: "button", and nothing else
+IconButton(
+  icon: const Icon(Icons.refresh),
+  tooltip: l10n.refresh, // the label for screen readers, and a long-press hint
+  onPressed: cubit.refresh,
+)
+
+// an icon that carries meaning on its own
+Icon(Icons.cloud_off, semanticLabel: l10n.notSynced)
+
+// a cover next to the title: the title already says it, so the image is noise
+Image(image: cover, excludeFromSemantics: true)
+```
+
+</CodeBlock>
+
+- <b>الـ `tooltip`:</b> بيعمل حاجتين: label لقارئ الشاشة، وكلمة بتظهر لما تدوس مطوّل. وده نفس اللي `labeledTapTargetGuideline` بيدوّر عليه في [درس الـ widget tests](/course/testing/widget-tests/).
+- <b>الأيقونة من غير `semanticLabel`</b> بتبقى decoration: قارئ الشاشة بيعدّيها. وده صح لأيقونة جنب نص بيقول نفس المعنى، وغلط لأيقونة لوحدها هي اللي بتقول المعلومة.
+- <b>الصورة:</b> يا ليها `semanticLabel` بيوصفها، يا `excludeFromSemantics: true` لو مالهاش معلومة زيادة. الغلاف جنب العنوان مالوش معلومة زيادة.
+
+### MergeSemantics: كارت واحد، جملة واحدة
+
+الـ `BookTile` فيه عنوان، ومؤلف، وchip الحالة، ونسبة القراية. من غير حاجة، TalkBack بيقف 4 وقفات: المستخدم بيسحب صباعه 4 مرات عشان يعرف كتاب واحد، وفي ليستة 30 كتاب ده 120 وقفة.
+
+<CodeBlock label="BookTile بيتقري مرة واحدة">
+
+```dart
+MergeSemantics(
+  child: InkWell(
+    onTap: onTap,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(book.title, style: context.textTheme.titleMedium),
+        Text(l10n.addedOn(book.addedAt), style: context.textTheme.bodySmall),
+        StatusChip(/* label: "بقراه" */),
+      ],
+    ),
+  ),
+)
+// TalkBack: "Atomic Habits، اتضاف 3 أكتوبر، بقراه، double tap to activate"
+```
+
+</CodeBlock>
+
+الـ `MergeSemantics` بيجمع كل اللي تحته في node واحدة: الـ labels بتتلزق بالترتيب، والـ actions (الـ tap بتاع الـ `InkWell`) بتبقى بتاعة الـ node دي. والـ `ListTile` بيعمل ده لوحده، وده ليه الـ `bySemanticsLabel` في درس الـ widget tests احتاج `RegExp`.
+
+### ExcludeSemantics: الكلام الزيادة
+
+<CodeBlock label="decoration ماتتقراش">
+
+```dart
+Row(
+  children: [
+    const ExcludeSemantics(child: Text('•')), // a separator dot is not content
+    Text(l10n.addedOn(book.addedAt)),
+  ],
+)
+```
+
+</CodeBlock>
+
+والعكس: لو حاجة مكتوبة بشكل مايتقريش كويس، استبدلها بـ label. `Text('3/10')` قارئ الشاشة هيقول «تلاتة شرطة عشرة». الـ `semanticsLabel` في الـ `Text` بيقول الجملة الصح:
+
+```dart
+Text('$read/$goal', semanticsLabel: l10n.yearlyGoalProgress(read, goal)) // "قريت 3 من 10 كتب"
+```
+
+### العناوين: headingLevel
+
+المستخدم بتاع قارئ الشاشة مابيقراش الصفحة من أولها لآخرها. بيقفز من عنوان لعنوان، زي ما انت بتبص على العناوين الكبيرة في الجرنال. والعناوين لازم تتعلّم:
+
+<CodeBlock label="أقسام الـ Home">
+
+```dart
+Semantics(
+  headingLevel: 2,
+  child: Text(l10n.continueReading, style: context.textTheme.titleLarge),
+)
+```
+
+</CodeBlock>
+
+زمان كان `Semantics(header: true)` هو الطريقة. من Flutter 3.47 الـ `header` مابقاش ليه أي تأثير على Android وiOS، والعناوين لازم تتعلّم بـ `headingLevel` من 1 لـ 6. لو بتحدّث كود قديم فيه `header: true`، ده بقى زي ما يكون مش موجود.
+
+### الـ touch targets
+
+صباع الإنسان مش mouse. أي حاجة بتتداس لازم تبقى مساحتها:
+
+| المنصة | أقل مساحة |
+| --- | --- |
+| Android (Material) | 48×48 dp |
+| iOS (Apple HIG) | 44×44 pt |
+
+الـ `IconButton` بيعمل 48×48 لوحده حتى لو الأيقونة 24. المشكلة في اللي بيتعمل بإيد:
+
+<CodeBlock label="زرار صغير، وزرار بمساحة صح">
+
+```dart
+// 16x16 tappable area: misses, and taps the row behind it instead
+GestureDetector(
+  onTap: onDismiss,
+  child: const Icon(Icons.close, size: 16),
+)
+
+// 48x48, a label, and a button flag: one widget does all three
+IconButton(
+  onPressed: onDismiss,
+  icon: const Icon(Icons.close, size: 16),
+  tooltip: MaterialLocalizations.of(context).closeButtonTooltip,
+)
+```
+
+</CodeBlock>
+
+الأيقونة ممكن تفضل صغيرة في الشكل. اللي لازم يكبر هو المساحة اللي بتستقبل الضغطة. ولو مش عايز `IconButton`، الـ `ConstrainedBox(constraints: const BoxConstraints(minWidth: kMinInteractiveDimension, minHeight: kMinInteractiveDimension))` بيدّي نفس المساحة (`kMinInteractiveDimension` = 48).
+
+### الـ contrast
+
+النص لازم يبان على خلفيته. المقياس اسمه <b>contrast ratio</b>، من 1:1 (نفس اللون) لـ 21:1 (أسود على أبيض). والحدود المعروفة (WCAG AA، واللي docs Flutter بتقولها):
+
+| الحاجة | أقل نسبة |
+| --- | --- |
+| نص عادي | 4.5:1 |
+| نص كبير (18 أو أكبر، أو 14 bold) | 3:1 |
+| حاجات UI مش نص (أيقونة لوحدها، حدود حقل) | 3:1 |
+
+والنسبة بتتحسب من الـ luminance بتاعة اللونين، وFlutter عنده الدالة جاهزة على `Color`:
+
+<CodeBlock label="packages/core_ui/lib/src/theme/contrast.dart">
+
+```dart
+/// WCAG contrast ratio between two opaque colors: 1.0 to 21.0.
+double contrastRatio(Color a, Color b) {
+  final la = a.computeLuminance();
+  final lb = b.computeLuminance();
+  final (light, dark) = la > lb ? (la, lb) : (lb, la);
+  return (light + 0.05) / (dark + 0.05);
+}
+```
+
+</CodeBlock>
+
+ودي هتبقى أهم دالة في [درس تست الـ Design System](/course/design-system/testing-ds/): بدل ما تستنى حد يشتكي إن «بقراه» مش باين في الـ dark، تست بيلف على كل دور في `ReadlyColors` ويتأكد إنه 4.5:1 على الـ surface في الثيمين.
+
+### اللون لوحده مايكفيش
+
+حوالي 1 من كل 12 راجل عنده نوع من عمى الألوان. الأحمر والأخضر بالذات بيبانوا شبه بعض عند كتير منهم. لو حالة الكتاب بتبان بلون النقطة بس، أو خطأ الـ sync نقطة حمرا بس، فيه ناس مش هتفرّق. وده ليه `StatusChip` في [درس الـ components](/course/design-system/components/) بياخد `icon` و`label` إجباري جنب اللون: المعنى بيوصل من 3 طرق، واللون بيساعد بس.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### MergeSemantics بلع زرار «المزيد»
+
+<b>اللي بيبوظ:</b> الـ `BookTile` فيه `IconButton` للمزيد (تعديل، حذف). بعد الـ `MergeSemantics`، TalkBack بيقرا الكارت كله «Atomic Habits، James Clear، بقراه، المزيد»، والـ double tap بيفتح الكتاب. مفيش طريقة توصل لزرار المزيد.
+
+<b>ليه:</b> الـ `MergeSemantics` بيجمع كل حاجة تحته، ومن ضمنها الزرار. والـ node المجمّعة ليها tap واحد بس.
+
+<b>الحل:</b> الـ merge على الجزء اللي هو «الكتاب» بس، والزرار جنبه node لوحده:
+
+<CodeBlock label="الكتاب node، والمزيد node تانية">
+
+```dart
+Row(
+  children: [
+    Expanded(
+      child: MergeSemantics(
+        child: InkWell(onTap: onTap, child: /* title, author, StatusChip */),
+      ),
+    ),
+    IconButton(
+      icon: const Icon(Icons.more_vert),
+      tooltip: l10n.moreActionsFor(isolate(book.title)), // "خيارات Atomic Habits"
+      onPressed: onMore,
+    ),
+  ],
+)
+```
+
+</CodeBlock>
+
+الـ tooltip فيه اسم الكتاب، لأن في ليستة فيها 30 «المزيد»، المستخدم لازم يعرف ده مزيد بتاع أنهي كتاب لما يوصله لوحده. ولو الأكشنز قليلة وبتتكرر، فيه طريقة تانية: `Semantics(customSemanticsActions: ...)` على الكارت نفسه، فبتظهر في قايمة الأكشنز بتاعة TalkBack من غير node زيادة.
+
+### زرار المفضلة مش بيقول حالته
+
+<b>اللي بيبوظ:</b> القلب في صفحة الكتاب `GestureDetector` على `Icon(isFavorite ? Icons.favorite : Icons.favorite_border)`. قارئ الشاشة مش بيوصله أصلًا، ولو وصله مش هيعرف هو متعلّم ولا لأ.
+
+<b>ليه:</b> الـ `GestureDetector` بيستقبل الضغطة بس. مابيقولش «أنا زرار»، ومالوش label، وتغيير الأيقونة تغيير في الشكل بس.
+
+<b>الحل:</b> widget بيقول كل ده:
+
+<CodeBlock label="زرار المفضلة">
+
+```dart
+IconButton(
+  isSelected: isFavorite,
+  icon: const Icon(Icons.favorite_border),
+  selectedIcon: const Icon(Icons.favorite),
+  tooltip: isFavorite ? l10n.removeFromFavorites : l10n.addToFavorites,
+  onPressed: cubit.toggleFavorite,
+)
+```
+
+</CodeBlock>
+
+الـ label بيقول الفعل اللي هيحصل لو ضغط، فبيتغير مع الحالة. ولو الزرار custom ومش `IconButton`، الـ `Semantics(button: true, toggled: isFavorite, label: ...)` بيقول نفس الحاجة بإيدك.
+
+### الخطأ ظهر ومحدش قال
+
+<b>اللي بيبوظ:</b> الـ refresh فشل، والـ `InlineErrorBanner` ظهر فوق الليستة. المستخدم اللي بيستخدم TalkBack صباعه على الكتاب العاشر، ومش هيعرف إن فيه حاجة ظهرت فوق.
+
+<b>ليه:</b> قارئ الشاشة بيقرا اللي تحت صباع المستخدم. الحاجة اللي ظهرت في مكان تاني مابتتقريش لوحدها.
+
+<b>الحل:</b> في [درس الأخطاء في الـ UI](/course/api-errors/errors-ui/) عملنا ده بـ `Semantics(liveRegion: true)` على الـ banner: أي node عليها liveRegion بتتقري لما تظهر أو كلامها يتغير. وده الحل الأول. ولو مفيش widget أصلًا تحط عليه liveRegion، فيه announcement مباشر:
+
+<CodeBlock label="sendAnnouncement">
+
+```dart
+final view = View.of(context);
+final direction = Directionality.of(context);
+if (MediaQuery.supportsAnnounceOf(context)) {
+  SemanticsService.sendAnnouncement(view, l10n.bookRemoved, direction);
+}
+```
+
+</CodeBlock>
+
+- <b>`sendAnnouncement` مش `announce`:</b> الـ `SemanticsService.announce` اللي في درس الأخطاء بقت deprecated (من بعد 3.35)، لأنها ماكانتش بتعرف أنهي window في الـ apps اللي فيها أكتر من window. البديلة بتاخد الـ `FlutterView` من `View.of(context)`.
+- <b>الـ `supportsAnnounceOf`:</b> مش كل منصة بتدعم الـ announcements، وAndroid نفسه بينصح بالـ liveRegion بدلها. فالـ liveRegion الأول، والـ announcement لما مفيش بديل.
+
+### العنوان الإنجليزي بيتقري بلكنة عربي
+
+<b>اللي بيبوظ:</b> TalkBack بصوت عربي بيقرا «Atomic Habits» حرف حرف أو بنطق غريب.
+
+<b>ليه:</b> الصوت بيتختار حسب لغة النص، وكل النص في الـ app متعلّم إنه عربي.
+
+<b>الحل:</b> قول للـ engine لغة الجزء ده. الـ `TextSpan` عنده `locale`، ومن Flutter 3.38 قارئ الشاشة بيستخدمه يختار الصوت:
+
+<CodeBlock label="عنوان بلغته">
+
+```dart
+Text.rich(
+  TextSpan(
+    text: book.title,
+    // only if the data knows the title's language (Open Library has it per edition)
+    locale: book.languageCode == 'en' ? const Locale('en') : null,
+  ),
+)
+```
+
+</CodeBlock>
+
+الـ `languageCode` هنا field محتاج يتضاف للـ `Book` لو عايز الميزة دي. ولو مش عارف لغة العنوان، ماتخمنش من الحروف بس: «Harry Potter» مترجم للعربي ممكن يتكتب بحروف لاتيني. اللي يعرف اللغة هي الـ data.
+
+### الترتيب غلط
+
+<b>اللي بيبوظ:</b> صفحة الكتاب فيها badge «مش متزامن» متحطوط بـ `Stack` فوق الغلاف. TalkBack بيقرا الـ badge الأول، وبعدين الغلاف، وبعدين العنوان، وبعدين زرار الرجوع اللي فوق خالص.
+
+<b>ليه:</b> قارئ الشاشة بيمشي بترتيب الشجرة والمكان على الشاشة. الـ `Stack` والـ `Positioned` بيلخبطوا الاتنين.
+
+<b>الحل:</b> الأول جرّب ترتب الـ widgets في الشجرة بنفس ترتيب القراية (الحاجة اللي فوق في الشجرة فوق في الكود). ولو الشكل محتاج ترتيب مختلف، `Semantics(sortKey: OrdinalSortKey(1))` بيحدد الترتيب بين الإخوات. بس ده آخر حل: غالبًا الترتيب الغلط علامة إن الـ layout نفسه ممكن يتبني أبسط.
+
+### إزاي تجرّب بنفسك
+
+التستات الأوتوماتيك بتمسك حاجات (الـ labels الناقصة، والـ targets الصغيرة، والـ contrast)، بس مابتقولكش إن الصفحة «مفهومة». ده محتاج تجربة بإيدك، مرة على الأقل قبل كل release:
+
+- <b>Android:</b> Settings ← Accessibility ← TalkBack. اسحب يمين وشمال عشان تنقل بين العناصر، ودبل تاب عشان تدوس. أغمض عينك وحاول تضيف كتاب لمكتبتك.
+- <b>iOS:</b> Settings ← Accessibility ← VoiceOver. نفس الحركات.
+- <b>من غير موبايل:</b> `MaterialApp(showSemanticsDebugger: true)` بيرسم الـ semantics tree فوق الشاشة بدل الـ UI: كل node مستطيل ومكتوب فيه الـ label بتاعه. أي مستطيل فاضي هو حاجة TalkBack هيقول عليها «زرار» وبس.
+- <b>أدوات المنصات:</b> Accessibility Scanner على Android بيقولك على الـ targets الصغيرة والـ contrast في أي شاشة، وAccessibility Inspector في Xcode بيوريك اللي VoiceOver شايفه.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>الـ semantics جوه الـ components:</b> لو `ReadlyButton` و`StatusChip` و`ErrorView` معمولين صح، كل feature بتاخد الـ accessibility ببلاش. ولو كل شاشة مسؤولة عن الـ semantics بتاعتها، هتلاقي 40 شاشة كل واحدة بطريقة. ده أقوى سبب للـ design system بعد الاتساق.
+- <b>اللون والـ contrast بيتقرروا في الـ tokens:</b> الشاشة مش هتعرف تصلّح contrast وحش في `statusReading`. الـ token نفسه لازم يعدّي في الثيمين، وده بيتستّ مرة واحدة.
+- <b>ماتكترش Semantics:</b> label على كل حاجة، أو `Semantics` بيكرر نفس النص اللي في الـ `Text`، بيخلي TalkBack يقول كل جملة مرتين. ابدأ من غير حاجة، اسمع، وزوّد بس اللي ناقص.
+- <b>والعكس: ماتخبيش كتير:</b> `excludeSemantics: true` على كارت كامل عشان «الكلام كتير» بيخفي معلومة حقيقية. اجمع بـ `MergeSemantics` واختصر بـ label أحسن، بدل ما تمسح.
+- <b>الـ a11y جزء من الـ Definition of Done:</b> الـ guidelines التلاتة (tap targets، labels، contrast) شغالين في الـ CI على كل component وشاشة أساسية، والتجربة اليدوية بـ TalkBack بند في checklist الـ release. docs Flutter نفسها فيها release checklist للـ accessibility: active interactions، screen readers، contrast، context switching، tap targets، errors، color vision، scale factors.
+- <b>الـ web حكاية تانية:</b> لو Readly طلع web، الـ semantics مقفولة افتراضيًا هناك لأسباب أداء، وبتتفتح بـ `SemanticsBinding.instance.ensureSemantics()` بعد `runApp`.
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي تخلي app Flutter accessible لمستخدم TalkBack؟» Flutter بيبني semantics tree جنب الـ widget tree، والـ widgets الجاهزة بتملاها لوحدها. شغلي في الباقي: كل حاجة بتتداس ليها label (`tooltip` في `IconButton`، `semanticLabel` في الأيقونات اللي ليها معنى)، والصور الـ decorative `excludeFromSemantics`، والكارت اللي فيه كذا نص `MergeSemantics` عشان يتقري مرة، مع إن الأزرار اللي جواه تفضل nodes لوحدها، والعناوين بـ `headingLevel` (من 3.47 الـ `header` مابيأثرش على الموبايل). والتغييرات المهمة بـ `liveRegion`. وفوق ده: targets 48×48 على Android و44×44 على iOS، وcontrast 4.5:1 للنص، والمعنى مايعتمدش على اللون بس. وبحرس ده بـ `meetsGuideline` في التستات، وبتجربة بإيدي بـ TalkBack قبل كل release.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### banner «مش متزامن» في المكتبة
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+Row(
+  children: [
+    Container(
+      width: 8,
+      height: 8,
+      decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
+    ),
+    const SizedBox(width: 6),
+    Text('$pending', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+    const Spacer(),
+    GestureDetector(
+      onTap: onSync,
+      child: const Icon(Icons.sync, size: 18),
+    ),
+  ],
+)
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+Semantics(
+  liveRegion: true,
+  child: Row(
+    children: [
+      Icon(Icons.cloud_off, size: 18, color: context.readlyColors.warning),
+      const SizedBox(width: AppSpace.sm),
+      Expanded(
+        child: Text(
+          l10n.pendingChanges(pending), // "3 تعديلات لسه ماتزامنتش"
+          style: context.textTheme.bodySmall,
+        ),
+      ),
+      IconButton(
+        onPressed: onSync,
+        icon: const Icon(Icons.sync, size: 18),
+        tooltip: l10n.syncNow,
+      ),
+    ],
+  ),
+)
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: المعنى كله في نقطة حمرا (اللي عنده عمى ألوان أحمر وأخضر مش هيفرق)، والرقم «3» لوحده مايقولش 3 إيه، والرمادي 11 على أبيض contrast ضعيف، وزرار الـ sync مساحته 18×18 ومالوش اسم ولا بيقول إنه زرار. بعد: أيقونة ونص كامل بيقولوا المعنى، واللون مساعد بس، والـ contrast من الـ textTheme والـ tokens، والزرار 48×48 باسم، والـ liveRegion بيقول للي بيستخدم TalkBack لما العدد يتغير.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="ds-semantics-1">
+<Ask>`IconButton(icon: Icon(Icons.refresh), onPressed: ...)` من غير tooltip. TalkBack بيقول إيه، وإيه التست اللي هيمسكها؟</Ask>
+<Answer>
+
+«زرار» وبس، من غير ما يقول بيعمل إيه. الـ `meetsGuideline(labeledTapTargetGuideline)` هيفشل عليها. الحل `tooltip: l10n.refresh`، وده بيبقى الـ label وكمان بيظهر لما تدوس مطوّل.
+
+</Answer>
+</Question>
+
+<Question id="ds-semantics-2">
+<Ask>لفّيت الـ `BookTile` كله بـ `MergeSemantics`، وزرار «المزيد» اللي جواه بقى مش بيتوصل له. ليه، وإيه الحل؟</Ask>
+<Answer>
+
+الـ `MergeSemantics` بيجمع كل اللي تحته في node واحدة بـ tap واحد، فالزرار اتبلع. الـ merge يبقى على جزء الكتاب بس (العنوان والمؤلف والحالة)، والزرار جنبه برا الـ merge، وفي الـ tooltip بتاعه اسم الكتاب.
+
+</Answer>
+</Question>
+
+<Question id="ds-semantics-3">
+<Ask>كود قديم بيعلّم العناوين بـ `Semantics(header: true)`. إيه المشكلة في Flutter 3.47؟</Ask>
+<Answer>
+
+من 3.47 الـ `header` مابقاش ليه تأثير على Android وiOS، فالعناوين دي بقت مش عناوين بالنسبة لقارئ الشاشة، والمستخدم مش هيقدر يقفز بينها. لازم تتحول لـ `headingLevel` من 1 لـ 6.
+
+</Answer>
+</Question>
+
+<Question id="ds-semantics-4">
+<Ask>زرار إغلاق `GestureDetector` على `Icon(Icons.close, size: 16)`. اذكر 3 مشاكل فيه.</Ask>
+<Answer>
+
+المساحة 16×16، أقل بكتير من 48×48 على Android و44×44 على iOS، فالضغطة بتفوّت. مالوش label، فقارئ الشاشة مش هيقول إنه «إغلاق». ومش متعلّم إنه زرار. `IconButton` بـ tooltip بيحل التلاتة مع بعض، والأيقونة ممكن تفضل 16 في الشكل.
+
+</Answer>
+</Question>
+
+<Question id="ds-semantics-5">
+<Ask>حالة الكتاب بتبان بلون النقطة جنب العنوان بس. إيه المشكلة، حتى لو الـ contrast كويس؟</Ask>
+<Answer>
+
+اللي عنده عمى ألوان (حوالي 1 من كل 12 راجل) ممكن مايفرقش بين الأحمر والأخضر، وقارئ الشاشة مابيشوفش اللون أصلًا. المعنى لازم يوصل بنص أو أيقونة كمان، زي `StatusChip` اللي بياخد label وicon إجباري، واللون يساعد بس.
+
+</Answer>
+</Question>
+
+</Quiz>

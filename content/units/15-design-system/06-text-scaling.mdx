@@ -1,0 +1,395 @@
+---
+title: "تكبير الخط من غير ما الـ layout يتكسر"
+description: "الـ textScaler بييجي من إعدادات الموبايل، والـ scaling اللي مش خطي في Android 14، والـ layouts اللي بتتمد بدل ما تتقص: من غير ارتفاعات ثابتة حوالين النص، وWrap بدل Row، وscroll في كل صفحة. وامتى تحط حد أقصى، وليه ماتقفلوش أبدًا."
+minutes: 30
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="استمارة بمربعات">
+
+استمارة حكومية فيها خانة الاسم: 10 مربعات صغيرين، حرف في كل مربع. لو اسمك «علي»، تمام. لو اسمك «عبد الرحمن محمد»، هتعمل إيه؟ هتكتب صغير لحد ما الحروف تبقى مش مقروءة، أو هتقطع الاسم في النص، أو هتكتب برا الخانة فوق الخانة اللي بعدها. والاستمارة الكويسة فيها سطر فاضي بيتمد على قد اللي هتكتبه.
+
+دلوقتي تخيل إن الكاتب نفسه خطه كبير، عشان نظره ضعيف. مش اسمه بس اللي طويل: كل حرف أعرض. الاستمارة اللي بالمربعات مستحيل تشتغل معاه.
+
+</Analogy>
+
+ناس كتير جدًا مكبّرين الخط في موبايلاتهم: كبار السن، وأي حد نظره ضعيف، وأي حد تعب من إنه يقرّب الموبايل من وشه. أي `SizedBox(height: 48)` حوالين نص هو استمارة بمربعات. والـ app الكويس سطوره بتتمد: النص بيكبر، والكارت بيطول، والصفحة بتعمل scroll.
+
+والهدف مش «الـ app مايقعش». الهدف إن المستخدم اللي مكبّر الخط 200% يقدر يستخدم الـ app كله: يقرا العناوين، ويوصل للأزرار، ويخلّص اللي جاي يعمله.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### الـ textScaler بييجي منين
+
+المستخدم بيغيّر حجم الخط من إعدادات الموبايل. Flutter بيحطه في `MediaQuery`، وكل `Text` بيقراه لوحده:
+
+```dart
+final scaler = MediaQuery.textScalerOf(context);
+scaler.scale(14); // 14 at default size, 28 at 200% (linear), less on Android 14+
+```
+
+والـ `Text(fontSize: 14)` بيترسم بـ `scaler.scale(14)` من غير ما تعمل حاجة. يعني النصوص بتكبر لوحدها. المشكلة في كل حاجة حوالين النص.
+
+### ليه TextScaler مش رقم
+
+زمان كان اسمه `textScaleFactor`: رقم بيتضرب في كل حجم. ده deprecated من Flutter 3.16، لأن Android 14 جاب <b>nonlinear scaling</b>: لما المستخدم يكبّر 200%، النص الصغير (12) بيكبر الضعف، بس العنوان الكبير (28) بيكبر أقل، لأنه مقروء أصلًا. يعني مفيش رقم واحد بيتضرب في كل حاجة.
+
+النتيجة العملية: ماتحسبش `fontSize * factor` بإيدك أبدًا. لو محتاج تعرف حجم معين بعد التكبير، اسأل الـ scaler نفسه: `scaler.scale(14)`.
+
+### إيه اللي بيكبر وإيه اللي لأ
+
+| الحاجة | بتكبر مع الخط؟ |
+| --- | --- |
+| `Text` و`TextField` و`RichText` | أيوه، لوحدها |
+| ارتفاع الـ `ListTile` والزرار (لو `minimumSize` مش `fixedSize`) | أيوه، بيتمد على النص |
+| `Icon(size: 24)` | لأ |
+| `SizedBox(height: 48)` و`Container(height: 56)` | لأ، وده أصل المشاكل |
+| `EdgeInsets` و`AppSpace` | لأ (وده عادي) |
+| صفحة من غير scroll | لأ، والمحتوى بيطلع برا الشاشة |
+
+### 4 قواعد للـ layout
+
+<b>1. مفيش ارتفاع ثابت حوالين نص.</b> لو عايز حد أدنى، قول حد أدنى:
+
+<CodeBlock label="ارتفاع أدنى مش ثابت">
+
+```dart
+// clips the second line at 200%
+SizedBox(height: 56, child: Center(child: Text(l10n.continueReading)))
+
+// at least 56, grows with the text
+ConstrainedBox(
+  constraints: const BoxConstraints(minHeight: 56),
+  child: Center(child: Text(l10n.continueReading)),
+)
+```
+
+</CodeBlock>
+
+ونفس الفكرة في الثيم: الأزرار في [درس الـ components](/course/design-system/components/) معمول لها `minimumSize: Size(64, 48)`، مش `fixedSize`. الـ `fixedSize` بيخلي الزرار 48 مهما كبر النص، فالكلمة بتتقص.
+
+<b>2. النص في Row ياخد اللي فاضل بس.</b> أي `Text` جوه `Row` من غير `Expanded` أو `Flexible` هيحاول ياخد عرضه كله، وفي الخط الكبير هيطلع برا الشاشة بالشريط الأصفر والأسود:
+
+```dart
+Row(
+  children: [
+    const Icon(Icons.menu_book),
+    const SizedBox(width: AppSpace.sm),
+    Expanded(child: Text(book.title)), // wraps instead of overflowing
+  ],
+)
+```
+
+<b>3. قرر كل نص يتلف ولا يتقص.</b> العنوان في الليستة سطرين بالكتير وبعدين `…`، عشان الليستة تفضل ليستة. بس الوصف في صفحة الكتاب، ورسالة الخطأ، ونص الزرار، مايتقصوش أبدًا: دي الحاجات اللي المستخدم محتاج يقراها فعلًا.
+
+```dart
+Text(book.title, maxLines: 2, overflow: TextOverflow.ellipsis) // a list title: may be cut
+Text(book.description)                                         // the content: never cut
+```
+
+<b>4. كل صفحة بتعمل scroll.</b> حتى لو في الحجم العادي المحتوى مالي نص الشاشة بس. في 200% على موبايل صغير، صفحة الـ login (لوجو وحقلين وزرار ولينك) أطول من الشاشة.
+
+### Wrap بدل Row للحاجات الصغيرة جنب بعض
+
+سطر المعلومات تحت عنوان الكتاب فيه الحالة، وتاريخ الإضافة، و«مش متزامن» لو الكتاب لسه ماتزامنش (الـ `unsynced` اللي الـ `BookTile` بيعمله `context.select` في [درس الـ flutter_bloc widgets](/course/state-management/flutter-bloc-widgets/)). في الحجم العادي جنب بعض. في 200% مش هيكفوا:
+
+<CodeBlock label="BookTile: سطر المعلومات">
+
+```dart
+Wrap(
+  spacing: AppSpace.sm,     // between items on the same line
+  runSpacing: AppSpace.xs,  // between lines when it wraps
+  crossAxisAlignment: WrapCrossAlignment.center,
+  children: [
+    StatusChip(/* ... */),
+    Text(l10n.addedOn(book.addedAt), style: context.textTheme.bodySmall),
+    if (unsynced) Text(l10n.notSynced, style: context.textTheme.bodySmall),
+  ],
+)
+```
+
+</CodeBlock>
+
+الـ `Wrap` زي الـ `Row`، بس لما العرض يخلص بينزل سطر جديد بدل ما يطلع برا. ويمشي مع الـ RTL لوحده. في الحجم العادي شكله زي الـ Row بالظبط، فمفيش سبب ماتستخدموش هنا.
+
+<Diagram name="d-ds-text-scale">
+
+نفس الـ BookTile في 3 حالات. على الشمال الحجم العادي. في النص تكبير 200% بارتفاع ثابت وRow: العنوان اتقص والمعلومات طلعت برا الكارت. على اليمين 200% بـ minHeight وWrap: الكارت طوّل، والعنوان سطرين، والمعلومات نزلت سطر جديد.
+
+</Diagram>
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### حد قفل التكبير عشان «الـ design بيبوظ»
+
+<b>اللي بيبوظ:</b> لقيت ده في `ReadlyApp`:
+
+<CodeBlock label="التكبير مقفول للـ app كله">
+
+```dart
+MaterialApp.router(
+  builder: (context, child) => MediaQuery.withNoTextScaling(child: child!),
+  // ...
+)
+```
+
+</CodeBlock>
+
+الـ app شكله زي الـ Figma بالظبط في أي موبايل. والمستخدمة اللي عندها 70 سنة ومكبّرة الخط، بتشوف كل الـ apps التانية كبيرة ومقروءة، وReadly بخط صغير ماتقدرش تقراه. هتمسحه.
+
+<b>ليه:</b> حد صلّح الأعراض (الـ overflow في 3 شاشات) بإنه شال الميزة عن كل المستخدمين. وده كمان بيخالف معيار WCAG اللي بيقول النص لازم يكبر لـ 200% من غير ما المحتوى أو الوظيفة تضيع.
+
+<b>الحل:</b> امسح السطر ده، وصلّح الـ 3 شاشات بالقواعد اللي في Level 2. ولو فيه حتة فعلًا مش هتشيل أي تكبير (label تحت أيقونة في الـ bottom bar مثلًا)، حط حد أقصى ليها هي بس:
+
+<CodeBlock label="حد أقصى لجزء صغير، مش للـ app">
+
+```dart
+MediaQuery.withClampedTextScaling(
+  maxScaleFactor: 1.3, // the bottom bar labels only: the pages themselves scale fully
+  child: NavigationBar(destinations: destinations, /* ... */),
+)
+```
+
+</CodeBlock>
+
+- <b>الـ clamp بيبقى على أصغر جزء ممكن:</b> شريط الـ navigation، أو badge فيه رقم. مش صفحة، ومش الـ app.
+- <b>ولو اضطريت لحد أقصى عام:</b> خليه 2.0 أو أكتر. على Android 14 أقصى تكبير 200% أصلًا، وعلى iOS «Larger Accessibility Sizes» بيعدّي 3 أضعاف للنص العادي، واللي مفعّلها محتاجها. حد أقصى 1.3 للـ app كله هو تقريبًا زي القفل.
+
+### الزرار بتاع «ضيف للمكتبة» نصه متقطع
+
+<b>اللي بيبوظ:</b> في 200%، الزرار ارتفاعه زي ما هو، والنص «ضيف لمكتبتي» طالع نصه فوق ونصه مقصوص.
+
+<b>ليه:</b> حد ظبط الأزرار في الثيم بـ `fixedSize: Size(double.infinity, 48)` عشان «كلهم يبقوا نفس الارتفاع».
+
+<b>الحل:</b> `minimumSize` بدل `fixedSize`. نفس الشكل في الحجم العادي، وبيطوّل لما النص يكبر. ولو عايز الزرار ياخد العرض كله، ده الـ `expand: true` بتاع `ReadlyButton`، مش العرض في الثيم.
+
+### الـ ErrorView بيطلع برا الشاشة
+
+<b>اللي بيبوظ:</b> على موبايل صغير بخط 200%، الـ `ErrorView` (أيقونة وعنوان ورسالة وزرار) أطول من الشاشة، والشريط الأصفر والأسود ظاهر تحت، وزرار «حاول تاني» مش باين.
+
+<b>ليه:</b> `Center(child: Column(...))` بيحط المحتوى في النص، بس مفيش scroll. لما المحتوى أطول من الشاشة، مالوش مكان يروح فيه.
+
+<b>الحل:</b> المحتوى في النص لو صغير، وبيعمل scroll لو كبير:
+
+<CodeBlock label="ErrorView: في النص أو scroll">
+
+```dart
+@override
+Widget build(BuildContext context) => LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        padding: const EdgeInsets.all(AppSpace.xl),
+        child: ConstrainedBox(
+          // at least the screen's height minus the padding: centered when short
+          constraints: BoxConstraints(minHeight: constraints.maxHeight - AppSpace.xl * 2),
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [/* icon, title, message, ReadlyButton */],
+            ),
+          ),
+        ),
+      ),
+    );
+```
+
+</CodeBlock>
+
+ولأن الـ `ErrorView` في `core_ui`، الحل ده بيتعمل مرة، وكل الشاشات اللي بتعرض أخطاء بتاخده.
+
+### النص بيكبر والأيقونة لأ
+
+<b>اللي بيبوظ:</b> في 200%، عنوان «كمّل القراية» كبير، والأيقونة اللي جنبه 24 صغيرة جدًا جنبه. الشكل مش متوازن، والأيقونة بقت صعب تتشاف.
+
+<b>ليه:</b> الـ `Icon` مابيقراش الـ textScaler.
+
+<b>الحل:</b> لو الأيقونة جنب نص وجزء من نفس المعنى، كبّرها مع النص بحد أقصى:
+
+<CodeBlock label="أيقونة بتكبر مع النص">
+
+```dart
+class ScaledIcon extends StatelessWidget {
+  const ScaledIcon(this.icon, {super.key, this.size = 24, this.color});
+  final IconData icon;
+  final double size;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final scaler = MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.5);
+    return Icon(icon, size: scaler.scale(size), color: color);
+  }
+}
+```
+
+</CodeBlock>
+
+الـ `clamp` على الـ `TextScaler` نفسه بيرجّع scaler جديد بحد أقصى، من غير ما يأثر على النص اللي حواليه. والحد الأقصى هنا عشان الأيقونة مش محتاجة تكبر قد النص، هي محتاجة تفضل متوازنة جنبه. والأيقونات اللي في الـ `AppBar` أو جوه `IconButton` سيبها زي ما هي: هي جوه مساحة 48 أصلًا.
+
+### التكبير مرتين بـ screenutil
+
+<b>اللي بيبوظ:</b> مشروع بيستخدم `flutter_screenutil`: كل حجم بيتكتب `14.sp`، وكل ارتفاع `48.h`. على تابلت بخط مكبّر، الخطوط ضخمة، والكروت بارتفاعات ثابتة، والنصوص متقصوصة.
+
+<b>ليه:</b> الـ `.sp` بيكبّر الخط على قد عرض الشاشة. والـ `Text` بعدها بيكبّره تاني بالـ textScaler بتاع المستخدم. يعني الخط بيكبر مع الشاشة ومع إعدادات المستخدم. وفي نفس الوقت الـ `.h` بيكبّر الارتفاعات على قد الشاشة بس، مش على قد الخط. فالنص بيكبر أسرع من الصندوق اللي هو فيه.
+
+<b>الحل:</b> القرار الأساسي: الخط يكبر بإعدادات المستخدم، مش بمقاس الشاشة. التابلت مش محتاج خط أكبر، محتاج layout مختلف (عمودين بدل عمود). يعني `TextTheme` بأحجام ثابتة، وارتفاعات بـ `minHeight`، و`LayoutBuilder` للتابلت. ولو المشروع كله على screenutil ومش هيتغير بكرة، على الأقل مفيش `.h` حوالين نص.
+
+### الـ dialog بيتقص من تحت
+
+<b>اللي بيبوظ:</b> الـ bottom sheet بتاع «غيّر الحالة» معمول بـ `SizedBox(height: 280)`. في 200% الاختيار التالت مش ظاهر.
+
+<b>ليه:</b> الارتفاع ثابت لمحتوى ارتفاعه بيتغير.
+
+<b>الحل:</b> الـ sheet ياخد ارتفاع المحتوى: `Column(mainAxisSize: MainAxisSize.min)` من غير `SizedBox`، و`showModalBottomSheet(isScrollControlled: true)` لو ممكن يطول عن نص الشاشة، والمحتوى نفسه جوه `SingleChildScrollView` لو ممكن يطول عن الشاشة كلها.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>الهدف: 200% يشتغل، مش «مايقعش»:</b> كل شاشة أساسية في Readly لازم تبقى قابلة للاستخدام بخط 200% على أصغر موبايل بتدعمه. ده رقم واضح يتكتب في الـ Definition of Done، ويتستّ (الدرس الجاي).
+- <b>الـ design review بالخط الكبير:</b> الـ designer بيرسم في الحجم العادي. اطلب في الـ review يشوف الشاشة الجديدة بـ 200% على موبايل صغير. أغلب قرارات الـ layout (Row ولا Wrap، سطرين ولا سطر) بتتاخد هناك، مش في الكود.
+- <b>القص قرار مش default:</b> `maxLines` و`ellipsis` بيتحطوا لما المحتوى ليه مكان تاني يتقري فيه كامل (العنوان في الليستة، كامل في صفحة الكتاب). أي نص مالوش مكان تاني مايتقصش.
+- <b>بلاش `FittedBox` و`AutoSizeText` على النصوص:</b> بيصغّروا النص لحد ما يدخل في الصندوق، يعني بيلغوا تكبير المستخدم بالظبط. مكانهم رقم كبير decorative (عداد الكتب في الـ Home)، مش جملة لازم تتقري.
+- <b>الحد الأقصى بيتحدد بتجربة:</b> لو فيه clamp في أي مكان، يبقى مكتوب جنبه ليه والرقم ده جه منين. والـ clamp العام للـ app كله لو لازم، مايقلش عن 2.0.
+- <b>إعدادات تانية جنب الخط:</b> «Bold text» على iOS بيوصل في `MediaQuery.boldTextOf(context)`، والـ Text بيتقل لوحده. و«Display size» على Android بيكبّر كل حاجة، فالشاشة الـ logical بتصغر: الـ 390 dp بقت 320. وده سبب إن الموبايل الصغير في التستات مش حالة نادرة.
+
+<Note kind="interview" title="سؤال interview">
+
+«المستخدم مكبّر الخط والـ layout بيبوظ. تعمل إيه؟» مش هقفل التكبير: ده بيشيل ميزة accessibility عن الناس اللي محتاجاها وبيخالف WCAG. الخط بيوصل من `MediaQuery.textScalerOf`، وكل `Text` بيكبر لوحده، والمشكلة دايمًا في اللي حواليه. فبشيل الارتفاعات الثابتة حوالين النص (`minHeight` مكان `height`، و`minimumSize` مكان `fixedSize` في الأزرار)، والنص جوه `Row` بياخد `Expanded`، والحاجات الصغيرة جنب بعض `Wrap`، وكل صفحة بتعمل scroll. وبقرر لكل نص يتقص ولا لأ: العنوان في الليستة آه، المحتوى لأ. والـ clamp بس على أجزاء صغيرة زي labels الـ navigation بـ `withClampedTextScaling`. وماحسبش `fontSize * factor` بإيدي، لأن Android 14 بيكبّر بشكل مش خطي، ولو محتاج حجم بقول `scaler.scale(14)`. وبتست ده بـ goldens بخط 2.0 على موبايل صغير.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### كارت «كمّل القراية» في الـ Home
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+SizedBox(
+  height: 88,
+  child: Row(
+    children: [
+      const Icon(Icons.auto_stories_outlined),
+      const SizedBox(width: AppSpace.md),
+      Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(book.title, style: context.textTheme.titleMedium),
+          Row(
+            children: [
+              Text(book.status.localized(l10n)),
+              const SizedBox(width: AppSpace.sm),
+              Text(l10n.addedOn(book.addedAt)),
+            ],
+          ),
+        ],
+      ),
+    ],
+  ),
+)
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+ConstrainedBox(
+  constraints: const BoxConstraints(minHeight: 88),
+  child: Row(
+    children: [
+      const ScaledIcon(Icons.auto_stories_outlined),
+      const SizedBox(width: AppSpace.md),
+      Expanded(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              book.title,
+              style: context.textTheme.titleMedium,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            Wrap(
+              spacing: AppSpace.sm,
+              children: [
+                Text(book.status.localized(l10n)),
+                Text(l10n.addedOn(book.addedAt)),
+              ],
+            ),
+          ],
+        ),
+      ),
+    ],
+  ),
+)
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: في 200% الكارت 88 بالظبط والعنوان والسطر التاني مش هيدخلوا، والـ Column من غير `Expanded` جوه Row فالعنوان الطويل بيطلع برا الشاشة، وسطر الحالة والتاريخ Row تاني هيطلع برا هو كمان. بعد: الكارت 88 على الأقل وبيطول، والعنوان سطرين بالكتير جوه المساحة اللي فاضلة، وسطر المعلومات بينزل سطر جديد لو مش كفاية، والأيقونة بتكبر مع النص لحد 1.5.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="ds-text-scaling-1">
+<Ask>ليه `textScaleFactor` اتشال لصالح `TextScaler`؟ وإيه اللي ماينفعش تعمله بسبب ده؟</Ask>
+<Answer>
+
+لأن Android 14 بيكبّر الخط بشكل مش خطي: النص الصغير بيكبر أكتر من الكبير، فمفيش رقم واحد بيتضرب في كل الأحجام. ماينفعش تحسب `fontSize * factor` بإيدك. لو محتاج الحجم بعد التكبير، اسأل `MediaQuery.textScalerOf(context).scale(fontSize)`.
+
+</Answer>
+</Question>
+
+<Question id="ds-text-scaling-2">
+<Ask>لقيت `MediaQuery.withNoTextScaling` في الـ `MaterialApp.builder`. ليه ده غلط، وإيه البديل؟</Ask>
+<Answer>
+
+بيقفل تكبير الخط لكل المستخدمين، يعني الناس اللي محتاجاه عشان يقروا مش هيقدروا يستخدموا الـ app، وده بيخالف WCAG (200% من غير ما المحتوى يضيع). البديل تصلّح الـ layouts نفسها (minHeight، Expanded، Wrap، scroll)، والـ clamp بـ `withClampedTextScaling` بس على أجزاء صغيرة مش هتشيل، زي labels الـ navigation.
+
+</Answer>
+</Question>
+
+<Question id="ds-text-scaling-3">
+<Ask>الأزرار في الثيم معمولة بـ `fixedSize`، والنص بيتقص في الخط الكبير. تغيّر إيه؟</Ask>
+<Answer>
+
+`minimumSize` بدل `fixedSize`. الشكل في الحجم العادي هو هو، بس الزرار بيطوّل لما النص يكبر بدل ما يقصه. والعرض الكامل يبقى من الـ component (`expand: true`) مش من الثيم.
+
+</Answer>
+</Question>
+
+<Question id="ds-text-scaling-4">
+<Ask>سطر تحت العنوان فيه 3 حاجات صغيرة (الحالة، والتاريخ، و«مش متزامن») في `Row`. إيه اللي هيحصل في 200%، وتعمل إيه؟</Ask>
+<Answer>
+
+هيطلع برا الكارت بالشريط الأصفر والأسود، لأن الـ Row مابينزلش سطر. `Wrap` بـ `spacing` و`runSpacing`: في الحجم العادي شكله زي الـ Row، ولما العرض يخلص بينزل سطر جديد.
+
+</Answer>
+</Question>
+
+<Question id="ds-text-scaling-5">
+<Ask>حد اقترح `AutoSizeText` لكل العناوين عشان «مايحصلش overflow أبدًا». ترد بإيه؟</Ask>
+<Answer>
+
+الـ `AutoSizeText` بيصغّر النص لحد ما يدخل، يعني بيلغي تكبير المستخدم بالظبط في الأماكن اللي محتاجها فيها. العنوان يتلف سطرين ويتقص بـ ellipsis في الليستة، ويبان كامل في صفحته. الـ AutoSizeText ليه مكان في رقم decorative كبير، مش في نص لازم يتقري.
+
+</Answer>
+</Question>
+
+</Quiz>

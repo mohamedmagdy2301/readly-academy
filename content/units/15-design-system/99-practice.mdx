@@ -1,0 +1,25 @@
+---
+title: "التطبيق والمهام"
+description: "مهام وحدة الـ Design System والـ Accessibility في Readly: core_ui بالـ tokens والـ components، والـ dark mode من غير if، والـ RTL والـ bidi، وTalkBack، وتكبير الخط 200%، والتستات اللي بتحرس كل ده."
+type: "practice"
+---
+
+<Tasks>
+<Task id="ds-practice-1">اعمل `packages/core_ui` في الـ workspace وانقل له `AppTheme` و`ErrorView` و`InlineErrorBanner`. الـ barrel يصدّر الثيم والـ components بس، والـ `Palette` يفضل في `src/` من غير export. وانقل خط Cairo لـ pubspec الـ `core_ui` بـ `package: 'core_ui'` في الـ `ThemeData`، واتأكد إن golden جوه الـ package طالع بالخط الحقيقي مش بالمربعات (درس «مكتبة الـ components»).</Task>
+<Task id="ds-practice-2">اعمل `ReadlyColors` كـ ThemeExtension بـ `copyWith` و`lerp` حقيقيين، و`AppSpace` و`AppRadius`، والـ `ReadlyThemeContext` extension. حوّل `BookStatusUi.color` ياخد `ReadlyColors`، وقلب الثيم من الإعدادات واتأكد إن ألوان الحالات بتتحول بنعومة مع الباقي (درس «الـ Design tokens»).</Task>
+<Task id="ds-practice-3">زوّد `design_tokens_test.dart` في `tools/architecture` بالـ rule بتاعة الألوان (`Color(0x` و`Colors.` غير `transparent` برا `core_ui`) والـ rule بتاعة الـ physical APIs، كل واحدة بـ allowlist بتصغر بس. اكتب في الـ PR طول الليستتين النهارده، وصلّح 5 مخالفات على الأقل في نفس الـ PR.</Task>
+<Task id="ds-practice-4">اعمل `ReadlyButton` بالـ 4 variants و`loading` و`expand`، و`StatusChip`. استبدل بيهم الزرار بتاع الـ login، وزرار الـ retry في `ErrorView`، وزرار حفظ الملاحظة، والـ chip اللي في `BookTile`. لازم يبقى فيه صفر `CircularProgressIndicator` جوه زرار برا `core_ui` (درس «مكتبة الـ components»).</Task>
+<Task id="ds-practice-5">امسح كل `isDark` و`brightness ==` و`platformBrightnessOf` من الـ features: كل واحد يبقى دور في الـ ColorScheme أو `ReadlyColors`، والصور اللي ليها نسختين في `ReadlyAssets`. ظبّط الـ `systemOverlayStyle` في الـ `AppBarThemeData`، و`AnnotatedRegion` لشاشة الـ reader، وضيف `highContrastTheme` و`highContrastDarkTheme` بـ `contrastLevel: 1` (درس «الـ Dark mode من الـ tokens»).</Task>
+<Task id="ds-practice-6">اعمل `isolate()` و`contentDirection()` في `core_ui`. لف بـ `isolate` كل placeholder قيمته جاية من data (عنوان، اسم، إيميل) في كل الـ ARB، وجرّب بكتاب اسمه `Who Moved My Cheese?` وكتاب اسمه `C++ Primer`. الـ `NoteCard` وحقل الملاحظة اتجاههم من المحتوى، وحقول الإيميل والباسورد LTR. ودوّر على أي `isRtl ?` أو `isArabic ?` حوالين أيقونة وامسحه (درس «الـ RTL بالتفصيل»).</Task>
+<Task id="ds-practice-7">ضيف في الـ debug menu زرار بيقلب الـ `Directionality` من غير ما يغيّر اللغة (`MaterialApp.builder`). افتح كل شاشة أساسية بالإنجليزي RTL، واكتب في الـ PR كل حاجة ماتقلبتش وصلّحتها إزاي، ومنها أي `CustomPainter` أو `SlideTransition` أو سحب بالإشارة.</Task>
+<Task id="ds-practice-8">شغّل TalkBack (أو VoiceOver)، وغمّض عينك، وضيف كتاب لمكتبتك من البحث لحد ما يظهر في الـ Home. اكتب كل مكان اتلخبطت فيه. وبعدين صلّح: `MergeSemantics` على الـ `BookTile` وزرار المزيد برّاه بـ tooltip فيه اسم الكتاب، و`headingLevel` لعناوين أقسام الـ Home، وزرار المفضلة `IconButton` بـ `isSelected`، والـ `SemanticsService.announce` القديمة تبقى `sendAnnouncement` أو liveRegion. وكرر التجربة (درس «الـ Semantics وقارئ الشاشة»).</Task>
+<Task id="ds-practice-9">حط الموبايل على أصغر حجم شاشة وأكبر خط (أو `useScreen(Screens.smallPhone)` و`useTextScale(2)`)، وافتح المكتبة وصفحة الكتاب والـ login والـ ErrorView. صلّح كل حاجة بتتقص أو بتطلع برا: `minHeight` بدل `height`، و`Wrap` لسطر المعلومات، وscroll في كل صفحة، و`minimumSize` في الثيم. والـ clamp الوحيد المسموح بيه على الـ `NavigationBar`، وجنبه كومنت بالسبب (درس «تكبير الخط»).</Task>
+<Task id="ds-practice-10">اكتب في `core_ui/test/`: الـ `pumpComponent`، والـ `componentCases`، و`contrast_test` (ولو الأخضر فشل على الـ chip زي الدرس، قرر تغمّق ولا تخفف الـ tint واكتب ليه)، و`accessibility_test` في الثيمين، و`text_scale_test` على 320 بخط 2.0، وgoldens لـ `ReadlyButton` في 3 صور بس (درس «تست الـ Design System»).</Task>
+<Task id="ds-practice-11">اعمل `apps/catalog` في الـ workspace بيعرض كل الـ `componentCases` بزرارين: dark وRTL. وابعت اللينك أو screenshots للـ designer، واطلب منه يراجع الـ variants والحالات في الـ light والـ dark والعربي والإنجليزي قبل ما أي component جديد يدخل.</Task>
+</Tasks>
+
+<Deliverable>`core_ui` package فيها الثيم والـ tokens والـ components، والـ features مابتكتبش ولا لون ولا left/right (والتست بيمنع الجديد). الـ dark mode والـ high contrast طالعين من الـ tokens من غير ولا `isDark` في الشاشات. العناوين الإنجليزي والملاحظات بتتعرض صح جوه الـ UI العربي. مستخدم TalkBack يقدر يضيف كتاب ويغيّر حالته لوحده، والـ app كله قابل للاستخدام بخط 200% على موبايل 320. وكل component في `core_ui` عليه تستات الـ contrast والـ guidelines والـ overflow والـ goldens.</Deliverable>
+
+<ReviewQuestion>اختار component واحد من `core_ui` (`ReadlyButton` أو `StatusChip` أو `ErrorView`) واحكي قصته كاملة: الـ API بتاعه وليه كل parameter موجود (وإيه اللي رفضت تحطه)، والـ tokens اللي بيستخدمها، وشكله في الـ dark والـ RTL و200%، وقارئ الشاشة بيقول عليه إيه في كل حالة، والتستات اللي بتحرس كل حاجة من دول. وبعدين قول: لو الـ designer طلب variant جديد بكرة، إيه الخطوات من الـ Figma لحد ما يبقى في الـ catalog ومتستّ؟</ReviewQuestion>
+
+<LogBox id="ds-practice-log" />

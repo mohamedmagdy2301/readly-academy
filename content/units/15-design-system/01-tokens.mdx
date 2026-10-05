@@ -1,0 +1,548 @@
+---
+title: "الـ Design tokens بـ ThemeExtension"
+description: "كل قرار تصميم ليه اسم: الألوان والمسافات والخطوط كـ tokens، والـ ColorScheme والـ TextTheme الأول، والـ ThemeExtension للي ناقص، وليه مفيش Color(0xFF...) جوه الشاشات."
+minutes: 30
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="النقّاش وكتالوج الدهانات">
+
+بتشطّب شقة، وقلت للنقّاش «اعمل الأوضة دي زي الصالة». هو هيخلط اللون بعينه، والأوضة هتطلع قريبة من الصالة بس مش زيها. والأوضة التالتة هيخلطها من ذاكرته، فتطلع درجة تالتة. وبعد سنة لما تحب تغيّر اللون، هتلف على الحيطان حيطة حيطة تفتكر كل واحدة كانت إيه.
+
+النقّاش الشاطر بيشتغل بورقتين. الورقة الأولى فيها <b>الأدوار</b>: «لون الحيطان»، «لون السقف»، «لون الأبواب». والورقة التانية فيها <b>القيم</b>: «لون الحيطان = جوتن 1024». هو وهو بيدهن مابيفكرش في الرقم، بيفكر في الدور: دي حيطة، يبقى «لون الحيطان». ولو قررت تغيّر لون الحيطان، بتغيّر سطر واحد في الورقة التانية، وكل الحيطان بتتغير مع بعض.
+
+</Analogy>
+
+الـ `Color(0xFF2E7D32)` جوه شاشة هو اللون اللي اتخلط بالعين. والـ <b>design token</b> هو اسم لقرار تصميم: «لون الكتاب اللي خلص»، «المسافة الكبيرة بين الكروت»، «حجم عنوان الصفحة». الشاشة بتطلب الدور بالاسم، والقيمة متكتبة في مكان واحد بس.
+
+والـ tokens بتتقسم على 3 طبقات، زي الورقتين بتوع النقّاش وزيادة:
+
+<Diagram name="d-ds-token-layers">
+
+الـ primitives هي الألوان الخام ومالهاش معنى. الـ semantic tokens بتدّي كل لون دور، وبتختار primitive مختلف في الـ light والـ dark. والـ component tokens بتاخد الدور وتقرر شكله جوه component واحد. الشاشة بتشوف الطبقة التانية والتالتة بس.
+
+</Diagram>
+
+- <b>Primitives (الكتالوج):</b> `green600 = 0xFF2E7D32`. أرقام خام، ومحدش في الشاشات يعرفها.
+- <b>Semantic (الأدوار):</b> `statusFinished = green600` في الـ light، و`green300` في الـ dark. ده اللي الشاشات بتستخدمه.
+- <b>Component (القرار جوه component):</b> «خلفية الـ chip بتاعة الحالة = لون الحالة بشفافية 12%». بيتكتب جوه الـ component مرة واحدة.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### الأول: اللي Material بيديهولك
+
+قبل ما تكتب token واحد، Flutter عنده نظام tokens كامل جاهز: الـ `ColorScheme` فيه أدوار الألوان، والـ `TextTheme` فيه أدوار الخطوط. وأغلب اللي محتاجه موجود فيهم:
+
+| الدور | بيتكتب | بيتستخدم في |
+| --- | --- | --- |
+| اللون الأساسي ونصه | `primary`، `onPrimary` | الزرار الأساسي، الحاجة المختارة |
+| الخلفيات | `surface`، `surfaceContainerLow` لحد `surfaceContainerHighest` | الشاشة، الكروت، الـ sheets، الـ banner |
+| النص على الخلفيات | `onSurface`، `onSurfaceVariant` | النص الأساسي، والنص الثانوي |
+| الحدود والحاجات الهادية | `outline`، `outlineVariant` | الـ dividers، الأيقونات الرمادي |
+| الخطأ | `error`، `onError`، `errorContainer` | رسايل الخطأ |
+| الخطوط | `headlineSmall`، `titleMedium`، `bodyMedium`، `labelLarge`... | العناوين، النص، الأزرار |
+
+القاعدة إن كل لون في الـ ColorScheme ليه `on` معاه: `primary` و`onPrimary` معمولين عشان النص يبقى مقروء فوق اللون. لو خلفية الزرار `primary`، النص `onPrimary`، مش `Colors.white`.
+
+والـ ColorScheme كله بيتولّد من لون واحد:
+
+<CodeBlock label="packages/core_ui/lib/src/theme/app_theme.dart">
+
+```dart
+abstract final class AppTheme {
+  static final light = _build(Brightness.light);
+  static final dark = _build(Brightness.dark);
+
+  static ThemeData _build(Brightness brightness) {
+    final scheme = ColorScheme.fromSeed(
+      seedColor: Palette.teal600, // the brand color, from the palette file
+      brightness: brightness,
+    );
+    return ThemeData(
+      colorScheme: scheme,
+      fontFamily: 'Cairo',
+      extensions: [
+        brightness == Brightness.light ? ReadlyColors.light : ReadlyColors.dark,
+      ],
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+ده نفس الـ `AppTheme.light` و`AppTheme.dark` اللي الـ `ReadlyApp` بيستخدمهم من [درس الإعدادات](/course/di-scale/settings/)، واللي الـ `pumpApp` بيحطهم في كل تست. الفرق إنه اتنقل لـ `core_ui`، الـ package اللي في [هيكل الـ packages](/course/di-scale/scale/) كان مكتوب جنبها «theme, shared widgets».
+
+### الكتالوج: المكان الوحيد اللي فيه hex
+
+<CodeBlock label="packages/core_ui/lib/src/theme/palette.dart">
+
+```dart
+/// Raw colors. Not exported from core_ui: screens never see these.
+abstract final class Palette {
+  static const teal600 = Color(0xFF00696B);
+  static const green300 = Color(0xFF81C995);
+  static const green700 = Color(0xFF1E7B3A);
+  static const amber300 = Color(0xFFFFD06B);
+  static const amber800 = Color(0xFF8A5A00);
+  static const slate300 = Color(0xFFB4BEC9);
+  static const slate600 = Color(0xFF55606B);
+  static const blue300 = Color(0xFF9CC3FF);
+  static const blue700 = Color(0xFF1F5FBF);
+}
+```
+
+</CodeBlock>
+
+الـ `Palette` مش في الـ barrel بتاع `core_ui`. يعني `feature_library` حرفيًا مايقدرش يكتب `Palette.green700`، لأن الـ `implementation_imports` بتاع [درس حراسة المعمارية](/course/quality/architecture-guards/) هيعلّم على أي import لـ `core_ui/src/`. حدود الـ package نفسها بقت جزء من الـ design system.
+
+### الأدوار اللي Material مافيهاش: ThemeExtension
+
+الـ ColorScheme مافيهوش «لون الكتاب اللي بقراه» ولا «لون النجاح». ومحاولة إنك تحشرهم في أدوار موجودة (`tertiary` للـ finished مثلًا) بتشتغل لحد ما الـ seed يتغير وتلاقي «خلّصته» بقى بنفسجي. الـ `ThemeExtension` بيخليك تزوّد أدوار بتاعتك على الـ `ThemeData`:
+
+<CodeBlock label="packages/core_ui/lib/src/theme/readly_colors.dart">
+
+```dart
+@immutable
+final class ReadlyColors extends ThemeExtension<ReadlyColors> {
+  const ReadlyColors({
+    required this.statusWantToRead,
+    required this.statusReading,
+    required this.statusFinished,
+    required this.success,
+    required this.warning,
+  });
+
+  final Color statusWantToRead;
+  final Color statusReading;
+  final Color statusFinished;
+  final Color success;
+  final Color warning;
+
+  static const light = ReadlyColors(
+    statusWantToRead: Palette.slate600,
+    statusReading: Palette.blue700,
+    statusFinished: Palette.green700,
+    success: Palette.green700,
+    warning: Palette.amber800,
+  );
+
+  static const dark = ReadlyColors(
+    statusWantToRead: Palette.slate300,
+    statusReading: Palette.blue300,
+    statusFinished: Palette.green300,
+    success: Palette.green300,
+    warning: Palette.amber300,
+  );
+
+  @override
+  ReadlyColors copyWith({
+    Color? statusWantToRead,
+    Color? statusReading,
+    Color? statusFinished,
+    Color? success,
+    Color? warning,
+  }) =>
+      ReadlyColors(
+        statusWantToRead: statusWantToRead ?? this.statusWantToRead,
+        statusReading: statusReading ?? this.statusReading,
+        statusFinished: statusFinished ?? this.statusFinished,
+        success: success ?? this.success,
+        warning: warning ?? this.warning,
+      );
+
+  @override
+  ReadlyColors lerp(ReadlyColors? other, double t) {
+    if (other is! ReadlyColors) return this;
+    return ReadlyColors(
+      statusWantToRead: Color.lerp(statusWantToRead, other.statusWantToRead, t)!,
+      statusReading: Color.lerp(statusReading, other.statusReading, t)!,
+      statusFinished: Color.lerp(statusFinished, other.statusFinished, t)!,
+      success: Color.lerp(success, other.success, t)!,
+      warning: Color.lerp(warning, other.warning, t)!,
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `copyWith`:</b> لازم يتعمل override. بيستخدمه أي حد عايز يعدّل token واحد في جزء من الشجرة، زي ما هتشوف في Level 3.
+- <b>الـ `lerp`:</b> لما الثيم بيتغير (light لـ dark)، الـ `MaterialApp` مابيقلبش في frame واحد. بيعمل animation، وفي كل frame بينادي `lerp` بـ `t` من 0 لـ 1 عشان يحسب اللون اللي في النص. الـ `Color.lerp` بيعمل ده لكل لون.
+- <b>الأسماء أدوار مش ألوان:</b> `statusFinished` مش `green`. لو الـ designer قرر بكرة إن «خلّصته» ذهبي، الاسم لسه صح.
+- <b>الـ light والـ dark نفس الأدوار بقيم مختلفة:</b> الأخضر الغامق مقروء على أبيض، والفاتح مقروء على أسود. وده كل سر [درس الـ dark mode](/course/design-system/dark-mode/).
+
+وعشان الشاشات ماتكتبش `Theme.of(context).extension<ReadlyColors>()!` في كل مكان:
+
+<CodeBlock label="packages/core_ui/lib/src/theme/theme_context.dart">
+
+```dart
+extension ReadlyThemeContext on BuildContext {
+  ReadlyColors get readlyColors => Theme.of(this).extension<ReadlyColors>()!;
+  ColorScheme get colorScheme => Theme.of(this).colorScheme;
+  TextTheme get textTheme => Theme.of(this).textTheme;
+}
+```
+
+</CodeBlock>
+
+### المسافات والـ radius: const مش ThemeExtension
+
+<CodeBlock label="packages/core_ui/lib/src/theme/app_space.dart">
+
+```dart
+abstract final class AppSpace {
+  static const xs = 4.0;
+  static const sm = 8.0;
+  static const md = 12.0;
+  static const lg = 16.0;
+  static const xl = 24.0;
+  static const xxl = 32.0;
+}
+
+abstract final class AppRadius {
+  static const sm = Radius.circular(8);
+  static const md = Radius.circular(12);
+  static const lg = Radius.circular(20);
+}
+```
+
+</CodeBlock>
+
+ليه مش ThemeExtension زي الألوان؟ لأن المسافات مابتتغيرش بين الـ light والـ dark، والـ `const` ليه ميزة كبيرة: `const EdgeInsets.all(AppSpace.lg)` و`const SizedBox(height: AppSpace.sm)` بيفضلوا `const`، فالـ widget مابيتبنيش تاني على الفاضي (زي ما شفنا في [درس الـ flutter_bloc widgets](/course/state-management/flutter-bloc-widgets/)). الـ ThemeExtension بيقرا من الـ context، فمستحيل يبقى const. والـ `AppRadius` قيمه `Radius` مش `BorderRadius`، عشان تتركّب في أي شكل: `BorderRadius.all(AppRadius.md)` للأركان الأربعة، أو ركن واحد بس في [درس الـ RTL](/course/design-system/rtl/).
+
+### الشاشة بتطلب الدور
+
+الـ `BookStatusUi` اللي عملناه في [درس الطبقات](/course/foundations/layers/) كان بيختار من الـ ColorScheme (`outline` و`primary` و`tertiary`). دي كانت بداية معقولة، بس «خلّصته = tertiary» صدفة: الـ tertiary اللي طالع من الـ seed بالصدفة أخضر. دلوقتي ليها دور باسمها:
+
+<CodeBlock label="packages/feature_library/lib/src/presentation/book_status_ui.dart">
+
+```dart
+extension BookStatusUi on BookStatus {
+  Color color(ReadlyColors colors) => switch (this) {
+        BookStatus.wantToRead => colors.statusWantToRead,
+        BookStatus.reading => colors.statusReading,
+        BookStatus.finished => colors.statusFinished,
+      };
+
+  String localized(AppLocalizations l10n) => switch (this) {
+        BookStatus.wantToRead => l10n.statusWantToRead,
+        BookStatus.reading => l10n.statusReading,
+        BookStatus.finished => l10n.statusFinished,
+      };
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="BookTile بالـ tokens">
+
+```dart
+@override
+Widget build(BuildContext context) {
+  final statusColor = book.status.color(context.readlyColors);
+  return Padding(
+    padding: const EdgeInsets.symmetric(horizontal: AppSpace.lg, vertical: AppSpace.md),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(book.title, style: context.textTheme.titleMedium),
+        const SizedBox(height: AppSpace.xs),
+        Text(
+          book.status.localized(AppLocalizations.of(context)!),
+          style: context.textTheme.labelMedium?.copyWith(color: statusColor),
+        ),
+      ],
+    ),
+  );
+}
+```
+
+</CodeBlock>
+
+مفيش ولا رقم ولا لون في الـ widget. كل رقم فيه اسم بيقول هو هنا ليه.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### «Null check operator used on a null value» في صفحة واحدة بس
+
+<b>اللي بيبوظ:</b> الـ app شغال، بس صفحة الـ reader بتقع أول ما تفتح. الصفحة دي فيها وضع قراية ليلي، فحد كتب:
+
+<CodeBlock label="Theme جديد بيمسح الـ extensions">
+
+```dart
+Theme(
+  data: ThemeData.dark(), // a brand new theme: no Cairo, no ReadlyColors
+  child: const ReaderView(),
+)
+```
+
+</CodeBlock>
+
+<b>ليه:</b> الـ `Theme` اللي جوه بيبدّل الثيم كله للشجرة اللي تحته. والـ `ThemeData.dark()` ده ثيم Flutter الافتراضي، مافيهوش الـ `ReadlyColors`، فالـ `extension<ReadlyColors>()` بيرجّع null، والـ `!` بيوقّع. ولو مافيش `!`، كان هيبقى أسوأ: كل الألوان هترجع للافتراضي من غير ما حد ياخد باله، والخط هيرجع Roboto.
+
+<b>الحل:</b> أي override محلي للثيم يبدأ من الثيم الحالي أو من الـ `AppTheme`، مش من الصفر:
+
+<CodeBlock label="override بيحافظ على الـ tokens">
+
+```dart
+// the reader is always dark: take Readly's dark theme as a whole
+Theme(data: AppTheme.dark, child: const ReaderView());
+
+// or change one token for one subtree, and keep everything else
+final theme = Theme.of(context);
+Theme(
+  data: theme.copyWith(
+    extensions: [
+      context.readlyColors.copyWith(statusReading: theme.colorScheme.primary),
+    ],
+  ),
+  child: const ReadingNowCard(),
+);
+```
+
+</CodeBlock>
+
+الـ `copyWith(extensions: ...)` بيبدّل الـ extension من نفس النوع بس، وبيسيب الباقي. وده سبب وجود الـ `copyWith` اللي اتجبرت تكتبه.
+
+ونفس الـ crash هيحصلك في أي تست بيعمل `MaterialApp(home: ...)` من غير `theme`. وده سبب إضافي إن كل التستات تعدّي من `pumpApp`، اللي بيحط `AppTheme.light` و`AppTheme.dark` من [درس الـ widget tests](/course/testing/widget-tests/).
+
+### الثيم بيقلب dark والألوان بتنط
+
+<b>اللي بيبوظ:</b> المستخدم بيقلب dark من الإعدادات. الخلفية والنصوص بيتحولوا بنعومة في ربع ثانية، بس ألوان الحالات بتنط مرة واحدة في نص الـ animation.
+
+<b>ليه:</b> حد كتب الـ `lerp` بالطريقة السريعة:
+
+<CodeBlock label="lerp بيرجّع واحد من الاتنين">
+
+```dart
+@override
+ReadlyColors lerp(ReadlyColors? other, double t) =>
+    t < 0.5 ? this : (other ?? this);
+```
+
+</CodeBlock>
+
+الـ `MaterialApp` بيلف الشجرة في `AnimatedTheme`، وده بينادي `ThemeData.lerp` في كل frame، واللي بينادي `lerp` بتاع كل extension. الـ ColorScheme بيتحسب لون لون، والـ extension بتاعك بيرجّع يا ده يا ده. <b>الحل:</b> `Color.lerp` لكل لون زي Level 2، و`lerpDouble` لو فيه أرقام. ولو الـ extension فيه حاجة مابتتعملهاش interpolation (enum مثلًا)، رجّع بتاعة `this` لحد `t < 0.5` وبعدين بتاعة `other`.
+
+### الـ designer عايز يغيّر الأخضر
+
+<b>اللي بيبوظ:</b> الـ designer: «الأخضر بتاع خلّصته فاقع شوية، خليه أهدى». بتدوّر على `0xFF4CAF50` في الـ repo: 23 نتيجة. منهم 9 للـ finished، و6 لرسالة «اتحفظ»، و5 لـ progress bar، و3 مش عارف دول بتوع إيه. ولو غيّرتهم كلهم، الـ progress bar هيتغير وهو مش مطلوب. ولو سبتهم، الـ finished هيبقى بلونين في الـ app.
+
+<b>ليه:</b> نفس القيمة كانت بتمثّل 3 أدوار مختلفة. الـ hex مابيقولش «أنا هنا ليه».
+
+<b>الحل:</b> الهجرة دور دور. كل لون في الشاشات بيتسأل: انت مين؟ لو انت حالة كتاب، يبقى `statusFinished`. لو رسالة نجاح، يبقى `success`. لو مش لاقي دور، يا إما ده دور ناقص يتضاف للـ extension، يا إما اللون ده مالوش لازمة وأقرب دور في الـ ColorScheme كفاية.
+
+وعشان الهجرة ماترجعش لورا، الـ test اللي في `tools/architecture` بياخد rule جديدة:
+
+<CodeBlock label="tools/architecture/test/design_tokens_test.dart">
+
+```dart
+import 'dart:io';
+
+import 'package:test/test.dart';
+
+final packagesDir = Directory('../../packages');
+
+// Colors.transparent is not a design decision
+final _rawColor = RegExp(r'Color\(0x|Color\.fromARGB|Colors\.(?!transparent\b)');
+
+// "file: match". Shrinks with every PR; never add to it.
+const known = {
+  'packages/feature_profile/lib/src/presentation/avatar_ring.dart: Color(0x',
+};
+
+void main() {
+  test('features use tokens, not raw colors', () {
+    final found = <String>{};
+    for (final pkg in packagesDir.listSync().whereType<Directory>()) {
+      if (pkg.path.endsWith('core_ui')) continue; // the palette lives here
+      final lib = Directory('${pkg.path}/lib');
+      if (!lib.existsSync()) continue;
+      for (final f in lib.listSync(recursive: true).whereType<File>()) {
+        if (!f.path.endsWith('.dart')) continue;
+        for (final m in _rawColor.allMatches(f.readAsStringSync())) {
+          found.add('${f.path.replaceAll(r'\', '/').replaceFirst('../../', '')}: ${m[0]}');
+        }
+      }
+    }
+    expect(found.difference(known), isEmpty, reason: 'use a token from core_ui');
+    expect(known.difference(found), isEmpty, reason: 'fixed? remove it from the list');
+  });
+}
+```
+
+</CodeBlock>
+
+- <b>الـ core_ui مستثنى:</b> الـ Palette لازم يبقى فيه hex. القاعدة إن الـ hex في مكان واحد، مش إنه مايبقاش موجود.
+- <b>الـ allowlist بتصغر بس:</b> نفس الفكرة اللي في [درس حراسة المعمارية](/course/quality/architecture-guards/). الـ test بيدخل النهارده، والمخالفات القديمة بتتصلّح على مهلها، والجديدة مابتدخلش.
+
+### الشفافية: لون جديد في كل شاشة
+
+<b>اللي بيبوظ:</b> خلفية الـ chip بتاعة الحالة هي لون الحالة بشفافية. شاشة كاتبة `withValues(alpha: 0.1)`، وشاشة `0.12`، وواحدة لسه `withOpacity(0.15)`. والـ 0.12 دي حلوة في الـ light، بس في الـ dark الخلفية بتختفي.
+
+<b>ليه:</b> الشفافية جزء من قرار التصميم. لما كل شاشة بتحسبها بنفسها، بقى عندك 3 «tokens» محدش سمّاهم.
+
+<b>الحل:</b> القرار ده component token، يعني مكانه جوه component واحد اسمه `StatusChip` (الدرس الجاي)، أو لو بيتكرر في كذا component، يبقى دور في `ReadlyColors`. والـ `withOpacity` نفسها deprecated من Flutter 3.27: البديل `withValues(alpha: ...)`، لأن الألوان بقت بتتخزن بدقة أعلى والـ API القديم كان بيقرّب.
+
+### الخط العربي بيتقص من فوق
+
+<b>اللي بيبوظ:</b> النص العربي في الأزرار والـ chips الحروف العالية فيه (زي «لـ» و«ط») بتتقص من فوق، أو السطرين في الوصف لازقين في بعض.
+
+<b>ليه:</b> حد كتب `TextStyle(fontSize: 14, height: 1.0)` في كذا مكان عشان «يظبط» مع الـ design اللي معمول بخط إنجليزي. الحروف العربي في Cairo طويلة لفوق ولتحت أكتر من اللاتيني، والـ `height: 1.0` بيقص مساحتها.
+
+<b>الحل:</b> الخطوط مكانها الـ `TextTheme` بس. لو محتاج تظبط الـ height أو الـ weight لكل الـ app، بتعملها مرة واحدة في `AppTheme`:
+
+<CodeBlock label="TextTheme مرة واحدة">
+
+```dart
+final base = ThemeData(colorScheme: scheme, fontFamily: 'Cairo').textTheme;
+return ThemeData(
+  colorScheme: scheme,
+  fontFamily: 'Cairo',
+  textTheme: base.copyWith(
+    titleMedium: base.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+    bodyMedium: base.bodyMedium?.copyWith(height: 1.6), // room for Arabic diacritics
+  ),
+  extensions: [/* ... */],
+);
+```
+
+</CodeBlock>
+
+والشاشة بتكتب `context.textTheme.titleMedium` وبس. ولو محتاجة تغيير صغير (لون الحالة)، `copyWith(color: ...)` على الـ style اللي جاي من الثيم، مش `TextStyle` جديد من الصفر.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>Material الأول، والـ extension للي ناقص بس:</b> كل دور بتضيفه في `ReadlyColors` هو دور الـ Material widgets مابتعرفهوش. الـ `FilledButton` بياخد `primary` لوحده، والـ `Card` بياخد `surfaceContainerLow` لوحده. لو عملت `brandPrimary` في الـ extension وسبت الـ `primary` زي ما هو، هتضطر تعدّل كل widget بإيدك. الـ extension لحاجات Material مالهاش مكان ليها: حالات الكتاب، والنجاح والتحذير.
+- <b>الاسم بيوصف الدور مش القيمة:</b> `statusFinished` و`success` و`AppSpace.lg`، مش `green` و`spacing16`. لو اسم الـ token فيه رقم القيمة، أول تغيير هيخلي الاسم يكدب.
+- <b>tokens قليلة:</b> 6 مسافات أحسن من 14. كل token زيادة سؤال جديد لكل واحد بيكتب شاشة: «أستخدم 14 ولا 16؟». ولو الـ designer طلب 14 في مكان، اسأله الأول هل ده قرار جديد ولا تقريب لـ 16.
+- <b>مين صاحب الـ tokens:</b> الـ design. لو الفريق بيستخدم Figma Variables، الأحسن إن القيم تطلع منها ملف (JSON مثلًا) يتولّد منه `palette.dart` و`readly_colors.dart` بسكريبت. الاتجاه واحد: من الـ design للكود. لو حد عدّل الـ dart بإيده، الـ generation الجاي هيمسح تعديله، وده مقصود.
+- <b>المسافات ThemeExtension امتى؟</b> لما تتغير فعلًا حسب السياق: وضع compact للتابلت، أو density بيختارها المستخدم. ساعتها تخسر الـ `const` وده تمن مقبول. لو مش محتاج ده، `const` أبسط وأسرع.
+- <b>الهجرة على مراحل:</b> app عنده 300 `Color(0x` مايتصلّحش في PR. الـ allowlist بتاع Level 3 بيدخل الأول، وبعدين الـ components المشتركة (اللي بتصلّح شاشات كتير مرة واحدة)، وبعدين الشاشات وانت شغال فيها. ورقم الليستة بيتعرض للفريق كل sprint.
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي تبني design system في Flutter؟ وفين تحط ألوان مش موجودة في الـ ColorScheme؟» بقسّمه 3 طبقات: palette فيه القيم الخام ومش ظاهر للشاشات، وأدوار (semantic tokens) هي اللي الشاشات بتستخدمها، وقرارات جوه كل component. الأدوار اللي Material عنده بستخدمها زي ما هي: `ColorScheme.fromSeed` و`TextTheme` بخط الـ app، عشان كل الـ Material widgets تاخدها لوحدها. والأدوار اللي ناقصة (حالات، نجاح، تحذير) في `ThemeExtension` فيه light وdark، بـ `copyWith` و`lerp` حقيقيين عشان الـ theme animation. المسافات والـ radius `const` لأنها مابتتغيرش مع الثيم. وبحرس ده بتست بيدوّر على `Color(0x` و`Colors.` برا `core_ui`، بـ allowlist للقديم بتصغر بس.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### الـ InlineErrorBanner قبل الـ tokens وبعدها
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+Container(
+  color: const Color(0xFFFFF4E5),
+  padding: const EdgeInsets.all(14),
+  child: Row(
+    children: [
+      const Icon(Icons.cloud_off, color: Color(0xFF8A5A00), size: 20),
+      const SizedBox(width: 10),
+      Expanded(
+        child: Text(
+          title,
+          style: const TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF3D2800),
+          ),
+        ),
+      ),
+    ],
+  ),
+)
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+Material(
+  color: context.colorScheme.surfaceContainerHighest,
+  child: Padding(
+    padding: const EdgeInsets.all(AppSpace.md),
+    child: Row(
+      children: [
+        Icon(Icons.cloud_off, color: context.readlyColors.warning),
+        const SizedBox(width: AppSpace.sm),
+        Expanded(
+          child: Text(title, style: context.textTheme.titleSmall),
+        ),
+      ],
+    ),
+  ),
+)
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: 3 ألوان مالهاش أسماء، والكريمي ده في الـ dark هيبقى مربع منوّر وسط شاشة سودا. والـ 14 والـ 10 والـ 15 أرقام محدش يعرف جت منين. بعد: الخلفية والنص بييجوا من الـ ColorScheme ومتظبطين للـ light والـ dark لوحدهم، ولون التحذير دور ليه اسم، والمسافات من السلم بتاع `AppSpace`. وده نفس الـ banner بتاع [درس الأخطاء في الـ UI](/course/api-errors/errors-ui/)، اللي كان أصلًا ماشي على الـ ColorScheme في أغلبه.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="ds-tokens-1">
+<Ask>إيه الفرق بين `Palette.green700` و`ReadlyColors.statusFinished`؟ وأنهي واحد الشاشة تستخدمه؟</Ask>
+<Answer>
+
+الأول primitive: قيمة خام مالهاش معنى. التاني semantic token: دور («الكتاب اللي خلص») بيشاور على primitive، ويشاور على واحد تاني في الـ dark. الشاشة بتستخدم الدور بس. والـ `Palette` مش في الـ barrel بتاع `core_ui` أصلًا، فالشاشات ماتقدرش توصله.
+
+</Answer>
+</Question>
+
+<Question id="ds-tokens-2">
+<Ask>ليه الـ `lerp` في الـ ThemeExtension مهم، مع إن الـ app بيستخدم light أو dark بس؟</Ask>
+<Answer>
+
+لأن الـ `MaterialApp` بيعمل animation لما الثيم يتغير، وفي كل frame بينادي `lerp` بقيمة `t` بين 0 و1. لو الـ `lerp` بيرجّع واحد من الاتنين بس، ألوان الـ extension هتنط في نص الـ animation وكل الباقي بيتحول بنعومة. الصح `Color.lerp` لكل لون.
+
+</Answer>
+</Question>
+
+<Question id="ds-tokens-3">
+<Ask>صفحة فيها `Theme(data: ThemeData.dark(), child: ...)` بتقع بـ «Null check operator». ليه، وتصلّحها إزاي؟</Ask>
+<Answer>
+
+الـ `ThemeData.dark()` ثيم جديد من الصفر، مافيهوش `ReadlyColors` ولا خط Cairo، فالـ `extension<ReadlyColors>()!` بيرجّع null. الحل إن أي override يبدأ من ثيم Readly: `AppTheme.dark`، أو `Theme.of(context).copyWith(...)` لو بتغيّر حاجة واحدة.
+
+</Answer>
+</Question>
+
+<Question id="ds-tokens-4">
+<Ask>ليه المسافات `const` في `AppSpace` والألوان في `ThemeExtension`؟</Ask>
+<Answer>
+
+الألوان بتتغير بين الـ light والـ dark، فلازم تتقري من الثيم الحالي. المسافات ثابتة، والـ `const` بيخلي `const EdgeInsets.all(AppSpace.lg)` و`const SizedBox` يفضلوا const، فمابيتبنوش تاني. لو المسافات بقت بتتغير (density للتابلت)، ساعتها تستاهل extension.
+
+</Answer>
+</Question>
+
+<Question id="ds-tokens-5">
+<Ask>دخلت مشروع فيه 300 `Color(0x` في الشاشات. تبدأ منين؟</Ask>
+<Answer>
+
+تست بيمنع أي `Color(0x` أو `Colors.` جديد برا `core_ui`، بـ allowlist للقديم بتصغر بس. وبعدين الـ components المشتركة الأول لأنها بتصلّح شاشات كتير مرة واحدة، وكل لون بيتسأل «انت دور إيه؟» قبل ما يتنقل. والشاشات بتتصلّح وانت شغال فيها، مش في PR واحد كبير.
+
+</Answer>
+</Question>
+
+</Quiz>

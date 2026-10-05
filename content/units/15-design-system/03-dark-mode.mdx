@@ -1,0 +1,415 @@
+---
+title: "الـ Dark mode من الـ tokens"
+description: "الـ dark mode بيطلع من الـ tokens لوحده، مش بـ if جوه كل widget: الأدوار اللي بتتغير قيمتها، والـ elevation من غير ظلال، والصور واللوجو، والـ status bar، والـ high contrast."
+minutes: 25
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="مهندس الإضاءة في المسرح">
+
+مسرحية فيها مشهد الصبح ومشهد بالليل. مصمم الديكور مابيبنيش بيت تاني للمشهد الليلي، ومابيدّيش كل ممثل كشاف في إيده يولّعه لما الدنيا تضلم. فيه حد واحد بس، مهندس الإضاءة، وقدامه ورقة: «المشهد الليلي = إضاءة رقم 7». بيدوس زرار، والمسرح كله بيتحول مع بعض: الحيطان والوشوش والهدوم. والديكور نفسه متصمم من الأول بألوان تبان كويس في الإضاءتين.
+
+ولو كل ممثل كان شايل كشاف، كل واحد هيولّعه في وقت مختلف وبدرجة مختلفة، وواحد هينسى خالص ويفضل في الضلمة.
+
+</Analogy>
+
+الـ `context.isDark ? Colors.grey.shade800 : Colors.grey.shade300` جوه widget هو الكشاف في إيد الممثل. والـ `AppTheme.dark` هو ورقة الإضاءة: نفس الأدوار اللي اتعملت في [درس الـ tokens](/course/design-system/tokens/)، بقيم تانية. الـ widget بيطلب `surfaceContainerHighest` أو `statusReading`، ومايعرفش ولا يهمه إحنا في أنهي مشهد.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### الـ dark mode = نفس الأدوار بقيم تانية
+
+في [درس الإعدادات](/course/di-scale/settings/) الـ `SettingsCubit` بيحفظ الـ `ThemeMode`، والـ `MaterialApp` بياخد `theme` و`darkTheme` ويختار. الدرس ده عن اللي جوه الـ `darkTheme`:
+
+<CodeBlock label="AppTheme: دالة واحدة، والـ brightness هو الفرق">
+
+```dart
+abstract final class AppTheme {
+  static final light = _build(Brightness.light);
+  static final dark = _build(Brightness.dark);
+
+  static ThemeData _build(Brightness brightness) {
+    final scheme = ColorScheme.fromSeed(seedColor: Palette.teal600, brightness: brightness);
+    return ThemeData(
+      colorScheme: scheme,
+      fontFamily: 'Cairo',
+      extensions: [
+        brightness == Brightness.light ? ReadlyColors.light : ReadlyColors.dark,
+      ],
+      // button themes, text theme... the same code for both
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+مفيش `_buildLight` و`_buildDark` منفصلين. لو اتنين، هتلاقي بعد شهر الـ `filledButtonTheme` متظبط في واحد بس. الـ `if` الوحيد في الـ app كله على الـ brightness هو اللي بيختار الـ `ReadlyColors`.
+
+والـ `ColorScheme.fromSeed` بـ `Brightness.dark` مش بيعكس الألوان. هو بياخد نفس الـ seed ويطلّع درجات (tones) معمولة للخلفية الغامقة: الـ `primary` بيبقى أفتح عشان يبان على الأسود، والـ `surface` رمادي غامق مش أسود صافي، والـ `onPrimary` غامق عشان يتقري فوق الـ primary الفاتح. كل الأزواج (`X` و`onX`) معمول حسابها في الاتنين.
+
+| الدور | في الـ light | في الـ dark |
+| --- | --- | --- |
+| `surface` | فاتح جدًا | رمادي غامق (مش أسود) |
+| `onSurface` | غامق | فاتح |
+| `primary` | teal غامق | teal فاتح |
+| `onPrimary` | أبيض | teal غامق جدًا |
+| `surfaceContainerLow` → `Highest` | كل ما يعلى يغمق شوية | كل ما يعلى يفتح شوية |
+| `statusFinished` (بتاعنا) | `green700` | `green300` |
+
+### الـ widget مابيسألش
+
+<BeforeAfter>
+
+<Side label="قبل: كشاف في كل widget" kind="before">
+
+```dart
+final isDark = Theme.of(context).brightness == Brightness.dark;
+return Container(
+  color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+  child: Text(
+    book.title,
+    style: TextStyle(color: isDark ? Colors.white70 : Colors.black87),
+  ),
+);
+```
+
+</Side>
+
+<Side label="بعد: الدور بس" kind="after">
+
+```dart
+return ColoredBox(
+  color: context.colorScheme.surfaceContainerLow,
+  child: Text(
+    book.title,
+    style: context.textTheme.titleMedium, // onSurface by default
+  ),
+);
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: كل widget فيه نسخته من الـ dark mode، وبقيم مختلفة عن الـ widget اللي جنبه (`white70` هنا، و`white60` في مكان تاني). ولو بكرة جه وضع تالت (high contrast تحت)، كل `isDark` هيبقى `switch`. بعد: الـ widget مش عارف إن فيه dark mode أصلًا.
+
+والقاعدة اللي بتتراجع في الـ review: أي `brightness ==` أو `isDark` برا `AppTheme` هو سؤال «الدور اللي ناقص اسمه إيه؟».
+
+### الـ elevation في الـ dark: درجات مش ظلال
+
+في الـ light، الكارت بيبان فوق الخلفية بالظل. في الـ dark الظل الأسود على خلفية غامقة مش باين. علشان كده Material 3 بيعبّر عن «العلو» بالـ surface containers: كل ما العنصر يعلى، لونه بيقرّب من الـ `onSurface` شوية.
+
+<CodeBlock label="الطبقات في صفحة الكتاب">
+
+```dart
+Scaffold(
+  backgroundColor: context.colorScheme.surface,            // the page
+  body: ListView(
+    children: [
+      Card(                                                  // surfaceContainerLow by default
+        child: BookHeader(book: book),
+      ),
+      // ...
+    ],
+  ),
+  bottomSheet: ColoredBox(
+    color: context.colorScheme.surfaceContainerHigh,         // above the page
+    child: ReadingProgressBar(book: book),
+  ),
+)
+```
+
+</CodeBlock>
+
+الـ `Card` والـ `BottomSheet` والـ `NavigationBar` بياخدوا الـ container المناسب لوحدهم. انت بتختار بإيدك بس لما بتعمل سطح بنفسك، وساعتها اسأل: ده فوق إيه؟ واختار الدرجة اللي بعدها.
+
+### الأدوار اللي مش ألوان: اللوجو والصور
+
+اللوجو بتاع Readly ليه نسختين: واحدة للخلفية الفاتحة وواحدة للغامقة. وده نفس الكشاف لو اتكتب `isDark ? 'logo_dark.png' : 'logo_light.png'` في كل شاشة. الـ ThemeExtension مش للألوان بس:
+
+<CodeBlock label="packages/core_ui/lib/src/theme/readly_assets.dart">
+
+```dart
+@immutable
+final class ReadlyAssets extends ThemeExtension<ReadlyAssets> {
+  const ReadlyAssets({required this.logo, required this.emptyLibrary});
+
+  final AssetImage logo;
+  final AssetImage emptyLibrary;
+
+  static const light = ReadlyAssets(
+    logo: AssetImage('assets/logo_on_light.png', package: 'core_ui'),
+    emptyLibrary: AssetImage('assets/empty_library_light.png', package: 'core_ui'),
+  );
+  static const dark = ReadlyAssets(
+    logo: AssetImage('assets/logo_on_dark.png', package: 'core_ui'),
+    emptyLibrary: AssetImage('assets/empty_library_dark.png', package: 'core_ui'),
+  );
+
+  @override
+  ReadlyAssets copyWith({AssetImage? logo, AssetImage? emptyLibrary}) =>
+      ReadlyAssets(logo: logo ?? this.logo, emptyLibrary: emptyLibrary ?? this.emptyLibrary);
+
+  @override
+  ReadlyAssets lerp(ReadlyAssets? other, double t) =>
+      t < 0.5 ? this : (other ?? this); // images can't be blended: switch halfway
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `package: 'core_ui'`:</b> الصور في الـ package مش في الـ app، فلازم تقول هي في أنهي package، وإلا Flutter هيدوّر عليها في assets الـ app.
+- <b>الـ lerp هنا بيقلب في النص:</b> صورة مابتتعملهاش interpolation، فدي الحالة اللي قلنا عليها في درس الـ tokens. والألوان في نفس الـ extension (لو فيه) لسه بـ `Color.lerp`.
+- <b>اللوجو بلون واحد؟</b> لو اللوجو شكل بلون واحد (أيقونة)، مش محتاج نسختين: `Image(image: logo, color: context.colorScheme.onSurface)` بيلوّنه بالدور.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### الساعة والبطارية اختفوا فوق
+
+<b>اللي بيبوظ:</b> في الـ dark، أيقونات الـ status bar (الساعة والشبكة والبطارية) غامقة على خلفية غامقة، فمش باينة. أو العكس في الـ light على شاشة الـ reader.
+
+<b>ليه:</b> لون أيقونات الـ status bar مش جزء من الـ widget tree بتاعك، ده إعداد للنظام. الـ `AppBar` بيظبطه لوحده حسب لون خلفيته، بس الشاشات اللي مافيهاش `AppBar` (الـ splash، والـ reader بملء الشاشة، والـ onboarding) بتسيب الإعداد زي ما هو من آخر شاشة.
+
+<b>الحل:</b> الـ `AppBar` بياخد الإعداد من الثيم، والشاشات اللي من غير AppBar بتقوله بنفسها:
+
+<CodeBlock label="الإعداد في الثيم، وفي الشاشات من غير AppBar">
+
+```dart
+// AppTheme._build
+appBarTheme: AppBarThemeData(
+  systemOverlayStyle: brightness == Brightness.light
+      ? SystemUiOverlayStyle.dark   // dark icons on a light bar
+      : SystemUiOverlayStyle.light, // light icons on a dark bar
+),
+
+// a full-screen page without an AppBar
+AnnotatedRegion<SystemUiOverlayStyle>(
+  value: Theme.of(context).brightness == Brightness.light
+      ? SystemUiOverlayStyle.dark
+      : SystemUiOverlayStyle.light,
+  child: const ReaderView(),
+)
+```
+
+</CodeBlock>
+
+الاسم بيلخبط: `SystemUiOverlayStyle.dark` معناها «أيقونات غامقة»، يعني للخلفية الفاتحة. وعلى Android 15، الـ apps اللي target SDK 15 بقت edge-to-edge إجباري (ومن Flutter 3.27 ده الافتراضي)، يعني الـ app بيترسم ورا الـ status bar والـ navigation bar. فاللون اللي ورا الأيقونات هو لون الشاشة بتاعتك فعلًا، وده بيخلي الإعداد ده أهم. وده الـ `if` التاني المسموح بيه على الـ brightness، لأنه إعداد للنظام مش لون في widget. ولو بيتكرر، اعمله widget صغير في `core_ui`.
+
+### الأزرق بتاع «بقراه» مش باين في الـ dark
+
+<b>اللي بيبوظ:</b> حد ضاف `statusReading` في الـ `ReadlyColors` وحط نفس `blue700` في الـ light والـ dark «عشان اللون يبقى نفسه في الاتنين». في الـ dark النص الأزرق الغامق على الرمادي الغامق بالعافية بيتقري.
+
+<b>ليه:</b> «نفس اللون» مش هو الهدف. الهدف إن الدور يوصل في الاتنين: «بقراه» يبان ويتقري. واللون اللي ليه contrast كويس على أبيض، غالبًا contrast وحش على أسود.
+
+<b>الحل:</b> كل دور ليه قيمة في كل ثيم، ومتختارة عشان تعدّي الـ contrast على الخلفية بتاعتها (4.5:1 للنص العادي، والتفاصيل في [درس الـ Semantics](/course/design-system/semantics/)). وده مش بيتساب للعين: تست بيحسب الـ contrast لكل دور على الـ surface في الثيمين، وده في [درس تست الـ Design System](/course/design-system/testing-ds/).
+
+ونفس الكلام في الشفافية: خلفية الـ `StatusChip` بـ alpha 0.12 حلوة في الـ light، وفي الـ dark ممكن تبقى مش باينة. لو ده حصل، الـ alpha نفسها تبقى قرار بيختلف بين الثيمين، يعني دور: `chipTintAlpha` في الـ extension، أو لون خلفية للـ chip جاهز لكل حالة.
+
+### المستخدم مختار light والـ app بيطلع جزء dark
+
+<b>اللي بيبوظ:</b> الموبايل dark، والمستخدم اختار light من الإعدادات. الـ app light كله، ما عدا الـ skeleton بتاع التحميل: رمادي غامق.
+
+<b>ليه:</b> الـ skeleton كاتب:
+
+```dart
+final isDark = MediaQuery.platformBrightnessOf(context) == Brightness.dark;
+```
+
+ده بيسأل الموبايل مش الـ app. الموبايل dark، فالـ skeleton dark، والـ app light.
+
+<b>الحل:</b> الثيم اللي على الشاشة فعلًا هو `Theme.of(context)`، والـ `MaterialApp` بيحسبه من الـ `themeMode` والـ platform مع بعض. بس الأحسن من الـ `if` الصح هو مفيش `if`: الـ skeleton ياخد ألوانه من الأدوار.
+
+<CodeBlock label="skeleton من غير isDark">
+
+```dart
+class Skeleton extends StatelessWidget {
+  const Skeleton({super.key, required this.width, required this.height});
+  final double width;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+        decoration: BoxDecoration(
+          color: context.colorScheme.surfaceContainerHighest, // right in both themes
+          borderRadius: const BorderRadius.all(AppRadius.sm),
+        ),
+        child: SizedBox(width: width, height: height),
+      );
+}
+```
+
+</CodeBlock>
+
+### اللون بتاع البراند مش هو اللي على الشاشة
+
+<b>اللي بيبوظ:</b> الـ marketing: «الـ teal بتاعنا `#00696B` بالظبط، مش أفتح». فحد عمل `ColorScheme.fromSeed(seedColor: ..., primary: Palette.teal600)` في الـ dark كمان. الأزرار في الـ dark بقت teal غامق على رمادي غامق، والنص اللي عليها `onPrimary` (اللي `fromSeed` عمله غامق عشان كان متوقع primary فاتح) بقى غامق على غامق.
+
+<b>ليه:</b> الـ `fromSeed` بيطلّع أزواج متظبطة مع بعض. لما تبدّل واحد من الزوج بإيدك، التاني مابيتظبطش لوحده.
+
+<b>الحل:</b> لو لازم تثبّت دور، ثبّت الزوج كله واتأكد من الـ contrast بتاعه (`primary: teal600, onPrimary: Colors.white` في الـ light). وفي الـ dark غالبًا الأحسن تسيب `fromSeed` يختار، والبراند يبان في اللوجو والـ illustrations. والـ `fromSeed` فيه `dynamicSchemeVariant` بيخليك تختار «شخصية» الـ scheme (`DynamicSchemeVariant.fidelity` مثلًا بيحاول يحافظ على لون الـ seed قريب من الأصل) من غير ما تكسر الأزواج.
+
+### High contrast: وضع تالت
+
+<b>اللي بيبوظ:</b> مستخدم مفعّل «Increase contrast» من إعدادات iOS (أو high contrast text في Android). الـ app مابيتغيرش.
+
+<b>ليه:</b> الـ `MaterialApp` عنده خانتين لده، `highContrastTheme` و`highContrastDarkTheme`، ولو فاضيين بيستخدم الثيم العادي.
+
+<b>الحل:</b> لأن الثيم كله طالع من دالة واحدة، الوضع التالت parameter زيادة:
+
+<CodeBlock label="AppTheme بالـ contrast">
+
+```dart
+abstract final class AppTheme {
+  static final light = _build(Brightness.light);
+  static final dark = _build(Brightness.dark);
+  static final lightHighContrast = _build(Brightness.light, contrast: 1);
+  static final darkHighContrast = _build(Brightness.dark, contrast: 1);
+
+  static ThemeData _build(Brightness brightness, {double contrast = 0}) {
+    final scheme = ColorScheme.fromSeed(
+      seedColor: Palette.teal600,
+      brightness: brightness,
+      contrastLevel: contrast, // -1 to 1; 0 is the standard scheme
+    );
+    // ...
+  }
+}
+
+// ReadlyApp
+MaterialApp.router(
+  theme: AppTheme.light,
+  darkTheme: AppTheme.dark,
+  highContrastTheme: AppTheme.lightHighContrast,
+  highContrastDarkTheme: AppTheme.darkHighContrast,
+  themeMode: settings.themeMode,
+  // ...
+)
+```
+
+</CodeBlock>
+
+الـ `ReadlyColors` محتاج نسخ high contrast هو كمان (أغمق في الـ light وأفتح في الـ dark). ولو مافيش وقت، على الأقل الـ ColorScheme هيتغير، وده أغلب الشاشة. ودي حاجة مستحيلة لو الـ dark mode كان `isDark ?` في 70 widget.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>الـ dark mode قرار في الـ tokens، مش feature في الشاشات:</b> لو الـ tokens صح، الـ dark mode بياخد يوم: قيم جديدة في `ReadlyColors.dark` ومراجعة بالعين. لو الشاشات فيها ألوان، بياخد شهر وبيفضل يطلع فيه bugs سنة.
+- <b>«dark بس» قرار منتج، مش اختصار:</b> لو المنتج قرر الـ app يبقى dark بس، الـ light theme لسه يتبني ويتستّ في الـ goldens. اليوم اللي الـ light يرجع فيه، هتلاقيه شغال بدل ما تلاقي 90 `Colors.white` مستخبيين ورا إن مفيش حد شايفهم.
+- <b>اسأل الـ designer عن الـ dark من الأول:</b> كل دور جديد بيتطلب بقيمتين. لو الـ design جاي بالـ light بس، القيمة الـ dark بتتعمل بالتخمين، والتخمين بيطلع في الـ contrast test أو في شكوى مستخدم.
+- <b>الـ dynamic color (Material You):</b> Android 12+ بيدّي الـ app ألوان من خلفية الموبايل (package زي `dynamic_color`). جميل، بس البراند بيختفي، والـ `ReadlyColors` بتوعك ممكن مايبقوش متناسقين مع الألوان الجديدة. لـ Readly: مش دلوقتي. ولو اتعمل، يبقى اختيار في الإعدادات مش الافتراضي.
+- <b>الـ transition:</b> الـ `MaterialApp` بيعمل animation بين الثيمين لوحده (من هنا أهمية الـ `lerp`). لو حاسس إنه بطيء أو عايز تقفله، فيه `themeAnimationDuration` و`themeAnimationCurve` على الـ `MaterialApp`.
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي تعمل dark mode في app كبير موجود؟» الأول أوقف النزيف: تست بيمنع ألوان جديدة برا الـ design system، وأي `isDark` جديد. بعدين الأدوار: كل لون في الشاشات بيتسأل هو دور إيه، ويتنقل للـ ColorScheme أو لـ ThemeExtension فيه قيمة light وقيمة dark، والصور اللي ليها نسختين كمان في extension. والثيم كله من دالة واحدة بتاخد الـ brightness، فالـ `if` الوحيد على الـ dark بيبقى جواها. وبعدين goldens بالثيمين للـ components والشاشات المهمة، وتست contrast لكل دور على الـ surface في الثيمين. والـ status bar بيتظبط من `systemOverlayStyle` في الـ `AppBarThemeData`، والشاشات اللي من غير AppBar بـ `AnnotatedRegion`.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### صفحة المكتبة الفاضية
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+Widget build(BuildContext context) {
+  final isDark = Theme.of(context).brightness == Brightness.dark;
+  return Column(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Image.asset(isDark ? 'assets/empty_dark.png' : 'assets/empty_light.png'),
+      Text(
+        l10n.libraryEmpty,
+        style: TextStyle(fontSize: 18, color: isDark ? Colors.white : Colors.black),
+      ),
+      Text(
+        l10n.libraryEmptyHint,
+        style: TextStyle(color: isDark ? Colors.grey[400] : Colors.grey[600]),
+      ),
+    ],
+  );
+}
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+Widget build(BuildContext context) {
+  final assets = Theme.of(context).extension<ReadlyAssets>()!;
+  return Column(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Image(image: assets.emptyLibrary),
+      Text(l10n.libraryEmpty, style: context.textTheme.titleLarge),
+      Text(
+        l10n.libraryEmptyHint,
+        style: context.textTheme.bodyMedium?.copyWith(
+          color: context.colorScheme.onSurfaceVariant,
+        ),
+      ),
+    ],
+  );
+}
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: 3 `isDark`، و`Colors.black` صافي على `surface` الـ light اللي هو مش أبيض صافي، و`grey[600]` بالتخمين. ولو اتفعّل الـ high contrast، الصفحة دي مش هتتغير. بعد: الصورة دور، والنص الأساسي `onSurface` من الـ textTheme، والنص الثانوي `onSurfaceVariant`، وده الدور اللي Material عامله للنص الأهدى. والـ high contrast بيوصل للصفحة دي لوحده.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="ds-dark-mode-1">
+<Ask>ليه `AppTheme` فيه دالة `_build(brightness)` واحدة بدل `_buildLight` و`_buildDark`؟</Ask>
+<Answer>
+
+عشان كل حاجة غير القيم (الـ button themes، والـ text theme، والـ shapes) تتكتب مرة واحدة. لو دالتين، أي تعديل هيتعمل في واحدة وينتسى في التانية. والـ `if` الوحيد على الـ brightness بيبقى في اختيار الـ extension.
+
+</Answer>
+</Question>
+
+<Question id="ds-dark-mode-2">
+<Ask>الموبايل dark والمستخدم اختار light من الإعدادات، والـ skeleton طالع غامق. إيه السبب الأغلب؟</Ask>
+<Answer>
+
+الـ skeleton بيسأل `MediaQuery.platformBrightnessOf`، يعني الموبايل مش الـ app. الثيم الفعلي في `Theme.of(context)`. والأحسن إن الـ skeleton مايسألش خالص وياخد لونه من دور زي `surfaceContainerHighest`.
+
+</Answer>
+</Question>
+
+<Question id="ds-dark-mode-3">
+<Ask>الكروت في الـ dark مش باينة فوق الخلفية، مع إن عليها elevation. ليه، وإيه الحل؟</Ask>
+<Answer>
+
+الظل الأسود على خلفية غامقة مش باين. Material 3 بيعبّر عن العلو بدرجات الـ surface containers: كل ما العنصر يعلى، لونه يقرب من الـ onSurface. استخدم `surfaceContainerLow` لحد `Highest` حسب الطبقة، والـ `Card` والـ sheets بياخدوها لوحدهم.
+
+</Answer>
+</Question>
+
+<Question id="ds-dark-mode-4">
+<Ask>غيّرت `primary` بإيدك في `ColorScheme.fromSeed` بتاع الـ dark عشان يبقى لون البراند بالظبط، والنص على الأزرار بقى مش مقروء. ليه؟</Ask>
+<Answer>
+
+الـ `fromSeed` بيطلّع أزواج (`primary` و`onPrimary`) متظبطة مع بعض. لما بدّلت الـ primary بلون غامق، الـ onPrimary فضل غامق زي ما كان محسوب للـ primary الفاتح. لو لازم تثبّت دور، ثبّت الزوج كله واتأكد من الـ contrast، أو استخدم `dynamicSchemeVariant` يقرّب للـ seed من غير ما يكسر الأزواج.
+
+</Answer>
+</Question>
+
+</Quiz>

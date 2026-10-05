@@ -1,0 +1,37 @@
+<svg viewBox="0 0 760 330" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="نفس الـ BookTile بخط عادي، وبخط 200 في المية بارتفاع ثابت وRow فالعنوان اتقص والمعلومات طلعت برا، وبخط 200 في المية بـ minHeight وWrap فالكارت طوّل والمعلومات نزلت سطر">
+<defs>
+<clipPath id="ds-ts-clip"><rect x="270" y="56" width="220" height="80" rx="10"/></clipPath>
+</defs>
+<text x="130" y="30" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">1.0×</text>
+<text x="130" y="46" text-anchor="middle" font-size="10" fill="var(--muted)">height: 80 · Row</text>
+<rect x="20" y="56" width="220" height="80" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+<text x="36" y="86" font-size="13" fill="var(--ink)" font-weight="600">Atomic Habits</text>
+<rect x="36" y="102" width="50" height="20" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1"/>
+<text x="61" y="116" text-anchor="middle" font-size="10" fill="var(--ink)" class="ar" direction="rtl">بقراه</text>
+<text x="96" y="116" font-size="10" fill="var(--muted)">Oct 3</text>
+<text x="134" y="116" text-anchor="end" font-size="10" fill="var(--muted)" class="ar" direction="rtl">مش متزامن</text>
+<text x="380" y="30" text-anchor="middle" font-size="12" fill="var(--warn)" font-weight="600">2.0×</text>
+<text x="380" y="46" text-anchor="middle" font-size="10" fill="var(--warn)">height: 80 · Row</text>
+<rect x="270" y="56" width="220" height="80" rx="10" fill="var(--surface)" stroke="var(--warn)" stroke-width="1.5"/>
+<g clip-path="url(#ds-ts-clip)">
+<text x="286" y="96" font-size="24" fill="var(--ink)" font-weight="600">Atomic Habits: An</text>
+<text x="286" y="128" font-size="24" fill="var(--ink)" font-weight="600">Easy &amp; Proven Way</text>
+</g>
+<rect x="286" y="146" width="96" height="34" rx="17" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1"/>
+<text x="334" y="169" text-anchor="middle" font-size="18" fill="var(--ink)" class="ar" direction="rtl">بقراه</text>
+<text x="394" y="169" font-size="18" fill="var(--muted)">Oct 3 …</text>
+<rect x="484" y="146" width="12" height="34" fill="var(--warn)"/>
+<text x="380" y="210" text-anchor="middle" font-size="11" fill="var(--warn)" font-weight="600">RenderFlex overflowed</text>
+<text x="380" y="228" text-anchor="middle" font-size="11" fill="var(--warn)" class="ar" direction="rtl">العنوان اتقص، والمعلومات برا الكارت</text>
+<text x="630" y="30" text-anchor="middle" font-size="12" fill="var(--good)" font-weight="600">2.0×</text>
+<text x="630" y="46" text-anchor="middle" font-size="10" fill="var(--good)">minHeight: 80 · Wrap</text>
+<rect x="520" y="56" width="220" height="200" rx="10" fill="var(--surface)" stroke="var(--good)" stroke-width="1.5"/>
+<text x="536" y="96" font-size="24" fill="var(--ink)" font-weight="600">Atomic Habits:</text>
+<text x="536" y="128" font-size="24" fill="var(--ink)" font-weight="600">An Easy &amp; Pro…</text>
+<rect x="536" y="146" width="96" height="34" rx="17" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1"/>
+<text x="584" y="169" text-anchor="middle" font-size="18" fill="var(--ink)" class="ar" direction="rtl">بقراه</text>
+<text x="644" y="169" font-size="18" fill="var(--muted)">Oct 3</text>
+<text x="536" y="210" text-anchor="end" font-size="18" fill="var(--muted)" class="ar" direction="rtl">مش متزامن</text>
+<text x="630" y="280" text-anchor="middle" font-size="11" fill="var(--good)" class="ar" direction="rtl">العنوان سطرين وبعدين …، والمعلومات نزلت سطر</text>
+<text x="380" y="310" text-anchor="middle" font-size="11" fill="var(--muted)" class="ar" direction="rtl">الخط بيكبر لوحده في الحالتين. الفرق كله في الصندوق اللي حواليه</text>
+</svg>

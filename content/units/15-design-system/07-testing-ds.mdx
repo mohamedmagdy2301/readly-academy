@@ -1,0 +1,545 @@
+---
+title: "تست الـ Design System"
+description: "التستات اللي بتحرس الـ design system من المصدر: الـ contrast لكل token في الثيمين، والـ semantics والـ guidelines لكل component في كل حالة، وgoldens بكل الـ variants والاتجاهين وتكبير الخط، وتست بيمنع الـ left والـ right."
+minutes: 35
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="مصنع الطوب">
+
+مصنع طوب بيطلّع طوبة بتدخل في ألف عمارة. لو الطوبة فيها عيب، العيب في الألف عمارة. المهندس اللي في كل عمارة ممكن يفحص كل حيطة بنفسه، بس ده غالي ومتأخر: الحيطة اتبنت خلاص. الأرخص بكتير إن المصنع يفحص كل دفعة قبل ما تخرج: المقاس، والصلابة، وبتتحمل كام. ومهندس العمارة بيفحص اللي يخصه هو بس: الحيطة مستقيمة؟ في مكانها؟
+
+</Analogy>
+
+الـ components في `core_ui` هي الطوب. `ReadlyButton` بيتحط في 30 شاشة. لو الـ loading بتاعه بيمسح الـ label، الـ 30 شاشة فيهم نفس المشكلة. وفي [درس الـ goldens](/course/testing/golden-tests/) و[درس الـ widget tests](/course/testing/widget-tests/) اتعلمنا الأدوات. الدرس ده عن <b>فين</b> تستخدمها: التست الأساسي بيبقى في المصنع، يعني في `packages/core_ui/test/`، وتستات الشاشات بتتأكد من اللي يخص الشاشة بس.
+
+والتستات هنا 4 طبقات، من الأرخص للأغلى:
+
+| الطبقة | بتمسك | بتاخد |
+| --- | --- | --- |
+| الـ tokens (unit tests) | contrast وحش في الـ light أو الـ dark | ملّي ثواني |
+| الـ guards (architecture test) | `Color(0x` و`EdgeInsets.only(left` في الـ features | ثانية |
+| الـ components (widget tests) | label ناقص، target صغير، loading بيمسح الاسم، overflow في 200% | ثواني |
+| الـ goldens | الشكل في كل variant وحالة وثيم واتجاه | ثواني + مراجعة صور |
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### helper الـ core_ui
+
+الـ `pumpApp` بتاع الـ app بيستخدم `AppLocalizations`، والـ `core_ui` مايعرفهاش (نفس سبب [درس الـ components](/course/design-system/components/)). فالـ package ليها helper بتاعها، أصغر:
+
+<CodeBlock label="packages/core_ui/test/helpers/pump_component.dart">
+
+```dart
+import 'package:core_ui/core_ui.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+extension PumpComponent on WidgetTester {
+  Future<void> pumpComponent(
+    Widget child, {
+    Locale locale = const Locale('ar'),
+    ThemeMode themeMode = ThemeMode.light,
+    double textScale = 1,
+  }) {
+    return pumpWidget(
+      MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: AppTheme.light,
+        darkTheme: AppTheme.dark,
+        themeMode: themeMode,
+        locale: locale,
+        supportedLocales: const [Locale('ar'), Locale('en')],
+        localizationsDelegates: GlobalMaterialLocalizations.delegates,
+        builder: (context, app) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(textScale)),
+          child: app!,
+        ),
+        home: Scaffold(body: Center(child: child)),
+      ),
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>الـ `GlobalMaterialLocalizations.delegates`:</b> من `flutter_localizations` (تتضاف في الـ `dev_dependencies` بتاعة `core_ui`). بتجيب ترجمة الـ Material widgets نفسها (tooltip الـ `BackButton` مثلًا)، وبتحط الـ `Directionality` من الـ locale. فالعربي RTL لوحده زي الـ app.
+- <b>الـ `textScale` جوه الـ helper:</b> بدل الـ `platformDispatcher` اللي في درس الـ goldens. الـ `MediaQuery` اللي في الـ `builder` بيغطي الـ component بس، ومش محتاج `addTearDown`.
+
+### الحالات في مكان واحد
+
+كل تست جاي هيحتاج «كل component في كل حالة». بدل ما كل ملف يكتب الليستة بتاعته:
+
+<CodeBlock label="packages/core_ui/test/helpers/component_cases.dart">
+
+```dart
+typedef ComponentCase = ({
+  String name,
+  Widget Function(BuildContext context) build,
+  bool checkContrast, // false for inactive states: WCAG doesn't require it there
+});
+
+void _noop() {}
+
+final componentCases = <ComponentCase>[
+  for (final v in ReadlyButtonVariant.values) ...[
+    (
+      name: 'button ${v.name}',
+      build: (_) => ReadlyButton(label: 'احفظ', variant: v, onPressed: _noop),
+      checkContrast: true,
+    ),
+    (
+      name: 'button ${v.name} icon',
+      build: (_) => ReadlyButton(label: 'شارك', variant: v, icon: Icons.share, onPressed: _noop),
+      checkContrast: true,
+    ),
+    (
+      name: 'button ${v.name} loading',
+      build: (_) => ReadlyButton(label: 'احفظ', variant: v, loading: true, onPressed: _noop),
+      checkContrast: false,
+    ),
+    (
+      name: 'button ${v.name} disabled',
+      build: (_) => ReadlyButton(label: 'احفظ', variant: v, onPressed: null),
+      checkContrast: false,
+    ),
+  ],
+  (
+    name: 'status chip reading',
+    build: (context) => StatusChip(
+      label: 'بقراه',
+      icon: Icons.auto_stories_outlined,
+      color: context.readlyColors.statusReading, // from the theme the test pumped
+    ),
+    checkContrast: true,
+  ),
+  (
+    name: 'error view',
+    build: (_) => ErrorView(message: 'مفيش اتصال بالنت.', onRetry: _noop, retryLabel: 'حاول تاني'),
+    checkContrast: true,
+  ),
+  (
+    name: 'error view retrying',
+    build: (_) => ErrorView(
+      message: 'مفيش اتصال بالنت.',
+      onRetry: _noop,
+      retryLabel: 'حاول تاني',
+      retrying: true,
+    ),
+    checkContrast: false,
+  ),
+];
+```
+
+</CodeBlock>
+
+- <b>الـ `build` بياخد `BuildContext`:</b> عشان الـ `StatusChip` ياخد لونه من الثيم اللي التست حاطه. لو الـ case اتعمل برا أي context، كان هيضطر ياخد لون ثابت، وكان التست هيختبر لون محدش بيستخدمه. والتست بيبنيه جوه `Builder`: `tester.pumpComponent(Builder(builder: c.build))`.
+- <b>الـ `checkContrast`:</b> الـ WCAG مابيطلبش contrast للحاجات اللي مش active (زرار disabled أو loading). الـ guidelines التانية (المساحة والـ label) بتشتغل على كل الحالات.
+- <b>ليستة واحدة لكل حاجة:</b> الـ catalog بتاع درس الـ components ممكن يعرض نفس الليستة دي، فاللي بتشوفه في الـ catalog هو بالظبط اللي بيتستّ.
+
+### طبقة 1: الـ contrast لكل token
+
+ده أرخص تست في الـ design system، ومابيرسمش أي حاجة:
+
+<CodeBlock label="packages/core_ui/test/theme/contrast_test.dart">
+
+```dart
+import 'package:core_ui/core_ui.dart';
+import 'package:core_ui/src/theme/contrast.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+void main() {
+  for (final (name, theme) in [('light', AppTheme.light), ('dark', AppTheme.dark)]) {
+    group('$name theme', () {
+      final scheme = theme.colorScheme;
+      final colors = theme.extension<ReadlyColors>()!;
+      final roles = {
+        'statusWantToRead': colors.statusWantToRead,
+        'statusReading': colors.statusReading,
+        'statusFinished': colors.statusFinished,
+        'success': colors.success,
+        'warning': colors.warning,
+      };
+      final backgrounds = {
+        'surface': scheme.surface,
+        'surfaceContainerLow': scheme.surfaceContainerLow,
+      };
+
+      for (final MapEntry(key: role, value: color) in roles.entries) {
+        for (final MapEntry(key: bg, value: bgColor) in backgrounds.entries) {
+          test('$role on $bg is readable as text', () {
+            expect(contrastRatio(color, bgColor), greaterThanOrEqualTo(4.5));
+          });
+        }
+
+        test('$role on its own chip tint is readable', () {
+          // StatusChip: the role's text over the role at 12% on the surface
+          final tint = Color.alphaBlend(color.withValues(alpha: 0.12), scheme.surface);
+          expect(contrastRatio(color, tint), greaterThanOrEqualTo(4.5));
+        });
+      }
+    });
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>مش محتاج `testWidgets`:</b> الـ `AppTheme.light` مجرد `ThemeData`، والـ `contrastRatio` حسبة. التست بيخلص في ملّي ثواني.
+- <b>الـ `Color.alphaBlend`:</b> بيحسب اللون الحقيقي اللي هيترسم لما لون شفاف يتحط فوق لون تاني. خلفية الـ chip مش الـ surface، هي الـ surface وفوقه لون الحالة بشفافية، والنص فوق الاتنين.
+- <b>اسم التست بيقول المشكلة:</b> `dark theme statusReading on surfaceContainerLow is readable as text`. لو فشل، عارف بالظبط أنهي دور في أنهي ثيم.
+
+### طبقة 2: الـ guidelines والـ semantics لكل component
+
+<CodeBlock label="packages/core_ui/test/components/accessibility_test.dart">
+
+```dart
+void main() {
+  for (final c in componentCases) {
+    for (final mode in [ThemeMode.light, ThemeMode.dark]) {
+      testWidgets('${c.name} meets the guidelines (${mode.name})', (tester) async {
+        final handle = tester.ensureSemantics();
+        await tester.pumpComponent(Builder(builder: c.build), themeMode: mode);
+
+        await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
+        await expectLater(tester, meetsGuideline(iOSTapTargetGuideline));
+        await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
+        if (c.checkContrast) await expectLater(tester, meetsGuideline(textContrastGuideline));
+        handle.dispose();
+      });
+    }
+  }
+}
+```
+
+</CodeBlock>
+
+الـ 4 guidelines دول نفسهم اللي في درس الـ widget tests. الفرق إنهم بيلفوا على كل component في كل حالة في الثيمين، فأي component جديد بيدخل الليستة بياخدهم ببلاش.
+
+وفيه حاجات الـ guidelines مابتعرفهاش، زي «الزرار وهو loading لسه بيقول اسمه». دي بتتكتب صريح:
+
+<CodeBlock label="packages/core_ui/test/components/readly_button_test.dart">
+
+```dart
+testWidgets('loading keeps the label and reports disabled', (tester) async {
+  final handle = tester.ensureSemantics();
+  await tester.pumpComponent(ReadlyButton(label: 'احفظ', onPressed: () {}, loading: true));
+
+  expect(
+    tester.getSemantics(find.byType(ReadlyButton)),
+    isSemantics(label: 'احفظ', isButton: true, hasEnabledState: true, isEnabled: false),
+  );
+  handle.dispose();
+});
+
+testWidgets('loading keeps the same size', (tester) async {
+  await tester.pumpComponent(ReadlyButton(label: 'احفظ الملاحظة', onPressed: () {}));
+  final idle = tester.getSize(find.byType(ReadlyButton));
+
+  await tester.pumpComponent(ReadlyButton(label: 'احفظ الملاحظة', onPressed: () {}, loading: true));
+  expect(tester.getSize(find.byType(ReadlyButton)), idle);
+});
+```
+
+</CodeBlock>
+
+- <b>الـ `getSemantics`:</b> بيرجّع الـ node اللي قارئ الشاشة هيشوفها للـ widget ده.
+- <b>`isSemantics` مش `matchesSemantics`:</b> الـ `matchesSemantics` بيقارن كل حاجة في الـ node، وأي flag مكتبتش قيمته متوقع يبقى false، فالتست بيتكسر لو Flutter زوّد flag جديد. الـ `isSemantics` بيتشيك على اللي كتبته بس. وفيه `containsSemantics` كان بيعمل نفس الحكاية، وبقى deprecated من Flutter 3.41 لصالح `isSemantics`.
+- <b>تست المقاس:</b> بيحمي الـ `Opacity` اللي في الـ `Stack`. لو حد «بسّطها» لـ `loading ? spinner : Text(label)`، التست ده هيقع.
+
+### طبقة 3: الـ overflow في 200% على موبايل صغير
+
+<CodeBlock label="packages/core_ui/test/components/text_scale_test.dart">
+
+```dart
+void main() {
+  for (final c in componentCases) {
+    testWidgets('${c.name} fits a small phone at 200%', (tester) async {
+      tester.view
+        ..physicalSize = const Size(320, 640) * 3
+        ..devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpComponent(Builder(builder: c.build), textScale: 2);
+      // nothing to expect: an overflow throws, and the test fails with it
+    });
+  }
+}
+```
+
+</CodeBlock>
+
+التست مافيهوش `expect` عن قصد. الـ `RenderFlex overflowed` بيترمي كـ error في الـ test framework، فأي component بيتقص أو بيطلع برا في 200% بيوقّع التست باسمه. ده نفس الملاحظة اللي في آخر درس الـ goldens، بس متطبّقة على كل حاجة في الـ package مرة واحدة.
+
+### طبقة 4: الـ goldens بكل المحاور
+
+الـ golden بيمسك اللي الطبقات اللي فاتت مابتشوفهوش: شكل الـ danger في الـ dark، والأيقونة في الـ RTL، والزرار في 200%. وبنفس الـ alchemist اللي في درس الـ goldens:
+
+<CodeBlock label="packages/core_ui/test/components/readly_button_golden_test.dart">
+
+```dart
+void main() {
+  for (final (name, locale, mode) in const [
+    ('ar_light', Locale('ar'), ThemeMode.light),
+    ('ar_dark', Locale('ar'), ThemeMode.dark),
+    ('en_light', Locale('en'), ThemeMode.light),
+  ]) {
+    goldenTest(
+      'ReadlyButton ($name)',
+      fileName: 'readly_button_$name',
+      pumpWidget: (tester, widget) => tester.pumpComponent(widget, locale: locale, themeMode: mode),
+      builder: () => GoldenTestGroup(
+        columns: 4, // one column per state
+        children: [
+          for (final v in ReadlyButtonVariant.values) ...[
+            GoldenTestScenario(name: '${v.name} enabled', child: ReadlyButton(label: 'احفظ', variant: v, onPressed: () {})),
+            GoldenTestScenario(name: '${v.name} icon', child: ReadlyButton(label: 'شارك', variant: v, icon: Icons.share, onPressed: () {})),
+            GoldenTestScenario(name: '${v.name} loading', child: ReadlyButton(label: 'احفظ', variant: v, loading: true, onPressed: () {})),
+            GoldenTestScenario(name: '${v.name} disabled', child: ReadlyButton(label: 'احفظ', variant: v, onPressed: null)),
+          ],
+          GoldenTestScenario.withTextScaleFactor(
+            name: 'primary at 200%',
+            textScaler: const TextScaler.linear(2),
+            child: ReadlyButton(label: 'ضيف لمكتبتي', icon: Icons.add, onPressed: () {}),
+          ),
+        ],
+      ),
+    );
+  }
+}
+```
+
+</CodeBlock>
+
+- <b>3 صور مش 48:</b> كل صورة فيها الـ 4 variants × 4 حالات في شبكة. الـ reviewer بيبص على صورة واحدة ويقارن الـ variants ببعض في نظرة.
+- <b>الـ `ar_dark` بس من غير `en_dark`:</b> الـ RTL والـ dark مستقلين عن بعض في الـ component ده. الـ `ar_light` بيمسك الاتجاه، والـ `ar_dark` بيمسك الألوان. صورة رابعة مش هتمسك حاجة جديدة.
+- <b>الـ spinner في الـ golden:</b> الـ alchemist بيصوّر frame ثابت، فالـ `CircularProgressIndicator` مش هيعمل timeout زي الـ `pumpAndSettle`.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### تست الـ contrast فشل على الأخضر
+
+<b>اللي بيبوظ:</b> أول ما التست اشتغل:
+
+```text
+light theme statusFinished on its own chip tint is readable
+Expected: a value greater than or equal to <4.5>
+  Actual: <4.33...>
+```
+
+الأخضر بتاع «خلّصته» (`green700`) على الـ surface تمام، فوق الـ 5. بس على خلفية الـ chip، اللي هي نفس الأخضر بشفافية 12%، الفرق قل لـ حوالي 4.3.
+
+<b>ليه:</b> خلفية الـ chip فيها من لون النص نفسه، فكل ما الـ tint يزيد، الـ contrast يقل. والعين مش هتلاحظ الفرق بين 4.3 و4.5، بس اللي نظره ضعيف هيلاحظ.
+
+<b>الحل:</b> عندك اختيارين، والاتنين قرار design:
+
+- <b>غمّق الدور:</b> `statusFinished` في الـ light يبقى `green800` (`0xFF1B6E34`)، فبيبقى حوالي 6 على الـ surface و5 على الـ chip. الأخضر لسه أخضر، وأغمق شوية.
+- <b>خفّف الـ tint:</b> alpha 0.08 بدل 0.12 بيدّي حوالي 4.57 بالعافية. بيعدّي، بس على الحافة، وأي تعديل صغير في الـ surface بعدين هيكسره.
+
+الأول أحسن. والمهم إن ده اتمسك في تست بياخد ملّي ثانية، مش في شكوى مستخدم بعد 3 شهور. ولو الـ designer غيّر اللون بعدين، التست هيقوله على طول إن الدرجة الجديدة مش بتعدّي.
+
+### المحاور كتير والصور بالمئات
+
+<b>اللي بيبوظ:</b> حد عمل golden لكل تركيبة: 4 variants × 4 حالات × 2 ثيم × 2 اتجاه × 2 حجم خط = 128 صورة للزرار لوحده. أي تعديل في الـ padding بيغيّر الـ 128، ومحدش بيبص عليهم.
+
+<b>ليه:</b> كل محور اتضرب في التاني، مع إن أغلبهم مستقلين.
+
+<b>الحل:</b> المحاور اللي بتتفاعل مع بعض بس هي اللي تتضرب. الـ variant والـ state بيتفاعلوا (شكل الـ danger وهو disabled)، فدول شبكة في صورة واحدة. الثيم والاتجاه غالبًا مستقلين، فـ 3 صور (`ar_light`، `ar_dark`، `en_light`) بتغطي. وتكبير الخط scenario أو اتنين جوه نفس الصورة. النتيجة 3 صور فيهم كل حاجة. والقاعدة اللي في [درس الـ goldens](/course/testing/golden-tests/): كل صورة لازم تجاوب «لو اتغيرت، هيبقى غالبًا bug؟».
+
+### `EdgeInsets.only(left:` رجع تاني
+
+<b>اللي بيبوظ:</b> بعد ما صلّحت الـ RTL في كل الـ features، بعد شهر لقيت `Alignment.centerLeft` في شاشة جديدة، والـ golden بتاعها عربي light وفيها العنصر لازق شمال. اتمسك في الـ golden، بس بعد ما حد عمل الشاشة وصوّرها.
+
+<b>ليه:</b> الـ golden بيمسك الأعراض في الشاشات اللي ليها golden بس. والشاشة دي كان ممكن ماتاخدش golden.
+
+<b>الحل:</b> نفس الـ test بتاع الألوان في [درس الـ tokens](/course/design-system/tokens/) بياخد rule تانية:
+
+<CodeBlock label="tools/architecture/test/design_tokens_test.dart: الـ RTL">
+
+```dart
+// physical APIs that are wrong in Arabic; the directional version exists for each
+final _physical = RegExp(
+  r'EdgeInsets\.only\([^)]*\b(left|right):'
+  r'|EdgeInsets\.fromLTRB'
+  r'|Alignment\.(centerLeft|centerRight|topLeft|topRight|bottomLeft|bottomRight)'
+  r'|Positioned\([^)]*\b(left|right):'
+  r'|TextAlign\.(left|right)'
+  r'|BorderRadius\.only\(',
+);
+
+// intentional: a phone number is LTR in every language (see the RTL lesson)
+const knownPhysical = {
+  'packages/feature_profile/lib/src/presentation/phone_field.dart: TextAlign.left',
+};
+```
+
+</CodeBlock>
+
+والتست بيلف على الملفات زي ما بيعمل في الألوان، وبنفس الـ `expectOnlyKnown`. والـ `Alignment` في الـ gradient مثلًا (`begin: Alignment.topLeft`) هيتمسك هو كمان. ده مقصود: الـ `AlignmentDirectional` شغال في الـ gradient، فالأحسن يتغير. ولو حالة مقصودة فعلًا، تدخل الـ allowlist بكومنت في الـ review.
+
+والـ regex بيمسك الحالات المعروفة بس، مش كل حاجة: `Positioned` اتكتب على كذا سطر ممكن يعدّي. ده مقبول: الهدف إن الغلط الشائع مايدخلش، والـ goldens بالعربي بتمسك الباقي.
+
+### الـ textContrastGuideline فشل على نص فوق صورة
+
+<b>اللي بيبوظ:</b> الـ guideline فشل على كارت فيه عنوان الكتاب أبيض فوق الغلاف، مع إن فيه gradient غامق تحت النص «عشان يتقري».
+
+<b>ليه:</b> الـ guideline بيبص على الـ pixels اللي حوالين النص فعلًا. لو الغلاف فاتح في المكان ده والـ gradient مش غامق كفاية، الـ contrast فعلًا ضعيف. والغلاف في التست ممكن يكون فاتح أكتر أو أغمق من غلاف تاني في الـ app.
+
+<b>الحل:</b> غالبًا الفشل حقيقي: صورة فاتحة في المكان ده هتخلي العنوان مش مقروء عند المستخدم كمان. اعمل الـ gradient أغمق، أو حط النص على شريط `surface` بدل الصورة. واختبر بأفتح غلاف عندك في الـ test assets، مش بأغمقهم.
+
+### تستات الشاشات بتكرر تستات الـ components
+
+<b>اللي بيبوظ:</b> كل شاشة في `feature_library` فيها تست بيتأكد إن الزرار وهو loading مقفول وفيه spinner. 12 نسخة من نفس التست، وأي تغيير في `ReadlyButton` بيكسرهم كلهم.
+
+<b>ليه:</b> الشاشات بتختبر سلوك الـ component بدل ما تختبر استخدامه.
+
+<b>الحل:</b> الشاشة بتسأل «أنا اديت الـ component القيم الصح؟»، مش «الـ component بيعمل اللي المفروض يعمله؟». يعني تست الشاشة بيتأكد إن `ReadlyButton` اتعرض بـ `loading: true` لما الـ state `submitting`:
+
+```dart
+final button = tester.widget<ReadlyButton>(find.byType(ReadlyButton));
+expect(button.loading, isTrue);
+```
+
+والـ spinner والـ semantics والمقاس دول اتستّوا مرة في `core_ui`. وعلى مستوى الشاشة، الـ `meetsGuideline` على الشاشة كلها لسه مفيد: بيمسك اللي الشاشة نفسها عملته بإيدها برا الـ components.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>التست على قد الطبقة:</b> الـ contrast مكانه الـ tokens، والـ semantics والـ overflow مكانهم الـ components، والشاشات بتتأكد إنها بتستخدم الـ components صح. كل bug بيتمسك في أرخص طبقة ممكنة.
+- <b>الـ componentCases هي الـ contract:</b> أي component جديد في `core_ui` مايدخلش من غير ما يتضاف لليستة بكل حالاته. ساعتها بياخد الـ guidelines والـ overflow والـ catalog ببلاش. ده بند في الـ PR template بتاع الـ package.
+- <b>الـ CI:</b> تستات `core_ui` بتشتغل في كل PR زي باقي الـ packages (الـ loop اللي في [درس الاستراتيجية](/course/testing/strategy/)). والـ goldens بتاعتها عليها tag `golden` زي أي goldens تانية، وبتتولّد على Linux.
+- <b>مابتختبرش Material:</b> مش شغلك تتأكد إن `FilledButton` بيعمل ripple. تختبر اللي انت زوّدته: الـ loading، والـ variants، والـ semantics، والألوان اللي انت اخترتها.
+- <b>الأوتوماتيك مش كفاية:</b> التستات بتمسك اللي ليه قاعدة واضحة. «الشاشة مفهومة بـ TalkBack؟» و«الترتيب منطقي؟» محتاجين بني آدم، مرة قبل كل release (الـ checklist في [درس الـ Semantics](/course/design-system/semantics/)).
+
+<Note kind="interview" title="سؤال interview">
+
+«إزاي تختبر design system؟» على 4 طبقات. الـ tokens بـ unit tests: الـ contrast لكل دور على الخلفيات اللي بيتحط عليها في الثيمين، ومنها الخلفيات المحسوبة زي tint الـ chip بـ `Color.alphaBlend`. والـ guards: architecture test بيمنع `Color(0x` والـ physical APIs زي `EdgeInsets.only(left:` برا الـ design system، بـ allowlist للحالات المقصودة. والـ components بـ widget tests في الـ package نفسها: ليستة واحدة فيها كل component في كل حالة، وعليها `meetsGuideline` للـ tap targets والـ labels والـ contrast في الثيمين، وتست overflow في 200% على موبايل صغير، و`isSemantics` للحاجات الخاصة زي إن الـ loading مابيمسحش الـ label. والـ goldens بالـ alchemist: الـ variants والحالات في شبكة في صورة واحدة، والثيم والاتجاه صور قليلة. والشاشات بتتأكد إنها بتدّي الـ components القيم الصح، مش بتعيد تستهم.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### هيكل التستات في core_ui
+
+```text
+packages/core_ui/test/
+├─ flutter_test_config.dart        # loads Cairo from core_ui (the components lesson)
+├─ helpers/
+│  ├─ pump_component.dart          # theme, locale, text scale
+│  └─ component_cases.dart         # every component in every state
+├─ theme/
+│  └─ contrast_test.dart           # layer 1: tokens, both themes
+└─ components/
+   ├─ accessibility_test.dart      # layer 2: guidelines on every case
+   ├─ text_scale_test.dart         # layer 3: 200% on a small phone
+   ├─ readly_button_test.dart      # semantics and size while loading
+   ├─ readly_button_golden_test.dart
+   └─ goldens/ci/                  # 3 images, not 128
+
+tools/architecture/test/
+└─ design_tokens_test.dart         # raw colors + physical APIs, with allowlists
+```
+
+<BeforeAfter>
+
+<Side label="قبل: تست في كل شاشة" kind="before">
+
+```dart
+// feature_library/test/.../library_view_test.dart
+// feature_notes/test/.../note_editor_test.dart
+// feature_auth/test/.../login_view_test.dart
+// ... the same test, 12 times
+testWidgets('save button shows a spinner while saving', (tester) async {
+  // ...
+  expect(find.byType(CircularProgressIndicator), findsOneWidget);
+  expect(tester.widget<FilledButton>(find.byType(FilledButton)).onPressed, isNull);
+});
+```
+
+</Side>
+
+<Side label="بعد: مرة في المصنع، واستخدام في الشاشة" kind="after">
+
+```dart
+// core_ui: once, for every variant
+testWidgets('loading keeps the label and reports disabled', /* ... */);
+
+// login_view_test.dart: only what the screen decides
+testWidgets('the button is loading while submitting', (tester) async {
+  when(() => cubit.state).thenReturn(
+    const LoginFormState(status: FormStatus.submitting),
+  );
+  await tester.pumpApp(subject());
+  final button = tester.widget<ReadlyButton>(find.byType(ReadlyButton));
+  expect(button.loading, isTrue);
+});
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: كل شاشة بتختبر تفاصيل الزرار من جوه (`FilledButton` والـ spinner)، فلو `ReadlyButton` اتغير من جوه، الـ 12 تست بيقعوا مع إن مفيش bug. بعد: الزرار اتستّ مرة بكل حالاته في `core_ui`، والشاشة بتختبر قرارها هي: «لما الفورم بيبعت، الزرار loading».
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="ds-testing-1">
+<Ask>`statusFinished` بيعدّي 4.5 على الـ surface، بس التست بتاع الـ chip فشل. إزاي ده ممكن، والتست حاسب الخلفية إزاي؟</Ask>
+<Answer>
+
+خلفية الـ chip مش الـ surface: هي الـ surface وفوقه نفس لون الحالة بشفافية 12%، فالخلفية قربت من لون النص والـ contrast قل. التست بيحسبها بـ `Color.alphaBlend(color.withValues(alpha: 0.12), surface)`. الحل تغميق الدور أو تخفيف الـ tint، والأول أأمن.
+
+</Answer>
+</Question>
+
+<Question id="ds-testing-2">
+<Ask>ليه تستات `core_ui` بتستخدم `pumpComponent` مش `pumpApp` بتاع الـ app؟</Ask>
+<Answer>
+
+الـ `pumpApp` بيستخدم `AppLocalizations` اللي في الـ app، والـ `core_ui` مايقدرش يعمل import منه. الـ `pumpComponent` بيحط `AppTheme` والـ locale و`GlobalMaterialLocalizations.delegates` (للـ Directionality وترجمة الـ Material widgets) وحجم الخط، وده كل اللي الـ components محتاجاه.
+
+</Answer>
+</Question>
+
+<Question id="ds-testing-3">
+<Ask>إيه الفرق بين `matchesSemantics` و`isSemantics`، وليه `isSemantics` أحسن هنا؟</Ask>
+<Answer>
+
+الـ `matchesSemantics` بيقارن الـ node كلها، وأي flag مش مكتوب متوقع false، فالتست بيتكسر مع أي flag جديد في Flutter. الـ `isSemantics` بيتشيك على القيم اللي كتبتها بس (الـ label، وإنه زرار، وإنه disabled). والـ `containsSemantics` القديم deprecated لصالحه.
+
+</Answer>
+</Question>
+
+<Question id="ds-testing-4">
+<Ask>تست الـ overflow في 200% مافيهوش ولا `expect`. إزاي بيفشل؟</Ask>
+<Answer>
+
+الـ `RenderFlex overflowed` بيترمي كـ error جوه الـ test framework، وأي error في الـ build أو الـ layout بيوقّع التست. فمجرد إن الـ component اترسم في 320 عرض بخط 2.0 من غير error هو الـ assertion.
+
+</Answer>
+</Question>
+
+<Question id="ds-testing-5">
+<Ask>golden للزرار بكل التركيبات طلع 128 صورة. إزاي تقللهم من غير ما تخسر حاجة مهمة؟</Ask>
+<Answer>
+
+تضرب المحاور اللي بتتفاعل مع بعض بس. الـ variant والحالة بيتفاعلوا، فدول شبكة في صورة واحدة. الثيم والاتجاه غالبًا مستقلين، فـ `ar_light` و`ar_dark` و`en_light` كفاية. وتكبير الخط scenario جوه نفس الصورة. النتيجة 3 صور بدل 128، وكل واحدة الـ reviewer يقدر يبص عليها فعلًا.
+
+</Answer>
+</Question>
+
+</Quiz>

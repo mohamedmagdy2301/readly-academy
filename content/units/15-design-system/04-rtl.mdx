@@ -1,0 +1,495 @@
+---
+title: "الـ RTL بالتفصيل"
+description: "الـ Directionality وstart وend في كل حاجة، والأيقونات اللي بتتقلب لوحدها واللي لأ واللي بتتقلب مرتين، والنص اللي فيه عربي وإنجليزي مع بعض، والحاجات اللي Flutter مابيقلبهاش لوحده."
+minutes: 40
+draft: true
+---
+
+<Level n="1" title="الفكرة بتشبيه">
+
+<Analogy title="الجرنال العربي والجرنال الإنجليزي">
+
+حط جرنال عربي جنب جرنال إنجليزي، وبص على الصفحة الأولى. العمود الرئيسي في العربي على اليمين، وفي الإنجليزي على الشمال. «التكملة في صفحة 5» في العربي جنبها سهم بيشاور شمال، لأن الصفحة الجاية ناحية الشمال. الـ layout كله متقلب زي المراية.
+
+بس بص على الصورة اللي في نص الصفحة: ساعة الحيطة اللي ورا الوزير مش متقلبة، والعقارب ماشية في نفس الاتجاه. ولوجو الشركة في الإعلان مكتوب زي ما هو. ورقم التليفون في آخر الإعلان بيتقري من الشمال لليمين حتى في الجرنال العربي. واسم الفيلم الأجنبي في عمود النقد مكتوب بالإنجليزي جوه الجملة العربي، وكل كلمة فيه بتتقري من الشمال.
+
+</Analogy>
+
+يعني الـ RTL مش «اقلب كل حاجة». فيه 3 أنواع حاجات، وكل نوع ليه قاعدة:
+
+<Diagram name="d-ds-rtl-mirror">
+
+الـ layout والأسهم اللي بتقول «قدام» و«ورا» بيتقلبوا. الحاجات اللي ليها شكل في الدنيا الحقيقية (ساعة، play، علامة صح، لوجو) مابتتقلبش. والنص اتجاهه من المحتوى نفسه: عنوان كتاب إنجليزي جوه جملة عربي بيتقري من الشمال، ورقم التليفون والإيميل دايمًا من الشمال.
+
+</Diagram>
+
+- <b>الـ layout:</b> بيتقلب. العنصر اللي «في الأول» بيبقى على اليمين، والـ padding بتاع «البداية» بيبقى يمين. Flutter بيعمل ده لوحده لو استخدمت الأدوات الصح.
+- <b>الأيقونات:</b> اللي بتعبّر عن اتجاه (رجوع، التالي، إرسال) بتتقلب. واللي بتعبّر عن حاجة حقيقية (play، ساعة، صح، كاميرا) لأ.
+- <b>النص:</b> كل جملة ليها اتجاه حسب حروفها. والمشاكل الحقيقية بتطلع لما الاتنين يتقابلوا في نفس السطر.
+
+وجمهور Readly عربي، يعني الـ RTL هو الوضع الأساسي مش حالة خاصة. أي bug هنا كل المستخدمين بيشوفوه.
+
+</Level>
+
+<Level n="2" title="الكود الأساسي">
+
+### الاتجاه بييجي منين
+
+في [درس الترجمة](/course/presentation/l10n/) قلنا إن Flutter بيقلب الـ layout لوحده لما اللغة عربي. اللي بيعمل ده هو `GlobalWidgetsLocalizations` اللي جوه `AppLocalizations.localizationsDelegates`: بيحط widget اسمه `Directionality` فوق الشجرة كلها، فيه `TextDirection.rtl` لأي لغة RTL. وكل widget بيعرف الاتجاه بالسؤال ده:
+
+```dart
+final direction = Directionality.of(context); // TextDirection.rtl in Arabic
+```
+
+ده المصدر الوحيد للحقيقة. مش `locale.languageCode == 'ar'`: الفارسي والأوردو والعبري RTL هما كمان، ولو Readly اتترجم لأي واحدة فيهم، كل `isArabic` في الكود هيبقى غلط.
+
+### start وend بدل left وright
+
+كل حاجة في Flutter ليها نسختين: نسخة physical بتقول «شمال» و«يمين»، ونسخة directional بتقول «بداية» و«نهاية». الـ directional بتتحسب من الـ `Directionality`: البداية يمين في العربي وشمال في الإنجليزي.
+
+| physical (غلط في RTL) | directional |
+| --- | --- |
+| `EdgeInsets.only(left: 16)` | `EdgeInsetsDirectional.only(start: 16)` |
+| `EdgeInsets.fromLTRB(16, 8, 4, 8)` | `EdgeInsetsDirectional.fromSTEB(16, 8, 4, 8)` |
+| `Alignment.centerLeft` | `AlignmentDirectional.centerStart` |
+| `Positioned(left: 8, top: 8)` | `PositionedDirectional(start: 8, top: 8)` |
+| `BorderRadius.only(topLeft: ...)` | `BorderRadiusDirectional.only(topStart: ...)` |
+| `Border(left: BorderSide(...))` | `BorderDirectional(start: BorderSide(...))` |
+| `TextAlign.left` | `TextAlign.start` |
+| `LinearGradient(begin: Alignment.centerLeft)` | `LinearGradient(begin: AlignmentDirectional.centerStart)` |
+
+وفيه حاجات آمنة من الأول ومش محتاجة تتغير:
+
+- <b>`EdgeInsets.all` و`EdgeInsets.symmetric`:</b> الناحيتين متساويين، فمش فارق مين يمين ومين شمال.
+- <b>`Row`:</b> الأولاد بيترصّوا من البداية، يعني من اليمين في العربي، لوحدهم. و`MainAxisAlignment.start` و`CrossAxisAlignment.start` في الـ `Column` كمان بيمشوا على الاتجاه.
+- <b>الـ `ListView` والـ `PageView` الأفقيين:</b> بيبدأوا من اليمين في العربي، والسحب بيمشي صح.
+- <b>الـ `ListTile`:</b> الـ `leading` في البداية والـ `trailing` في النهاية.
+
+<CodeBlock label="BookTile والـ NoteCard">
+
+```dart
+// BookTile: a status stripe on the start side
+DecoratedBox(
+  decoration: BoxDecoration(
+    border: BorderDirectional(
+      start: BorderSide(color: book.status.color(context.readlyColors), width: 4),
+    ),
+  ),
+  child: Padding(
+    padding: const EdgeInsetsDirectional.only(start: AppSpace.md, end: AppSpace.lg),
+    child: /* title, StatusChip */,
+  ),
+)
+
+// NoteCard: a speech-bubble shape, the sharp corner at the top start
+DecoratedBox(
+  decoration: BoxDecoration(
+    color: context.colorScheme.surfaceContainerLow,
+    borderRadius: const BorderRadiusDirectional.only(
+      topEnd: AppRadius.md,
+      bottomStart: AppRadius.md,
+      bottomEnd: AppRadius.md,
+    ),
+  ),
+  child: /* note body */,
+)
+```
+
+</CodeBlock>
+
+الشريط على يمين الكارت في العربي وعلى شماله في الإنجليزي، والركن الحاد في الـ NoteCard بيتنقل معاه. ومفيش ولا `if` على اللغة. والـ `AppRadius.md` هنا `Radius` مش `BorderRadius`، عشان يتركّب في أي شكل: `BorderRadius.all(AppRadius.md)` للأركان الأربعة، و`BorderRadiusDirectional.only` لأركان معينة.
+
+### الأيقونات: Flutter بيقلب بعضها لوحده
+
+كل أيقونة في Flutter عبارة عن `IconData`، وفيه flag اسمه `matchTextDirection`. لو true، الـ `Icon` بيعكسها لوحده في الـ RTL. والأيقونات بتاعة Material اللي بتعبّر عن اتجاه متعلّم عليها من الأول:
+
+| بتتقلب لوحدها (`matchTextDirection: true`) | مابتتقلبش |
+| --- | --- |
+| `arrow_back`، `arrow_forward`، `arrow_back_ios`، `arrow_forward_ios` | `keyboard_arrow_left`، `keyboard_arrow_right` |
+| `chevron_left`، `chevron_right`، `navigate_before`، `navigate_next` | `login`، `logout` |
+| `first_page`، `last_page` | `play_arrow`، `fast_forward`، `skip_next` |
+| `send`، `reply`، `forward` | `check`، `check_circle` |
+| `undo`، `redo`، `open_in_new` | `schedule`، `access_time` |
+| `list`، `sort`، `format_list_bulleted`، `help` | `search`، `camera_alt` |
+
+يعني `Icon(Icons.chevron_right)` معناها «اللي جاي»، وهتشاور شمال في العربي لوحدها. وأيقونة الـ `help` بتتقلب كمان، لأن علامة الاستفهام العربي «؟» معكوسة. أما الـ play فمابتتقلبش عن قصد: هي بتمثّل اتجاه شريط التسجيل، مش اتجاه القراية.
+
+والجدول ده بيقول قاعدة: الأيقونة بتتقلب لو معناها «قدام» أو «ورا» في الـ UI. لو معناها حاجة في الدنيا الحقيقية، لأ.
+
+<CodeBlock label="صف «كمّل القراية» في الـ Home">
+
+```dart
+ListTile(
+  leading: const Icon(Icons.auto_stories_outlined), // a book: never flipped
+  title: Text(l10n.continueReading),
+  subtitle: Text(book.title),
+  trailing: const Icon(Icons.chevron_right),        // "go to": flips by itself
+  onTap: () => context.push('/library/${book.id.value}'),
+)
+```
+
+</CodeBlock>
+
+### الأيقونات والصور بتاعتك
+
+الأيقونات اللي جاية SVG أو PNG من الـ designer مافيهاش flag، فمابتتقلبش لوحدها. ليها طريقتين:
+
+<CodeBlock label="صورة بتعبّر عن اتجاه">
+
+```dart
+// a PNG / asset image: Image has the same flag as IconData
+Image.asset('assets/swipe_hint.png', matchTextDirection: true)
+
+// anything else (an SVG widget, a custom painted arrow)
+Transform.flip(
+  flipX: Directionality.of(context) == TextDirection.rtl,
+  child: SvgPicture.asset('assets/next_chapter.svg'), // flutter_svg
+)
+```
+
+</CodeBlock>
+
+وماتقلبش صورة فيها كلام أو لوجو أو ظل: الكلام هيطلع معكوس، والظل هيبقى جاي من ناحية غلط. الصور دي لو محتاجة نسخة RTL، الـ designer يعملها نسخة تانية.
+
+### النص: كل حرف ليه اتجاه
+
+ده الجزء اللي أغلب الناس مش فاهماه، وهو سبب أغرب الـ bugs. الـ text engine بيمشي على حاجة اسمها <b>Unicode Bidirectional Algorithm</b>، وبيقسم الحروف 3 أنواع:
+
+| النوع | أمثلة | اتجاهه |
+| --- | --- | --- |
+| strong | الحروف العربي، الحروف اللاتيني | العربي RTL، اللاتيني LTR، دايمًا |
+| weak | الأرقام، `+` و`-` و`%` | بتمشي LTR جوه نفسها، بس مكانها بيتحدد من اللي حواليها |
+| neutral | المسافة، `.` `,` `!` `?` `(` `)` `«` | مالهاش اتجاه: بتاخد اتجاه اللي حواليها، ولو اللي حواليها مختلفين بتاخد اتجاه الفقرة |
+
+الـ `Text` عنده اتجاه للفقرة كلها (من الـ `Directionality`، أو من `textDirection` لو اديته). جوه الفقرة، الحروف بتتجمع في «runs» كل واحد ليه اتجاه. والمشكلة كلها في الـ neutral اللي على الحدود بين run عربي وrun إنجليزي.
+
+وده بيحصل في Readly طول الوقت، لأن الكتب أغلبها عناوين إنجليزي، والـ UI عربي.
+
+</Level>
+
+<Level n="3" title="المشاكل الحقيقية وحلولها">
+
+### علامة الاستفهام طلعت في أول العنوان
+
+<b>اللي بيبوظ:</b> لما المستخدم يخلّص كتاب، بيظهر snackbar:
+
+<CodeBlock label="app_ar.arb">
+
+```json
+"finishedBook": "خلّصت {title}",
+"@finishedBook": { "placeholders": { "title": { "type": "String" } } }
+```
+
+</CodeBlock>
+
+والكتاب اسمه `Who Moved My Cheese?`. على الشاشة طالع: «خلّصت ?Who Moved My Cheese». علامة الاستفهام نطّت لأول العنوان من الشمال.
+
+<b>ليه:</b> الـ `?` حرف neutral. اللي قبله حرف لاتيني (`e`)، واللي بعده آخر الفقرة. الاتنين مش متفقين، فبياخد اتجاه الفقرة: RTL. يعني الـ engine شايفه جزء من الجملة العربي مش من العنوان، فبيحطه في آخرها، وآخر الجملة العربي ناحية الشمال. ونفس الحكاية مع `Harry Potter (Book 1)` (القوس بيتعكس مكانه)، ومع `C++` (الـ `++` بتنط).
+
+<b>الحل:</b> بتقول للـ engine «النص ده وحدة لوحدها، احسب اتجاهه من جواه، وماتخلطوش باللي برا». ده اسمه <b>isolate</b>، وليه حرفين Unicode مش بيظهروا: `U+2068` (FIRST STRONG ISOLATE: الاتجاه من أول حرف strong جوه) و`U+2069` (POP DIRECTIONAL ISOLATE: خلص):
+
+<CodeBlock label="packages/core_ui/lib/src/text/bidi.dart">
+
+```dart
+/// Wraps text that comes from data (a title, a name) before it goes
+/// into a translated sentence: its direction is computed from its own
+/// letters, and its punctuation stays inside it.
+String isolate(String text) => '⁨$text⁩';
+```
+
+</CodeBlock>
+
+```dart
+// presentation: the placeholder value is isolated, not the whole sentence
+SnackBar(content: Text(l10n.finishedBook(isolate(book.title))));
+```
+
+دلوقتي الـ `?` جوه الـ isolate، والـ isolate اتجاهه LTR لأن أول حرف strong فيه `W`. فبيطلع «خلّصت Who Moved My Cheese?» صح. والقاعدة: <b>أي placeholder قيمته جاية من data (اسم، عنوان، إيميل) بيتلف بـ `isolate` قبل ما يدخل جملة مترجمة</b>. والنصوص الثابتة في الـ ARB مش محتاجة، لأنها بلغة واحدة.
+
+والـ intl package فيها `BidiFormatter` بيعمل حاجة قريبة (`BidiFormatter.RTL().wrapWithUnicode(text)`)، بس بيستخدم الـ embedding marks القديمة (`RLE`/`LRE` و`PDF`). الـ isolates أحدث وأنضف لأنها مابتأثرش على اللي حواليها خالص، والـ text engine بتاع Flutter بيفهمها.
+
+### ملاحظة إنجليزي في app عربي
+
+<b>اللي بيبوظ:</b> المستخدم بيكتب ملاحظاته على الكتاب بالإنجليزي: `Great chapter on habits. Re-read p. 42!`. في الـ `NoteCard` النص لازق يمين، والـ `!` طالعة في أول السطر، و`p. 42` متلخبطة.
+
+<b>ليه:</b> الـ `Text` واخد اتجاه الفقرة من الـ `Directionality`، يعني RTL. بس الملاحظة دي مكتوبة كلها LTR. النص ده مش جزء من الـ UI، ده محتوى المستخدم، واتجاهه من حروفه هو.
+
+<b>الحل:</b> اتجاه المحتوى بيتحسب من المحتوى:
+
+<CodeBlock label="packages/core_ui/lib/src/text/bidi.dart">
+
+```dart
+import 'package:flutter/widgets.dart';
+import 'package:intl/intl.dart' as intl; // intl has its own TextDirection
+
+/// The direction of user content, from its own letters.
+/// Empty text follows the surrounding direction.
+TextDirection contentDirection(String text, TextDirection fallback) {
+  if (text.trim().isEmpty) return fallback;
+  return intl.Bidi.detectRtlDirectionality(text) ? TextDirection.rtl : TextDirection.ltr;
+}
+```
+
+</CodeBlock>
+
+<CodeBlock label="NoteCard">
+
+```dart
+Text(
+  note.body,
+  textDirection: contentDirection(note.body, Directionality.of(context)),
+  textAlign: TextAlign.start, // start of the note's own direction
+)
+```
+
+</CodeBlock>
+
+- <b>الـ `as intl`:</b> الـ intl فيها enum اسمه `TextDirection` برضه (`LTR` و`RTL` و`UNKNOWN`)، ولو عملت import من غير alias هيتخانق مع بتاع Flutter.
+- <b>الـ `TextAlign.start` مش `left`:</b> الـ start بيتحسب من الـ `textDirection` بتاع الـ `Text` نفسه. الملاحظة الإنجليزي هتبدأ من الشمال، والعربي من اليمين، في نفس الليستة.
+- <b>الـ `detectRtlDirectionality`:</b> بيبص على نسبة الكلمات العربي في النص. ملاحظة عربي فيها اسم كتاب إنجليزي هتطلع RTL، وده الصح.
+
+وفي الـ `TextField` اللي بيكتب فيه الملاحظة، نفس الفكرة بس الاتجاه بيتغير وهو بيكتب:
+
+<CodeBlock label="حقل الملاحظة بيقلب مع أول حرف">
+
+```dart
+ValueListenableBuilder<TextEditingValue>(
+  valueListenable: _body, // the TextEditingController
+  builder: (context, value, _) => TextField(
+    controller: _body,
+    maxLines: null,
+    textDirection: contentDirection(value.text, Directionality.of(context)),
+    textAlign: TextAlign.start,
+  ),
+)
+```
+
+</CodeBlock>
+
+### الإيميل في الـ login بيتكتب بالمقلوب
+
+<b>اللي بيبوظ:</b> في حقل الإيميل، المستخدم بيكتب `ali@mail.com`، والـ cursor بيبدأ من اليمين، والـ `@` والـ `.` بيتنطّوا وهو بيكتب.
+
+<b>ليه:</b> الحقل RTL لأن الـ app عربي. والإيميل حروف لاتيني وneutrals كتير.
+
+<b>الحل:</b> فيه محتوى اتجاهه ثابت مهما كانت اللغة: الإيميل، والباسورد، والـ URL، ورقم التليفون، والـ ISBN، والكود. ده بتقوله صريح:
+
+<CodeBlock label="حقول اتجاهها LTR دايمًا">
+
+```dart
+TextField(
+  onChanged: cubit.emailChanged,
+  keyboardType: TextInputType.emailAddress,
+  textDirection: TextDirection.ltr, // an email is always LTR
+  decoration: InputDecoration(labelText: l10n.emailLabel), // the label stays Arabic
+)
+
+// the support email in the about page: text, not a field, same rule
+Text('help@readly.app', textDirection: TextDirection.ltr)
+```
+
+</CodeBlock>
+
+الـ `textDirection` بيأثر على النص اللي جوه الحقل بس. الـ label والـ error تحته بيفضلوا عربي ومن اليمين.
+
+### السهم بيشاور الناحية الغلط في العربي بس
+
+<b>اللي بيبوظ:</b> في صفحة الإعدادات، السهم اللي جنب «اللغة» بيشاور يمين في العربي، يعني لورا، مع إنه المفروض يشاور على الصفحة الجاية.
+
+<b>ليه:</b> حد «صلّح» الـ RTL بإيده:
+
+```dart
+trailing: Icon(isArabic ? Icons.chevron_left : Icons.chevron_right),
+```
+
+بس الـ `chevron_left` بيتقلب لوحده في الـ RTL، فبقى بيشاور يمين. اتقلب مرتين: مرة بالـ `if` ومرة بـ Flutter. والمطوّر جرّبه في الإنجليزي بس، فشافه صح.
+
+<b>الحل:</b> امسح الـ `if`. `Icons.chevron_right` لوحدها معناها «قدام» في الاتجاهين. والقاعدة: لو لقيت `isRtl ?` أو `isArabic ?` بيختار بين أيقونتين، غالبًا واحدة منهم بتتقلب لوحدها والكود بيقلبها تاني.
+
+والعكس كمان فخ: `Icons.keyboard_arrow_right` شكلها زي `chevron_right` بالظبط، بس <b>مابتتقلبش</b>. لو حد اختارها من الـ autocomplete، السهم هيشاور يمين في العربي. لو محتاج سهم اتجاه، استخدم `chevron_*` أو `arrow_*`، و`keyboard_arrow_*` بس للحاجات اللي اتجاهها physical فعلًا (زي أسهم الكيبورد).
+
+### الحاجات اللي Flutter مابيقلبهاش
+
+كل اللي فات بيتقلب لوحده لو استخدمت الأداة الصح. فيه حاجات تانية مالهاش نسخة directional، ولازم انت تفكر فيها:
+
+<b>الرسم بـ CustomPainter:</b> الـ canvas إحداثياته physical: x=0 دايمًا شمال. الدايرة بتاعة نسبة القراية لو بتبدأ من الشمال وبتتملي مع عقارب الساعة، هتفضل كده في العربي. الـ painter محتاج ياخد الاتجاه:
+
+<CodeBlock label="ReadingProgressPainter بياخد الاتجاه">
+
+```dart
+class ReadingProgressPainter extends CustomPainter {
+  ReadingProgressPainter({required this.progress, required this.direction, required this.color});
+  final double progress; // 0..1
+  final TextDirection direction;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final width = size.width * progress;
+    // the filled part grows from the start side
+    final left = direction == TextDirection.rtl ? size.width - width : 0.0;
+    canvas.drawRRect(
+      RRect.fromLTRBR(left, 0, left + width, size.height, const Radius.circular(4)),
+      Paint()..color = color,
+    );
+  }
+
+  @override
+  bool shouldRepaint(ReadingProgressPainter old) =>
+      old.progress != progress || old.direction != direction || old.color != color;
+}
+
+// CustomPaint(painter: ReadingProgressPainter(progress: p, direction: Directionality.of(context), color: ...))
+```
+
+</CodeBlock>
+
+ولو اللي بترسمه موجود جاهز (`LinearProgressIndicator` بيمشي مع الاتجاه لوحده)، استخدم الجاهز.
+
+<b>الـ animations بالـ Offset:</b> `SlideTransition(position: Tween(begin: const Offset(1, 0), end: Offset.zero).animate(a))` بيدخّل الكارت من اليمين دايمًا. في العربي «الجاي» بييجي من الشمال. الـ `x` لازم تتضرب في `-1` لو الاتجاه RTL.
+
+<b>السحب:</b> «اسحب لليمين عشان تعلّم الكتاب خلصته» في `GestureDetector.onHorizontalDragEnd` بيقرا `details.primaryVelocity`، والإشارة بتاعتها physical. لو المعنى «اسحب ناحية البداية»، الإشارة بتتعكس في العربي. أو استخدم `Dismissible`: الـ `DismissDirection.startToEnd` و`endToStart` directional.
+
+### Directionality ثابت LTR: امتى ده صح
+
+<b>اللي بيبوظ:</b> حد لف صفحة كاملة بـ `Directionality(textDirection: TextDirection.ltr)` عشان «الـ layout كان بيبوظ في العربي». الصفحة بقت شغالة، بس النصوص العربي فيها لازقة شمال، والـ back arrow بيشاور غلط.
+
+<b>ليه:</b> ده إخفاء للمشكلة مش حل. الـ physical values جوه الصفحة لسه موجودة، والـ `Directionality` الثابت خلاها «صح» بالصدفة.
+
+<b>الحل:</b> الـ LTR الثابت صح بس لما المحتوى نفسه LTR بطبيعته في كل اللغات: رقم تليفون، كود، معادلة، أو حاجة المنتج قرر إنها تتقري من الشمال دايمًا (زي نتيجة ماتش: صاحب الأرض شمال). ساعتها بيتلف أصغر جزء ممكن، ومكتوب جنبه كومنت بيقول ليه. وأي حاجة تانية: صلّح الـ physical values.
+
+</Level>
+
+<Level n="4" title="قرارات الـ senior">
+
+- <b>`Directionality.of` هو المصدر الوحيد:</b> مفيش `isArabic` ولا `locale == 'ar'` في الـ UI. الـ locale للترجمة، والاتجاه للـ layout. ولو فيه helper مكتوب `isArabic`، ده أول حاجة تتشال لما Readly يتترجم لفارسي أو أوردو.
+- <b>اتعامل مع النص على إنه 3 أنواع:</b> نص الـ UI (من الـ ARB: اتجاه الـ app)، ومحتوى المستخدم (اتجاهه من حروفه)، وdata مدموجة في جملة (isolate). كل `Text` في الـ review يتسأل: ده أنهي نوع؟
+- <b>الـ physical APIs بيتمنعوا بتست:</b> نفس الـ test بتاع الألوان في [درس الـ tokens](/course/design-system/tokens/) بيدوّر على `EdgeInsets.only(left`، و`fromLTRB`، و`Alignment.centerLeft`، و`Positioned(left`، و`TextAlign.left` في الـ packages، بـ allowlist للحالات المقصودة. التفاصيل في [درس تست الـ Design System](/course/design-system/testing-ds/).
+- <b>طوّر بالعربي:</b> لو الفريق بيطوّر والـ app إنجليزي، الـ RTL هيتشاف في الـ QA بس. خلّي الـ locale الافتراضي في الـ debug عربي، وخلّي فيه زرار في الـ debug menu بيقلب الاتجاه من غير ما يغيّر اللغة (`MaterialApp.builder` بيلف الـ child بـ `Directionality` تانية). الإنجليزي RTL شكله غريب، فأي حاجة مش متقلبة بتبان على طول.
+- <b>الخط لازم يغطي اللغتين:</b> Cairo فيه حروف لاتيني، فالعنوان الإنجليزي بيطلع بنفس الخط. لو الخط العربي اللي اختاره الـ designer مافيهوش لاتيني، الـ engine هيدوّر على fallback من النظام، والعنوان هيطلع بخط تاني على كل موبايل. ده يتحل بـ `fontFamilyFallback` في الثيم بخط لاتيني متحدد.
+- <b>الصور والـ illustrations:</b> اسأل الـ designer من الأول: الصورة دي فيها اتجاه؟ لو فيها (شخص بيمشي ناحية، سهم)، محتاجة `matchTextDirection` أو نسخة تانية. ولو فيها كلام، مابتتقلبش أبدًا.
+
+<Note kind="interview" title="سؤال interview">
+
+«إيه اللي بيتكسر في الـ RTL غير الـ padding؟» الـ layout سهل لو استخدمت الـ directional APIs (`EdgeInsetsDirectional`، و`AlignmentDirectional`، و`PositionedDirectional`، و`TextAlign.start`). الصعب 3 حاجات. الأيقونات: Flutter بيقلب أيقونات الاتجاه لوحده (`chevron_right` و`arrow_back`)، فالـ `isRtl ? left : right` بيقلبها مرتين، و`keyboard_arrow_right` مابتتقلبش فبتطلع غلط. والـ SVG بتوعك محتاجين `Transform.flip` أو `matchTextDirection`. النص المختلط: علامات الترقيم neutral فبتاخد اتجاه الفقرة، فعنوان إنجليزي جوه جملة عربي بتنط علامته؛ الحل isolate بـ `U+2068` و`U+2069` حوالين الـ placeholder، ومحتوى المستخدم اتجاهه من حروفه (`Bidi.detectRtlDirectionality`)، والإيميل والتليفون LTR صريح. والحاجات اللي مالهاش نسخة directional: الـ CustomPainter، والـ Offset في الـ animations، واتجاه السحب. وكل ده بيتستّ بـ golden عربي وتست بيمنع الـ physical APIs.
+
+</Note>
+
+</Level>
+
+<LessonPart title="قبل وبعد والكود">
+
+### هيدر صفحة الكتاب
+
+<BeforeAfter>
+
+<Side label="قبل" kind="before">
+
+```dart
+Row(
+  children: [
+    IconButton(
+      icon: Icon(isArabic ? Icons.arrow_forward : Icons.arrow_back),
+      onPressed: context.pop,
+    ),
+    Expanded(
+      child: Padding(
+        padding: const EdgeInsets.only(left: 8),
+        child: Text(
+          '${l10n.by} $authorName', // authorName = details.author?.name
+          textAlign: isArabic ? TextAlign.right : TextAlign.left,
+        ),
+      ),
+    ),
+    Positioned(right: 0, child: SyncBadge(pending: pending)),
+  ],
+)
+```
+
+</Side>
+
+<Side label="بعد" kind="after">
+
+```dart
+Row(
+  children: [
+    const BackButton(), // the right icon per platform, mirrored, with a tooltip
+    Expanded(
+      child: Padding(
+        padding: const EdgeInsetsDirectional.only(start: AppSpace.sm),
+        child: Text(
+          l10n.byAuthor(isolate(authorName)), // "تأليف {author}"
+          textAlign: TextAlign.start,
+        ),
+      ),
+    ),
+    SyncBadge(pending: pending), // last child of a Row = the end side
+  ],
+)
+```
+
+</Side>
+
+</BeforeAfter>
+
+قبل: السهم بيتقلب مرتين (الـ `arrow_back` بيتقلب لوحده، والـ `if` بيقلبه تاني)، والـ padding ناحية الشمال في العربي فلازق في السهم، والجملة متركّبة بالـ `+` بدل placeholder (زي ما [درس الترجمة](/course/presentation/l10n/) حذّر)، واسم مؤلف زي `J.R.R. Tolkien` النقط بتاعته هتنط. والـ `Positioned` جوه `Row` أصلًا مالوش معنى (هو للـ `Stack`). بعد: `BackButton` بيختار الأيقونة المناسبة للمنصة وبيقلبها وفيه tooltip لقارئ الشاشة، والـ padding directional، والاسم معزول جوه placeholder، والـ badge في آخر الـ Row يعني ناحية النهاية في أي لغة.
+
+</LessonPart>
+
+<Quiz>
+
+<Question id="ds-rtl-1">
+<Ask>كود فيه `Icon(isRtl ? Icons.chevron_left : Icons.chevron_right)`. في الإنجليزي السهم صح. في العربي بيشاور فين، وليه؟</Ask>
+<Answer>
+
+بيشاور يمين، يعني غلط. الـ `chevron_left` عليها `matchTextDirection: true`، فـ Flutter بيقلبها لوحده في الـ RTL. الكود قلبها مرة، وFlutter قلبها تاني. الصح `Icons.chevron_right` من غير `if`.
+
+</Answer>
+</Question>
+
+<Question id="ds-rtl-2">
+<Ask>الـ snackbar بيقول «خلّصت ?Who Moved My Cheese». ليه علامة الاستفهام نطّت، وتصلّحها إزاي؟</Ask>
+<Answer>
+
+الـ `?` حرف neutral، وبين حرف لاتيني وآخر الفقرة، فبياخد اتجاه الفقرة (RTL) ويتحط في آخر الجملة العربي، اللي هو ناحية الشمال. الحل isolate: العنوان يتلف بـ `U+2068` و`U+2069` قبل ما يدخل الـ placeholder، فاتجاهه يتحسب من جواه والـ `?` تفضل معاه.
+
+</Answer>
+</Question>
+
+<Question id="ds-rtl-3">
+<Ask>ليه `Directionality.of(context)` أحسن من `locale.languageCode == 'ar'` عشان تعرف الاتجاه؟</Ask>
+<Answer>
+
+لأن الـ RTL مش العربي بس: الفارسي والأوردو والعبري كمان. والـ `Directionality` هو اللي الـ widgets نفسها بتستخدمه، فلو حد غيّره لجزء من الشجرة (رقم تليفون LTR مثلًا)، الكود بتاعك هيمشي معاه. الـ locale للترجمة، والـ Directionality للـ layout.
+
+</Answer>
+</Question>
+
+<Question id="ds-rtl-4">
+<Ask>المستخدم كتب ملاحظة بالإنجليزي، وظاهرة لازقة يمين والنقط متلخبطة. تعمل إيه؟</Ask>
+<Answer>
+
+الملاحظة محتوى مستخدم، واتجاهها من حروفها مش من الـ app. احسبه بـ `Bidi.detectRtlDirectionality` من intl (بـ alias عشان الـ TextDirection)، وحطه في `textDirection` بتاع الـ `Text` مع `TextAlign.start`. ولو النص فاضي، ارجع لاتجاه الـ app.
+
+</Answer>
+</Question>
+
+<Question id="ds-rtl-5">
+<Ask>أنهي من دول بيتقلب لوحده في العربي: `EdgeInsets.symmetric(horizontal: 16)`، `Row` children، `CustomPainter` بيرسم progress bar، `Icons.play_arrow`، `Icons.keyboard_arrow_right`؟</Ask>
+<Answer>
+
+الـ `symmetric` مش محتاج يتقلب أصلًا (الناحيتين زي بعض). الـ `Row` بيرص من اليمين لوحده. الـ `CustomPainter` لأ: الـ canvas physical، ولازم تدّيله الاتجاه. الـ `play_arrow` لأ وده مقصود (اتجاه الشريط مش القراية). والـ `keyboard_arrow_right` لأ، وده فخ لو استخدمتها كسهم «التالي».
+
+</Answer>
+</Question>
+
+<Question id="ds-rtl-6">
+<Ask>امتى `Directionality(textDirection: TextDirection.ltr)` حوالين جزء من الشاشة يبقى قرار صح؟</Ask>
+<Answer>
+
+لما المحتوى LTR بطبيعته في كل اللغات: رقم تليفون، كود، معادلة، أو حاجة المنتج قرر صريح إنها تتقري من الشمال دايمًا. ساعتها تلف أصغر جزء ممكن وتكتب كومنت بالسبب. لو بتستخدمه عشان «الـ layout بيبوظ في العربي»، ده إخفاء لـ physical values لازم تتصلّح.
+
+</Answer>
+</Question>
+
+</Quiz>
