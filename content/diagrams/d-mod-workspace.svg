@@ -10,8 +10,8 @@
 <line x1="572" y1="62" x2="608" y2="62" stroke="var(--muted)" stroke-width="1.6" marker-end="url(#mk-mut)"/>
 <text x="678" y="114" text-anchor="middle" font-size="10.5" fill="var(--muted)" class="ar" direction="rtl" unicode-bidi="embed">نسخة واحدة من كل package</text>
 <rect x="16" y="196" width="168" height="62" rx="10" fill="var(--accent)" stroke="var(--accent)" stroke-width="1.5"/>
-<text x="100" y="222" text-anchor="middle" font-size="12.5" fill="#fff" font-weight="600">apps/readly</text>
-<text x="100" y="242" text-anchor="middle" font-size="10.5" fill="#e8f2fb">resolution: workspace</text>
+<text x="100" y="222" text-anchor="middle" font-size="12.5" fill="var(--surface)" font-weight="600">apps/readly</text>
+<text x="100" y="242" text-anchor="middle" font-size="10.5" fill="var(--accent-soft)">resolution: workspace</text>
 <rect x="204" y="196" width="168" height="62" rx="10" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.5"/>
 <text x="288" y="222" text-anchor="middle" font-size="12.5" fill="var(--ink)" font-weight="600">feature_notes</text>
 <text x="288" y="242" text-anchor="middle" font-size="10.5" fill="var(--muted)">resolution: workspace</text>

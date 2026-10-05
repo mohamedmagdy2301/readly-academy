@@ -20,7 +20,7 @@
 <rect x="201" y="170" width="12" height="26" fill="var(--accent-soft)" stroke="var(--accent)"/>
 <rect x="213" y="170" width="44" height="26" fill="var(--good-soft)" stroke="var(--good)"/><text x="235" y="187">build</text>
 <rect x="257" y="170" width="38" height="26" fill="var(--good-soft)" stroke="var(--good)"/><text x="276" y="187">books</text>
-<rect x="300" y="170" width="200" height="26" rx="4" fill="none" stroke="var(--muted)" stroke-dasharray="4 3"/><text x="400" y="187">after first frame: wm, sync, update check</text>
+<rect x="300" y="170" width="240" height="26" rx="4" fill="none" stroke="var(--muted)" stroke-dasharray="4 3"/><text x="420" y="187">after first frame: wm, sync, update check</text>
 </g>
 <g stroke="var(--ink)" stroke-width="1.2">
 <line x1="535" y1="34" x2="535" y2="72"/><line x1="295" y1="164" x2="295" y2="226"/>

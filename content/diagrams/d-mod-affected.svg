@@ -12,8 +12,8 @@
 <rect x="560" y="104" width="180" height="44" rx="10" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="2"/>
 <text x="650" y="131" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">feature_library</text>
 <rect x="470" y="190" width="200" height="48" rx="10" fill="var(--warn)" stroke="var(--warn)" stroke-width="2"/>
-<text x="570" y="212" text-anchor="middle" font-size="12.5" fill="#fff" font-weight="600">library_domain</text>
-<text x="570" y="229" text-anchor="middle" font-size="10.5" fill="#fff" class="ar" direction="rtl" unicode-bidi="embed">اتغيرت في الـ PR</text>
+<text x="570" y="212" text-anchor="middle" font-size="12.5" fill="var(--surface)" font-weight="600">library_domain</text>
+<text x="570" y="229" text-anchor="middle" font-size="10.5" fill="var(--surface)" class="ar" direction="rtl" unicode-bidi="embed">اتغيرت في الـ PR</text>
 <line x1="650" y1="150" x2="610" y2="186" stroke="var(--warn)" stroke-width="1.6" marker-end="url(#mk-warn)"/>
 <line x1="460" y1="150" x2="530" y2="186" stroke="var(--warn)" stroke-width="1.6" marker-end="url(#mk-warn)"/>
 <line x1="280" y1="150" x2="500" y2="196" stroke="var(--warn)" stroke-width="1.6" marker-end="url(#mk-warn)"/>

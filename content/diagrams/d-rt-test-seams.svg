@@ -12,7 +12,7 @@
 <text x="230" y="145" text-anchor="middle" font-size="10" fill="var(--good)">() =&gt; 1.0</text>
 <rect x="310" y="110" width="140" height="44" rx="8" fill="var(--surface)" stroke="var(--line)"/>
 <text x="380" y="128" text-anchor="middle">Clock + Timer</text>
-<text x="380" y="145" text-anchor="middle" font-size="10" fill="var(--good)">fakeAsync + FakeAsyncClock</text>
+<text x="380" y="145" text-anchor="middle" font-size="8" fill="var(--good)">fakeAsync + FakeAsyncClock</text>
 <rect x="460" y="110" width="140" height="44" rx="8" fill="var(--surface)" stroke="var(--line)"/>
 <text x="530" y="128" text-anchor="middle">NetworkStatus</text>
 <text x="530" y="145" text-anchor="middle" font-size="10" fill="var(--good)">FakeNetworkStatus</text>
@@ -38,7 +38,7 @@
 <text x="380" y="307" text-anchor="middle" font-size="10" fill="var(--good)">fake: changePages</text>
 <rect x="530" y="272" width="170" height="44" rx="8" fill="var(--good-soft)" stroke="var(--good)"/>
 <text x="615" y="290" text-anchor="middle">AppDatabase</text>
-<text x="615" y="307" text-anchor="middle" font-size="10" fill="var(--good)">real, NativeDatabase.memory()</text>
+<text x="615" y="307" text-anchor="middle" font-size="9" fill="var(--good)">real, NativeDatabase.memory()</text>
 </g>
 <line x1="145" y1="270" x2="300" y2="254" stroke="var(--muted)" stroke-width="1.2"/>
 <line x1="380" y1="270" x2="380" y2="254" stroke="var(--muted)" stroke-width="1.2"/>

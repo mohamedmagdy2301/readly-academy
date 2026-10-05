@@ -1,10 +1,10 @@
 <svg viewBox="0 0 760 330" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="الـ app والأدمن بيعتمدوا على library_domain، والأدمن مابيعتمدش على feature_library">
 <rect x="60" y="14" width="220" height="50" rx="10" fill="var(--accent)" stroke="var(--accent)" stroke-width="1.5"/>
-<text x="170" y="36" text-anchor="middle" font-size="13" fill="#fff" font-weight="600">apps/readly</text>
-<text x="170" y="54" text-anchor="middle" font-size="10.5" fill="#e8f2fb" class="ar" direction="rtl" unicode-bidi="embed">موبايل، أوفلاين</text>
+<text x="170" y="36" text-anchor="middle" font-size="13" fill="var(--surface)" font-weight="600">apps/readly</text>
+<text x="170" y="54" text-anchor="middle" font-size="10.5" fill="var(--accent-soft)" class="ar" direction="rtl" unicode-bidi="embed">موبايل، أوفلاين</text>
 <rect x="480" y="14" width="220" height="50" rx="10" fill="var(--accent)" stroke="var(--accent)" stroke-width="1.5"/>
-<text x="590" y="36" text-anchor="middle" font-size="13" fill="#fff" font-weight="600">apps/readly_admin</text>
-<text x="590" y="54" text-anchor="middle" font-size="10.5" fill="#e8f2fb" class="ar" direction="rtl" unicode-bidi="embed">ويب، أونلاين بس</text>
+<text x="590" y="36" text-anchor="middle" font-size="13" fill="var(--surface)" font-weight="600">apps/readly_admin</text>
+<text x="590" y="54" text-anchor="middle" font-size="10.5" fill="var(--accent-soft)" class="ar" direction="rtl" unicode-bidi="embed">ويب، أونلاين بس</text>
 <rect x="30" y="112" width="140" height="62" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
 <text x="100" y="138" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">feature_library</text>
 <text x="100" y="158" text-anchor="middle" font-size="10" fill="var(--muted)">use cases · drift · UI</text>

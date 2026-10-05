@@ -35,9 +35,9 @@
 <line x1="392" y1="263" x2="446" y2="263" stroke="var(--muted)" stroke-width="1.6" marker-end="url(#mk-mut)"/>
 
 <rect x="640" y="160" width="110" height="80" rx="10" fill="var(--accent)"/>
-<text x="695" y="190" text-anchor="middle" font-size="12" fill="#fff" font-weight="600">PushRouter</text>
-<text x="695" y="208" text-anchor="middle" font-size="10" fill="#fff">dedupe · allowlist</text>
-<text x="695" y="224" text-anchor="middle" font-size="10" fill="#fff">uid · router.go</text>
+<text x="695" y="190" text-anchor="middle" font-size="12" fill="var(--surface)" font-weight="600">PushRouter</text>
+<text x="695" y="208" text-anchor="middle" font-size="10" fill="var(--surface)">dedupe · allowlist</text>
+<text x="695" y="224" text-anchor="middle" font-size="10" fill="var(--surface)">uid · router.go</text>
 <line x1="602" y1="160" x2="636" y2="185" stroke="var(--accent)" stroke-width="1.8" marker-end="url(#mk-acc)"/>
 <line x1="602" y1="263" x2="636" y2="220" stroke="var(--accent)" stroke-width="1.8" marker-end="url(#mk-acc)"/>
 <path d="M 600 57 C 690 57, 695 100, 695 156" fill="none" stroke="var(--accent)" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#mk-acc)"/>

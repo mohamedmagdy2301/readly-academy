@@ -13,7 +13,7 @@
 <text x="190" y="246" text-anchor="middle" font-size="11" fill="var(--muted)" class="ar" direction="rtl" unicode-bidi="embed">مين يتبني الأول؟ التست بيقع:</text>
 <text x="190" y="266" text-anchor="middle" font-size="11" fill="var(--warn)">[feature_library, feature_notes, feature_library]</text>
 <rect x="500" y="44" width="120" height="40" rx="10" fill="var(--accent)" stroke="var(--accent)" stroke-width="1.5"/>
-<text x="560" y="69" text-anchor="middle" font-size="12" fill="#fff" font-weight="600">apps/readly</text>
+<text x="560" y="69" text-anchor="middle" font-size="12" fill="var(--surface)" font-weight="600">apps/readly</text>
 <rect x="400" y="130" width="130" height="48" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
 <text x="465" y="159" text-anchor="middle" font-size="12.5" fill="var(--ink)" font-weight="600">feature_notes</text>
 <rect x="580" y="118" width="160" height="104" rx="10" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>

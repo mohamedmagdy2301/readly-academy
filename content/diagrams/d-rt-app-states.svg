@@ -25,5 +25,5 @@
 <path d="M 630 194 C 630 260, 130 260, 130 196" fill="none" stroke="var(--accent)" stroke-width="1.8" marker-end="url(#mk-acc)"/>
 <path d="M 380 194 C 380 230, 160 230, 150 198" fill="none" stroke="var(--accent)" stroke-width="1.8" marker-end="url(#mk-acc)"/>
 <rect x="250" y="250" width="260" height="30" rx="8" fill="var(--accent)"/>
-<text x="380" y="270" text-anchor="middle" font-size="12" fill="#fff">resume: connect + catch-up (?since=)</text>
+<text x="380" y="270" text-anchor="middle" font-size="12" fill="var(--surface)">resume: connect + catch-up (?since=)</text>
 </svg>

@@ -8,6 +8,11 @@ import BlocConcurrencyLab from "./BlocConcurrencyLab";
 import EventLoopLab from "./EventLoopLab";
 import StreamMarblesLab from "./StreamMarblesLab";
 import SubscriptionLeakLab from "./SubscriptionLeakLab";
+import ProviderLifecycleLab from "./ProviderLifecycleLab";
+import WsReconnectLab from "./WsReconnectLab";
+import EventMergeLab from "./EventMergeLab";
+import FrameBudgetLab from "./FrameBudgetLab";
+import BidiLab from "./BidiLab";
 
 /**
  * Registry of interactive labs usable in MDX as <Lab name="..." />.
@@ -23,6 +28,11 @@ const LABS: Record<string, React.ComponentType> = {
   "event-loop": EventLoopLab,
   "stream-marbles": StreamMarblesLab,
   "subscription-leak": SubscriptionLeakLab,
+  "provider-lifecycle": ProviderLifecycleLab,
+  "ws-reconnect": WsReconnectLab,
+  "event-merge": EventMergeLab,
+  "frame-budget": FrameBudgetLab,
+  bidi: BidiLab,
 };
 
 export default function Lab({ name }: { name: string }) {

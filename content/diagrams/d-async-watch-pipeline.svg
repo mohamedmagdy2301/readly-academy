@@ -15,10 +15,10 @@
 </g>
 <g font-size="10" text-anchor="middle" fill="var(--muted)">
 <text x="380" y="53">.watch(): Stream&lt;List&lt;BookRow&gt;&gt;</text>
-<text x="380" y="121">Stream&lt;List&lt;BookRow&gt;&gt;, errors as CacheException</text>
-<text x="380" y="189">.map(toEntity) + distinct: Stream&lt;List&lt;Book&gt;&gt;</text>
+<text x="380" y="121" font-size="8.5">Stream&lt;List&lt;BookRow&gt;&gt;, errors as CacheException</text>
+<text x="380" y="189" font-size="9">.map(toEntity) + distinct: Stream&lt;List&lt;Book&gt;&gt;</text>
 <text x="380" y="257">.map(filter + sort)</text>
-<text x="380" y="325">listen → emit(LibraryLoaded) · cancel in close()</text>
+<text x="380" y="325" font-size="8.5">listen → emit(LibraryLoaded) · cancel in close()</text>
 </g>
 <g stroke="var(--accent)" stroke-width="1.8" fill="none">
 <line x1="380" y1="62" x2="380" y2="81" marker-end="url(#mk-acc)"/>

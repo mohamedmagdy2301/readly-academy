@@ -7,8 +7,8 @@
 <text x="285" y="53" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">activate()</text>
 <text x="285" y="70" text-anchor="middle" font-size="10" fill="var(--muted)">what launch N-1 fetched</text>
 <rect x="400" y="32" width="160" height="50" rx="9" fill="var(--accent)" stroke="var(--accent)" stroke-width="1.4"/>
-<text x="480" y="53" text-anchor="middle" font-size="12" fill="#fff" font-weight="600">snapshot</text>
-<text x="480" y="70" text-anchor="middle" font-size="10" fill="#e8f2fb">release flags fixed</text>
+<text x="480" y="53" text-anchor="middle" font-size="12" fill="var(--surface)" font-weight="600">snapshot</text>
+<text x="480" y="70" text-anchor="middle" font-size="10" fill="var(--accent-soft)">release flags fixed</text>
 <rect x="595" y="32" width="145" height="50" rx="9" fill="var(--good-soft)" stroke="var(--good)" stroke-width="1.4"/>
 <text x="667" y="53" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">DI, router, UI</text>
 <text x="667" y="70" text-anchor="middle" font-size="10" fill="var(--muted)">isOn(flag)</text>
@@ -30,7 +30,7 @@
 <text x="20" y="214" font-size="11" fill="var(--warn)">kill switch, app open</text>
 <rect x="20" y="224" width="150" height="50" rx="9" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="1.4"/>
 <text x="95" y="245" text-anchor="middle" font-size="11" fill="var(--ink)" font-weight="600">console</text>
-<text x="95" y="262" text-anchor="middle" font-size="10" fill="var(--muted)">recommendations_enabled=false</text>
+<text x="95" y="262" text-anchor="middle" font-size="8" fill="var(--muted)">recommendations_enabled=false</text>
 <rect x="205" y="224" width="160" height="50" rx="9" fill="var(--surface)" stroke="var(--line)" stroke-width="1.4"/>
 <text x="285" y="245" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="600">onConfigUpdated</text>
 <text x="285" y="262" text-anchor="middle" font-size="10" fill="var(--muted)">activate()</text>

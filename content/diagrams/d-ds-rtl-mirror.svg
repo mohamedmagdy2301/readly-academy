@@ -14,15 +14,15 @@
 <rect x="510" y="104" width="230" height="190" rx="12" fill="var(--good-soft)" stroke="var(--good)" stroke-width="1.5"/>
 <text x="625" y="128" text-anchor="middle" font-size="13" fill="var(--ink)" font-weight="600" class="ar" direction="rtl">بيتقلب لوحده</text>
 <text x="728" y="156" text-anchor="start" font-size="11" fill="var(--ink)" class="ar" direction="rtl">Row، والـ padding والـ alignment</text>
-<text x="728" y="176" text-anchor="end" font-size="10" fill="var(--muted)">EdgeInsetsDirectional · TextAlign.start</text>
+<text x="728" y="176" text-anchor="end" font-size="9" fill="var(--muted)">EdgeInsetsDirectional · TextAlign.start</text>
 <text x="728" y="204" text-anchor="start" font-size="11" fill="var(--ink)" class="ar" direction="rtl">أسهم «قدام» و«ورا»</text>
-<text x="728" y="224" text-anchor="end" font-size="10" fill="var(--muted)">arrow_back · chevron_right · send · undo</text>
+<text x="728" y="224" text-anchor="end" font-size="8.5" fill="var(--muted)">arrow_back · chevron_right · send · undo</text>
 <text x="728" y="252" text-anchor="start" font-size="11" fill="var(--ink)" class="ar" direction="rtl">الـ progress bar والـ PageView</text>
 <text x="728" y="272" text-anchor="end" font-size="10" fill="var(--muted)">ListTile: leading / trailing</text>
 <rect x="265" y="104" width="230" height="190" rx="12" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="1.5"/>
 <text x="380" y="128" text-anchor="middle" font-size="13" fill="var(--ink)" font-weight="600" class="ar" direction="rtl">مابيتقلبش</text>
 <text x="483" y="156" text-anchor="start" font-size="11" fill="var(--ink)" class="ar" direction="rtl">حاجات ليها شكل في الدنيا</text>
-<text x="483" y="176" text-anchor="end" font-size="10" fill="var(--muted)">play_arrow · check · schedule · camera</text>
+<text x="483" y="176" text-anchor="end" font-size="9" fill="var(--muted)">play_arrow · check · schedule · camera</text>
 <text x="483" y="204" text-anchor="start" font-size="11" fill="var(--ink)" class="ar" direction="rtl">اللوجو والصور اللي فيها كلام</text>
 <text x="483" y="232" text-anchor="start" font-size="11" fill="var(--warn)" font-weight="600" class="ar" direction="rtl">فخ: شكلها سهم ومابتتقلبش</text>
 <text x="483" y="252" text-anchor="end" font-size="10" fill="var(--muted)">keyboard_arrow_left / right</text>

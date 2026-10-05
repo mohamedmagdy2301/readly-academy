@@ -8,7 +8,7 @@
 <text x="275" y="102" text-anchor="middle" font-size="10" fill="var(--ink)" class="ar" direction="rtl">مستني أول listen</text>
 <line x1="162" y1="88" x2="206" y2="88" stroke="var(--muted)" stroke-width="1.6" marker-end="url(#mk-mut)"/>
 <rect x="210" y="150" width="130" height="40" rx="10" fill="var(--surface)" stroke="var(--good)" stroke-width="1.5"/>
-<text x="275" y="175" text-anchor="middle" font-size="12" fill="var(--ink)">listen #1: 1, 2, ...</text>
+<text x="275" y="175" text-anchor="middle" font-size="10" fill="var(--ink)">listen #1: 1, 2, ...</text>
 <line x1="275" y1="112" x2="275" y2="146" stroke="var(--good)" stroke-width="1.8" marker-end="url(#mk-good)"/>
 <rect x="210" y="226" width="130" height="40" rx="10" fill="var(--warn-soft)" stroke="var(--warn)" stroke-width="1.5"/>
 <text x="275" y="251" text-anchor="middle" font-size="12" fill="var(--ink)">listen #2</text>

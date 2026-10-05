@@ -5,7 +5,7 @@
 <g font-family="IBM Plex Mono, monospace" font-size="14" text-anchor="middle">
 <rect fill="var(--surface)" height="44" rx="22" stroke="var(--ink)" stroke-width="1.5" width="120" x="30" y="60"></rect><text fill="var(--ink)" x="90" y="87">pending</text>
 <rect fill="var(--accent-soft)" height="44" rx="22" stroke="var(--accent)" stroke-width="1.5" width="120" x="240" y="60"></rect><text fill="var(--ink)" x="300" y="87">syncing</text>
-<rect fill="var(--accent)" height="44" rx="22" stroke="var(--accent)" stroke-width="1.5" width="120" x="450" y="60"></rect><text fill="#fff" x="510" y="87">synced</text>
+<rect fill="var(--accent)" height="44" rx="22" stroke="var(--accent)" stroke-width="1.5" width="120" x="450" y="60"></rect><text fill="var(--surface)" x="510" y="87">synced</text>
 <rect fill="var(--warn-soft)" height="44" rx="22" stroke="var(--warn)" stroke-width="1.5" width="120" x="240" y="200"></rect><text fill="var(--ink)" x="300" y="227">failed</text>
 <rect fill="var(--warn-soft)" height="44" rx="22" stroke="var(--warn)" stroke-width="1.5" width="120" x="450" y="200"></rect><text fill="var(--ink)" x="510" y="227">conflict</text>
 </g>

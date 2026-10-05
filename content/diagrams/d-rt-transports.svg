@@ -11,7 +11,7 @@
 <rect x="330" y="64" width="34" height="20" rx="5" fill="var(--surface)" stroke="var(--muted)"/>
 <text x="347" y="78" text-anchor="middle" font-size="10" fill="var(--muted)">304</text>
 <rect x="590" y="64" width="34" height="20" rx="5" fill="var(--accent)"/>
-<text x="607" y="78" text-anchor="middle" font-size="10" fill="#fff">200</text>
+<text x="607" y="78" text-anchor="middle" font-size="10" fill="var(--surface)">200</text>
 <line x1="422" y1="96" x2="588" y2="96" stroke="var(--warn)" stroke-width="1.4"/>
 <line x1="422" y1="91" x2="422" y2="101" stroke="var(--warn)" stroke-width="1.4"/>
 <line x1="588" y1="91" x2="588" y2="101" stroke="var(--warn)" stroke-width="1.4"/>
@@ -46,5 +46,5 @@
 <rect x="160" y="322" width="250" height="16" rx="5" fill="none" stroke="var(--muted)" stroke-dasharray="4 3"/>
 <text x="285" y="334" text-anchor="middle" font-size="10" fill="var(--muted)">app suspended: no connection</text>
 <rect x="430" y="322" width="200" height="16" rx="5" fill="var(--accent)"/>
-<text x="530" y="334" text-anchor="middle" font-size="10" fill="#fff">OS wakes the app → GET</text>
+<text x="530" y="334" text-anchor="middle" font-size="10" fill="var(--surface)">OS wakes the app → GET</text>
 </svg>

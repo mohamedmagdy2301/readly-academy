@@ -1,7 +1,7 @@
 <svg viewBox="0 0 760 350" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="الـ core_ui في قاع شجرة الـ packages: الـ features بتبني الـ widgets بتاعتها من components الـ core_ui، والـ app بيحط الثيم، والـ core_ui مابيعتمدش على حد">
 <rect x="230" y="16" width="300" height="60" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
 <text x="380" y="40" text-anchor="middle" font-size="13" fill="var(--ink)" font-weight="600">apps/readly</text>
-<text x="380" y="62" text-anchor="middle" font-size="10" fill="var(--muted)">MaterialApp(theme: AppTheme.light, darkTheme: AppTheme.dark)</text>
+<text x="380" y="62" text-anchor="middle" font-size="8" fill="var(--muted)">MaterialApp(theme: AppTheme.light, darkTheme: AppTheme.dark)</text>
 <rect x="30" y="120" width="220" height="70" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
 <text x="140" y="146" text-anchor="middle" font-size="13" fill="var(--ink)" font-weight="600">feature_library</text>
 <text x="140" y="168" text-anchor="middle" font-size="11" fill="var(--muted)">BookTile · LibraryView</text>
@@ -13,7 +13,7 @@
 <text x="620" y="168" text-anchor="middle" font-size="11" fill="var(--muted)">LoginView</text>
 <rect x="110" y="240" width="400" height="92" rx="12" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.8"/>
 <text x="310" y="262" text-anchor="middle" font-size="14" fill="var(--ink)" font-weight="600">core_ui</text>
-<text x="310" y="282" text-anchor="middle" font-size="11" fill="var(--ink)">theme: AppTheme · ReadlyColors · AppSpace · AppRadius · Cairo</text>
+<text x="310" y="282" text-anchor="middle" font-size="10.5" fill="var(--ink)">theme: AppTheme · ReadlyColors · AppSpace · AppRadius · Cairo</text>
 <text x="310" y="300" text-anchor="middle" font-size="11" fill="var(--ink)">components: ReadlyButton · StatusChip · ErrorView</text>
 <text x="310" y="320" text-anchor="middle" font-size="11" fill="var(--warn)" class="ar" direction="rtl">بيعتمد على Flutter بس: مايعرفش Book ولا AppLocalizations ولا Cubit</text>
 <rect x="540" y="240" width="190" height="92" rx="12" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>

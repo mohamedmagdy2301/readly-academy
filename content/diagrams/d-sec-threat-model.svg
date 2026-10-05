@@ -9,8 +9,8 @@
 <text x="120" y="198" text-anchor="middle" font-size="11" fill="var(--ink)">no secrets in the binary</text>
 <text x="120" y="234" text-anchor="middle" font-size="10.5" fill="var(--muted)" class="ar" direction="rtl" unicode-bidi="embed">القفل بالبصمة فوق الـ session</text>
 <rect x="540" y="50" width="200" height="56" rx="10" fill="var(--accent)" stroke="var(--accent)" stroke-width="1.5"/>
-<text x="640" y="74" text-anchor="middle" font-size="13" fill="#fff" font-weight="600">api.readly.app</text>
-<text x="640" y="93" text-anchor="middle" font-size="10.5" fill="#e8f2fb">authorization on every endpoint</text>
+<text x="640" y="74" text-anchor="middle" font-size="13" fill="var(--surface)" font-weight="600">api.readly.app</text>
+<text x="640" y="93" text-anchor="middle" font-size="10.5" fill="var(--accent-soft)">authorization on every endpoint</text>
 <rect x="540" y="140" width="200" height="44" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
 <text x="640" y="167" text-anchor="middle" font-size="12" fill="var(--ink)">openlibrary.org</text>
 <rect x="540" y="210" width="200" height="44" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
