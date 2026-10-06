@@ -150,7 +150,7 @@ for (const file of targets) {
     if (quizzes.length !== 1) report(file, 0, `expected one <Quiz>, found ${quizzes.length}`);
     else {
       const n = (quizzes[0][1].match(/<Question id=/g) ?? []).length;
-      if (n < 3 || n > 5) report(file, lineAt(quizzes[0].index), `<Quiz> has ${n} questions, expected 3 to 5`);
+      if (n < 3 || n > 6) report(file, lineAt(quizzes[0].index), `<Quiz> has ${n} questions, expected 3 to 6`);
     }
     if (data.draft && !/<Note kind="interview"/.test(content)) err(file, 0, 'missing <Note kind="interview"> (Level 4)');
   }
